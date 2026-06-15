@@ -1,9 +1,13 @@
 package com.hermesandroid.relay.ui.components
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,11 +17,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,7 +41,11 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentRenderMode
 import com.hermesandroid.relay.data.AttachmentState
+import com.hermesandroid.relay.util.MediaSaver
 import com.hermesandroid.relay.viewmodel.ChatViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Discord-style inline render for any attachment — outbound (user-authored)
@@ -213,12 +227,25 @@ private fun ImageRender(
     }
 
     if (bitmap != null) {
+        var viewerOpen by remember { mutableStateOf(false) }
+        if (viewerOpen) {
+            ChatImageViewer(
+                source = ChatImageViewerSource.Bitmap(
+                    bitmap = bitmap,
+                    displayName = attachment.fileName ?: "image",
+                    mime = attachment.contentType.ifBlank { "image/*" },
+                    bytesProvider = { attachmentBytes(context, attachment) },
+                ),
+                onDismiss = { viewerOpen = false },
+            )
+        }
         Image(
             bitmap = bitmap,
             contentDescription = attachment.fileName,
             modifier = modifier
                 .widthIn(max = maxWidth)
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { viewerOpen = true },
             contentScale = ContentScale.FillWidth
         )
     } else {
@@ -232,6 +259,7 @@ private fun ImageRender(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileCardRender(
     attachment: Attachment,
@@ -239,32 +267,30 @@ private fun FileCardRender(
     maxWidth: Dp
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val (emoji, typeLabel) = emojiAndLabelFor(attachment.renderMode, attachment.contentType)
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    val openExternal = {
+        val uriStr = attachment.cachedUri
+        if (!uriStr.isNullOrBlank()) {
+            MediaSaver.open(context, Uri.parse(uriStr), attachment.contentType)
+        }
+    }
 
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = modifier
             .widthIn(max = maxWidth)
-            .clickable {
-                val uriStr = attachment.cachedUri
-                if (!uriStr.isNullOrBlank()) {
-                    try {
-                        val uri = Uri.parse(uriStr)
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, attachment.contentType)
-                            addFlags(
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                                    Intent.FLAG_ACTIVITY_NEW_TASK
-                            )
-                        }
-                        context.startActivity(intent)
-                    } catch (_: Exception) {
-                        // No viewer installed or malformed URI — silently ignore.
-                    }
-                }
-            }
+            // Tap opens externally (unchanged); long-press surfaces the
+            // Open / Share / Save menu — only when there are bytes to act on.
+            .combinedClickable(
+                onClick = openExternal,
+                onLongClick = { if (!attachment.cachedUri.isNullOrBlank()) menuExpanded = true },
+            )
     ) {
+      Box {
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -298,7 +324,78 @@ private fun FileCardRender(
                 }
             }
         }
+
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Open") },
+                onClick = {
+                    menuExpanded = false
+                    openExternal()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Share") },
+                onClick = {
+                    menuExpanded = false
+                    scope.launch {
+                        val bytes = attachmentBytes(context, attachment)
+                        if (bytes == null) {
+                            attachmentToast(context, "Couldn't read this file")
+                            return@launch
+                        }
+                        val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
+                        MediaSaver.share(context, uri, attachment.contentType)
+                    }
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Save to device") },
+                onClick = {
+                    menuExpanded = false
+                    scope.launch {
+                        val bytes = attachmentBytes(context, attachment)
+                        if (bytes == null) {
+                            attachmentToast(context, "Couldn't read this file")
+                            return@launch
+                        }
+                        when (val result = MediaSaver.saveFile(context, bytes, attachment.fileName, attachment.contentType)) {
+                            is MediaSaver.SaveResult.Saved ->
+                                attachmentToast(context, "Saved to ${result.location}")
+                            MediaSaver.SaveResult.UseShareInstead -> {
+                                val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
+                                MediaSaver.share(context, uri, attachment.contentType)
+                            }
+                            is MediaSaver.SaveResult.Failed ->
+                                attachmentToast(context, "Save failed: ${result.message}")
+                        }
+                    }
+                },
+            )
+        }
+      } // end Box
     }
+}
+
+/**
+ * Original bytes behind an attachment — read from the cached `content://` URI
+ * when present (inbound), else base64-decoded from the inline content
+ * (outbound). Off the main thread; null when neither source is available.
+ */
+private suspend fun attachmentBytes(context: Context, attachment: Attachment): ByteArray? {
+    val uriStr = attachment.cachedUri
+    return when {
+        !uriStr.isNullOrBlank() -> MediaSaver.readUriBytes(context, Uri.parse(uriStr))
+        attachment.content.isNotBlank() -> withContext(Dispatchers.IO) {
+            runCatching {
+                android.util.Base64.decode(attachment.content, android.util.Base64.DEFAULT)
+            }.getOrNull()
+        }
+        else -> null
+    }
+}
+
+private fun attachmentToast(context: Context, message: String) {
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
 
 private fun emojiAndLabelFor(

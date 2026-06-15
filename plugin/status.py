@@ -204,18 +204,31 @@ def render_status_block(data: dict, palette: _Palette) -> str:
     if isinstance(bridge, dict) and bridge:
         lines.append("")
         lines.append("  " + palette.label("Bridge"))
-        lines.append(
-            f"    Master:           {_enabled(bridge.get('master_enabled'), palette)}"
-        )
-        lines.append(
-            f"    Accessibility:    {_granted(bridge.get('accessibility_granted'), palette)}"
-        )
-        lines.append(
-            f"    Screen capture:   {_granted(bridge.get('screen_capture_granted'), palette)}"
-        )
-        lines.append(
-            f"    Overlay:          {_granted(bridge.get('overlay_granted'), palette)}"
-        )
+        device_control = bridge.get("device_control_supported")
+        if device_control is False:
+            lines.append(
+                "    Device control:   "
+                + palette.dim
+                + "unavailable (Google Play Bridge Core)"
+                + palette.reset
+            )
+        else:
+            if device_control is True:
+                lines.append(
+                    f"    Device control:   {_enabled(True, palette)}"
+                )
+            lines.append(
+                f"    Master:           {_enabled(bridge.get('master_enabled'), palette)}"
+            )
+            lines.append(
+                f"    Accessibility:    {_granted(bridge.get('accessibility_granted'), palette)}"
+            )
+            lines.append(
+                f"    Screen capture:   {_granted(bridge.get('screen_capture_granted'), palette)}"
+            )
+            lines.append(
+                f"    Overlay:          {_granted(bridge.get('overlay_granted'), palette)}"
+            )
         lines.append(
             f"    Notifications:    {_granted(bridge.get('notification_listener_granted'), palette)}"
         )

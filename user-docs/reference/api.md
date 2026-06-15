@@ -1,6 +1,6 @@
 # Hermes API Reference
 
-Hermes-Relay communicates with the Hermes API Server using the following endpoints. If the server is configured with `API_SERVER_KEY`, requests must include a Bearer token in the `Authorization` header. Most local setups don't require a key.
+Hermes-Relay communicates with the Hermes API Server using the following endpoints. If the server is configured with `API_SERVER_KEY`, requests must include a Bearer token in the `Authorization` header. For phone-reachable LAN, VPN, or public setups, configure `API_SERVER_KEY` and enter the same value in Android.
 
 ## Base URL
 
@@ -14,13 +14,13 @@ http(s)://<server>:8642
 Authorization: Bearer <API_SERVER_KEY>   (optional — only if server has a key configured)
 ```
 
-Hermes-Relay voice endpoints can reuse this same Bearer token. Relay validates it against the protected `GET /v1/models` endpoint on the configured Hermes API Server, then accepts it only for `/voice/config`, `/voice/transcribe`, and `/voice/synthesize`. Relay pairing/session tokens remain required for sessions, media, clipboard, terminal, TUI, bridge, profile writes, and Android control routes. Non-loopback API-bearer voice calls require HTTPS by default; for temporary plain-LAN testing, run `hermes relay insecure-api-key on` on the relay host.
+Hermes-Relay voice endpoints can reuse this same Bearer token. Relay validates it against the protected `GET /v1/models` endpoint on the configured Hermes API Server, then accepts it only for `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, `/voice/realtime/*`, and `/voice/realtime-agent/*`. Relay pairing/session tokens remain required for sessions, media, clipboard, terminal, TUI, bridge, profile writes, and Android control routes. Non-loopback API-bearer voice calls require HTTPS by default; for temporary plain-LAN testing, run `hermes relay insecure-api-key on` on the relay host.
 
 ## How endpoints get served
 
-Installing the plugin via `install.sh` is enough to make all of the endpoints below work — including the management ones (`/api/sessions/*`, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models`). The plugin wires the gateway up at install time so these are served on the same `:8642` host as the standard `/v1/*` endpoints, with the same `Authorization: Bearer …` auth.
+Current upstream Hermes serves the session API natively on `/api/sessions/*`, advertises it through `/v1/capabilities`, and exposes read-only skill/toolset discovery through `/v1/skills` and `/v1/toolsets`. Installing Hermes-Relay via `install.sh` still adds a bootstrap compatibility hook for older hermes-agent builds and for remaining management surfaces that are not current API-server routes (`/api/memory`, legacy `/api/skills`, `/api/config`, `/api/available-models`).
 
-**Chat streaming uses standard `/v1/runs`** by default — it emits structured `tool.started`/`tool.completed` SSE events for live tool progress cards in the Android app. The app's `Settings → Chat → Streaming endpoint = "Auto"` (default) probes per-endpoint capability and picks the best chat path automatically; you can manually force `Sessions` or `Runs` mode for debugging.
+**Chat streaming uses `Auto` by default.** The app probes `/v1/capabilities` first, then legacy route probes, and prefers native `/api/sessions/{id}/chat/stream` when available. Older builds fall back to `/v1/chat/completions` or `/v1/runs`; you can manually force `Sessions`, `Completions`, or `Runs` mode for debugging.
 
 ## Endpoints
 
@@ -36,6 +36,17 @@ Returns server health status. Used by the app to verify connectivity (green/red 
 
 ---
 
+### Capabilities
+
+```
+GET /v1/capabilities
+```
+
+Returns the API-server feature and endpoint map. The app uses it before falling
+back to legacy route probes.
+
+---
+
 ### List Sessions
 
 ```
@@ -47,7 +58,8 @@ Returns all chat sessions.
 **Response:**
 ```json
 {
-  "sessions": [
+  "object": "list",
+  "data": [
     {
       "id": "uuid",
       "title": "Session title",
@@ -58,6 +70,8 @@ Returns all chat sessions.
   ]
 }
 ```
+
+Older compatibility builds may return `items` or `sessions`; the app accepts all three shapes.
 
 ---
 
@@ -91,7 +105,8 @@ Returns message history for a session.
 **Response:**
 ```json
 {
-  "messages": [
+  "object": "list",
+  "data": [
     {
       "id": "uuid",
       "role": "user | assistant",

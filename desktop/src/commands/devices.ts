@@ -17,11 +17,13 @@
 //   hermes-relay devices revoke <prefix>      DELETE — destroys the token
 //   hermes-relay devices extend <prefix> [--ttl <seconds>]  PATCH — defaults to 24h
 //
-// If no `--remote` is passed we default to the single stored relay (if
-// exactly one exists). Otherwise --remote is required.
+// If no `--remote` is passed we default to the tray-selected active relay,
+// then the single stored relay if exactly one exists. Otherwise --remote is
+// required.
 
 import { humanExpiry } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
+import { getActiveDesktopRelayUrl } from '../desktopConfig.js'
 import { getSession, listSessions } from '../remoteSessions.js'
 
 const DEFAULT_EXTEND_TTL_SECONDS = 24 * 3600
@@ -77,10 +79,13 @@ async function resolveRemoteAndToken(
 
   const stored = await listSessions()
   const urls = Object.keys(stored)
+  const activeDesktopUrl = await getActiveDesktopRelayUrl()
 
   let url: string
   if (argUrl || envUrl) {
     url = argUrl ?? envUrl!
+  } else if (activeDesktopUrl) {
+    url = activeDesktopUrl
   } else if (urls.length === 1) {
     url = urls[0]!
   } else if (urls.length === 0) {

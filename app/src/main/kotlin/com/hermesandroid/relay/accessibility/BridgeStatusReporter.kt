@@ -65,10 +65,10 @@ import kotlinx.serialization.json.put
  * }
  * ```
  *
- * `unattended.supported` is false on the googlePlay flavor — the Play
- * APK has no wake-lock path — which lets the agent distinguish "user
- * hasn't opted in" from "this build can't do unattended at all" without
- * a separate probe.
+ * `bridge.device_control_supported` and `unattended.supported` are false on
+ * the googlePlay flavor — the Play APK ships Bridge Core without
+ * AccessibilityService, wake locks, overlays, screenshots, or unattended
+ * control — which lets the agent avoid attempting sideload-only tools.
  *
  * The legacy top-level keys (`screen_on`, `battery`, `current_app`,
  * `accessibility_enabled`, `ts`) are ALSO emitted for backwards
@@ -188,6 +188,7 @@ class BridgeStatusReporter(
         val currentApp = HermesAccessibilityService.instance?.currentApp
         val accessibilityGranted = HermesAccessibilityService.instance != null
         val masterEnabled = HermesAccessibilityService.instance?.isMasterEnabled() ?: false
+        val deviceControlSupported = BuildFlavor.isSideload
 
         // Screen-capture grant — the process-singleton holder is non-null
         // iff the user granted MediaProjection consent this session.
@@ -257,10 +258,17 @@ class BridgeStatusReporter(
                     })
                 })
                 put("bridge", buildJsonObject {
-                    put("master_enabled", masterEnabled)
-                    put("accessibility_granted", accessibilityGranted)
-                    put("screen_capture_granted", screenCaptureGranted)
-                    put("overlay_granted", overlayGranted)
+                    put("device_control_supported", deviceControlSupported)
+                    put("master_enabled", if (deviceControlSupported) masterEnabled else false)
+                    put(
+                        "accessibility_granted",
+                        if (deviceControlSupported) accessibilityGranted else false,
+                    )
+                    put(
+                        "screen_capture_granted",
+                        if (deviceControlSupported) screenCaptureGranted else false,
+                    )
+                    put("overlay_granted", if (deviceControlSupported) overlayGranted else false)
                     put("notification_listener_granted", notificationListenerGranted)
                 })
                 put("safety", buildJsonObject {
@@ -285,11 +293,18 @@ class BridgeStatusReporter(
                 // when both `enabled=true` and this is true, commands
                 // will wake the screen but stop at the lock screen.
                 put("unattended", buildJsonObject {
-                    put("supported", BuildFlavor.isSideload)
-                    put("enabled", UnattendedAccessManager.enabled.value)
+                    put("supported", deviceControlSupported)
+                    put(
+                        "enabled",
+                        if (deviceControlSupported) UnattendedAccessManager.enabled.value else false,
+                    )
                     put(
                         "credential_lock_detected",
-                        UnattendedAccessManager.credentialLockDetected.value,
+                        if (deviceControlSupported) {
+                            UnattendedAccessManager.credentialLockDetected.value
+                        } else {
+                            false
+                        },
                     )
                 })
 
@@ -300,8 +315,8 @@ class BridgeStatusReporter(
                 // groups above.
                 put("screen_on", screenOn)
                 put("battery", batteryFinal)
-                put("current_app", currentApp ?: "unknown")
-                put("accessibility_enabled", accessibilityGranted)
+                put("current_app", if (deviceControlSupported) currentApp ?: "unknown" else "unknown")
+                put("accessibility_enabled", if (deviceControlSupported) accessibilityGranted else false)
                 put("ts", System.currentTimeMillis())
             }
         )

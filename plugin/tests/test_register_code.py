@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import io
 import json
+import base64
 import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from plugin import pair
@@ -123,6 +125,24 @@ def _pair_args(**overrides: object) -> types.SimpleNamespace:
 
 
 class PairCommandTests(unittest.TestCase):
+    def test_pairing_invite_url_round_trips_payload(self) -> None:
+        payload = json.dumps({
+            "hermes": 2,
+            "host": "10.0.0.42",
+            "port": 8642,
+            "key": "sk-api",
+            "tls": False,
+            "relay": {"url": "ws://10.0.0.42:8767", "code": "ABCD12"},
+        })
+        invite = pair.build_pairing_invite_url(payload)
+
+        self.assertTrue(invite.startswith("hermes-relay://pair?payload="))
+        query = parse_qs(urlparse(invite).query)
+        encoded = query["payload"][0]
+        padded = encoded + ("=" * (-len(encoded) % 4))
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        self.assertEqual(json.loads(decoded), json.loads(payload))
+
     def test_qr_payload_keeps_api_key_separate_from_relay_pair_code(self) -> None:
         captured: dict[str, object] = {}
 
@@ -175,7 +195,8 @@ class PairCommandTests(unittest.TestCase):
         ), patch.object(
             pair, "build_payload", side_effect=fake_build_payload
         ):
-            with redirect_stdout(io.StringIO()):
+            out = io.StringIO()
+            with redirect_stdout(out):
                 pair.pair_command(_pair_args())
 
         payload = captured["payload"]
@@ -186,6 +207,8 @@ class PairCommandTests(unittest.TestCase):
         relay = payload["relay"]
         self.assertEqual(relay["url"], "ws://10.0.0.42:8767")
         self.assertEqual(relay["code"], "ABCD12")
+        self.assertIn("Copy/paste pairing invite", out.getvalue())
+        self.assertIn("hermes-relay://pair?payload=", out.getvalue())
 
 
 class RegisterCodeCommandTests(unittest.TestCase):

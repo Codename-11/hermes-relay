@@ -57,10 +57,19 @@ import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { deleteSession, getSession, saveSession } from '../remoteSessions.js'
 import { stageClipboardImageToInbox } from './paste.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
+import {
+  clearActiveTerminalSession,
+  getActiveTerminalSession,
+  saveActiveTerminalSession
+} from '../terminalSessionStore.js'
 import { ensureToolsConsent } from '../tools/consent.js'
 import { configureComputerUseRuntime } from '../tools/computerGrants.js'
 import { setComputerActionPromptCoordinator } from '../tools/computerActionApproval.js'
-import { DESKTOP_HANDLERS, advertisedDesktopTools } from '../tools/handlerSet.js'
+import {
+  advertisedDesktopTools,
+  desktopHandlers,
+  shouldAdvertiseComputerUse
+} from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
@@ -92,13 +101,13 @@ function resolveRemoteOrNull(args: ParsedArgs): string | null {
   return url ? url.trim() : null
 }
 
-interface AuthedRelay {
+export interface AuthedRelay {
   relay: RelayTransport
   url: string
   endpointRole: string | null
 }
 
-async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
+export async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
   let urlFlag = resolveRemoteOrNull(args)
   const argCode = typeof args.flags.code === 'string' ? args.flags.code : undefined
   const argToken = typeof args.flags.token === 'string' ? args.flags.token : undefined
@@ -174,6 +183,7 @@ interface AttachedInfo {
   shell?: string
   tmuxAvailable?: boolean
   reattach?: boolean
+  replay?: string
 }
 
 /** Wait for the server's `terminal.attached` ack (or error) after we've
@@ -199,7 +209,8 @@ function waitForAttached(relay: RelayTransport): Promise<AttachedInfo> {
           pid: typeof payload.pid === 'number' ? payload.pid : undefined,
           shell: typeof payload.shell === 'string' ? payload.shell : undefined,
           tmuxAvailable: typeof payload.tmux_available === 'boolean' ? payload.tmux_available : undefined,
-          reattach: typeof payload.reattach === 'boolean' ? payload.reattach : undefined
+          reattach: typeof payload.reattach === 'boolean' ? payload.reattach : undefined,
+          replay: typeof payload.replay === 'string' ? payload.replay : undefined
         })
         return
       }
@@ -347,6 +358,14 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
       endpointRole: bannerRole
     }) + '\n'
   )
+  const storedTerminalSession = sessionNameArg ? null : await getActiveTerminalSession(url)
+  const explicitConversation = typeof args.flags.conversation === 'string'
+  const forceFreshTerminalForConversation = explicitConversation && !sessionNameArg && !args.flags.new
+  const terminalSessionName =
+    sessionNameArg ??
+    ((args.flags.new || forceFreshTerminalForConversation)
+      ? `session-${Date.now().toString(36)}`
+      : (storedTerminalSession?.name ?? 'default'))
 
   // Conversation picker — runs on a TTY when the user didn't pass
   // --conversation / --new, and the default exec is still `hermes` (so
@@ -354,7 +373,12 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   // We append `--resume <id>` to the exec command when the user picks
   // one; 'cancel' exits cleanly; 'new' leaves the exec command alone.
   // --raw / --exec-override / --new all skip the picker entirely.
-  const skipPicker = raw || execOverride !== null || !!args.flags.new
+  const skipPicker =
+    raw ||
+    execOverride !== null ||
+    !!args.flags.new ||
+    (!explicitConversation && (!!sessionNameArg || storedTerminalSession !== null))
+  let pickedConversationId: string | null = null
   if (!skipPicker) {
     const picked = await resolveHermesConversationId(relay, args, url)
     if (picked === 'cancel') {
@@ -366,6 +390,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
       }
       return 0
     }
+    pickedConversationId = picked
     if (picked && postAttachExec === 'hermes') {
       // Shell-quote defensively — session ids are typically [a-z0-9-] but
       // we can't assume, and the tmux shell will bash-eval the exec line.
@@ -383,21 +408,23 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   if (!toolsDisabled) {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
+      const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
       configureComputerUseRuntime({
         url,
-        computerUseConsented: true,
+        computerUseConsented: computerUseEnabled,
         consentSource: consent.source ?? 'stored'
       })
-      const advertisedTools = advertisedDesktopTools()
+      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
-        handlers: DESKTOP_HANDLERS,
+        handlers: desktopHandlers({ computerUse: computerUseEnabled }),
         advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)
-      process.stderr.write(
-        `Desktop tools: ${advertisedTools.length} handlers advertised (computer-use experimental; control requires grant approval)\n`
-      )
+      const computerUseNote = computerUseEnabled
+        ? ' (computer-use experimental; control requires grant approval)'
+        : ''
+      process.stderr.write(`Desktop tools: ${advertisedTools.length} handlers advertised${computerUseNote}\n`)
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)
     }
@@ -412,9 +439,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   const attachPromise = waitForAttached(relay)
 
   const attachPayload: Record<string, unknown> = { cols, rows }
-  if (sessionNameArg) {
-    attachPayload.session_name = sessionNameArg
-  }
+  attachPayload.session_name = terminalSessionName
   relay.sendChannel('terminal', 'terminal.attach', attachPayload)
 
   let attached: AttachedInfo
@@ -436,12 +461,22 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   // recent), but echoing it makes the wire self-describing and survives a
   // future multi-session client.
   const sessionName = attached.sessionName
+  await saveActiveTerminalSession(url, {
+    name: sessionName,
+    conversationId: pickedConversationId,
+    endpointRole: bannerRole,
+    serverVersion: relay.serverVersion,
+    status: attached.reattach ? 'resumed' : 'attached'
+  })
 
   const reattachMsg = attached.reattach ? ' — re-attached to existing session' : ''
   process.stderr.write(
     `Attached${attached.tmuxAvailable ? ` (tmux session "${sessionName}")` : ''}${reattachMsg}.\n` +
       `${CHORD_HELP}\n\n`
   )
+  if (attached.replay) {
+    process.stdout.write(attached.replay)
+  }
 
   // Swap handler from attach-waiter to steady-state output pump. Re-registering
   // replaces the previous listener, so `terminal.output` frames now flow to
@@ -557,6 +592,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
           // Ctrl+A k → destructive kill (tmux session destroyed)
           exiting = true
           relay.sendChannel('terminal', 'terminal.kill', { session_name: sessionName })
+          void clearActiveTerminalSession(url, sessionName)
           process.stderr.write('\n\x1b[90m[shell] killed tmux session "' + sessionName + '"\x1b[0m\n')
           cleanup()
           process.exit(0)
@@ -711,7 +747,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   // On a fresh tmux attach the login shell takes ~250-350ms to paint its first
   // prompt; injecting `exec` too early means bash swallows the first keystroke
   // and the command never runs. Skipped entirely when --raw is set.
-  if (postAttachExec) {
+  if (postAttachExec && !attached.reattach) {
     setTimeout(() => {
       if (exiting) {
         return

@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 import tempfile
 import unittest
+from urllib.parse import parse_qs, urlparse
 from unittest import mock
 
 from aiohttp import web
@@ -79,6 +81,16 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertTrue(relay["url"].startswith("ws://"))
         self.assertEqual(relay["code"], result["code"])
         self.assertEqual(len(relay["code"]), 6)
+
+    async def test_pairing_url_wraps_same_qr_payload(self) -> None:
+        result = await self._mint()
+
+        self.assertTrue(result["pairing_url"].startswith("hermes-relay://pair?payload="))
+        query = parse_qs(urlparse(result["pairing_url"]).query)
+        encoded = query["payload"][0]
+        padded = encoded + ("=" * (-len(encoded) % 4))
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        self.assertEqual(json.loads(decoded), json.loads(result["qr_payload"]))
 
     async def test_top_level_key_is_api_key_not_pair_code(self) -> None:
         """Top-level ``key`` is the API bearer token — not the pair code."""

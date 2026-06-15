@@ -2,6 +2,9 @@ package com.hermesandroid.relay.network
 
 import android.util.Log
 import com.hermesandroid.relay.auth.PairedDeviceInfo
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
@@ -579,7 +582,10 @@ class RelayHttpClient(
      * human-readable message on any failure (network, non-200, bad body,
      * doesn't-look-like-hermes-relay).
      */
-    suspend fun probeHealth(relayUrl: String): Result<RelayHealth> = withContext(Dispatchers.IO) {
+    suspend fun probeHealth(
+        relayUrl: String,
+        logSuccess: Boolean = true,
+    ): Result<RelayHealth> = withContext(Dispatchers.IO) {
         val trimmed = relayUrl.trim()
         if (trimmed.isEmpty()) {
             return@withContext Result.failure(
@@ -591,10 +597,18 @@ class RelayHttpClient(
             .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
             .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
             .trimEnd('/')
+        val startedAtMs = System.currentTimeMillis()
 
         val url = try {
             "$httpBase/health".toHttpUrl()
         } catch (e: IllegalArgumentException) {
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Error,
+                title = "Relay URL invalid",
+                detail = e.message,
+                url = relayUrl,
+            )
             return@withContext Result.failure(
                 IOException("Invalid relay URL: ${e.message}")
             )
@@ -606,6 +620,7 @@ class RelayHttpClient(
             .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .build()
 
         val request = Request.Builder()
@@ -617,12 +632,28 @@ class RelayHttpClient(
         try {
             fastClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Relay,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Relay health failed",
+                        detail = "HTTP ${response.code}",
+                        url = httpBase,
+                        elapsedMs = System.currentTimeMillis() - startedAtMs,
+                    )
                     return@withContext Result.failure(
                         IOException("Relay responded HTTP ${response.code}")
                     )
                 }
                 val body = response.body?.string().orEmpty()
                 if (body.isBlank()) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Relay,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Relay health failed",
+                        detail = "Empty response",
+                        url = httpBase,
+                        elapsedMs = System.currentTimeMillis() - startedAtMs,
+                    )
                     return@withContext Result.failure(
                         IOException("Relay returned an empty response")
                     )
@@ -632,18 +663,42 @@ class RelayHttpClient(
                 val parsed: Map<String, kotlinx.serialization.json.JsonElement> = try {
                     sessionsJson.parseToJsonElement(body).jsonObject
                 } catch (e: Exception) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Relay,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Relay health failed",
+                        detail = "Non-JSON response",
+                        url = httpBase,
+                        elapsedMs = System.currentTimeMillis() - startedAtMs,
+                    )
                     return@withContext Result.failure(
                         IOException("Relay returned non-JSON: ${e.message ?: "parse error"}")
                     )
                 }
                 val status = (parsed["status"] as? kotlinx.serialization.json.JsonPrimitive)?.content
                 if (status != "ok") {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Relay,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Relay health failed",
+                        detail = "status=${status ?: "missing"}",
+                        url = httpBase,
+                        elapsedMs = System.currentTimeMillis() - startedAtMs,
+                    )
                     return@withContext Result.failure(
                         IOException("Relay reports status=${status ?: "missing"} (expected 'ok')")
                     )
                 }
                 val version = (parsed["version"] as? kotlinx.serialization.json.JsonPrimitive)?.content
                 if (version.isNullOrBlank()) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Relay,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Relay health failed",
+                        detail = "Missing version field",
+                        url = httpBase,
+                        elapsedMs = System.currentTimeMillis() - startedAtMs,
+                    )
                     return@withContext Result.failure(
                         IOException("Response doesn't look like a hermes-relay — missing 'version' field")
                     )
@@ -652,19 +707,61 @@ class RelayHttpClient(
                     ?.content?.toIntOrNull() ?: 0
                 val sessions = (parsed["sessions"] as? kotlinx.serialization.json.JsonPrimitive)
                     ?.content?.toIntOrNull() ?: 0
+                if (logSuccess) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Relay,
+                        severity = DiagnosticSeverity.Info,
+                        title = "Relay health ok",
+                        detail = "version=$version clients=$clients sessions=$sessions",
+                        url = httpBase,
+                        elapsedMs = System.currentTimeMillis() - startedAtMs,
+                    )
+                }
                 Result.success(RelayHealth(version = version, clients = clients, sessions = sessions))
             }
         } catch (e: java.net.SocketTimeoutException) {
             Log.w(TAG, "probeHealth timeout: ${e.message}")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Warning,
+                title = "Relay health timeout",
+                detail = "No HTTP response in 3s",
+                url = httpBase,
+                elapsedMs = System.currentTimeMillis() - startedAtMs,
+            )
             Result.failure(IOException("Relay is not responding (3s timeout)"))
         } catch (e: java.net.ConnectException) {
             Log.w(TAG, "probeHealth connect refused: ${e.message}")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Error,
+                title = "Relay connection refused",
+                detail = e.message,
+                url = httpBase,
+                elapsedMs = System.currentTimeMillis() - startedAtMs,
+            )
             Result.failure(IOException("Connection refused — is the relay running on this URL?"))
         } catch (e: IOException) {
             Log.w(TAG, "probeHealth IO error: ${e.message}")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Warning,
+                title = "Relay health failed",
+                detail = e.message ?: "Network error",
+                url = httpBase,
+                elapsedMs = System.currentTimeMillis() - startedAtMs,
+            )
             Result.failure(IOException("Network error: ${e.message ?: "unreachable"}"))
         } catch (e: Exception) {
             Log.w(TAG, "probeHealth unexpected error: ${e.message}")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Error,
+                title = "Relay health failed",
+                detail = e.message ?: e.javaClass.simpleName,
+                url = httpBase,
+                elapsedMs = System.currentTimeMillis() - startedAtMs,
+            )
             Result.failure(e)
         }
     }

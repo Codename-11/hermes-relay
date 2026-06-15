@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,6 +22,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -53,12 +55,16 @@ import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
 import com.hermesandroid.relay.ui.components.ActiveCardSecurityPosture
-import com.hermesandroid.relay.ui.components.ActiveCardStatusSection
+import com.hermesandroid.relay.ui.components.ActiveCardRelayStatusSection
+import com.hermesandroid.relay.ui.components.ActiveCardStandardStatusSection
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.EndpointsCard
+import com.hermesandroid.relay.ui.components.RouteEditorDialog
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
+import com.hermesandroid.relay.network.RelayUrlDeriver
+import com.hermesandroid.relay.network.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.statusText
@@ -108,6 +114,7 @@ fun ConnectionsSettingsScreen(
     onRemoveConnection: (id: String) -> Unit,
     onAddConnection: () -> Unit,
     onBack: () -> Unit,
+    onNavigateToManage: () -> Unit,
     // Opens `PairedDevicesScreen` for the server-side session list. Wired
     // via the "Relay sessions" row inside the active card's security
     // posture strip. Must not be null — the row is always rendered.
@@ -126,6 +133,12 @@ fun ConnectionsSettingsScreen(
     // (HTTP-only) is unaffected.
     val relayEnabled by FeatureFlags.relayEnabled(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
+    val activeRelayConfigured: Boolean = if (connectionViewModel != null) {
+        val configured by connectionViewModel.relayConfigured.collectAsState()
+        configured
+    } else {
+        false
+    }
 
     // Kick a WSS reconnect on screen entry in case the user landed here
     // from a Stale chip. Moved here from the deleted singular
@@ -190,7 +203,7 @@ fun ConnectionsSettingsScreen(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = "Tap Add connection to pair with a Hermes server.",
+                    text = "Tap Add connection to connect to Standard Hermes.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -219,6 +232,11 @@ fun ConnectionsSettingsScreen(
                         // + action row) and don't collect any VM flows.
                         activeConnectionViewModel = if (isActive) connectionViewModel else null,
                         relayEnabled = relayEnabled,
+                        relayConfigured = if (isActive) {
+                            activeRelayConfigured
+                        } else {
+                            connection.hasConfiguredRelay()
+                        },
                         isDarkTheme = isDarkTheme,
                         onReconnect = onReconnectActive,
                         onRename = { newLabel -> onRenameConnection(connection.id, newLabel) },
@@ -226,6 +244,7 @@ fun ConnectionsSettingsScreen(
                         onRevoke = { onRevokeConnection(connection.id) },
                         onRemove = { onRemoveConnection(connection.id) },
                         onOpenApiInfo = { showApiInfoSheet = true },
+                        onOpenDashboard = onNavigateToManage,
                         onOpenRelayInfo = { showRelayInfoSheet = true },
                         onOpenSessionInfo = { showSessionInfoSheet = true },
                         onInsecureAckRequested = { showInsecureAckDialog = true },
@@ -297,6 +316,7 @@ private fun ConnectionCard(
     liveState: RelayUiState?,
     activeConnectionViewModel: ConnectionViewModel?,
     relayEnabled: Boolean,
+    relayConfigured: Boolean,
     isDarkTheme: Boolean,
     onReconnect: () -> Unit,
     onRename: (String) -> Unit,
@@ -304,6 +324,7 @@ private fun ConnectionCard(
     onRevoke: () -> Unit,
     onRemove: () -> Unit,
     onOpenApiInfo: () -> Unit,
+    onOpenDashboard: () -> Unit,
     onOpenRelayInfo: () -> Unit,
     onOpenSessionInfo: () -> Unit,
     onInsecureAckRequested: () -> Unit,
@@ -315,8 +336,11 @@ private fun ConnectionCard(
     var showRemoveConfirm by remember { mutableStateOf(false) }
     var endpointsExpanded by remember { mutableStateOf(false) }
 
+    // Active card: muted indigo wash instead of the full-strength Electric
+    // primaryContainer — a card-sized fill of the brand blue overwhelmed the
+    // body text (2026-06-10 feedback); small accents keep the vivid blue.
     val containerColor = if (isActive) {
-        MaterialTheme.colorScheme.primaryContainer
+        com.hermesandroid.relay.ui.theme.RelayRefresh.ElectricMuted.copy(alpha = 0.42f)
     } else {
         MaterialTheme.colorScheme.surfaceVariant
     }
@@ -344,6 +368,20 @@ private fun ConnectionCard(
     } else {
         false
     }
+    val routeProbeStatus: ConnectionViewModel.RouteProbeStatus =
+        if (activeConnectionViewModel != null) {
+            val status by activeConnectionViewModel.routeProbeStatus.collectAsState()
+            status
+        } else {
+            ConnectionViewModel.RouteProbeStatus.Idle
+        }
+    val routeProbeOutcomes: Map<String, RouteProbeOutcome> =
+        if (activeConnectionViewModel != null) {
+            val outcomes by activeConnectionViewModel.routeProbeOutcomes.collectAsState()
+            outcomes
+        } else {
+            emptyMap()
+        }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -378,9 +416,13 @@ private fun ConnectionCard(
 
             // ── Subtitle: hostname + status + endpoints roles ──────────
             val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
+            val hasStandardApi = connection.apiServerUrl.isNotBlank()
             val pairedStatus = when {
-                liveState != null -> liveState.statusText(connectedLabel = "Connected")
+                liveState != null &&
+                    (connection.pairedAt != null || liveState != RelayUiState.NotConfigured) ->
+                    liveState.statusText(connectedLabel = "Connected")
                 connection.pairedAt != null -> formatPairedRelative(connection.pairedAt)
+                hasStandardApi -> "Standard · Relay not paired"
                 else -> "Not paired"
             }
             // ADR 24 — active-only endpoint role summary.
@@ -406,8 +448,16 @@ private fun ConnectionCard(
                 overflow = TextOverflow.Ellipsis,
             )
 
+            ConnectionSurfaceSummary(
+                connection = connection,
+                isActive = isActive,
+                liveState = liveState,
+                activeConnectionViewModel = activeConnectionViewModel,
+                relayConfigured = relayConfigured,
+            )
+
             // ── Single-endpoint nudge (active only) ──────────────────────
-            if (isActive && endpoints.size == 1) {
+            if (isActive && connection.pairedAt != null && endpoints.size == 1) {
                 Surface(
                     color = MaterialTheme.colorScheme.tertiaryContainer,
                     shape = RoundedCornerShape(8.dp),
@@ -449,8 +499,12 @@ private fun ConnectionCard(
                     TextButton(onClick = onReconnect) { Text("Reconnect") }
                 }
                 TextButton(onClick = { showRenameDialog = true }) { Text("Rename") }
-                TextButton(onClick = onRepair) { Text("Re-pair") }
-                TextButton(onClick = { showRevokeConfirm = true }) { Text("Revoke") }
+                TextButton(onClick = onRepair) {
+                    Text(if (connection.pairedAt == null) "Pair Relay" else "Re-pair")
+                }
+                if (connection.pairedAt != null) {
+                    TextButton(onClick = { showRevokeConfirm = true }) { Text("Revoke") }
+                }
                 TextButton(onClick = { showRemoveConfirm = true }) {
                     Text(text = "Remove", color = MaterialTheme.colorScheme.error)
                 }
@@ -463,20 +517,28 @@ private fun ConnectionCard(
             if (isActive && activeConnectionViewModel != null) {
                 HorizontalDivider()
 
-                // ── Connection health section ────────────────────────────
-                SectionHeader(text = "Connection health")
-                SectionCaption(text = "Tap any row for details.")
+                // ── Standard section ─────────────────────────────────────
+                SectionHeader(text = "Standard")
+                SectionCaption(text = "API and dashboard setup for Chat and Manage.")
 
-                // Status section (3 tappable rows → info sheets). Always
-                // visible on the active card — the "health dashboard"
-                // replacing the old Settings-top quick-look card.
-                ActiveCardStatusSection(
+                ActiveCardStandardStatusSection(
                     connectionViewModel = activeConnectionViewModel,
-                    relayEnabled = relayEnabled,
                     onOpenApiInfo = onOpenApiInfo,
-                    onOpenRelayInfo = onOpenRelayInfo,
-                    onOpenSessionInfo = onOpenSessionInfo,
+                    onOpenDashboard = onOpenDashboard,
                 )
+
+                if (relayEnabled) {
+                    HorizontalDivider()
+                    SectionHeader(text = "Relay")
+                    SectionCaption(
+                        text = "Optional power tools: Terminal, Bridge, relay sessions, and grants.",
+                    )
+                    ActiveCardRelayStatusSection(
+                        connectionViewModel = activeConnectionViewModel,
+                        onOpenRelayInfo = onOpenRelayInfo,
+                        onOpenSessionInfo = onOpenSessionInfo,
+                    )
+                }
 
                 // ── Routes section (conditional on having endpoints) ─────
                 // ADR 24 behavior preserved verbatim from pre-refactor;
@@ -493,6 +555,17 @@ private fun ConnectionCard(
                     var preferredRole by remember(connection.id) {
                         mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
                     }
+                    // Live transient override — set by "Use now" (or by
+                    // preference restoration, in which case it equals
+                    // preferredRole). A manual switch is the differing case.
+                    val manualOverrideRole by
+                        activeConnectionViewModel.manualRouteOverride.collectAsState()
+                    val manualSwitchActive = manualOverrideRole != null &&
+                        !manualOverrideRole.equals(preferredRole, ignoreCase = true)
+                    var routeEditorOpen by remember(connection.id) { mutableStateOf(false) }
+                    var routeEditorOriginal by remember(connection.id) {
+                        mutableStateOf<EndpointCandidate?>(null)
+                    }
                     val hasTailscaleRoute = endpoints.any {
                         it.role.equals("tailscale", ignoreCase = true)
                     }
@@ -507,16 +580,50 @@ private fun ConnectionCard(
                     val tailscaleLaunchIntent = remember(context) {
                         context.packageManager.getLaunchIntentForPackage("com.tailscale.ipn")
                     }
-                    val activeRouteLabel = activeEndpoint?.displayLabel() ?: "Resolving"
-                    val activeRouteHost = activeEndpoint?.let {
-                        "${it.api.host}:${it.api.port}"
-                    } ?: connection.relayUrl
+                    val isRouteProbing =
+                        routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Probing
+                    // Last user-triggered probe finished with NO winner: say
+                    // so explicitly. The old UI sat on "Resolving" forever
+                    // and showed the (internal) relay URL underneath, which
+                    // read as "stuck on the internal route".
+                    val probeCameUpEmpty = activeEndpoint == null &&
+                        routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Done &&
+                        routeProbeStatus.winner == null
+                    val activeRouteLabel = when {
+                        activeEndpoint != null -> activeEndpoint.displayLabel()
+                        isRouteProbing -> "Checking routes…"
+                        probeCameUpEmpty -> "No route reachable"
+                        else -> "Resolving"
+                    }
+                    // Full URL (scheme included) — http vs https is the
+                    // difference between a working route and a TLS-failing
+                    // one, so never hide it. With no resolved route, show the
+                    // saved API URL the app is actually falling back to.
+                    val activeRouteHost = activeEndpoint?.api?.url
+                        ?: "Using saved URL: ${
+                            connection.apiServerUrl.ifBlank { connection.relayUrl }
+                        }"
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = "Current: $activeRouteLabel",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = "Current: $activeRouteLabel",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (probeCameUpEmpty) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            if (isRouteProbing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            }
+                        }
                         Text(
                             text = activeRouteHost,
                             style = MaterialTheme.typography.bodySmall,
@@ -524,6 +631,15 @@ private fun ConnectionCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (probeCameUpEmpty) {
+                            Text(
+                                text = "None of the saved routes answered a health " +
+                                    "probe. Expand the routes below for per-route " +
+                                    "reasons.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
                     if (showTailscaleUnavailableHint) {
                         Surface(
@@ -566,13 +682,56 @@ private fun ConnectionCard(
                                     }
                                     TextButton(
                                         onClick = { activeConnectionViewModel.probeNow() },
+                                        enabled = !isRouteProbing,
                                         contentPadding =
                                             androidx.compose.foundation.layout.PaddingValues(
                                                 horizontal = 0.dp,
                                             ),
                                     ) {
-                                        Text("Re-check")
+                                        Text(if (isRouteProbing) "Checking…" else "Re-check")
                                     }
+                                }
+                            }
+                        }
+                    }
+                    if (isTailscaleDetected && !hasTailscaleRoute) {
+                        // Inverse of the hint above: the phone is on Tailscale
+                        // but this connection has nothing to roam to. This is
+                        // the strongest signal a user wants remote access and
+                        // simply never configured it — offer the route editor
+                        // directly instead of hoping they find Show routes.
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = "Phone is on Tailscale — no Tailscale route yet",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                Text(
+                                    text = "Add your server's Tailscale URL so Hermes " +
+                                        "keeps working when this phone leaves the " +
+                                        "server's network.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                TextButton(
+                                    onClick = {
+                                        routeEditorOriginal = null
+                                        routeEditorOpen = true
+                                    },
+                                    contentPadding =
+                                        androidx.compose.foundation.layout.PaddingValues(
+                                            horizontal = 0.dp,
+                                        ),
+                                ) {
+                                    Text("Add Tailscale route")
                                 }
                             }
                         }
@@ -581,12 +740,17 @@ private fun ConnectionCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(onClick = { activeConnectionViewModel.probeNow() }) {
-                            Text("Re-check")
+                        TextButton(
+                            onClick = { activeConnectionViewModel.probeNow() },
+                            enabled = !isRouteProbing,
+                        ) {
+                            Text(if (isRouteProbing) "Checking…" else "Re-check")
                         }
-                        if (preferredRole != null) {
+                        if (preferredRole != null || manualSwitchActive) {
                             TextButton(
                                 onClick = {
+                                    // Clears both layers: the persisted
+                                    // preference and any live manual switch.
                                     activeConnectionViewModel.setPreferredEndpointRole(null)
                                     preferredRole = null
                                 },
@@ -621,12 +785,24 @@ private fun ConnectionCard(
                         EndpointsCard(
                             endpoints = endpoints,
                             activeEndpoint = activeEndpoint,
+                            isProbing = isRouteProbing,
+                            outcomeFor = { candidate ->
+                                routeProbeOutcomes[activeConnectionViewModel.routeOutcomeKey(candidate)]
+                            },
                             preferredRole = preferredRole,
+                            manualOverrideRole = manualOverrideRole,
+                            onUseNow = { candidate ->
+                                // Transient switch — no preference write.
+                                activeConnectionViewModel.useRouteNow(candidate.role)
+                            },
+                            onCancelUseNow = {
+                                activeConnectionViewModel.useRouteNow(null)
+                            },
                             onPreferEndpoint = { candidate ->
                                 activeConnectionViewModel.setPreferredEndpointRole(candidate.role)
                                 preferredRole = candidate.role
                             },
-                            onClearOverride = {
+                            onClearPreferred = {
                                 activeConnectionViewModel.setPreferredEndpointRole(null)
                                 preferredRole = null
                             },
@@ -634,6 +810,34 @@ private fun ConnectionCard(
                             onViewPin = { candidate ->
                                 activeConnectionViewModel.lookupEndpointPin(candidate)
                             },
+                            onAddRoute = {
+                                routeEditorOriginal = null
+                                routeEditorOpen = true
+                            },
+                            onEditRoute = { candidate ->
+                                routeEditorOriginal = candidate
+                                routeEditorOpen = true
+                            },
+                            onRemoveRoute = { candidate ->
+                                activeConnectionViewModel.removeExtraRoute(candidate)
+                            },
+                        )
+                    }
+                    // Rendered outside the routes expander so the "Add
+                    // Tailscale route" nudge above can open it while the
+                    // routes list is collapsed.
+                    if (routeEditorOpen) {
+                        RouteEditorDialog(
+                            original = routeEditorOriginal,
+                            onSave = { role, apiUrl, onResult ->
+                                activeConnectionViewModel.saveExtraRoute(
+                                    role = role,
+                                    apiUrl = apiUrl,
+                                    original = routeEditorOriginal,
+                                    onResult = onResult,
+                                )
+                            },
+                            onDismiss = { routeEditorOpen = false },
                         )
                     }
                 }
@@ -643,11 +847,11 @@ private fun ConnectionCard(
                 // ── Advanced section ─────────────────────────────────────
                 // Header + caption above the collapsed Advanced card so
                 // users understand this branch is a power-user surface,
-                // not something they're expected to touch after QR pairing.
+                // not something they're expected to touch after Standard setup.
                 SectionHeader(text = "Advanced")
                 SectionCaption(
                     text = "Manual setup — most people don't need this " +
-                        "after QR pairing.",
+                        "after Standard Hermes setup.",
                 )
 
                 // Advanced expander: manual URL config + insecure toggle
@@ -737,6 +941,158 @@ private fun ConnectionCard(
             },
         )
     }
+}
+
+@Composable
+private fun ConnectionSurfaceSummary(
+    connection: Connection,
+    isActive: Boolean,
+    liveState: RelayUiState?,
+    activeConnectionViewModel: ConnectionViewModel?,
+    relayConfigured: Boolean,
+) {
+    val activeApiReachable: Boolean? = if (activeConnectionViewModel != null) {
+        val reachable by activeConnectionViewModel.apiServerReachable.collectAsState()
+        reachable
+    } else {
+        null
+    }
+    val activeApiHealth: ConnectionViewModel.HealthStatus? = if (activeConnectionViewModel != null) {
+        val health by activeConnectionViewModel.apiServerHealth.collectAsState()
+        health
+    } else {
+        null
+    }
+    val activeConnection: Connection? = if (activeConnectionViewModel != null) {
+        val current by activeConnectionViewModel.activeConnection.collectAsState()
+        current
+    } else {
+        null
+    }
+    val dashboardStatus = (activeConnection ?: connection).dashboardLastStatus
+    val dashboardSignInRequired =
+        dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+
+    val apiText = when {
+        connection.apiServerUrl.isBlank() -> "Missing"
+        activeApiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking"
+        activeApiReachable == true -> "Ready"
+        isActive && activeApiReachable == false -> "Offline"
+        else -> "Configured"
+    }
+    val apiTone = when (apiText) {
+        "Ready" -> SummaryTone.Good
+        "Offline", "Missing" -> SummaryTone.Warning
+        else -> SummaryTone.Neutral
+    }
+
+    val dashboardText = when {
+        connection.resolvedDashboardUrl.isBlank() -> "Missing"
+        dashboardStatus == null -> "Unchecked"
+        !dashboardStatus.reachable -> "Offline"
+        dashboardSignInRequired -> "Sign in"
+        dashboardStatus.authenticated == true -> "Signed in"
+        else -> "Available"
+    }
+    val dashboardTone = when (dashboardText) {
+        "Signed in", "Available" -> SummaryTone.Good
+        "Sign in" -> SummaryTone.Info
+        "Offline", "Missing" -> SummaryTone.Warning
+        else -> SummaryTone.Neutral
+    }
+
+    val relayText = when {
+        !relayConfigured -> "Optional"
+        liveState != null -> liveState.statusText(connectedLabel = "Ready")
+        connection.pairedAt != null -> "Paired"
+        connection.relayUrl.isNotBlank() -> "Configured"
+        else -> "Configure"
+    }
+    val relayTone = when {
+        !relayConfigured -> SummaryTone.Neutral
+        liveState == RelayUiState.Connected -> SummaryTone.Good
+        liveState == RelayUiState.Stale || liveState == RelayUiState.Disconnected -> SummaryTone.Warning
+        else -> SummaryTone.Info
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ConnectionSurfacePill(
+            label = "API",
+            value = apiText,
+            tone = apiTone,
+            modifier = Modifier.weight(1f),
+        )
+        ConnectionSurfacePill(
+            label = "Dashboard",
+            value = dashboardText,
+            tone = dashboardTone,
+            modifier = Modifier.weight(1f),
+        )
+        ConnectionSurfacePill(
+            label = "Relay",
+            value = relayText,
+            tone = relayTone,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+private enum class SummaryTone { Neutral, Good, Info, Warning }
+
+@Composable
+private fun ConnectionSurfacePill(
+    label: String,
+    value: String,
+    tone: SummaryTone,
+    modifier: Modifier = Modifier,
+) {
+    val container = when (tone) {
+        SummaryTone.Good -> MaterialTheme.colorScheme.primaryContainer
+        SummaryTone.Info -> MaterialTheme.colorScheme.tertiaryContainer
+        SummaryTone.Warning -> MaterialTheme.colorScheme.errorContainer
+        SummaryTone.Neutral -> MaterialTheme.colorScheme.surface
+    }
+    val content = when (tone) {
+        SummaryTone.Good -> MaterialTheme.colorScheme.onPrimaryContainer
+        SummaryTone.Info -> MaterialTheme.colorScheme.onTertiaryContainer
+        SummaryTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
+        SummaryTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        modifier = modifier,
+        color = container,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = content,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = content,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun Connection.hasConfiguredRelay(): Boolean {
+    val trimmedRelayUrl = relayUrl.trim()
+    return pairedAt != null ||
+        trimmedRelayUrl.isNotBlank() &&
+        !RelayUrlDeriver.isAutoManagedRelayUrl(trimmedRelayUrl, apiServerUrl)
 }
 
 @Composable

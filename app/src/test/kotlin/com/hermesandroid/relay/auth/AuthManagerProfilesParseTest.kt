@@ -291,4 +291,49 @@ class AuthManagerProfilesParseTest {
         assertFalse(parsed[0].hasSoul)
         assertEquals(0, parsed[0].skillCount)
     }
+
+    @Test
+    fun parsesProfileApiMetadataWhenPresent() {
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "mizu")
+                put("model", "xai/grok")
+                put("api_server_enabled", true)
+                put("api_server_url", "https://hermes.example.test:8643")
+                put("api_server_host", "0.0.0.0")
+                put("api_server_port", 8643)
+                put("api_server_key_present", true)
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertTrue(parsed[0].apiServerEnabled)
+        assertEquals("https://hermes.example.test:8643", parsed[0].apiServerUrl)
+        assertEquals("0.0.0.0", parsed[0].apiServerHost)
+        assertEquals(8643, parsed[0].apiServerPort)
+        assertTrue(parsed[0].apiServerKeyPresent)
+        assertTrue(parsed[0].hasIsolatedApi)
+    }
+
+    @Test
+    fun defaultsProfileApiMetadataWhenKeysMissing() {
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "legacy")
+                put("model", "m1")
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertFalse(parsed[0].apiServerEnabled)
+        assertNull(parsed[0].apiServerUrl)
+        assertNull(parsed[0].apiServerHost)
+        assertNull(parsed[0].apiServerPort)
+        assertFalse(parsed[0].apiServerKeyPresent)
+        assertFalse(parsed[0].hasIsolatedApi)
+    }
 }

@@ -45,7 +45,7 @@ import {
 import type { ToolHandler } from './router.js'
 
 /** Experimental computer-use tools are registered in the local handler map
- * and heartbeat-advertised with the rest of the desktop tools after normal
+ * but heartbeat-advertised only when explicitly feature-flagged after normal
  * desktop-tool consent. Host input still fails closed unless a task-scoped
  * grant exists and was approved from a visible local prompt. */
 export const DESKTOP_COMPUTER_USE_TOOLS: readonly string[] = Object.freeze([
@@ -112,27 +112,52 @@ export interface DesktopAdvertiseOptions {
   computerUse?: boolean
 }
 
+function envEnabled(value: string | undefined): boolean {
+  if (!value) {
+    return false
+  }
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
 export function shouldAdvertiseComputerUse(
-  _flags?: Record<string, string | true>
+  flags: Record<string, string | true> = {},
+  env: NodeJS.ProcessEnv = process.env
 ): boolean {
-  return true
+  if (flags['no-computer-use'] === true) {
+    return false
+  }
+  if (flags['experimental-computer-use'] === true || flags['allow-computer-use'] === true) {
+    return true
+  }
+  return envEnabled(env.HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE) ||
+    envEnabled(env.HERMES_RELAY_COMPUTER_USE)
+}
+
+export function desktopHandlers(
+  opts: DesktopAdvertiseOptions = {}
+): Record<string, ToolHandler> {
+  if (opts.computerUse !== true) {
+    return BASE_DESKTOP_HANDLERS
+  }
+  return DESKTOP_HANDLERS
 }
 
 /** Stable list of advertised tool names — what the heartbeat claims to
- * service. Computer-use tools are included by default with the rest of the
- * desktop tool surface; callers may pass `computerUse:false` only for tests
- * or a future explicit disable path. */
+ * service. Computer-use tools are feature-flagged so the regular desktop
+ * CLI/daemon surface stays primary and backward-compatible. */
 export function advertisedDesktopTools(
   opts: DesktopAdvertiseOptions = {}
 ): readonly string[] {
-  if (opts.computerUse === false) {
+  if (opts.computerUse !== true) {
     const experimental = new Set(DESKTOP_COMPUTER_USE_TOOLS)
     return Object.freeze(Object.keys(DESKTOP_HANDLERS).filter(name => !experimental.has(name)))
   }
   return Object.freeze(Object.keys(DESKTOP_HANDLERS))
 }
 
-export const DESKTOP_ADVERTISED_TOOLS: readonly string[] = advertisedDesktopTools()
+export const DESKTOP_ADVERTISED_TOOLS: readonly string[] = advertisedDesktopTools({
+  computerUse: shouldAdvertiseComputerUse()
+})
 
 /** Short summary line used by chat.ts / shell.ts when announcing to the
  * user that tools are wired. Centralizing the count avoids the "9 handlers"

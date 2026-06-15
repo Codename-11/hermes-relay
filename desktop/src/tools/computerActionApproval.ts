@@ -1,4 +1,6 @@
 import { createInterface } from 'node:readline/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 export interface ComputerActionApprovalRequest {
   action: string
@@ -41,6 +43,73 @@ function cleanAnswer(raw: string): string {
     .trim()
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function safeBridgeId(): string {
+  return `grant-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`
+  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  await rename(tmp, path)
+}
+
+async function approveComputerGrantViaBridge(
+  request: ComputerGrantApprovalRequest,
+  bridgeDir: string
+): Promise<ComputerActionApprovalDecision> {
+  const id = safeBridgeId()
+  await mkdir(bridgeDir, { recursive: true })
+  const requestPath = join(bridgeDir, `request-${id}.json`)
+  const responsePath = join(bridgeDir, `response-${id}.json`)
+  const timeoutMs = Math.min(Math.max(request.durationSeconds * 1000, 30_000), 175_000)
+
+  try {
+    await writeJsonAtomic(requestPath, {
+      id,
+      kind: 'computer_grant_request',
+      mode: request.mode,
+      duration_seconds: request.durationSeconds,
+      reason: request.reason,
+      scope: request.scope,
+      created_at: new Date().toISOString()
+    })
+
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      try {
+        const parsed = JSON.parse(await readFile(responsePath, 'utf8')) as {
+          approved?: unknown
+          reason?: unknown
+        }
+        return {
+          approved: parsed.approved === true,
+          reason: typeof parsed.reason === 'string' ? parsed.reason : ''
+        }
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code && code !== 'ENOENT') {
+          return {
+            approved: false,
+            reason: `native grant approval bridge failed: ${String((err as Error).message ?? err)}`
+          }
+        }
+      }
+      await sleep(500)
+    }
+    return {
+      approved: false,
+      reason: 'native grant approval timed out'
+    }
+  } finally {
+    await rm(requestPath, { force: true }).catch(() => undefined)
+    await rm(responsePath, { force: true }).catch(() => undefined)
+  }
+}
+
 /** Legacy one-action approval prompt retained for compatibility with older
  * callers. Current computer-use control approves the assist/control grant
  * once, then actions run until the grant expires or is canceled. */
@@ -61,6 +130,10 @@ export async function approveComputerGrant(
   request: ComputerGrantApprovalRequest
 ): Promise<ComputerActionApprovalDecision> {
   if (!request.interactive) {
+    const bridgeDir = process.env.HERMES_RELAY_GRANT_BRIDGE_DIR
+    if (bridgeDir) {
+      return approveComputerGrantViaBridge(request, bridgeDir)
+    }
     return {
       approved: false,
       reason: 'non-interactive mode - computer control grant approval requires a TTY'

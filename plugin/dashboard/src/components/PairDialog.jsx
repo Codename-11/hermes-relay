@@ -116,6 +116,7 @@ export default function PairDialog({ open, onClose }) {
   const [settings, setSettings] = useState(loadSettings);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [state, setState] = useState({ status: "idle" });
+  const [copyStatus, setCopyStatus] = useState("");
   // Operator's explicit "yes, I know it's proxy-fronted, mint anyway"
   // acknowledgement. Resets every time the pinned host changes so a new
   // host triggers a fresh consent step — avoids a situation where the
@@ -151,6 +152,7 @@ export default function PairDialog({ open, onClose }) {
         prefer: use.prefer || undefined,
         ...overrides,
       });
+      setCopyStatus("");
       setState({ status: "ok", data });
     } catch (err) {
       setState({ status: "error", error: err && err.message ? err.message : String(err) });
@@ -201,6 +203,17 @@ export default function PairDialog({ open, onClose }) {
     // The useEffect watching [state, proxyConfirmed] will fire the
     // mint as soon as both gates are clear.
   }, []);
+
+  const copyInvite = useCallback(async () => {
+    const invite = state.data && (state.data.pairing_url || state.data.qr_payload);
+    if (!invite) return;
+    try {
+      await navigator.clipboard.writeText(invite);
+      setCopyStatus("Copied invite URL");
+    } catch (_err) {
+      setCopyStatus("Copy failed; select the URL manually");
+    }
+  }, [state.data]);
 
   if (!open) return null;
 
@@ -324,6 +337,22 @@ export default function PairDialog({ open, onClose }) {
                   </Badge>
                 </div>
               </div>
+              {state.data.pairing_url ? (
+                <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs space-y-2">
+                  <div className="uppercase tracking-wider text-muted-foreground">
+                    Copy/paste invite
+                  </div>
+                  <div className="font-mono break-all">{state.data.pairing_url}</div>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={copyInvite}>
+                      Copy invite URL
+                    </Button>
+                    {copyStatus ? (
+                      <span className="text-muted-foreground">{copyStatus}</span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               {/* Compact endpoint receipt — full preview + probes live on
                   the Remote Access tab. */}
               {endpoints && endpoints.length > 0 ? (

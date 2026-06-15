@@ -683,6 +683,14 @@ private fun VoiceSection(stats: VoiceStats) {
             value = if (stats.recentTtsLatenciesMs.isEmpty()) "—" else formatMsWithSeconds(avgTtsLatency),
         )
         KeyValueRow(
+            label = "Response chunks",
+            value = "${stats.currentResponseTtsChunks}",
+        )
+        KeyValueRow(
+            label = "Last chunk gap",
+            value = if (stats.currentResponseTtsChunks <= 1) "—" else formatMsWithSeconds(stats.lastTtsChunkGapMs),
+        )
+        KeyValueRow(
             label = "Received",
             value = formatByteCount(stats.ttsBytesReceived),
         )

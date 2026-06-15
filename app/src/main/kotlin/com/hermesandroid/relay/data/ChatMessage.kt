@@ -39,6 +39,8 @@ data class ChatMessage(
     val estimatedCost: Double? = null,
     // Agent/personality name for display on assistant messages
     val agentName: String? = null,
+    // Small provenance badges rendered on assistant bubbles.
+    val badges: List<String> = emptyList(),
     // File attachments (images, documents, etc.)
     val attachments: List<Attachment> = emptyList(),
     /**
@@ -77,7 +79,17 @@ data class ChatMessage(
      * to true via [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
      * so they're not re-sent on the next turn.
      */
-    val voiceIntent: VoiceIntentTrace? = null
+    val voiceIntent: VoiceIntentTrace? = null,
+    /**
+     * Provider-native Realtime Agent turns can answer without calling Hermes.
+     * Those local-only assistant turns need to be spliced into the next Hermes
+     * chat/run payload so switching back to normal chat preserves context.
+     *
+     * Hermes-backed realtime turns leave this null because Hermes already owns
+     * the durable session turn; the provider's spoken summary is UI/runtime
+     * provenance, not another canonical assistant message.
+     */
+    val realtimeTurn: RealtimeTurnTrace? = null
 )
 
 /**
@@ -126,6 +138,24 @@ data class VoiceIntentTrace(
     val argumentsJson: String,
     val success: Boolean,
     val resultJson: String,
+    val syncedToServer: Boolean = false,
+)
+
+/**
+ * Local provider-native realtime turn that has not necessarily been absorbed
+ * into the Hermes session yet.
+ *
+ * Stored on the assistant message so the next normal chat send can emit a
+ * compact OpenAI-format user/assistant pair before the live user message. This
+ * keeps Realtime Agent and Hermes Chat + Voice Output as one conversation even
+ * when the realtime provider answered directly.
+ */
+data class RealtimeTurnTrace(
+    val userText: String,
+    val assistantText: String,
+    val provider: String? = null,
+    val model: String? = null,
+    val voice: String? = null,
     val syncedToServer: Boolean = false,
 )
 
@@ -204,9 +234,31 @@ data class ToolCall(
     val success: Boolean?,
     val isComplete: Boolean = false,
     val error: String? = null,
+    val runId: String? = null,
+    val provenance: String? = null,
     // Duration tracking
     val startedAt: Long = System.currentTimeMillis(),
-    val completedAt: Long? = null
+    val completedAt: Long? = null,
+    /**
+     * Gateway `tool.generating` pre-start phase — the model is still
+     * streaming this tool's arguments. Cleared (flipped false) when the
+     * matching `tool.start` arrives and the call begins executing. Renders
+     * as the quiet "preparing" state in ToolProgressCard / CompactToolCall
+     * rather than the active running spinner.
+     */
+    val isGenerating: Boolean = false,
+    /**
+     * Subagent lane index from gateway `subagent.*` events (`task_index`).
+     * Null = top-level tool call, rendered exactly as before. Non-null
+     * calls are grouped per index into a SubagentLane under the bubble.
+     */
+    val taskIndex: Int? = null,
+    /**
+     * Human label for the owning subagent lane — the `subagent.start`
+     * goal truncated to 60 chars. Carried on each child call so the lane
+     * header can render without a separate lane registry.
+     */
+    val taskLabel: String? = null
 )
 
 enum class MessageRole {

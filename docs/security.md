@@ -7,12 +7,12 @@ Hermes-Relay gives a remote AI agent full control of an Android device via Acces
 ## Current Security Model
 
 ### Authentication
-- **Pairing code**: A random 6-character alphanumeric code. For the QR-driven flow, the pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim) generates the code on the Hermes host and pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint; the phone-side `AuthManager.generatePairingCode()` generator is retained for the Phase 3 bridge flow.
+- **Pairing code**: A random 6-character alphanumeric code. For the QR-driven flow, the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) generates the code on the Hermes host and pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint; the phone-side `AuthManager.generatePairingCode()` generator is retained for the Phase 3 bridge flow.
 - The phone and server must share this code to establish a connection.
 - Codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambiguous 0/O/1/I" restriction was dropped when the pairing flow moved from "human retypes code from display" to "code flows phone ↔ server via QR + HTTP" (see `docs/decisions.md` §6a).
 - `POST /pairing/register` is gated to loopback callers only (`127.0.0.1` / `::1`) — only a process with host shell access on the relay machine can inject pairing codes. A LAN attacker cannot.
-- Relay session tokens carry per-channel grants. Voice routes require explicit `voice:config`, `voice:stt`, or `voice:tts` grants when called with a Relay session token.
-- `/voice/config`, `/voice/transcribe`, and `/voice/synthesize` may also accept the Hermes API bearer token used by API-server clients. The Android app uses this fallback for chat+voice-only setups when no Relay session is paired. This is a narrow exception for chat/media-adjacent voice features only; the API bearer token is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes.
+- Relay session tokens carry per-channel grants. Voice routes require explicit `voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime` grants when called with a Relay session token.
+- `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, and `/voice/realtime/*` may also accept the Hermes API bearer token used by API-server clients. The Android app uses this fallback for chat+voice-only setups when no Relay session is paired. This is a narrow exception for chat/media-adjacent voice features only; the API bearer token is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes.
 - Hermes API bearer use on voice routes requires HTTPS for non-loopback callers by default. Loopback plaintext is allowed for local clients; reverse-proxy TLS is accepted only when `RELAY_TRUST_PROXY_HEADERS=1`, and plaintext LAN testing requires an explicit opt-in. Use `hermes relay insecure-api-key on` for a running relay, or `RELAY_ALLOW_INSECURE_API_BEARER=1` at startup.
 
 ### Rate Limiting
@@ -68,7 +68,7 @@ Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-c
 
 See [docs/privacy.md](privacy.md) for the full privacy and data handling policy. Key points:
 
-- **No external data transmission** — the app connects only to your self-hosted Hermes servers
+- **No external data transmission** — the app connects only to the Hermes servers you configure
 - **Local-only analytics** — Stats for Nerds counters are stored in DataStore on-device, never sent externally
 - **Encrypted credential storage** — API keys and session tokens use EncryptedSharedPreferences (AES-256-GCM, hardware-backed Android Keystore)
 - **No tracking, ads, or third-party SDKs**

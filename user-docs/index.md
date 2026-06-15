@@ -3,136 +3,68 @@ layout: home
 
 hero:
   name: Hermes-Relay
-  text: One Hermes agent. Two ways to use it.
-  tagline: An Android remote-control app for your phone, plus a desktop CLI that lets you use a server-deployed Hermes from your laptop as if it were running locally.
+  text: Runs on your machine. Lives on your devices.
+  tagline: Pair your Hermes agent with the devices around you — a native Android companion for chat, voice, and full phone control, plus a single-binary CLI that gives the agent hands on any machine you put it on.
   actions:
     - theme: brand
-      text: Use Hermes from my desktop
-      link: /desktop/
-    - theme: alt
-      text: Control my phone with Hermes
+      text: Get the Android app
       link: /guide/getting-started
+    - theme: alt
+      text: Give it hands — CLI
+      link: /desktop/
 
 features:
   - icon:
       src: /icons/chat.svg
       width: 40
       height: 40
-    title: Two surfaces, one pair
-    details: Pair once. Both the Android app and the desktop CLI share `~/.hermes/remote-sessions.json` and the same WSS relay — sign in on either, both light up.
-  - icon:
-      src: /icons/sessions.svg
-      width: 40
-      height: 40
-    title: Server-deployed Hermes, native feel
-    details: The agent brain (LLM, tools, memory, sessions) lives on your Hermes host. The desktop CLI gives you the same shell, the same TUI, the same `/paste` flow — over WSS, no Python on your laptop.
-  - icon:
-      src: /icons/reasoning.svg
-      width: 40
-      height: 40
-    title: Native paste in your shell
-    details: "`Win+Shift+S` → `Ctrl+A v` inside `hermes-relay shell` ships the screenshot to the server inbox and types `/paste` into the TUI. Identical UX to a local Hermes install."
+    title: Chat that streams, not spins
+    details: Direct HTTP/SSE to your Hermes API server — markdown, syntax-highlighted code, reasoning blocks, live tool-progress cards. No cloud relay in the path.
   - icon:
       src: /icons/personalities.svg
       width: 40
       height: 40
-    title: Phone control (Android)
-    details: The agent reads your screen and acts on it — tap, type, swipe, screenshots, clipboard, media, notifications. Voice mode, multi-Connection, agent profiles, full safety rails.
+    title: Hands-free voice
+    details: Talk to your agent using your server's own TTS/STT — or opt into the provider-native Realtime Agent for low-latency, barge-in conversation.
   - icon:
-      src: /icons/tokens.svg
+      src: /icons/sessions.svg
       width: 40
       height: 40
-    title: Local tool routing (Desktop)
-    details: The remote agent can read, write, search, run shell commands, capture screenshots, and read your clipboard — on your machine — through the same relay it uses for chat. Consent-gated.
+    title: Manage from your pocket
+    details: Skills, cron jobs, profiles, models, and keys — your server's dashboard controls, rebuilt native. One sign-in unlocks Manage and voice.
   - icon:
       src: /icons/tools.svg
       width: 40
       height: 40
-    title: Multi-endpoint pairing
-    details: One QR carries LAN + Tailscale + public URLs. The client races them in priority order on every connect and on network change, so the same pair just works whether you're at home, on the train, or behind your VPN.
+    title: Your phone, on the agent's toolbelt
+    details: Sideload builds add screen reading, taps, typing, and vision-driven navigation — fenced by a per-app blocklist, destructive-verb confirmation, and auto-disable.
+  - icon:
+      src: /icons/tokens.svg
+      width: 40
+      height: 40
+    title: Hands on any machine
+    details: Install the single-binary CLI — desktop, laptop, or headless box — and the agent can read, write, search, run commands, and capture screens there. Consent-gated per device.
   - icon:
       src: /icons/markdown.svg
       width: 40
       height: 40
-    title: Streaming chat + structured tools
-    details: Direct SSE to the Hermes API server with markdown rendering, syntax-highlighted code, reasoning blocks, tool-progress cards, and a 29-command searchable palette.
+    title: Works at home and away
+    details: Connections carry LAN, Tailscale, and public routes, and the app picks the best one on every connect and network change — home, train, or VPN, it just works.
+  - icon:
+      src: /icons/reasoning.svg
+      width: 40
+      height: 40
+    title: Notifications and media in the loop
+    details: Forward phone notifications to your agent, and let it hand files, images, and rich cards back into chat — shareable through native Android flows.
   - icon:
       src: /icons/security.svg
       width: 40
       height: 40
-    title: Secure by default
-    details: QR pairing, session tokens (Android Keystore / mode-0600 file), TOFU cert pinning, per-channel grants, user-chosen TTLs, revocable from any client.
+    title: Private by architecture
+    details: No cloud in the path — QR pairing, Keystore-held tokens, TOFU cert pinning, per-channel grants with TTLs you choose, revocable from any client.
 ---
 
-<style>
-:root {
-  --hr-card-bg: var(--vp-c-bg-soft);
-  --hr-card-border: var(--vp-c-divider);
-}
-.dark {
-  --hr-card-bg: var(--vp-c-bg-alt);
-}
-.surface-grid {
-  display: grid;
-  gap: 1.25rem;
-  grid-template-columns: 1fr;
-  margin: 2rem auto 0;
-  max-width: 1152px;
-  padding: 0 1.5rem;
-}
-@media (min-width: 768px) {
-  .surface-grid { grid-template-columns: 1fr 1fr; }
-}
-.surface-card {
-  background: var(--hr-card-bg);
-  border: 1px solid var(--hr-card-border);
-  border-radius: 12px;
-  padding: 1.5rem;
-}
-.surface-card h3 {
-  margin: 0 0 .25rem;
-  font-size: 1.25rem;
-}
-.surface-card .surface-tag {
-  font-size: .8rem;
-  font-weight: 500;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--vp-c-text-2);
-}
-.surface-card p { margin: .75rem 0; line-height: 1.55; }
-.surface-card ul { padding-left: 1.1rem; margin: .5rem 0 1rem; }
-.surface-card li { margin: .25rem 0; }
-.surface-card .cta {
-  display: inline-block;
-  font-weight: 500;
-  margin-top: .5rem;
-}
-</style>
-
-<div class="surface-grid">
-  <div class="surface-card">
-    <div class="surface-tag">Surface 1</div>
-    <h3>Android — phone control</h3>
-    <p>Native app. Talks directly to the Hermes API server for chat, plus a WSS relay for voice, bridge (the agent reads your screen and acts on it), and notification companion.</p>
-    <ul>
-      <li>Streaming chat, multi-Connection, agent profiles, personalities</li>
-      <li>Voice mode with the morphing sphere + your server's TTS/STT</li>
-      <li>Screen reading, gestures, clipboard, media control, macros</li>
-      <li>Per-app blocklist, destructive-verb confirmation, auto-disable</li>
-    </ul>
-    <a class="cta" href="./guide/getting-started.html">Install the Android app →</a>
-  </div>
-  <div class="surface-card">
-    <div class="surface-tag">Surface 2 · Experimental</div>
-    <h3>Desktop CLI — terminal</h3>
-    <p>One binary, no Node required. Pipes the full Hermes TUI over a PTY, or streams structured chat events for scripting. The remote agent can also reach back through the relay and run tools on <em>your</em> machine.</p>
-    <ul>
-      <li><code>shell</code> mode — full Hermes CLI verbatim, in tmux on the server</li>
-      <li><code>chat</code> mode — REPL or one-shot, JSON event stream for scripting</li>
-      <li>In-shell <code>Ctrl+A v</code> paste · multi-monitor screenshots · editor tool</li>
-      <li>Daemon mode keeps tools advertised even when no shell is open</li>
-    </ul>
-    <a class="cta" href="./desktop/">Use Hermes from my desktop →</a>
-  </div>
-</div>
+<!-- Home body intentionally empty — the sphere, How-it-works strip, surface
+     cards, and Get-started section are slotted via .vitepress/theme/index.ts
+     (markdown body always renders below the VPFeatures grid, which is the
+     wrong place for all of them). -->

@@ -1,6 +1,6 @@
 # Features
 
-Hermes-Relay ships in two flavors — **Google Play** (easy install, conservative scope) and **Sideload** (manual install, full feature set). Most chat, voice, and session features are identical across both. The bridge channel — where the agent reads or controls your phone — is where the two tracks diverge.
+Hermes-Relay ships in two flavors — **Google Play** (easy install, conservative scope) and **Sideload** (manual install, full feature set). Chat, profiles, voice, relay pairing, terminal/TUI relay, media, notification companion, sessions, and diagnostics are available across both. The Device Control channel — where the agent reads or controls your phone — is sideload-only.
 
 A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge on a feature row means the feature is compiled out of the Google Play APK and is only available in the sideload build. See the [Release tracks](/guide/release-tracks) page for the full breakdown and a decision guide.
 
@@ -9,46 +9,56 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | Feature | Description |
 |---------|-------------|
 | [Direct API Connection](/features/direct-api) | HTTP/SSE streaming to Hermes API Server |
-| [Voice Mode](/features/voice) | Real-time voice conversation — sphere listens, agent speaks back via your server's configured TTS/STT providers |
+| [Voice Mode](/features/voice) | Real-time voice conversation — you talk, the agent answers aloud via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |
-| [Connections](/features/connections) | Pair with multiple Hermes servers — one-tap switch from the top-bar chip |
+| [Connections](/features/connections) | Save multiple Hermes servers — one-tap switch from the top-bar chip |
 | [Profiles](/features/profiles) | Auto-discovered upstream agent directories — overlay model + SOUL on chat turns |
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
 | [Command Palette](/guide/chat#command-palette) | Searchable command browser — 29 gateway commands, personalities, 90+ skills |
 | [Slash Commands](/guide/chat#inline-autocomplete) | Inline autocomplete as you type `/` |
-| [QR Code Pairing](/guide/getting-started#qr-code-pairing-recommended) | Scan `hermes-pair` QR to auto-configure connection |
+| [Standard Setup](/guide/getting-started#connect-android-to-hermes) | Connect by API URL/key first; scan a QR only when you want Relay pairing |
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
 
-## Bridge — Phone Control
+## Bridge Core
+
+Available on both tracks:
+
+| Feature | Description | Track |
+|---------|-------------|-------|
+| Relay pairing and status | QR/manual pairing, relay session grants, endpoint health, and diagnostics | Both |
+| Terminal/TUI relay | Remote shell and Hermes TUI access through paired relay sessions | Both |
+| Notification companion | Optional Android Notification Access forwards posted-notification metadata to your relay | Both |
+| Media handoff | Relay-registered media appears in chat and can be shared through Android-native flows | Both |
+
+## Device Control <span class="track-badge track-badge--sideload">Sideload only</span>
 
 **Reading the screen**
 
 | Feature | Description | Track |
 |---------|-------------|-------|
-| Read what's on screen | Agent sees the active window so it can answer "what does this say?" | Both |
-| Multi-window read | Sees system overlays, popups, and the notification shade — not just the foregrounded app | Both |
-| Filtered node search | "Find every clickable labelled 'Save'" — precise accessibility-tree queries instead of guessing | Both |
-| Per-node property lookups | Stable node IDs that can be handed back to tap/scroll, plus full property bags for resolution | Both |
-| Screen change detection | Cheap screen-hash + diff so the agent can wait for a screen to actually change without polling | Both |
-| Real-time UI event stream | Live accessibility-event stream for "wait until this loads" and "notice when a dialog opens" waits | Both |
-| Notification triage | Agent reads incoming notifications and summarizes them for you | Both |
+| Read what's on screen | Agent sees the active window so it can answer "what does this say?" | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Multi-window read | Sees system overlays, popups, and the notification shade — not just the foregrounded app | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Filtered node search | "Find every clickable labelled 'Save'" — precise accessibility-tree queries instead of guessing | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Per-node property lookups | Stable node IDs that can be handed back to tap/scroll, plus full property bags for resolution | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Screen change detection | Cheap screen-hash + diff so the agent can wait for a screen to actually change without polling | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Real-time UI event stream | Live accessibility-event stream for "wait until this loads" and "notice when a dialog opens" waits | <span class="track-badge track-badge--sideload">Sideload only</span> |
 
 **Acting on the phone**
 
 | Feature | Description | Track |
 |---------|-------------|-------|
-| Tap, type, swipe, scroll | Core UI actions with destructive-verb confirmation | Both <sup>*</sup> |
-| Long-press | Context menus, text selection, widget rearranging — by coordinate or node ID | Both <sup>*</sup> |
-| Drag | Rearrange icons, pull notification shade, drag map pins — point A → point B over a duration | Both <sup>*</sup> |
-| Smarter tap fallbacks | Three-tier cascade handles apps that wrap labels in non-clickable parents | Both <sup>*</sup> |
-| Clipboard bridge | Read and write the system clipboard from the agent side | Both <sup>*</sup> |
-| System media control | Play / pause / next / previous / volume on whichever app is playing | Both <sup>*</sup> |
-| Macro batching | Run a sequence of actions as one workflow without a round-trip per step | Both <sup>*</sup> |
-| Raw Intent escape hatch | Send a direct Android Intent or broadcast for apps that expose deep-link actions | Both <sup>*</sup> |
-| Gesture reliability under idle | Short-lived wake-lock keeps gestures landing on dim/idle screens | Both <sup>*</sup> |
-| Per-app playbooks | Bundled `android` skill with reusable flows for common apps | Both |
+| Tap, type, swipe, scroll | Core UI actions with destructive-verb confirmation | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Long-press | Context menus, text selection, widget rearranging — by coordinate or node ID | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Drag | Rearrange icons, pull notification shade, drag map pins — point A → point B over a duration | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Smarter tap fallbacks | Three-tier cascade handles apps that wrap labels in non-clickable parents | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Clipboard bridge | Read and write the system clipboard from the agent side | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| System media control | Play / pause / next / previous / volume on whichever app is playing | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Macro batching | Run a sequence of actions as one workflow without a round-trip per step | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Raw Intent escape hatch | Send a direct Android Intent or broadcast for apps that expose deep-link actions | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Gesture reliability under idle | Short-lived wake-lock keeps gestures landing on dim/idle screens | <span class="track-badge track-badge--sideload">Sideload only</span> |
+| Per-app playbooks | Bundled `android` skill with reusable flows for common apps | <span class="track-badge track-badge--sideload">Sideload only</span> |
 | Voice → bridge intent routing | "Text Sam I'll be 10 min late" — fully hands-free | <span class="track-badge track-badge--sideload">Sideload only</span> |
 | Vision-driven navigation (`android_navigate`) | Agent looks at the screen and figures out what to tap on its own | <span class="track-badge track-badge--sideload">Sideload only</span> |
 | Workflow recording | Show the agent something once, ask it to repeat the workflow later | <span class="track-badge track-badge--sideload">Sideload only</span> |
@@ -64,9 +74,9 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | One-tap dialing | Place a call directly from the sideload build |
 | Location awareness | GPS last-known-location read for "where am I?" and location-scoped commands |
 
-<sup>*</sup> On Google Play, the accessibility service is read-only — action routes fail closed with `403 sideload_only` and do not attempt UI automation. Sideload ships the full gesture surface and the phone-utility tools above.
+Google Play builds do not include AccessibilityService-backed screen reading or phone-control code. Direct Device Control probes fail closed with `403 device_control_sideload_only`.
 
-## Bridge — Safety Rails (always on, both tracks)
+## Device Control Safety Rails <span class="track-badge track-badge--sideload">Sideload only</span>
 
 | Feature | Description |
 |---------|-------------|
@@ -125,7 +135,7 @@ For the full decision guide and install instructions for each, see [Release trac
 |---------|--------|
 | Push Notifications | Future — Agent-initiated alerts |
 | Memory Viewer | Future — View/edit agent memories |
-| Cross-device handoff | Future — Hand a task from phone to desktop terminal session |
+| Cross-device handoff | Future — Hand a task from your phone to a desktop hand |
 
 <style scoped>
 .track-badge {

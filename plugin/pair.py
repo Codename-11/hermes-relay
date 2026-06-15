@@ -67,6 +67,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import base64
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -290,6 +291,17 @@ def build_pairing_qr_payload(
         endpoints=endpoints,
         sign=sign,
     )
+
+
+def build_pairing_invite_url(payload: str) -> str:
+    """Wrap a QR payload in a paste-friendly Hermes Relay invite URL.
+
+    The QR remains compact JSON for Android scanner compatibility. The URL is
+    for terminals, dashboard copy buttons, and desktop paste flows where a
+    one-line string is easier than raw JSON.
+    """
+    encoded = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
+    return f"hermes-relay://pair?payload={encoded.rstrip('=')}"
 
 
 # ── Endpoint candidate discovery (ADR 24) ────────────────────────────────────
@@ -970,6 +982,7 @@ def render_text_block(
     key: str,
     tls: bool,
     relay: Optional[dict] = None,
+    invite_url: Optional[str] = None,
 ) -> str:
     """Return formatted connection details — always shown (works in any terminal).
 
@@ -1019,6 +1032,16 @@ def render_text_block(
                     f"{channel}={format_duration_label(int(duration))}"
                 )
             lines.append(f"  Grants: {', '.join(grant_parts)}")
+
+    if invite_url:
+        lines.extend([
+            "",
+            "  Copy/paste pairing invite",
+            "  " + "-" * 40,
+            f"  URL  : {invite_url}",
+            "  Use  : Hermes Relay Desktop -> Pair -> Paste invite",
+            "         or: hermes-relay pair --pair-qr '<URL>'",
+        ])
 
     lines.append("")
     return "\n".join(lines)
@@ -1307,9 +1330,10 @@ def pair_command(args) -> None:
         relay=relay_block,
         endpoints=endpoints or None,
     )
+    invite_url = build_pairing_invite_url(payload)
 
     # Always show text block — works in any terminal including Hermes TUI
-    print(render_text_block(host, port, key, tls, relay=relay_block))
+    print(render_text_block(host, port, key, tls, relay=relay_block, invite_url=invite_url))
 
     png_only = getattr(args, "png", False)
     no_qr = getattr(args, "no_qr", False)

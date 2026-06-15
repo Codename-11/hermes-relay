@@ -4,7 +4,17 @@ Hermes-Relay stores its settings using Android's DataStore, Android Keystore (fo
 
 ## Connection Settings
 
-These are configured during onboarding or from the **Settings → Connections** screen. That screen is the single authoritative home for everything connection-related (as of the 2026-04-21 unification — the legacy singular *Settings → Connection* subpage was folded in here). Each paired server appears as its own card in the list; the currently-active card expands inline to surface all deep-configuration UI.
+These are configured during onboarding or from the **Settings → Connections** screen. That screen is the single authoritative home for everything connection-related (as of the 2026-04-21 unification — the legacy singular *Settings → Connection* subpage was folded in here). Each saved Hermes server appears as its own card in the list; the currently-active card expands inline to surface all deep-configuration UI.
+
+Hermes-Relay now treats connection auth as three related but separate contexts:
+
+- **Dashboard sign-in** (`:9119`) — upstream-preferred remote identity for the standard dashboard/desktop path. Manage uses dashboard cookies; dashboard-gateway chat uses short-lived `/api/ws` tickets minted from those cookies. Android supports username/password and redirect providers such as Nous/OIDC for this surface.
+- **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for Chat while dashboard-gateway JSON-RPC chat is being wired in.
+- **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for standard dashboard/API use, but it is required for relay power tools.
+
+The default bottom navigation is **Chat**, **Manage**, and **Settings**. Terminal and Bridge are still available from **Settings → Power tools** and deep links, but unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
+
+The **Manage** tab uses the dashboard session, not relay pairing. It covers Skills, Cron jobs, MCP servers, the MCP catalog, Profiles, Models, and Config. Actions that write dashboard state use upstream dashboard endpoints; profile SOUL is view-only here, while SOUL/memory file editing remains a paired power tool.
 
 **On any card (active or not) — the per-connection action row:**
 - **Reconnect** (only on Stale state)
@@ -13,18 +23,20 @@ These are configured during onboarding or from the **Settings → Connections** 
 **On the active card — a deep body below the action row.** Each section is headed by a labelMedium header and a one-line caption so the card self-narrates:
 
 - **Connection health** (always visible) — *"Tap any row for details."* Three tappable rows (API / Relay / Session) open detail sheets with token, endpoint, health, and session info.
-- **Routes (N)** (when the pairing carries multi-endpoint candidates) — *"The app picks the fastest reachable network automatically and switches when you change networks."* Expander reveals one row per route with role chip (LAN / Tailscale / Public / Custom VPN), per-row Secure/Plain security chip, state chip (Active / Fallback), probe-now button, per-candidate *Prefer this route* override, and per-candidate TOFU pin inspection.
-- **Advanced** (collapsible) — *"Manual setup — most people don't need this after QR pairing."* Holds:
-  - **Manual URL config** — API Server URL, API Key, Relay URL, each with **Save & Test**.
+- **Routes (N)** (when Standard setup saved a LAN/Tailscale URL or pairing carried multi-endpoint candidates) — *"The app picks the fastest reachable network automatically and switches when you change networks."* Expander reveals one row per route with role chip (LAN / Tailscale / Public / Custom VPN), per-row Secure/Plain security chip, state chip (Active / Fallback), probe-now button, per-candidate *Prefer this route* override, and per-candidate TOFU pin inspection.
+- **Advanced** (collapsible) — *"Manual setup — most people don't need this after Standard Hermes setup."* Holds:
+  - **Manual URL config** — API Server URL, API Key, Relay URL, each with **Save & Test**. This preserves the direct host/API-key path for custom networks, proxies, and compatibility installs.
   - **Allow plain (unencrypted) connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is stored for later but the Transport Security badge usually derives a more accurate label from the live active-route role. Operator intent is the trust model — the toggle gates the UI's ability to save `ws://` / `http://` URLs, nothing server-side.
   - **Disconnect** button — drops the active WSS without clearing the session token.
-  - **Manual pairing code (fallback)** — the 3-step flow for when you can't use QR scanning. (1) Copy the locally-generated 6-char code; (2) on the host, run `hermes-pair --register-code <code>`; (3) tap **Connect** here. Canonical flow is still the QR from `/hermes-relay-pair` — use this only when QR scanning is physically impossible. Bridge control is gated by the master toggle on the Bridge tab, NOT by this code.
+  - **Manual pairing code (fallback)** — the 3-step flow for when you can't use QR scanning. (1) Copy the locally-generated 6-char code; (2) on the host, run `hermes pair --register-code <code>`; (3) tap **Connect** here. Canonical flow is still the QR from `/hermes-relay-pair` or `hermes pair` — use this only when QR scanning is physically impossible. Bridge control is gated by the master toggle on the Bridge tab, NOT by this code.
 - **Security** (always visible) — Transport Security badge (🔒 secure / 🔓 plain with reason / 🔓 unknown), Tailscale-detected chip, Hardware-keystore badge, and a **Relay sessions** row that navigates to the full list of phones paired with this server.
 
 | Setting | Storage | Description |
 |---------|---------|-------------|
 | API Server URL | EncryptedSharedPreferences | Base URL of the Hermes API Server (e.g., `http://192.168.1.100:8642`) |
-| API Key (optional) | EncryptedSharedPreferences | Bearer token for API authentication — only needed if server has `API_SERVER_KEY` set |
+| API Key | EncryptedSharedPreferences | Bearer token for API-server authentication. Used by Android Chat fallback, not by dashboard login. |
+| Dashboard URL | DataStore | Hermes dashboard/admin URL, conventionally the same host as the API server on port `9119`. Derived automatically from the API URL unless explicitly overridden. |
+| Dashboard session cookies | EncryptedSharedPreferences | Auth cookies for the dashboard/admin server. Stored separately from API keys and relay session tokens. OAuth/NouS WebView sign-in imports these cookies into the native dashboard client. |
 | Relay URL | EncryptedSharedPreferences | WebSocket URL for the Relay Server (optional, for bridge/terminal) |
 | Relay Session Token | **Keystore** (StrongBox when available), with fallback to EncryptedSharedPreferences | Persistent token from relay pairing flow. Migrated automatically from the legacy EncryptedSharedPreferences file on first launch post-upgrade. |
 | TOFU Cert Pins | DataStore (`tofu_pins`) | SHA-256 SPKI fingerprints per `host:port`. Recorded on the first successful `wss://` connect, verified on subsequent connects via OkHttp `CertificatePinner`. Wiped explicitly when the user re-pairs via QR (taken as consent to new cert material). |
@@ -33,6 +45,10 @@ These are configured during onboarding or from the **Settings → Connections** 
 | Plain toggle reason | DataStore (`insecure_reason`) | Reason selected on the plain-toggle ack dialog — `lan_only` / `tailscale_vpn` / `local_dev` / empty. Auto-stamped at pair time when the resolved endpoint's role is `lan` or `tailscale` (cleared on upgrade to a secure endpoint). The Transport Security badge prefers the live active-route role over this stored value. |
 | All-plain pairing ack | DataStore (`all_insecure_pair_ack_seen`) | Whether the user has acknowledged the one-time pairing-consent checkbox that appears on step 2 when every route in the scanned QR is plain `ws://` / `http://` (no secure sibling). Per-install. Mixed QRs (LAN + Tailscale) are ungated because the secure route is a safety net. |
 | Trusted bridge actions | DataStore (`bridge_trusted_destructive_verbs`) | Set of destructive bridge verbs (e.g. `send_sms`, `call`) that bypass the confirmation overlay because the user ticked "Don't ask again" in a prior confirm. The master-disable toggle and the blocklist still override — trust is for eliminating confirmation fatigue on approved verbs, not a kill-switch bypass. Reset from Bridge → Trusted actions → **Reset**. |
+
+### Backups
+
+**Settings → Developer options → Export Settings** writes a full connection backup. It includes saved connection records, route candidates, preferred route, API keys, relay session tokens, device IDs, paired-session metadata, and dashboard cookies. Treat the exported JSON as sensitive credential material. Importing a backup replaces the saved connection list and restores those connection secrets into the app's encrypted stores.
 
 ### Pair Flow — TTL Picker
 
@@ -44,13 +60,13 @@ When you scan a pairing QR (or enter a code manually), a **Session TTL Picker** 
 - **90 days** / **1 year** — longer-lived operator devices.
 - **Never expire** — the device stays paired until you revoke it manually from Relay sessions. Always selectable — the phone treats user intent as the trust model and doesn't gate on transport security. A warning is shown inline.
 
-The default pre-selection depends on the QR's operator-chosen TTL (if any, via `hermes-pair --ttl <duration>`), falling back to 30d on secure/Tailscale transports or 7d on plain ws. Your last pick persists as the new default for future pairs.
+The default pre-selection depends on the QR's operator-chosen TTL (if any, via `hermes pair --ttl <duration>`), falling back to 30d on secure/Tailscale transports or 7d on plain ws. Your last pick persists as the new default for future pairs.
 
-Per-channel grants (`chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`) can be pre-set by the operator via `hermes-pair --grants terminal=7d,bridge=1d,voice:stt=7d`. The phone displays them on the Relay sessions card as labeled chips with a tap-for-info icon explaining that each grant is a per-feature permission with an independent expiry. Grants cannot outlive the session — they're clamped to the session TTL server-side.
+Per-channel grants (`chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`) can be pre-set by the operator via `hermes pair --grants terminal=7d,bridge=1d,voice:stt=7d`. The phone displays them on the Relay sessions card as labeled chips with a tap-for-info icon explaining that each grant is a per-feature permission with an independent expiry. Grants cannot outlive the session — they're clamped to the session TTL server-side.
 
 ### Relay sessions
 
-**Settings → Connections → [active card] → Security → Relay sessions** (or **Settings → Relay sessions**) opens a full-screen list of every phone currently paired with the relay. The screen leads with a short intro paragraph explaining that each row is a server-side session (not a Bluetooth pairing, not an account), then renders one card per session:
+**Settings → Connections → [active card] → Security → Relay sessions** (or **Settings → Power tools → Relay sessions**) opens a full-screen list of every phone currently paired with the relay. This is a relay power tool: if the current connection is not paired, Android shows **Requires pairing** with a **Pair to unlock** action instead of an empty session list. When paired, the screen leads with a short intro paragraph explaining that each row is a server-side session (not a Bluetooth pairing, not an account), then renders one card per session:
 
 - Device name + device ID
 - **Current device** badge if this is the device you're looking at the list on
@@ -136,7 +152,7 @@ The API server is part of `hermes gateway` and configured via `~/.hermes/.env`:
 ```bash
 # Required for Hermes-Relay
 API_SERVER_ENABLED=true
-# API_SERVER_KEY=your-secret-key  # Optional — only set if exposing to network
+API_SERVER_KEY=your-secret-key
 API_SERVER_HOST=0.0.0.0
 API_SERVER_PORT=8642
 ```
@@ -155,7 +171,7 @@ hermes relay start --no-ssl
 python -m plugin.relay --no-ssl
 ```
 
-`RELAY_HOST` and `RELAY_PORT` are read by **both** the relay server itself and the pair command (`hermes-pair` / `/hermes-relay-pair`) — the pair command uses them to locate the local relay when pre-registering a pairing code, so if you run the relay on a non-default port, make sure the same values are in the environment when you invoke pairing.
+`RELAY_HOST` and `RELAY_PORT` are read by **both** the relay server itself and the pair command (`hermes pair` / `/hermes-relay-pair`; `hermes-pair` remains a compatibility shim) — the pair command uses them to locate the local relay when pre-registering a pairing code, so if you run the relay on a non-default port, make sure the same values are in the environment when you invoke pairing.
 
 **Environment variables:**
 

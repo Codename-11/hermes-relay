@@ -20,11 +20,15 @@ import { fileURLToPath } from 'node:url'
 import { humanExpiry } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
 import { listSessions } from '../remoteSessions.js'
+import { VERSION } from '../version.js'
 import { detectWorkspaceContext, type WorkspaceContext } from '../workspaceContext.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function readVersion(): string {
+  if (VERSION) {
+    return VERSION
+  }
   // Same trick as cli.ts — dist/commands/doctor.js → dist → pkg root.
   try {
     const pkgPath = join(__dirname, '..', '..', 'package.json')

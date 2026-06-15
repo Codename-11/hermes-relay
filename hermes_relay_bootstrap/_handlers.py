@@ -1,5 +1,9 @@
-"""Ported handlers from the `feat/session-api` branch on Codename-11/hermes-agent
-(submitted upstream as PR #8556).
+"""Compatibility handlers from the pre-upstream Hermes-Relay API branch.
+
+The original broad branch was superseded upstream. Current Hermes main has
+native session controls via PR #33134 and read-only skills/toolsets via PR
+#33016; these handlers remain for older core builds and for compatibility-only
+surfaces that do not yet have stable API-server replacements.
 
 This file mirrors the management endpoints from the fork branch, adapted to
 take the `APIServerAdapter` instance as an explicit parameter rather than
@@ -40,22 +44,26 @@ Endpoints injected (all bearer-auth gated via `adapter._check_auth`):
 
 NOT injected:
 
-- `POST /api/sessions/{session_id}/chat/stream` — chat streaming intentionally
-  goes through upstream's standard `/v1/runs`, which emits structured
-  `tool.started`/`tool.completed` SSE events in real time. Injecting the
-  sessions chat handler would require coordinating with `_create_agent` /
-  `run_conversation` — the fork's riskiest cross-cutting dependencies.
+- `POST /api/sessions/{session_id}/chat/stream` — native upstream provides
+  this in PR #33134. The bootstrap does not inject a chat-stream handler for
+  older builds because that path requires coordinating with `_create_agent` /
+  `run_conversation` — the fork's riskiest cross-cutting dependencies. Clients
+  should fall back to `/v1/chat/completions` or `/v1/runs` when chat streaming
+  is not advertised.
 
 - `GET /api/skills/categories` — removed from upstream as dead code in commit
   8d023e43 ("refactor: remove dead code — 1,784 lines across 77 files"). The
   app does not call this endpoint; skill browsing uses `/api/skills?category=`.
   Re-injecting it would require importing a symbol that no longer exists.
 
-Removal note: when upstream PR #8556 merges and a released hermes-agent
-version contains these endpoints, this entire file becomes dead weight. The
-bootstrap's feature detection no-ops on the existing routes, so leaving it in
-place is harmless during the rollout window. Cleanup is a clean delete of
-the `hermes_relay_bootstrap/` package and its `.pth` file.
+Removal note: upstream is moving toward focused native surfaces rather than one
+large frontend API patch. As each method/path lands in hermes-agent, route
+registration below skips that native route and keeps only the missing
+compatibility gaps. Cleanup should therefore happen per surface: sessions can
+retire once the supported core baseline includes PR #33134, read-only skill
+lists should use `/v1/skills` from PR #33016, while config/memory/legacy skill
+detail/toggle/available-models remain until core exposes stable equivalents or
+Hermes-Relay stops depending on them.
 """
 
 from __future__ import annotations
@@ -664,14 +672,72 @@ def _make_config_handlers(adapter, upstream):
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def register_routes(app, adapter) -> None:
-    """Bind every injected route to the live aiohttp router.
+def _route_exists(app, method: str, path: str) -> bool:
+    """Return true when *method path* is already registered on the app."""
+    wanted_method = method.upper()
+    try:
+        resources = list(app.router.resources())
+    except Exception:
+        # If introspection fails, report the route as present. That prevents
+        # duplicate registration from crashing gateway startup.
+        logger.warning(
+            "hermes_relay_bootstrap: cannot inspect routes while checking "
+            "%s %s; skipping that compatibility route.",
+            wanted_method,
+            path,
+        )
+        return True
 
-    Called from `_patch._maybe_register_routes()` after feature detection
-    determines we're on a vanilla upstream server and the adapter has just
+    for resource in resources:
+        if getattr(resource, "canonical", None) != path:
+            continue
+        try:
+            routes = list(resource)
+        except TypeError:
+            routes = []
+        for route in routes:
+            route_method = str(getattr(route, "method", "")).upper()
+            if route_method in {wanted_method, "*"}:
+                return True
+    return False
+
+
+def _add_route_if_missing(app, method: str, path: str, handler) -> bool:
+    """Register a compatibility route only when upstream has not done so."""
+    method = method.upper()
+    if _route_exists(app, method, path):
+        logger.debug(
+            "hermes_relay_bootstrap: native route exists; skipping %s %s",
+            method,
+            path,
+        )
+        return False
+    if method == "GET":
+        # Preserve aiohttp's add_get default behavior: HEAD should work for
+        # capability probes even when this route is bootstrap-provided.
+        app.router.add_get(path, handler)
+    elif method == "POST":
+        app.router.add_post(path, handler)
+    elif method == "PATCH":
+        app.router.add_patch(path, handler)
+    elif method == "DELETE":
+        app.router.add_delete(path, handler)
+    elif method == "PUT":
+        app.router.add_put(path, handler)
+    else:
+        app.router.add_route(method, path, handler)
+    return True
+
+
+def register_routes(app, adapter) -> int:
+    """Bind missing compatibility routes to the live aiohttp router.
+
+    Called from `_patch._maybe_register_routes()` after the adapter has just
     finished its own setup. Routes are added directly to `app.router`, which
     aiohttp keeps mutable until `AppRunner.setup()` freezes it shortly after
-    `connect()` returns.
+    `connect()` returns. Native upstream routes win per method/path.
+
+    Returns the number of compatibility routes actually added.
     """
     upstream = _resolve_upstream()
 
@@ -680,28 +746,38 @@ def register_routes(app, adapter) -> None:
     skills = _make_skills_handlers(adapter, upstream)
     config = _make_config_handlers(adapter, upstream)
 
-    app.router.add_get("/api/sessions", sessions["list_sessions"])
-    app.router.add_post("/api/sessions", sessions["create_session"])
-    app.router.add_get("/api/sessions/search", sessions["search_sessions"])
-    app.router.add_get("/api/sessions/{session_id}", sessions["get_session"])
-    app.router.add_get("/api/sessions/{session_id}/messages", sessions["get_session_messages"])
-    app.router.add_patch("/api/sessions/{session_id}", sessions["update_session"])
-    app.router.add_delete("/api/sessions/{session_id}", sessions["delete_session"])
-    app.router.add_post("/api/sessions/{session_id}/fork", sessions["fork_session"])
-
-    app.router.add_get("/api/memory", memory["get_memory"])
-    app.router.add_post("/api/memory", memory["add_memory"])
-    app.router.add_patch("/api/memory", memory["replace_memory"])
-    app.router.add_delete("/api/memory", memory["delete_memory"])
-
-    app.router.add_get("/api/skills", skills["list_skills"])
-    app.router.add_get("/api/skills/{name}", skills["view_skill"])
+    routes = [
+        ("GET", "/api/sessions", sessions["list_sessions"]),
+        ("POST", "/api/sessions", sessions["create_session"]),
+        ("GET", "/api/sessions/search", sessions["search_sessions"]),
+        ("GET", "/api/sessions/{session_id}", sessions["get_session"]),
+        ("GET", "/api/sessions/{session_id}/messages", sessions["get_session_messages"]),
+        ("PATCH", "/api/sessions/{session_id}", sessions["update_session"]),
+        ("DELETE", "/api/sessions/{session_id}", sessions["delete_session"]),
+        ("POST", "/api/sessions/{session_id}/fork", sessions["fork_session"]),
+        ("GET", "/api/memory", memory["get_memory"]),
+        ("POST", "/api/memory", memory["add_memory"]),
+        ("PATCH", "/api/memory", memory["replace_memory"]),
+        ("DELETE", "/api/memory", memory["delete_memory"]),
+        ("GET", "/api/skills", skills["list_skills"]),
+        ("GET", "/api/skills/{name}", skills["view_skill"]),
+    ]
     # Stubbed 501 — see `toggle_skill` docstring. Registered so the
     # Kotlin client's capability probe observes the route and renders a
     # disabled toggle rather than hitting a 404 and showing "unknown
     # feature."
-    app.router.add_put("/api/skills/toggle", skills["toggle_skill"])
+    routes.append(("PUT", "/api/skills/toggle", skills["toggle_skill"]))
 
-    app.router.add_get("/api/config", config["get_config"])
-    app.router.add_patch("/api/config", config["update_config"])
-    app.router.add_get("/api/available-models", config["available_models"])
+    routes.extend(
+        [
+            ("GET", "/api/config", config["get_config"]),
+            ("PATCH", "/api/config", config["update_config"]),
+            ("GET", "/api/available-models", config["available_models"]),
+        ]
+    )
+
+    injected = 0
+    for method, path, handler in routes:
+        if _add_route_if_missing(app, method, path, handler):
+            injected += 1
+    return injected

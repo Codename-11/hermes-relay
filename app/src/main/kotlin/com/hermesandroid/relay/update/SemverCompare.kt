@@ -5,13 +5,13 @@ package com.hermesandroid.relay.update
  * pulling in a full SemVer library.
  *
  * Rules:
- * - Strips a leading "v" (e.g. `v0.5.0` → `0.5.0`).
+ * - Strips a leading "android-v" or "v" (`android-v0.5.0` → `0.5.0`).
  * - Splits on "." and takes the leading digits of each segment; missing
  *   segments are treated as 0 so `0.5` and `0.5.0` compare equal.
  * - Pre-release suffixes (`0.6.0-rc.1`) are dropped — the bare version
  *   is used. That means we treat `0.6.0-rc.1` and `0.6.0` as equal; we
- *   don't ship prereleases via `/releases/latest` (GitHub excludes them
- *   automatically) so this simplification is safe.
+ *   don't surface prereleases in the sideload updater, so this simplification
+ *   is safe.
  *
  * Returns: negative if [current] < [latest], 0 if equal, positive if >.
  */
@@ -29,6 +29,7 @@ internal fun compareVersions(current: String, latest: String): Int {
 
 private fun tokenize(raw: String): List<Int> {
     return raw.trim()
+        .removePrefix("android-v")
         .removePrefix("v")
         .substringBefore('-')                 // drop pre-release suffix
         .substringBefore('+')                 // drop build metadata

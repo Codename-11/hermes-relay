@@ -21,19 +21,17 @@ import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
 /**
- * Full-screen pairing route. Wraps [ConnectionWizard] in a real Scaffold so
+ * Full-screen connection route. Wraps [ConnectionWizard] in a real Scaffold so
  * the chooser tiles, manual-entry forms, and camera viewport all get the
  * actual window — not a Compose Dialog that leaked the Settings cards
- * underneath. Reached via Settings → Connection → Pair (or any "Re-pair"
+ * underneath. Reached via Settings → Connections → Add/Pair Relay (or any "Re-pair"
  * button), and pops back to wherever it came from on complete or cancel.
  *
  * [autoStart] lets the caller deep-link into a specific pair method. When
  * set to `"scan"`, the wizard jumps straight to camera-permission-request
  * → scanner on first composition. Null (default) shows the full Method
- * chooser so users can pick Scan / Enter code / Show code. The "Add
- * connection" FAB sets this to `"scan"` because there's exactly one
- * obvious next step after "I want a new connection"; re-pair flows
- * intentionally leave it null.
+ * chooser so users can pick Standard API/dashboard setup or a Relay pairing
+ * method.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +39,7 @@ fun PairScreen(
     connectionViewModel: ConnectionViewModel,
     onComplete: () -> Unit,
     onCancel: () -> Unit,
+    onManageSignIn: (() -> Unit)? = null,
     autoStart: String? = null,
 ) {
     val context = LocalContext.current
@@ -56,7 +55,7 @@ fun PairScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Pair with your server") },
+                title = { Text("Connect to Hermes") },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
@@ -77,10 +76,11 @@ fun PairScreen(
             ConnectionWizard(
                 connectionViewModel = connectionViewModel,
                 onComplete = {
-                    Toast.makeText(context, "Paired successfully", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Connection updated", Toast.LENGTH_SHORT).show()
                     onComplete()
                 },
                 onCancel = onCancel,
+                onManageSignIn = onManageSignIn,
                 showSkip = false,
                 autoStart = autoStart,
             )

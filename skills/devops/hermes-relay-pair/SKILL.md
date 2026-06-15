@@ -67,6 +67,7 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
 
 4. **Show the output verbatim.** `plugin.pair` prints, in order:
    - Text block with `Server` URL, masked `API Key`, and (if relay is up) a `Relay (terminal + bridge)` section with `URL` and `Code`.
+   - `Copy/paste pairing invite` section with a `hermes-relay://pair?payload=...` URL. This is the preferred desktop GUI/CLI fallback when QR scanning is unavailable.
    - Unicode half-block QR (when stdout is a TTY).
    - `PNG: /tmp/hermes-pairing-qr.png` line.
    - `WARNING: This QR contains credentials ...` line (whenever an API key or relay code is present).
@@ -79,6 +80,13 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
    3. If already onboarded: go to `Settings` → `Connection` → `Scan Pairing QR`.
    4. Point the camera at the terminal (or the PNG file) until it auto-detects.
    5. Watch for the success toast and the status summary.
+
+   For Desktop pairing, tell the user to copy the `hermes-relay://pair?...`
+   invite URL into **Hermes Relay Desktop → Pair → Paste invite**, or run:
+
+   ```bash
+   hermes-relay pair --pair-qr 'hermes-relay://pair?payload=...'
+   ```
 
 6. **Time constraint.** The relay pairing code expires 10 minutes after generation and is single-use. If the user won't scan within that window, re-run the skill to mint a fresh code.
 
