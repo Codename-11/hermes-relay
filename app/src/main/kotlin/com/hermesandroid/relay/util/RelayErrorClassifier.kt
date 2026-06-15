@@ -56,6 +56,22 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
     // Ordered most-specific-first; callers have already handled the typed
     // SSL / timeout / connect exceptions so this only runs on generic IOs.
     return when {
+        "hermes broker auth failed" in msg ||
+            "relay-side hermes credential" in msg -> HumanError(
+            title = "Relay Hermes auth failed",
+            body = "The relay could not authenticate to Hermes. Update the server-side Hermes credential and restart the relay.",
+            retryable = false,
+        )
+        "xai realtime auth" in msg ||
+            "openai realtime auth" in msg ||
+            "realtime rejected the relay auth" in msg ||
+            "realtime oauth refresh failed" in msg ||
+            "realtime provider credentials" in msg -> HumanError(
+            title = "Realtime provider auth unavailable",
+            body = "The realtime voice provider is missing or rejected server-side auth. Refresh provider auth on the relay or choose another provider.",
+            retryable = false,
+            actionLabel = "Voice settings",
+        )
         (
             "api key" in msg ||
                 "sessions auth failed" in msg ||
@@ -123,21 +139,24 @@ fun classifyError(t: Throwable?, context: String? = null): HumanError {
     // happen to contain HTTP-ish substrings. Only fall through to the
     // message scan once we know it's a plain IOException.
     return when (t) {
+        // Bodies say "server", not "relay" — these exceptions also surface
+        // from the standard API/dashboard routes, where relay wording would
+        // send users debugging the wrong box.
         is UnknownHostException -> HumanError(
             title = "Can't reach server",
-            body = "Check your network and the relay URL in Settings",
+            body = "Check your network and the server URL in Settings",
             retryable = true,
             actionLabel = "Retry",
         )
         is ConnectException -> HumanError(
             title = "Connection refused",
-            body = "The relay isn't accepting connections — make sure it's running",
+            body = "The server isn't accepting connections — make sure it's running",
             retryable = true,
             actionLabel = "Retry",
         )
         is SocketTimeoutException -> HumanError(
             title = "Network timeout",
-            body = "The relay took too long to respond",
+            body = "The server took too long to respond",
             retryable = true,
             actionLabel = "Retry",
         )
@@ -156,14 +175,18 @@ fun classifyError(t: Throwable?, context: String? = null): HumanError {
         )
         is IllegalStateException -> HumanError(
             title = titlePrefix(context),
-            body = "Not ready — check that the relay is paired and online",
+            // Voice routing throws IllegalStateException with actionable copy
+            // ("needs dashboard sign-in — open Manage"); preserve it instead
+            // of rewriting every not-ready state into relay advice.
+            body = t.message?.takeIf { it.isNotBlank() }
+                ?: "Not ready — check that the relay is paired and online",
             retryable = true,
         )
         is IOException -> {
             if ("timeout" in msg) {
                 HumanError(
                     title = "Network timeout",
-                    body = "The relay took too long to respond",
+                    body = "The server took too long to respond",
                     retryable = true,
                     actionLabel = "Retry",
                 )

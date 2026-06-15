@@ -28,7 +28,12 @@ from .auth import Session
 
 logger = logging.getLogger("hermes_relay.voice_auth")
 
-VoiceCapability = Literal["voice:config", "voice:stt", "voice:tts"]
+VoiceCapability = Literal[
+    "voice:config",
+    "voice:stt",
+    "voice:tts",
+    "voice:realtime",
+]
 AuthPrincipalKind = Literal["relay_session", "hermes_api"]
 
 _VALIDATION_CACHE_TTL_SECONDS = 60.0

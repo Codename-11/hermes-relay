@@ -301,8 +301,9 @@ function PublicUrlCard({ initialUrl, onSaved }) {
   );
 }
 
-function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, busy, qrPayload, preferRole, onPreferChange }) {
+function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, busy, qrPayload, pairingUrl, preferRole, onPreferChange }) {
   const canvasRef = useRef(null);
+  const [copyStatus, setCopyStatus] = useState("");
 
   useEffect(() => {
     if (!qrPayload || !canvasRef.current) return;
@@ -318,6 +319,17 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
     (reachability || []).forEach((r) => { m.set(r.url, r); });
     return m;
   }, [reachability]);
+
+  const copyInvite = useCallback(async () => {
+    const invite = pairingUrl || qrPayload;
+    if (!invite) return;
+    try {
+      await navigator.clipboard.writeText(invite);
+      setCopyStatus("Copied invite URL");
+    } catch (_err) {
+      setCopyStatus("Copy failed; select the URL manually");
+    }
+  }, [pairingUrl, qrPayload]);
 
   return (
     <Card>
@@ -406,6 +418,22 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
               Scan from the Hermes-Relay Android app. Fresh payload, signed with the
               host's QR secret — embedding one-shot pairing code.
             </p>
+          </div>
+        ) : null}
+        {pairingUrl ? (
+          <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs space-y-2">
+            <div className="uppercase tracking-wider text-muted-foreground">
+              Copy/paste invite
+            </div>
+            <div className="font-mono break-all">{pairingUrl}</div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={copyInvite}>
+                Copy invite URL
+              </Button>
+              {copyStatus ? (
+                <span className="text-muted-foreground">{copyStatus}</span>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </CardContent>
@@ -585,6 +613,7 @@ export default function RemoteAccess({ autoRefresh }) {
         onRegenerate={onRegenerate}
         busy={busy === "mint" || busy === "probe" ? busy : null}
         qrPayload={mintResult && mintResult.qr_payload ? mintResult.qr_payload : null}
+        pairingUrl={mintResult && mintResult.pairing_url ? mintResult.pairing_url : null}
         preferRole={preferRole}
         onPreferChange={setPreferRole}
       />

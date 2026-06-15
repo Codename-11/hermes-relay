@@ -62,6 +62,7 @@ import kotlinx.coroutines.launch
 fun DeveloperSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onNavigateToRealtimeVoice: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -72,6 +73,8 @@ fun DeveloperSettingsScreen(
     // Data management local state — unfolded from the private
     // DataManagementSection helper in the old SettingsScreen.
     var showResetDialog by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
     var backupJson by remember { mutableStateOf<String?>(null) }
 
     // SAF file picker for export
@@ -195,17 +198,12 @@ fun DeveloperSettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Save settings to a file (no tokens or API keys)",
+                                text = "Full backup with API keys, tokens, and dashboard cookies",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(onClick = {
-                            connectionViewModel.exportSettings { json ->
-                                backupJson = json
-                                exportLauncher.launch("hermes-relay-backup.json")
-                            }
-                        }) {
+                        IconButton(onClick = { showExportDialog = true }) {
                             Icon(
                                 imageVector = Icons.Filled.FileDownload,
                                 contentDescription = "Export settings"
@@ -225,14 +223,12 @@ fun DeveloperSettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Restore settings from a backup file",
+                                text = "Restore full backup and replace saved connections",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(onClick = {
-                            importLauncher.launch(arrayOf("application/json"))
-                        }) {
+                        IconButton(onClick = { showImportDialog = true }) {
                             Icon(
                                 imageVector = Icons.Filled.FileUpload,
                                 contentDescription = "Import settings"
@@ -329,6 +325,43 @@ fun DeveloperSettingsScreen(
 
                     HorizontalDivider()
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Science,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.tertiary
+                                )
+                                Text(
+                                    text = "Realtime voice lab",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            Text(
+                                text = "Open the provider websocket testbench for dev builds",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onNavigateToRealtimeVoice) {
+                            Icon(
+                                imageVector = Icons.Filled.Science,
+                                contentDescription = "Open realtime voice lab"
+                            )
+                        }
+                    }
+
+                    HorizontalDivider()
+
                     // Lock developer options
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -362,12 +395,73 @@ fun DeveloperSettingsScreen(
         }
     }
 
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("Export sensitive backup?") },
+            text = {
+                Text(
+                    "This backup includes saved connections, API keys, relay session tokens, device IDs, and dashboard cookies. Anyone with the file may be able to access your Hermes server."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showExportDialog = false
+                        connectionViewModel.exportSettings { json ->
+                            backupJson = json
+                            exportLauncher.launch("hermes-relay-sensitive-backup.json")
+                        }
+                    }
+                ) {
+                    Text("Export")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            title = { Text("Import backup?") },
+            text = {
+                Text(
+                    "Importing a backup can restore API keys, relay tokens, device IDs, and dashboard cookies. It replaces the saved connection list on this device."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showImportDialog = false
+                        importLauncher.launch(arrayOf("application/json"))
+                    }
+                ) {
+                    Text("Choose file")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // Confirmation dialog for data reset
     if (showResetDialog) {
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            title = { Text("Reset All Data?") },
-            text = { Text("This will clear all settings, API keys, authentication tokens, and cached data. You'll need to reconfigure your API server and re-pair with your relay. This cannot be undone.") },
+            title = { Text("Reset all app data?") },
+            text = {
+                Text(
+                    "This clears saved connections, API keys, Relay tokens, dashboard cookies, device IDs, settings, and cached data. Use dashboard sign out or Relay pairing controls when you only need to clear one connection path. This cannot be undone."
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {

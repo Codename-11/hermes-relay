@@ -45,7 +45,7 @@ def register(ctx):
             check_fn=_make_desktop_check(tool_name),
         )
 
-    # Register CLI sub-commands: hermes pair + hermes relay (v0.8.0+)
+    # Register plugin-native CLI sub-commands: hermes pair + hermes relay.
     # Wrapped in try/except so the plugin still works on older hermes-agent
     # versions that do not expose register_cli_command.
     try:

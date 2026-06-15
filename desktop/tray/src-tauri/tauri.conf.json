@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Hermes Relay Desktop",
+  "version": "0.3.0-alpha.18",
+  "identifier": "com.axiomlabs.hermesrelay.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Hermes Relay Desktop",
+        "width": 1040,
+        "height": 760,
+        "minWidth": 860,
+        "minHeight": 620,
+        "visible": true,
+        "resizable": true
+      },
+      {
+        "label": "overlay",
+        "url": "overlay.html",
+        "title": "Hermes Control",
+        "width": 164,
+        "height": 40,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "focusable": false,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon-256.png"
+    ],
+    "externalBin": [
+      "bin/hermes-relay"
+    ]
+  }
+}

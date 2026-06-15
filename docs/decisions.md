@@ -80,11 +80,16 @@ The app supports two streaming endpoints, selectable in Settings:
 | **Sessions** (`/api/sessions/{id}/chat/stream`) | Inline text annotations (`` `💻 terminal` ``) — client parses from markdown | Hermes-native SSE (assistant.delta, tool.progress, etc.) or OpenAI-format (delta.content) |
 | **Runs** (`/v1/runs` + `/v1/runs/{run_id}/events`) | **Structured events** (tool.started, tool.completed) — real-time tool cards | Hermes lifecycle events (message.delta, tool.started, tool.completed, run.completed) |
 
-**Important upstream note:** The `/api/sessions` CRUD endpoints are not in vanilla upstream hermes-agent. They are provided by one of three mechanisms:
-
-1. The Codename-11 fork (`feat/session-api` branch — also carried on the `axiom` deploy branch). Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"*. The PR's scope is broader than its title — it covers sessions CRUD, session chat/stream, memory, skills, config, and available-models, which is the full surface the bootstrap currently injects.
-2. **Bootstrap injection** — `hermes_relay_bootstrap/` ships with the plugin and runs at Python interpreter startup (via a `.pth` file in the venv site-packages). It monkey-patches `aiohttp.web.Application` to add the management endpoints to upstream's `APIServerAdapter` at the moment it builds its app. See ADR 8 below.
-3. Once PR #8556 merges, upstream-merged. The bootstrap detects this and no-ops.
+**Important upstream note:** The `/api/sessions` CRUD/chat endpoints are now in
+upstream Hermes core via focused PR
+[#33134](https://github.com/NousResearch/hermes-agent/pull/33134), which
+salvaged the useful session-control portion of #29302 and covers session
+list/create/read/update/delete, messages, fork, chat, and chat stream. Read-only
+skill/toolset discovery is also native via
+[#33016](https://github.com/NousResearch/hermes-agent/pull/33016). The bootstrap
+still ships for older core builds and for surfaces that remain compatibility-only
+(config, memory, legacy skill detail/toggle, available-models, slash middleware),
+but sessions and read-only skill lists should now be upstream-first.
 
 The app's `probeCapabilities()` returns a per-endpoint snapshot, and `ConnectionViewModel.resolveStreamingEndpoint()` collapses `streamingEndpoint = "auto"` (the default for new installs) to a concrete `"sessions"` or `"runs"` choice based on what the server actually exposes.
 
@@ -128,12 +133,12 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 #### 6a. QR Carries Both API and Relay Credentials (updated 2026-05-03)
 
-**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim, both backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes-pair` and places it in top-level `key`.
+**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim, all backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes pair` and places it in top-level `key`.
 
 **Trust anchor:** the operator with shell access on the host. Only a process running on the same machine as the relay can hit `/pairing/register` — the handler rejects any non-loopback `request.remote` with HTTP 403. A LAN attacker cannot inject codes. This matches the model we already rely on for reading `~/.hermes/.env` and `~/.hermes/config.yaml`: if you have shell access to the host, you have enough privilege to authorize a device.
 
 **Why the change was necessary:**
-- Previously the phone generated its own 6-char pairing code locally via `AuthManager.generatePairingCode()` and sent it to the relay on WSS connect. The relay had no way to know what code to accept, so relay pairing was effectively broken — only API-direct-chat pairing worked via the QR.
+- Previously the phone generated its own 6-char pairing code locally via `AuthManager.generatePairingCode()` and sent it to the relay on WSS connect. The relay had no way to know what code to accept, so relay pairing was effectively broken — only direct API chat pairing worked via the QR.
 - Pushing the code flow through the host means the operator always has the source of truth, and a single scan configures both chat and terminal/bridge with no manual steps.
 
 **Schema evolution:**
@@ -337,7 +342,7 @@ Key data classes: `MessageEvent` (inbound), `SendResult` (outbound), `SessionSou
 
 **Why the old `skills/hermes-pairing-qr/` was deleted:** It was the pre-plugin bash script era — `hermes-pair` as a shell script + a flat-file `SKILL.md`. The plugin now owns the QR generation (`plugin/pair.py`, pure Python, no `qrencode` dependency), the skill at `skills/devops/hermes-relay-pair/` owns the slash-command surface, and the shell shim at `~/.local/bin/hermes-pair` covers the script-friendly CLI entry point. Keeping the deprecated skill around would have been two sources of truth for the same operation.
 
-**Upstream CLI gap (documented for posterity):** hermes-agent v0.8.0's `PluginContext.register_cli_command()` is wired up on the plugin side, and `plugin/cli.py` calls it correctly. However, `hermes_cli/main.py:5236` only reads `plugins.memory.discover_plugin_cli_commands()` (memory-plugin-specific) and never consults the generic `_cli_commands` dict. Third-party plugin CLI commands never reach the top-level argparser. Documented in DEVLOG as an upstream fix target. Until it lands, `hermes pair` (with a space) is **not** a working entry point — docs point users at `/hermes-relay-pair` (skill-driven slash command) and `hermes-pair` (dashed shell shim) instead.
+**Plugin CLI status (updated 2026-06-07):** hermes-agent v0.8.0 had a top-level argparse gap where third-party `PluginContext.register_cli_command()` entries did not reach `hermes <subcommand>`. Current upstream now discovers plugin CLI registrations in `hermes_cli/main.py`, so `hermes pair` and `hermes relay` are the preferred shell entry points when the plugin is enabled. `/hermes-relay-pair` and the dashed `hermes-pair` shim stay as older-build and script compatibility paths until our supported baseline includes the upstream fix.
 
 **References:**
 - `install.sh` — canonical installer
@@ -449,7 +454,7 @@ The bare-path fetch is therefore safe as long as operators treat the allowed-roo
 
 - **Grants on a single token (not multiple tokens)** — one WSS connection, one auth envelope, one session lookup. Per-channel expiry is checked at channel message dispatch time via `Session.channel_is_expired(name)`. Simpler to reason about than multiple parallel tokens, and the phone only needs one storage slot.
 - **`math.inf` for never-expire** — represents "truly unbounded" in code, serializes to `null` on the wire (JSON doesn't have an infinity literal, and null maps cleanly to Kotlin's nullable `Long?`). `canonicalize()` uses `allow_nan=False` so accidentally trying to sign a payload with a raw `math.inf` crashes loudly — callers must explicitly emit `None`/`0`. Prevents silent serialization bugs.
-- **Metadata on pairing entries, host wins over phone** — when the host operator runs `hermes-pair --ttl 7d` and the phone sends `ttl_seconds=30d` in the auth envelope (because the user picked a different value on the TTL dialog), the host value wins. Operator policy is authoritative. If the host didn't specify anything, the phone's value applies.
+- **Metadata on pairing entries, host wins over phone** — when the host operator runs `hermes pair --ttl 7d` and the phone sends `ttl_seconds=30d` in the auth envelope (because the user picked a different value on the TTL dialog), the host value wins. Operator policy is authoritative. If the host didn't specify anything, the phone's value applies.
 - **Token prefix (not full token) in `/sessions` responses** — a caller already holds their own full token; they should never see another session's full token. First 8 chars are enough to identify devices in a practical deployment (one operator, 1-3 phones) and enough entropy to avoid collisions. Collisions return 409 with the match count.
 - **Always open the TTL picker (no skip)** — even when the QR carries an operator-chosen TTL, the dialog opens with that value preselected. The user is always in the loop for the trust decision. A future "don't ask again if QR specifies a TTL" toggle is a plausible refinement but not in this cut.
 
@@ -494,13 +499,24 @@ Adopting from ARC's workflow patterns:
 
 ### 16. Runtime API Server Patch via .pth Bootstrap (2026-04-12)
 
-**Context:** The Codename-11 fork of hermes-agent (`feat/session-api` branch, submitted as PR #8556) adds ~14 management endpoints — `/api/sessions/*` CRUD, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models` — that the Android app depends on for its sessions browser, personality picker, command palette, and history-on-restart. These are submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"* but not yet merged. Until then, users running vanilla upstream hermes-agent + our plugin would lose these features and see a blank chat window when reopening the app to a previous session.
+**Context:** The Android app depends on API-server routes for session history,
+profile/config metadata, skills, and memory-backed UI. Upstream core moved in
+focused pieces rather than one large frontend API patch: PR
+[#33134](https://github.com/NousResearch/hermes-agent/pull/33134) now covers the
+canonical `/api/sessions/*` surface, and PR
+[#33016](https://github.com/NousResearch/hermes-agent/pull/33016) covers
+read-only `/v1/skills` + `/v1/toolsets`. Config, memory, legacy skill
+detail/toggle, available-models, and slash-command preprocessing still remain
+compatibility routes in this repo until core exposes stable equivalents or the
+local UI no longer depends on them. Without the bootstrap, users on older
+vanilla upstream builds lose session browsing, metadata-backed settings, and
+history-on-restart behavior.
 
 We considered four options:
-- **A. Stay fork-only.** Reject vanilla upstream users until PR #8556 lands. Penalises onboarding.
+- **A. Stay fork-only.** Reject vanilla upstream users until the relevant core API surfaces land. Penalises onboarding.
 - **B. Read-only sessions browser via plugin relay.** Add `GET /api/sessions/*` to the relay at port 8767. Forces the client to know which URL each operation goes to.
 - **C. Full parity by porting all 800 lines onto the plugin relay.** Same architectural pollution as B, plus duplicates ~250 lines of chat-stream handler with cross-cutting `_create_agent` / `run_conversation` dependencies that the fork may have implicitly modified.
-- **D. Runtime injection via Python interpreter startup hook.** Ship a `.pth` file in the venv site-packages that imports a bootstrap module, which installs a `sys.meta_path` finder for `aiohttp.web`. When the gateway eventually imports `aiohttp.web`, our finder wraps the loader and replaces `web.Application` with a thin subclass. The subclass overrides `__setitem__` to detect `app["api_server_adapter"] = self` (the line in upstream's `connect()` that gives us a reference to the adapter while the router is still mutable). At that point we feature-detect by route path and bind our extra handlers directly onto the same router the gateway is in the middle of populating.
+- **D. Runtime injection via Python interpreter startup hook.** Ship a `.pth` file in the venv site-packages that imports a bootstrap module, which installs a `sys.meta_path` finder for `aiohttp.web`. When the gateway eventually imports `aiohttp.web`, our finder wraps the loader and replaces `web.Application` with a thin subclass. The subclass overrides `__setitem__` to detect `app["api_server_adapter"] = self` (the line in upstream's `connect()` that gives us a reference to the adapter while the router is still mutable). At that point we register only missing method/path handlers directly onto the same router the gateway is in the middle of populating.
 
 **Decision: D, scoped to management endpoints only.** The chat-stream handler is intentionally NOT injected — chat goes through standard upstream `/v1/runs`, which already emits structured `tool.started`/`tool.completed` events. This avoids touching `_create_agent` / `run_conversation` (the fork's riskiest cross-cutting dependencies) and is arguably an upgrade — `/v1/runs` has live tool events whereas the sessions chat-stream path required a post-stream message-history reload to render tool cards.
 
@@ -508,12 +524,25 @@ We considered four options:
 
 1. **Zero modifications to hermes-agent's filesystem.** `git pull` / `hermes update` see no local changes, so they always work cleanly. The patch lives entirely in `hermes_relay_bootstrap/` inside our own repo.
 2. **Single-file containment of all ported logic.** `_handlers.py` is 500 lines of straight-line aiohttp handler code with explicit `adapter` parameters (closures, not bound methods). Easy to audit, easy to delete.
-3. **Feature detection by route path, not method name.** The bootstrap checks if `/api/sessions` is already in the router and no-ops if so. This means fork users, bootstrap-injected vanilla-upstream users, AND post-PR-#8556 upstream-merged users all run safely with the bootstrap installed. Three of the four valid combinations require zero changes; only the bootstrap-injected one actively patches.
+3. **Feature detection by method/path, not broad route family.** Native upstream
+   routes win one method/path at a time. This matters because #33134 landed
+   `/api/sessions/*` before core had stable config/memory/legacy skill APIs; the
+   bootstrap must not skip those remaining compatibility routes just because a
+   sessions route exists.
 4. **Trust model already established.** The user installed our plugin into their hermes-agent venv. They've already consented to having the plugin import hermes-agent internals (it does this for relay tools, voice endpoints, media registry). Monkey-patching `aiohttp.web.Application` is in the same trust bucket.
-5. **Trivial removal.** When PR #8556 reaches a released hermes-agent version: delete `hermes_relay_bootstrap/`, delete the `.pth` from `install.sh` step 2, bump plugin version. The Android client's capability detection still works because it probes routes by path, not by source.
-6. **`/v1/runs` is genuinely better for chat than `/api/sessions/{id}/chat/stream`.** It's standard upstream, supports `X-Hermes-Session-Id` for continuation, and emits live structured tool events. The fork's chat handler exists because upstream didn't HAVE this clean structured-event runs API at the time the fork was cut — but upstream does now.
+5. **Surface-by-surface removal.** With #33134/#33016 merged, sessions and
+   read-only skill lists should go quiet automatically on current upstream.
+   Config, memory, legacy skill detail/toggle, available-models, and command
+   preprocessing remain until their native replacements exist or the local UI
+   stops depending on them. Full bootstrap deletion happens only after every
+   compatibility route group has a stable core equivalent or a deliberate local
+   removal.
+6. **`/v1/runs` remains the fallback run-control path.** Native
+   `/api/sessions/{id}/chat/stream` is now the preferred session-persisted chat
+   path when advertised. `/v1/runs` still matters for async run lifecycle/control
+   and for older builds without native sessions chat.
 
-**The Android client adapts via `streamingEndpoint = "auto"`.** New `ServerCapabilities` data class returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` (when chat-stream handler is present, i.e. fork or upstream-merged) or `"runs"` (otherwise, i.e. bootstrap-injected vanilla upstream). The setting still supports manual `"sessions"` / `"runs"` overrides for debugging.
+**The Android client adapts via `streamingEndpoint = "auto"`.** `ServerCapabilities` returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` when native session chat is present, then falls back to OpenAI-compatible completions or runs according to the probe. The setting still supports manual `"sessions"` / `"completions"` / `"runs"` overrides for debugging.
 
 **Risks accepted:**
 - **Plugin load order** — verified: `.pth` files are processed by Python's `site` module BEFORE any application code runs, so our import hook is in place before hermes-agent imports `aiohttp.web`.
@@ -528,12 +557,20 @@ We considered four options:
 - `hermes_relay_bootstrap.pth` — single line: `import hermes_relay_bootstrap`
 - `install.sh` step 2 — copies the `.pth` into the venv site-packages
 
-**Removal path** (when PR #8556 lands and reaches a released hermes-agent):
-1. Delete `hermes_relay_bootstrap/` directory
-2. Delete `hermes_relay_bootstrap.pth` from repo root
-3. Remove the `.pth` drop block from `install.sh` step 2
-4. Update CLAUDE.md to drop the bootstrap reference
-5. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
+**Removal path** is now per surface:
+1. Sessions: once the supported Hermes baseline includes #33134, remove the
+   sessions compatibility handlers and any docs that require bootstrap for
+   history/chat. Until then, verify native `/api/sessions/*` routes win.
+2. Read-only skills/toolsets: clients should prefer native `/v1/skills` and
+   `/v1/toolsets` from #33016. Retire `/api/skills` list dependence; keep legacy
+   detail/toggle only if the UI still needs it.
+3. Config/memory/available-models: remove those compatibility handlers only
+   after stable core APIs exist or the dependent Android surfaces are redesigned.
+4. Slash middleware: remove after native API-server slash preprocessing exists.
+5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
+   `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update
+   local agent docs only after all compatibility groups have native replacements.
+6. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
 
 ---
 
@@ -726,9 +763,9 @@ Four sub-decisions captured together:
 - `docs/spec.md` §10.1 Dashboard plugin — user-facing overview + route table
 - `docs/relay-server.md` HTTP Routes — wire-shape details for `/bridge/activity`, `/media/inspect`, `/relay/info`, `/sessions` loopback branch
 
-### 21. Agent Profile picker — directory-discovered overlay of model + SOUL (2026-04-18)
+### 21. Agent Profile picker — Hermes profile API routing with overlay fallback (2026-04-18, updated 2026-05-18)
 
-**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root `~/.hermes/config.yaml`). Each discovered profile is advertised in the `auth.ok` payload as `{name, model, description, system_message}`. On chat send with a profile selected, the phone overrides the request's `model` field with the profile's model AND uses the profile's `SOUL.md` content (carried in `system_message`) as the request's `system_message`. Selection is ephemeral and clears on Connection switch.
+**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root `~/.hermes/config.yaml`). Each discovered profile is advertised in the `auth.ok` payload as `{name, model, description, system_message, api_server_*}`. When a selected profile advertises `api_server_url`, Android routes chat/session API traffic to that profile's Hermes API server so memory, sessions, tools, `.env`, and model config follow upstream Hermes isolation. When no isolated API route is advertised, Android falls back to the older compatibility overlay: send the selected profile's `model` and `SOUL.md` (`system_message`) on the active Connection's API server.
 
 **Why this supersedes the original §21 design:**
 
@@ -738,27 +775,31 @@ Rather than invent our own schema, match upstream's layout. The relay scans the 
 
 **Three-layer model (unchanged at the UI level):**
 - **Connection** (§19) — which Hermes server + gateway. One scan per server.
-- **Profile** (this decision) — which upstream-layout agent directory on that server. Overlays model + SOUL.
+- **Profile** (this decision) — which upstream-layout agent directory on that server. Routes to that profile's API server when advertised; otherwise overlays model + SOUL as fallback.
 - **Personality** (§8) — which system-prompt preset *within* the agent's config.
 
 **How:**
 
 Server side (`plugin/relay/config.py`, `plugin/relay/server.py`):
 - `_load_profiles` rewritten to walk `~/.hermes/profiles/*/`. For each profile: `name = dir.name`; `model = config.yaml/model.default || "unknown"`; `description = config.yaml/description || first non-blank line of SOUL.md || ""`; `system_message = SOUL.md content || null`. Plus a synthetic `"default"` entry from the root config.
+- `_load_profiles` also reads profile-local API server metadata from `config.yaml` (`platforms.api_server` / `api_server`) and `.env` (`API_SERVER_ENABLED`, `API_SERVER_HOST`, `API_SERVER_PORT`, `API_SERVER_KEY`). It advertises `api_server_enabled`, `api_server_url`, `api_server_host`, `api_server_port`, and `api_server_key_present`, but never the API key value. Local bind hosts (`127.0.0.1`, `localhost`, `0.0.0.0`, `::1`) are rewritten through `RelayConfig.webapi_url`; operators should set `RELAY_WEBAPI_URL` to the phone-reachable base API URL. Android also rewrites loopback profile URLs against the active Connection API URL as a defensive fallback for stale or host-local payloads.
 - New `RelayConfig.profile_discovery_enabled: bool = True`. Set to `false` in the relay's config to skip the scan and advertise an empty list — matches our configurability pattern of "opt-out defaults" for discovery features. Disabled state is logged at INFO on startup.
-- `auth.ok` payload shape: each entry is `{"name": str, "model": str, "description": str, "system_message": str | null}` (snake_case on the wire).
+- `auth.ok` payload shape: each entry is `{"name": str, "model": str, "description": str, "system_message": str | null, "api_server_enabled": bool, "api_server_url": str | null, "api_server_host": str | null, "api_server_port": int | null, "api_server_key_present": bool}` (snake_case on the wire).
 
 Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt`, `viewmodel/ChatViewModel.kt`):
-- `Profile(name, model, description, systemMessage: String? = null)`, `@SerialName("system_message")` for the last field.
-- `AuthManager.parseAgentProfiles` reads the new `system_message` field (null-safe, default null).
-- `ChatViewModel` send path: if `selectedProfile != null`, pass `modelOverride = profile.model` AND, when `profile.systemMessage?.isNotBlank() == true`, use `profile.systemMessage` as the `system_message` override. Profile's `system_message` WINS over the personality's system message when both are selected — the profile is a richer/newer concept, and picking both implies the user wants the profile's full persona.
-- `ConnectionViewModel.selectedProfile` and the reset-on-Connection-switch rule are unchanged from the earlier pass; `HermesApiClient.modelOverride` is unchanged.
+- `Profile` includes the `apiServer*` metadata and exposes `hasIsolatedApi`.
+- `AuthManager.parseAgentProfiles` reads the new `api_server_*` fields with safe defaults so older relays remain compatible.
+- `ConnectionViewModel` keeps a base API client for server health/settings and a chat-routed API client for actual chat. Selecting a profile with `apiServerUrl` swaps chat/session calls to that profile API URL while reusing the Connection's stored API bearer token.
+- `ChatViewModel` send path omits `profile`, `model`, and profile `SOUL.md` overrides when the selected profile has an isolated API route. The profile API server owns its own default model, SOUL, sessions, memory, tools, and `.env`; Android still appends phone context when enabled. If no isolated API route exists, it keeps the compatibility overlay behavior.
+- Chat session browsing is scoped to the selected profile route. On profile switch Android clears the old session list, refetches through the routed API client, and labels the drawer with the active profile/API fallback.
+- Voice requests carry the selected profile to relay-owned `/voice/*` routes. `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.
 
 **Trade-offs / v1 scope:**
-- **Overlay, not isolation.** Selecting a profile on the phone routes through the active Connection's gateway with the profile's model + SOUL applied. The profile's `.env` (different API keys), memory, sessions, skills, and cron jobs stay with the Connection's default gateway. For fully isolated profile state, run the profile's own gateway (`hermes -p <name> platform start api --port <other>`) and pair it as a **separate Connection**. The server-side docs for this live in `plugin/relay/config.py` + `user-docs/features/profiles.md`.
-- **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` on every chat turn. Upstream's personality path already ships a system prompt per turn, so this is consistent — but it's worth keeping SOUL.md concise.
-- **Ephemeral only.** Selection doesn't persist across app restarts. Re-opening the app lands on server-default. Persisting per-Connection is a ~30-line extension (add `lastSelectedProfileName` to the Connection data class) — filed as a follow-up.
-- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection. Voice routes through `/voice/*` relay endpoints that don't carry `model` or `system_message`; bridge is unrelated to model choice.
+- **Isolation when the profile API is running; overlay only as fallback.** Proper Hermes profile switching requires each profile's API server/gateway to be running and discoverable. If a profile has no API route, the app can still provide the older model/SOUL overlay, but that does not isolate memory, sessions, tools, provider auth, or cron jobs.
+- **Shared-key assumption.** The relay exposes only `api_server_key_present`, never the key. Android reuses the active Connection's stored API bearer for profile API requests. Operators who intentionally use different API keys per profile should pair those profile API servers as separate Connections or keep a shared API key across profile API servers.
+- **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` only in overlay fallback mode; isolated profile APIs should rely on their own configured SOUL/default prompt.
+- **Persisted per Connection.** The selected profile name and last session id are persisted per Connection/profile context. Switching Connections clears the in-memory object, then rehydrates the destination Connection's persisted profile once its advertised profile list arrives.
+- **Voice is profile-aware but still relay-mediated.** Voice output/realtime settings can follow the selected profile, but provider secrets stay server-side and the Hermes chat/tool loop still owns the final assistant text. Bridge commands remain unrelated to model choice.
 - **Config toggle.** `profile_discovery_enabled = false` lets a server op keep the phone picker empty (e.g. if the operator wants Connections-only semantics). Per our configurability pattern of "enable useful defaults, let the operator opt out."
 
 **Earlier (abandoned) design, for the record:**
@@ -800,7 +841,7 @@ Write support would require an `active_profile` routing layer on the relay — p
 2. Register with full behavior → requires either shelling to the CLI or duplicating upstream persistence. Same objections as write-path above, worse because skill toggle state is per-profile and upstream persists it in a JSON sidecar whose shape we don't want to pin.
 3. Register a 501 stub with a stable structured body → capability probe sees the route, reads `error: "skill_toggle_not_implemented"`, renders the toggle UI as disabled with a tooltip. Client logic stays a simple switch on error code; no magic version sniffing.
 
-We pick (3). When upstream PR #8556 or a follow-up exposes a real toggle on `api_server.py`, we flip the stub to call through — the Kotlin client sees the 501 disappear and the toggle unlocks.
+We pick (3). When a focused upstream follow-up exposes a real toggle on `api_server.py`, we flip the stub to call through — the Kotlin client sees the 501 disappear and the toggle unlocks.
 
 **Trade-offs:**
 - **Profile scoping is a directory lookup, not an active-profile check.** The request says "read profile X"; we do not require X to be the currently-active profile for the dashboard or for any gateway daemon. This matches the read-only intent — the phone picker shows every profile's shape, even ones no gateway is running against.
@@ -825,7 +866,7 @@ Those fields (added in the same commit series — see `auth.ok` profile shape) a
 
 ## Voice Mode — Architecture
 
-**Context:** We wanted real-time voice conversation with the Hermes agent — user speaks, agent listens, agent speaks back, orb reacts. Hermes-agent has six TTS providers and five STT providers fully implemented in `tools/tts_tool.py` and `tools/transcription_tools.py`, plus a CLI `voice_mode.py` that uses them for push-to-talk — but none of it is exposed via the WebAPI server at `:8642`. The phone has no way to call voice functions over HTTP.
+**Context:** We wanted real-time voice conversation with the Hermes agent — user speaks, agent listens, agent speaks back, orb reacts. Hermes-agent has six TTS providers and five STT providers fully implemented in `tools/tts_tool.py` and `tools/transcription_tools.py`, plus a CLI `voice_mode.py` that uses them for push-to-talk. At the time, core did not expose those functions through the API server. Upstream PR [#8199](https://github.com/NousResearch/hermes-agent/pull/8199) is now the canonical path for native `/v1/audio/transcriptions` and `/v1/audio/speech`; Relay should treat that as the long-term execution surface while keeping `/voice/*` as the paired mobile facade.
 
 **The four decisions:**
 
@@ -833,7 +874,7 @@ Those fields (added in the same commit series — see `auth.ok` profile shape) a
 
 Three options were considered:
 
-1. **Patch upstream `gateway/platforms/api_server.py`** — add `/api/voice/transcribe` / `/api/voice/synthesize` routes directly. Cleanest long-term, but requires upstream PRs, version pinning, and blocks shipping voice until upstream merges. Rejected for this cut.
+1. **Patch upstream `gateway/platforms/api_server.py`** — add native audio routes directly. The current canonical shape is PR #8199's OpenAI-style `/v1/audio/transcriptions` and `/v1/audio/speech`, not a competing `/api/audio/*` or core `/voice/*` route family.
 2. **Relay plugin hosts the endpoints** — `plugin/relay/voice.py` imports `tools.tts_tool.text_to_speech_tool` and `tools.transcription_tools.transcribe_audio` directly from the hermes-agent venv (where the relay is editable-installed) and wraps them in async handlers. Chosen.
 3. **Phone calls provider APIs directly** — ElevenLabs / OpenAI / Groq SDKs on Android. Rejected: would require API keys stored on the phone, different providers per-device, no unified config, and the phone would need to replicate the provider-selection logic that `tts_tool.py` / `transcription_tools.py` already implement.
 
@@ -841,7 +882,7 @@ Three options were considered:
 - The relay already runs inside the hermes-agent venv (editable install per `install.sh` — `pip show hermes-relay` confirms). `from tools.tts_tool import text_to_speech_tool` just works.
 - Provider config (`tts:` and `stt:` sections) is already in `~/.hermes/config.yaml` — the tools read it internally. The phone gets whatever provider the operator configured on the server, with zero per-device keys.
 - No upstream dependency. Ships as part of hermes-relay; updates via `git pull` in the plugin clone.
-- If upstream later adds native voice endpoints to `api_server.py`, the relay can switch to proxying without phone changes.
+- If upstream native `/v1/audio/*` endpoints are present, the relay can switch `/voice/transcribe` and `/voice/synthesize` to proxy those endpoints before falling back to private helper imports, without phone changes.
 
 **Trade-offs accepted:**
 - Uses private upstream helpers (`_load_tts_config`, `_load_stt_config`) for the `/voice/config` endpoint because they're the cleanest way to report what's configured. Marked clearly as private/unstable in the handler — if upstream refactors these, our `/voice/config` response shape is the only thing that needs a patch.
@@ -901,7 +942,7 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - `plugin/relay/server.py` — route registration alongside `/media/*`
 - `plugin/tests/test_voice_routes.py` — 14 unit tests, `unittest`-based (pytest conftest issue documented in `CLAUDE.md`)
 - `app/src/main/kotlin/.../audio/VoiceRecorder.kt` — MediaRecorder amplitude StateFlow
-- `app/src/main/kotlin/.../audio/VoicePlayer.kt` — MediaPlayer + Visualizer amplitude StateFlow with OEM fallback
+- `app/src/main/kotlin/.../audio/VoicePlayer.kt` — Media3 ExoPlayer (gapless TTS queue) + Visualizer amplitude StateFlow with OEM fallback; `audioSessionId` served from a thread-safe `@Volatile` cache (read off-main by barge-in)
 - `app/src/main/kotlin/.../network/RelayVoiceClient.kt` — OkHttp multipart + JSON clients
 - `app/src/main/kotlin/.../viewmodel/VoiceViewModel.kt` — turn state machine, sentence detection, TTS queue consumer, `ChatViewModel` observation pattern
 - `app/src/main/kotlin/.../ui/components/VoiceModeOverlay.kt` — full-screen overlay, VoiceState→SphereState mapping, three interaction modes
@@ -949,16 +990,16 @@ two operational frictions as it grew:
   audience now trails `dev` by a release cadence, not a merge cadence.
 
 **CI impact:** the same workflow files trigger on both branches via
-path-filtered triggers (`ci-android.yml` / `ci-relay.yml` after the
+path-filtered triggers (`ci-android.yml` / `ci-server.yml` after the
 2026-04-19 split). `docs.yml` stays `main`-only — docs publish represents
-shipped state, not integration state. `release.yml` is tag-triggered and
+shipped state, not integration state. Surface release workflows are tag-triggered and
 branch-agnostic, unchanged.
 
 **References:**
 - `CLAUDE.md` — "Git" section + "Testing / CI is split by path" note
 - `RELEASE.md` — "Branching policy" + Release Process step 4 + Hotfix recipe
 - `CONTRIBUTING.md` — "Commit Conventions"
-- `.github/workflows/ci-android.yml`, `.github/workflows/ci-relay.yml`
+- `.github/workflows/ci-android.yml`, `.github/workflows/ci-server.yml`
 - `scripts/bump-version.sh` — prints the dev → main release flow
 
 ---
@@ -1124,9 +1165,9 @@ session-API endpoints.
   All shell out to `tailscale` CLI and return structured dicts; no new
   daemon, no new state.
 - `scripts/hermes-relay-tailscale` — shell shim mirroring `hermes-pair`
-  pattern (see `project_hermes_plugin_cli_gap.md` memory — plugin
-  `register_cli_command` doesn't reach `main.py` argparse on v0.8.0,
-  so shell shim is the working path).
+  pattern for scriptability and older Hermes builds. Current upstream supports
+  generic plugin CLI command dispatch, so native `hermes <subcommand>` should
+  be preferred when available.
 - `install.sh` gets an optional step [7/7]: detect `tailscale` binary;
   if present and the operator hasn't declined, offer to run
   `tailscale serve --bg --https=8767 http://127.0.0.1:8767`. Skipped
@@ -1155,8 +1196,9 @@ or a `hermes.version >= X.Y.Z` gate — the exact probe is TODO until
 the PR lands and we see what its contract looks like). Helper then
 no-ops with a log line pointing at `hermes gateway run --tailscale`.
 `install.sh` gains an `# TODO(upstream-merge #9295):` comment marking
-the exit criteria. Same removal pattern as `hermes_relay_bootstrap/`
-after PR #8556.
+the exit criteria. Same removal pattern as other compatibility overlays:
+keep the helper until a released core build exposes the native path, then
+delete the local shim instead of layering another abstraction on top.
 
 **Alternatives rejected:**
 - **Bundle our own `tailscaled` daemon.** Replaces Tailscale's existing
@@ -1209,7 +1251,7 @@ Each [com.hermesandroid.relay.data.HermesCardDispatch] carries a `syncedToServer
 
 **Phase B (deferred — not v0.7.x).**
 
-Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter translations. Discord gains its first real embed usage; Slack reuses the existing Block Kit path. Plain-text platforms (Signal, SMS) fall back to a markdown render of the same card. Same playbook as the `hermes_relay_bootstrap/` → upstream PR #8556 pipeline. Held until real phone-side card usage surfaces concrete fidelity issues worth translating for.
+Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter translations. Discord gains its first real embed usage; Slack reuses the existing Block Kit path. Plain-text platforms (Signal, SMS) fall back to a markdown render of the same card. Same playbook as the current compatibility-overlay model: ship locally while the shape is proving out, then retire the local marker path once a released core build exposes the native card surface. Held until real phone-side card usage surfaces concrete fidelity issues worth translating for.
 
 **Key Files:**
 - `app/src/main/kotlin/com/hermesandroid/relay/data/HermesCard.kt` (new)
@@ -1219,3 +1261,457 @@ Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter tra
 - `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt` (+`scanForCardMarkers` / `tryDispatchCardMarker` / `finalizeCardMarkers` / `extractCardsFromContent` / `recordCardDispatch` / `markCardDispatchesSynced`)
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/components/MessageBubble.kt` (+`onCardAction` plumb-through)
 - `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt` (+`dispatchCardAction`, sync splice in `startStream`)
+
+---
+
+## ADR 27 — Desktop control native shell uses Tauri v2 with CLI fallback
+
+**Status:** Accepted (desktop-control enhanced plan, 2026-05-16).
+
+**Context.** The desktop computer-use surface needs more than a terminal prompt once it graduates from experimental CLI use. Safe control needs a tray icon, always-visible observing/control chip, local grant prompt, task log, settings, and an emergency stop that is available even when no terminal window is open. At the same time, the existing TypeScript CLI and daemon are already the durable thin-client surface and must keep working for operators, headless boxes, and scripting.
+
+**Decision.** Use Tauri v2 (Rust + static web UI) for the native tray/overlay shell. Keep the core desktop tool router, pairing state, grant model, and policy logic in the existing TypeScript CLI first. Rust stays thin and native-specific: tray, overlay window, hotkey, installer/sidecar integration, and later OS-level screenshot/input helpers.
+
+**Overlay UX refinement (2026-05-17).** The desktop overlay should behave like a compact Conjure-style pill, not a mini management card. It is a small transparent always-on-top status window anchored bottom-center to Tauri's monitor work area so it sits just above the taskbar; the full management UI remains in the tray/dashboard. The pill dynamically sizes to its current label (`Observing`, `Paused`, `Offline`, or `Unavailable`) instead of reserving a fixed dashboard-width capsule. On Windows the tray shell reasserts topmost with `SetWindowPos(HWND_TOPMOST | SWP_NOACTIVATE)`, strips native chrome styles, and marks the overlay click-through so the pill cannot steal focus or expose a titlebar.
+
+**UX tiers.**
+- **Easy:** pair once, tray runs, compact visible pill shows Observing / Control Active / Paused / Disconnected, and pause or emergency stop is always reachable from the tray, dashboard, or hotkey.
+- **Standard:** full tray menu with Devices, Revoke, Task Log, Settings, grant history, and a settings panel.
+- **Advanced:** CLI + `hermes-relay daemon` + JSON policy and scripts remain first-class forever.
+
+**Seamless pairing requirement.** The Tauri app must reuse the current `hermes-relay pair` flow, QR/code payloads, `~/.hermes/remote-sessions.json`, and relay `/sessions` device management. A successful Easy-tier pair should leave the tray connected, the overlay chip visible, and Devices / Revoke / Task Log / Settings / Emergency Stop reachable from the tray. Local revoke must also clear active computer-use grants.
+
+**Tray click behavior (2026-05-17).** Tauri's tray menu can appear on left click by default, so the app disables left-click menu display and reserves left click for opening the dashboard. The native management menu remains on right click and through explicit menu events, preventing a single tray click from trying to show both a menu and the main window.
+
+**Control refresh wiring (2026-05-17).** Dashboard controls, tray menu actions, and overlay status all read the same Rust daemon state. Control commands must release the daemon mutex before asking for the resulting daemon status; otherwise pause/stop can deadlock by trying to lock the same mutex twice. Mutating commands emit `dashboard://refresh`, the dashboard guards against stale overlapping refreshes, and the overlay listens for the same event in addition to its fallback poll.
+
+**Desktop GUI refinement (2026-05-17).** The desktop dashboard should reference the Android app's visual discipline and shared Hermes branding, not copy its mobile navigation. The Tauri shell uses the Chevron Compass logo from the repo brand assets, keeps the sidebar navigation-only, and places Start / Pause / Emergency Stop in a sticky topbar so critical daemon controls stay reachable at short window heights. The Android reference remains useful for graphite surfaces, dense operational spacing, short labels, and visible state-first controls.
+
+**Default blocklist baseline.** Computer-use policy starts with password managers, credential vaults, MFA/passkey/OS credential prompts, banking/brokerage/payment apps, crypto wallets, OS security/admin settings, and private-key or token surfaces blocked by default. Advanced users can narrow or extend that baseline through `~/.hermes/desktop-control.json`; the Easy tier keeps it on.
+
+**Why Tauri.**
+- Small binaries and system webview match the thin-client posture better than Electron.
+- Tray, always-on-top windows, native dialogs, hotkeys, signing, and Rust interop cover the missing safety UX.
+- React keeps UI implementation close to the existing TypeScript stack.
+
+**Alternatives rejected.**
+- Electron is too heavy for a background "desktop hand" helper.
+- Pure WinUI3 / SwiftUI / platform-native stacks increase maintenance cost across platforms.
+- CLI-only plus node tray does not give a strong visible overlay and grant-prompt story.
+
+**Compatibility rule.** Phases 1-4 of desktop computer-use must keep working fully in the CLI and daemon with no Tauri dependency. The Tauri app is the Windows Easy/Standard wrapper and primary installer surface, while `hermes-relay daemon` remains the durable advanced/headless backend. The tray installer bundles the compiled CLI as a Tauri sidecar so normal pair/daemon/devices/task-log workflows do not depend on a separate PATH install. When the tray starts the daemon, it also provides a local grant bridge so assist/control requests can open the Grant Requests view for visible approval instead of silently granting host input.
+
+**Key Files:**
+- `docs/plans/desktop-control-computer-use-enhanced.md`
+- `desktop/src/`
+- `desktop/tray/`
+- `desktop/README.md`
+- `plugin/tools/desktop_tool.py`
+
+---
+
+## ADR 28 - Desktop Android pairing parity and one active tray relay
+
+**Status:** Accepted for next desktop tray UI pass (2026-05-17).
+
+**Context.** The first Windows tray pass made the desktop surface testable: real tray icon, click-through overlay pill, sticky daemon controls, dashboard refresh wiring, and shared Hermes branding. The next gap is product parity with the Android pairing/settings experience. Android already has the right model: pairing is a first-class route, endpoint candidates make LAN/Tailscale/public routes visible, auth failures separate API health from relay session auth, and advanced settings are tucked behind expandable sections instead of crowding the default screen.
+
+**Decision.** Track the next desktop implementation in `docs/plans/2026-05-17-desktop-android-pairing-parity.md`. The Windows Tauri tray app should default to dark mode, present one active paired relay instance for now, support manual pairing and pasted pairing invites, expose LAN/Tailscale/manual endpoint choices when available, and require explicit confirmation before replacing the active desktop pairing. Visible "Tier" settings and "Easy tier" copy should be removed from the tray UI; CLI/daemon/JSON configuration remain the advanced operator path without being represented as a user-selectable app tier.
+
+**Terminal and diagnostics refinement (2026-05-17).** After pairing parity, the tray dashboard adds task-based Terminal / CLI and Diagnostics routes. Terminal / CLI opens the remote TUI in a real terminal and converts the active relay into copyable standard `hermes-relay shell`, `chat`, `daemon`, `status`, `tools`, and `doctor` commands so users can move between GUI and terminal workflows without hunting through docs. The CLI resolver reads the tray-selected active relay from `~/.hermes/desktop-control.json`, so copied commands omit `--remote` after pairing and reserve it for explicit one-off overrides. If the app is only using its bundled sidecar, the tab nudges the user to install the CLI shim instead of copying full sidecar paths into normal workflows. Diagnostics keeps local install/session checks visible in the tray and runs `hermes-relay doctor --json` through the bundled sidecar, preserving the CLI as the source of truth for install triage.
+
+**Pairing invite URL and desktop consent repair (2026-05-17).** Host-side pairing now prints a paste-friendly `hermes-relay://pair?payload=...` invite URL alongside the QR payload, and `/pairing/mint` returns the same value as `pairing_url`. Desktop accepts raw JSON, base64 JSON, or the invite URL in the Paste invite flow. The desktop CLI now correctly uses `relay.code` as the one-shot relay pairing code; the top-level `key` remains the Hermes API bearer for direct HTTP chat. The tray dashboard also exposes an explicit active-relay desktop-tool consent grant/revoke control so users do not need to drop into a TTY just to allow the daemon.
+
+**Optional `hermes` alias (2026-05-17).** The desktop CLI installer no longer creates `hermes` / `hermes.cmd` by default. That alias is useful for Orca and upstream-style `hermes` workflows because it opens the paired remote Hermes session, but it can shadow a real local hermes-agent install. Alias management is therefore explicit through `desktop/scripts/hermes-alias.ps1` and `desktop/scripts/hermes-alias.sh`; both scripts enable, disable, or report status and only touch aliases that point to `hermes-relay`.
+
+**Implementation constraints.**
+- Do not change Android as part of the desktop pass.
+- Keep CLI and daemon behavior intact.
+- Keep Rust config deserialization backward-compatible with existing `tier` values while removing the visible selector from the tray UI.
+- Keep multiple stored sessions compatible with `~/.hermes/remote-sessions.json`, but present exactly one active desktop relay in the tray UI until multi-instance desktop UX is explicitly approved.
+- Use a collapsed Advanced section for low-frequency controls such as computer-use flag, emergency hotkey, overlay tuning, raw relay URL override, and blocklist.
+
+**Key Files:**
+- `docs/plans/2026-05-17-desktop-android-pairing-parity.md`
+- `docs/android-ui-design-reference.md`
+- `desktop/tray/src-tauri/src/main.rs`
+- `desktop/tray/ui/index.html`
+- `desktop/tray/ui/app.js`
+- `desktop/tray/ui/styles.css`
+
+---
+
+## ADR 29 - Voice output uses streaming TTS as renderer, realtime as agent mode
+
+**Status:** Implemented baseline (2026-05-18).
+
+**Context.** The first relay-mediated realtime voice path made provider PCM,
+Android `AudioTrack` playback, waveform metrics, and barge-in testable. It also
+exposed a correctness issue: when normal chat speech is sent to a realtime
+voice-agent provider as a conversational prompt, the provider can answer
+differently from the Hermes chat response. We patched the current path with a
+`render_mode="verbatim"` bridge, but that is still instruction-following on a
+conversational provider rather than a true speech renderer.
+
+**Decision.** Treat deterministic assistant narration and realtime voice agents
+as different output modes.
+
+- `streaming_tts_renderer` is the default target for normal assistant speech,
+  pre-tool-call status lines, long-task filler, and final response narration.
+  It receives final Hermes text and should emit exact audio without answering
+  conversationally.
+- `realtime_agent` is reserved for speech-to-speech, provider turn-taking,
+  provider tool-call event experiments, and comparison testing.
+- Hermes remains the owner of chat text, tool execution, approvals, and final
+  answers. Provider-emitted tool-call events are scaffolds unless a later
+  explicit integration changes that contract.
+
+**Provider direction.** Grok streaming TTS (`xai_tts`) is the first renderer,
+with OpenAI streaming TTS (`openai_tts`) added as the next renderer. Existing
+Hermes `/voice/synthesize` remains the fallback path, and ElevenLabs remains a
+lab comparison adapter. Keep Grok/OpenAI Realtime providers in the lab and relay
+for agent-mode testing and comparison.
+
+**Shared broker behavior.** The voice output broker owns verbatim rendering,
+PCM waveform levels, first-audio latency, chunk-gap metrics, playback, barge-in
+cancel, fallback selection, and short spoken tool/wait status lines. These
+behaviors should not be reimplemented separately in every provider adapter.
+
+**Key Files:**
+- `docs/realtime-voice-poc.md`
+- `docs/realtime-voice-lab-readme.html`
+- `plugin/relay/voice_output.py`
+- `plugin/relay/realtime_voice.py`
+- `plugin/voice_lab/providers/xai_tts.py`
+- `plugin/voice_lab/providers/openai_tts.py`
+- `plugin.voice_lab`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/RelayVoiceClient.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/VoiceSettingsScreen.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
+
+---
+
+## ADR 30 - Desktop surface plugins and built-in Herm launcher
+
+**Status:** Accepted for desktop tray/CLI plugin surface (2026-05-18).
+
+**Context.** The desktop tray already owns a local xterm/PTY host for the
+remote Hermes Relay TUI. Herm (`liftaris/herm`) is a separate OpenTUI dashboard
+for Hermes, published as `herm-tui`, and should be installable without folding
+its code into Hermes-Relay or replacing the default relay TUI path.
+
+**Decision.** Add a small desktop surface plugin registry to the CLI and Tauri
+tray. The first built-in descriptor is Herm:
+
+- source: `https://github.com/liftaris/herm`
+- package: `herm-tui`
+- binary: `herm`
+- install/update: prefer `bun add -g herm-tui`, fall back to `npm install -g herm-tui`
+- launch: prefer installed `herm`, fall back to `bunx herm-tui` or `npx --yes herm-tui`
+- resume: use `-c` for installed and fallback launchers
+
+The registry describes plugin tabs, status cards, keybindings, and session
+actions for the dashboard. The CLI exposes `hermes-relay plugins`; the tray
+adds a Plugins view with Install, Update, Open, Resume, and Embed actions.
+Embedding reuses the existing xterm/PTY host and records the running surface as
+`plugin:<id>` so the dashboard can distinguish Herm from the default Relay TUI.
+
+**Why built-in first.** Herm is a known terminal surface with simple package
+manager semantics. A built-in descriptor gets install/update/launch UX working
+now while keeping dynamic third-party plugin loading out of the trusted desktop
+surface until signing, permissions, and manifest validation have an explicit
+design.
+
+**Compatibility rules.**
+
+- Bare `hermes-relay` remains the default remote Relay TUI path.
+- Plugin installation is optional and does not mutate relay pairing or session
+  token state.
+- Plugin fallback launchers are convenience paths only; a user can still manage
+  `herm-tui` directly with Bun or npm.
+- The tray must keep external terminal launch available when embedded PTY focus,
+  resize, or shortcut behavior needs a fallback.
+
+**Key Files:**
+- `desktop/src/surfacePlugins.ts`
+- `desktop/src/commands/plugins.ts`
+- `desktop/src/cli.ts`
+- `desktop/tray/src-tauri/src/main.rs`
+- `desktop/tray/ui/index.html`
+- `desktop/tray/ui/app.js`
+- `desktop/tray/ui/styles.css`
+- `desktop/README.md`
+- `user-docs/desktop/subcommands.md`
+
+---
+
+## ADR 31 - Desktop Chat tab and first-run chat route
+
+**Status:** Accepted for desktop tray chat surface (2026-05-18).
+
+**Context.** `fathah/hermes-desktop` is useful as a product reference for a
+chat-first desktop surface and first-run setup, but Hermes-Relay's desktop app
+is a thin Tauri client that should not fork a separate Electron chat stack.
+The durable local source of truth is still the paired relay session in
+`~/.hermes/remote-sessions.json` plus the existing `hermes-relay chat` CLI
+path. Some users also need chat-only access to a Hermes WebAPI gateway before
+or instead of pairing a relay.
+
+**Decision.** Add a tray Chat tab with route selection:
+
+- Paired relay mode is the default whenever `selected_url` resolves to a stored
+  session. It spawns the bundled CLI sidecar as `hermes-relay chat --json` with
+  the active relay URL, so auth, session creation/resume, gateway events, and
+  cancellation remain shared with the CLI.
+- Direct Gateway/API mode is available when no relay is paired or when the user
+  selects it explicitly. The tray saves only `chat_gateway_url` in
+  `~/.hermes/desktop-control.json`; the optional API key is passed to the
+  sidecar as an environment variable for the current chat turn and is not
+  persisted.
+- The direct API worker probes `/api/sessions/probe/chat/stream` first, then
+  `/v1/runs`, mirroring the Android WebAPI capability split.
+- The tab owns only chat UX: transcript, stop, retry, new chat, clear, setup
+  diagnostics. Models, providers, memory, skills, schedules, and richer agent
+  management remain future plugin panels rather than core tray navigation.
+
+**Compatibility rules.**
+
+- Relay pairing remains required for daemon, terminal/TUI, devices, grants, and
+  desktop tool routing.
+- Direct Gateway/API mode is chat-only and must not imply desktop-control
+  consent or a paired relay session.
+- The default relay TUI and plugin terminal surfaces must remain available
+  unchanged.
+
+**Key Files:**
+- `desktop/src/commands/chat.ts`
+- `desktop/src/commands/chatWorker.ts`
+- `desktop/src/cli.ts`
+- `desktop/tray/src-tauri/src/main.rs`
+- `desktop/tray/ui/index.html`
+- `desktop/tray/ui/app.js`
+- `desktop/tray/ui/styles.css`
+- `desktop/README.md`
+- `user-docs/desktop/index.md`
+- `user-docs/desktop/subcommands.md`
+
+---
+
+## ADR 32 - Realtime Agent uses provider preamble before relay-forced Hermes
+
+**Status:** Accepted for Realtime Agent correction (2026-05-22).
+
+**Context.** Realtime Agent is supposed to feel like a provider-native
+speech-to-speech session while Hermes remains the governed brain and tool
+authority. Recent forced-Hermes routing protected correctness by sending
+current data, tool, memory, and confirmation requests through Hermes, but it
+could regress the audible turn shape by cancelling the provider response and
+using local status TTS before Hermes ran. That makes the feature feel like the
+old STT -> Hermes -> TTS pipeline instead of a native realtime agent.
+
+**Decision.** Relay-forced Hermes turns must use this sequence:
+
+- Provider owns speech recognition and yields the final user transcript.
+- Relay detects that the transcript must go to Hermes.
+- Relay asks the active realtime provider to speak one short acknowledgement,
+  for example "I'll check Hermes.", without calling tools or adding detail.
+- After that provider audio drains, the relay starts the Hermes run and mirrors
+  clean Hermes tool/progress/confirmation state into the UI.
+- Hermes returns a compact authoritative function result.
+- The same realtime provider speaks the final natural summary from that result.
+
+**Rules.**
+
+- Hermes remains the only path for tools, memory, current data, research,
+  side effects, durable context, and confirmations.
+- Android must not read raw Hermes tool output aloud. Raw output belongs in
+  logs/debug trace; spoken output is a provider-generated summary after the
+  compact Hermes result.
+- Local spoken status lines are fallback or long-wait affordances only. They
+  should not replace provider-native pre-Hermes acknowledgement during a healthy
+  Realtime Agent turn.
+- The relay must suppress provider tool calls during the preamble phase; the
+  preamble is acknowledgement only, and Hermes starts after the preamble drains.
+
+**Key Files:**
+- `docs/realtime-voice-poc.md`
+- `docs/relay-protocol.md`
+- `plugin/relay/realtime_agent/broker.py`
+- `plugin/relay/realtime_agent/providers/xai.py`
+- `plugin/relay/realtime_agent/providers/openai.py`
+
+---
+
+## ADR 33 - Realtime Agent foregrounds short Hermes turns and promotes long ones to background tasks
+
+**Status:** Accepted, phased (2026-05-24). Default-on at feature GA, gated by a
+prerequisite provider-idle-tolerance spike (Phase 0). Supersedes the
+blocking-broker assumption inside ADR 32's sequence; ADR 32's preamble ->
+forced-Hermes -> provider-summary shape is preserved for the foreground tier.
+
+**Context.** Today a Realtime Agent turn runs Hermes *synchronously inside the
+provider event pump*: `_pump_provider_events` awaits `_handle_provider_tool_call`
+-> `_run_brokered_tool`, which streams the entire Hermes SSE run to completion
+before the pump consumes the next provider event (`broker.py`). This is correct
+and lowest-latency for short Q&A, but it has two costs that grow with task
+length:
+
+- The provider realtime socket sits attached-but-idle for the whole run (a live,
+  billed, audio-clocked WebSocket parked for tens of seconds during research,
+  multi-tool, or desktop/build tasks).
+- The tool surface already advertises a background vocabulary
+  (`hermes_run_task`, `hermes_get_status`, `hermes_cancel`, `hermes_confirm`)
+  and a `hermes_run_status` state machine, but `hermes_get_status` /
+  `hermes_cancel` as *provider* tool calls are unreachable mid-run because the
+  pump is parked. Only the client->relay `response.cancel` path can interrupt.
+
+The blocking `await` is also an *implicit mutex*: it serializes the three audio
+sources that can produce `voice.output_audio.delta` (see "Who speaks" below) so
+they never overlap. Removing it requires replacing that mutex with an explicit
+floor owner.
+
+**Who speaks (confirmed against both supported providers).** Up to three mouths
+exist; only one is active per phase today because of the blocking await:
+
+1. **Realtime provider** - xAI `grok-voice-latest`, OpenAI `gpt-realtime-2`.
+   Both run with `turn_detection: None` (relay owns turn boundaries; no server
+   VAD) and audio output modality. Speaks the pre-Hermes acknowledgement and the
+   final post-result summary.
+2. **Relay TTS render** - `xai_tts`/`openai_tts` via `_render_provider_audio`.
+   A separate, non-realtime synthesizer used as the forced-summary fallback and
+   the legacy render path. Emits the *same* `voice.output_audio.delta` wire event
+   as the provider, so Android cannot distinguish them.
+3. **Android local TTS** - the `should_speak` long-wait filler, driven by
+   `hermes.run.progress`. Client-side, not the provider.
+
+Because all three converge on one Android `AudioTrack`, **floor arbitration must
+happen relay-side, before bytes reach the socket.**
+
+**Decision.** Keep three turn classes; make promotion automatic and default-on,
+with the relay as the single explicit floor owner.
+
+- **Tier A - Foreground (short Q&A).** Unchanged from ADR 32: provider preamble
+  -> relay-forced Hermes (still awaited) -> provider summary. Lowest latency,
+  trivial floor. This remains the path for any turn that completes inside the
+  promotion grace window.
+- **Tier B - Promoted (long task detected late).** Start in Tier A. If the
+  Hermes run has not produced a final result within a grace window
+  (`promote_after_ms`, default ~6000ms, tunable), the relay *detaches* the run
+  from the pump: the run continues as a tracked `asyncio.Task`, the pump resumes
+  consuming provider events, and the provider speaks a short "I've started that -
+  I'll let you know" handoff. Progress continues via `hermes.run.progress`. When
+  the background run completes, the relay injects the result as a tool result and
+  requests a provider summary at the next floor-idle moment.
+- **Tier C - Explicitly durable.** `hermes_run_task(mode="background")` returns a
+  run handle immediately (no grace window). For tasks the model/profile knows up
+  front are long (research, builds via desktop tools, multi-step). Same
+  completion-injection path as Tier B.
+
+Promotion is the default behavior, not a flag. Grace-period promotion preserves
+Tier A latency for the common case and only forks when a run actually proves
+long, so the user never has to pick a mode.
+
+**The relay is the single floor owner.** A per-session floor state
+(`idle | provider_speaking | hermes_filler | result_pending`) gates every audio
+source:
+
+- Only one mouth may hold the floor. The provider holds it by default.
+- A completed background result does **not** barge in. It is queued as
+  `result_pending` and spoken only when the floor returns to `idle` (provider
+  finished, user not mid-utterance). Provider VAD being off means the relay
+  controls `response.create`, so it can withhold the summary until the floor is
+  clear.
+- Android local filler (`should_speak`) is suppressed whenever the provider holds
+  the floor; it is a Tier B/C long-wait affordance only.
+- Relay TTS render (mouth 2) may only fire when it owns the floor and the
+  provider has drained, exactly as the forced-summary fallback does today.
+
+**Settings (ample, per ADR intent).** Surface in Voice Settings -> Realtime
+Agent, with relay-side `realtime_voice` config as source of truth and per-profile
+override:
+
+- `promotion_enabled` (default true) - master switch; false pins Tier A blocking.
+- `promote_after_ms` (default ~6000) - grace window before Tier B handoff.
+- `background_default_mode` - whether ambiguous long turns prefer promote vs.
+  stay-foreground.
+- `spoken_handoff` (default true) - speak the "I've started that" line on
+  promotion vs. silent + visual only.
+- `progress_spoken_after_ms` / `progress_repeat_ms` - reuse existing
+  `_HERMES_SPOKEN_PROGRESS_*` knobs, now configurable.
+- `result_delivery` - `speak_when_idle` (default) vs. `notify_then_speak`
+  (chime/visual, speak on user re-engage) vs. `visual_only`.
+- `max_background_runs` - concurrent background runs per session (default 1 for
+  the MVP; the existing single-`hermes_task` field assumes 1).
+
+**Protocol additions (relay <-> Android, additive).**
+
+- `hermes.run.promoted` - run moved to background; carries `run_id`,
+  `promote_after_ms`, `spoken_handoff`.
+- `hermes.run.background_completed` - background run finished; precedes the
+  provider/relay summary.
+- Extend `hermes.run.progress` with `tier` and `floor` so the client can render
+  background state distinctly (e.g. a persistent "working on: ..." chip).
+- `hermes_get_status` / `hermes_cancel` become genuinely reachable as provider
+  tool calls in Tier B/C because the pump is no longer parked; no schema change.
+
+**Prerequisite (Phase 0 spike) — RESOLVED 2026-05-24.** The spike asked how xAI
+and OpenAI realtime sessions behave when held open and idle. Verdicts (see
+`docs/realtime-voice-poc.md`): **OpenAI `hold-floor-ok` (empirical** — survived
+10/20/30s idle with clean post-idle audio); **xAI `hold-floor-ok`** (shipping
+Realtime Agent already holds `xai_realtime` sessions open across between-turn
+idle with `turn_detection: None` + resume TTL; relay-host probe retained as a
+regression check, not a precondition). The premise was also superseded in
+implementation: Tier B closes the pending provider call with an interim ack
+rather than holding an open response, so the socket only sees the normal
+between-turns idle gap — no provider needs the `must-reopen` fallback today, and
+default-on is unblocked.
+
+**Rules.**
+
+- Hermes remains the only path for tools, memory, current data, research, side
+  effects, durable context, and confirmations (unchanged from ADR 29/32).
+- Exactly one audio source may hold the floor at a time; the relay enforces this
+  before audio reaches Android. Background results never barge in.
+- Android must not read raw Hermes output aloud; spoken output is always a
+  provider (or relay-fallback) summary of the compact Hermes result.
+- Promotion must be cancel-safe: a promoted/background run is cancelable via both
+  the provider `hermes_cancel` tool and the client `response.cancel` path, reusing
+  `_cancel_active_hermes`.
+- A turn must never strand: if a background run completes while the WS is
+  detached, the result is replayed through the existing event-ring/resume path on
+  reattach.
+
+**Open questions / risks.**
+
+- Floor arbitration is the hard part and the existing `native_forced_*` /
+  `_should_forward_provider_response_event` suppression machinery is already the
+  most fragile code in `broker.py`. Concurrency stresses it most; the floor-owner
+  state machine should *replace* ad-hoc suppression, not stack on top of it.
+- Concurrent background runs (`max_background_runs > 1`) are out of scope for the
+  MVP; the session model assumes a single `hermes_task`.
+- "Notify then speak" result delivery needs an Android affordance (chime +
+  chip + tap-to-hear) that does not yet exist.
+
+**Phased rollout.**
+
+1. **Phase 0** - provider-idle-tolerance spike (above). Gate for default-on.
+2. **Phase 1** - introduce the relay floor-owner state machine under the current
+   blocking behavior (no functional change), with tests that prove single-floor
+   invariants.
+3. **Phase 2** - Tier B grace-period promotion behind `promotion_enabled`,
+   default **off**, validated on long-task transcripts.
+4. **Phase 3** - flip `promotion_enabled` default **on**; add Tier C
+   `mode="background"`; ship the Voice Settings surface.
+
+**Key Files:**
+- `docs/decisions.md` (this ADR; supersedes ADR 32's blocking assumption)
+- `docs/plans/2026-05-24-realtime-background-hermes-runs.md` (companion plan)
+- `plugin/relay/realtime_agent/broker.py`
+- `plugin/relay/realtime_agent/hermes_tool_broker.py`
+- `plugin/relay/realtime_agent/models.py`
+- `plugin/relay/realtime_agent/providers/xai.py`
+- `plugin/relay/realtime_agent/providers/openai.py`
+- `plugin/relay/profile_voice.py`
+- `docs/relay-protocol.md`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/VoiceSettingsScreen.kt`

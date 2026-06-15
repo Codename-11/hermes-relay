@@ -1,64 +1,66 @@
-# Hermes-Relay v0.6.1
+# Hermes-Relay-Android v1.0.0
 
-**Release Date:** May 6, 2026
-**Since v0.6.0:** API-key voice auth, durable pairing/session recovery, route failover hardening, dashboard pairing UI polish, and full Android bridge media/MMS handoff support.
+**Release Date:** June 14, 2026
+**Since v0.8.1:** The 1.0 milestone — a rechromed app, a first-class standard (no-plugin) path, live-thinking gateway chat, and a broad polish pass.
 
-v0.6.1 is a compatibility and bridge-contract release. It keeps the v0.6.0 multi-connection model, then tightens the real-world paths we just exercised: LAN/Tailscale pairing, API-key voice mode, stale session recovery, and Android phone bridge tools.
+v1.0.0 is the first stable release. The headline is that a **plain, unmodified Hermes agent is now enough**: chat, Manage, and voice all work against vanilla upstream with no relay plugin. The relay plugin is now purely additive (phone control, terminal, notification companion, extra voice engines).
 
 ---
 
 ## Download
 
-v0.6.1 ships in two build flavors. APK and AAB filenames are version-tagged:
+v1.0.0 ships in two Android build flavors. APK and AAB filenames are version-tagged:
 
 | Flavor | File | Who it's for |
 |---|---|---|
-| sideload | `hermes-relay-0.6.1-sideload-release.apk` | Recommended for full bridge/device-control features, including share/MMS/file handoff. Installs as `com.axiomlabs.hermesrelay.sideload`. |
-| Google Play | `hermes-relay-0.6.1-googlePlay-release.aab` | Conservative Play-track build for chat and voice without sideload-only bridge-control surfaces. |
-| googlePlay APK | `hermes-relay-0.6.1-googlePlay-release.apk` | Parity/testing artifact. |
-| sideload AAB | `hermes-relay-0.6.1-sideload-release.aab` | Parity/testing artifact. |
+| Google Play | `hermes-relay-1.0.0-googlePlay-release.aab` | Upload this Android App Bundle to Play Console. It has no AccessibilityService, screen reading, screenshots, gestures, SMS/calls, contacts/location, overlays, or unattended phone control. |
+| sideload | `hermes-relay-1.0.0-sideload-release.apk` | Direct-install APK for full Device Control. Installs as `com.axiomlabs.hermesrelay.sideload`. |
+| googlePlay APK | `hermes-relay-1.0.0-googlePlay-release.apk` | Parity/testing artifact. |
+| sideload AAB | `hermes-relay-1.0.0-sideload-release.aab` | Parity/testing artifact. |
 
-Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for install steps.
+Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 
 ---
 
 ## Highlights
 
-### Voice auth and pairing durability
+### Standard path is first-class — no plugin required
 
-- Voice routes now accept either Relay session voice grants or a saved Hermes API bearer token for `/voice/config`, `/voice/transcribe`, and `/voice/synthesize`.
-- Chat and voice can work from manual API URL + API key setup without a full QR pairing. Bridge, terminal, Android control, media, clipboard, and pair-session features still use the Relay session path.
-- Relay sessions can recover through trusted device refresh after server restarts/updates, reducing forced re-pairing.
-- Pairing and endpoint resolution were hardened for LAN/Tailscale transitions, including route normalization and clearer VPN fallback behavior.
+Chat, Manage, and voice now work against an unmodified upstream Hermes agent. Chat streams over the API server; Manage and voice use the Hermes dashboard with a single sign-in. The relay plugin stays optional and only adds power tools.
 
-### Android bridge media, files, and MMS handoff
+### Gateway chat transport with live thinking
 
-- Added `android_share_media` for text, files, relay media tokens, screenshots, and attachment lists through Android's native share sheet.
-- Added `android_send_mms` for MMS compose/share handoff with body text and attachments.
-- Added the missing `/return_to_hermes` relay route and `android_return_to_hermes` tool so docs, tools, relay HTTP, and the phone command contract match.
-- `android_send_sms` remains text-only and now returns structured states such as `sent`, `blocked`, `awaiting_confirmation`, `timeout`, and `failed`.
-- The active plugin import now uses `plugin.tools.android_tool` as the single source of truth, preventing Hermes tool exposure drift.
+Chat can now ride the upstream dashboard `/api/ws` gateway (the same surface the official hermes-desktop client speaks). It's the only vanilla-upstream path that streams reasoning **live**, so the Thinking block and sphere light up *during* generation instead of after. "Auto" prefers the gateway when the dashboard is reachable and Manage is signed in, and falls back to the SSE endpoints per turn on any failure.
 
-### Dashboard and operator flow
+- **Warm-start + keep-alive.** The app pre-warms the gateway on foreground so the first token lands fast (the cold session-setup cost moves off the send path). An opt-in **Keep connected in background** toggle (both flavors) holds the connection open via a foreground service so a long-backgrounded conversation resumes instantly.
+- **Attachments at desktop parity.** Images, PDFs, and any other file upload natively over the gateway (`image.attach_bytes` / `pdf.attach` / `file.attach`). Turns that fall back to an endpoint that can't carry a file now post a visible notice instead of dropping it silently.
+- **Steering, edit & resend, subagent lanes.** Send mid-turn to inject guidance into the running turn; edit your own messages to rewind and regenerate; watch per-task subagent lanes stream under the bubble; a context-window meter warns as the window fills.
+- **Turn-complete notifications** when the app is backgrounded.
 
-- Dashboard-minted pairing QRs and the QR modal styling were corrected so the plugin owns its dialog layout instead of inheriting host dashboard card styling.
-- The relay CLI can toggle insecure LAN API-key voice auth at runtime with `hermes relay insecure-api-key status|on|off`.
-- Docs now spell out the bridge HTTP routes, SMS schema, `current_app` limitations, share/MMS handoff behavior, sideload-only restrictions, and direct HTTP fallback route contract.
+### Manage parity with the desktop dashboard
+
+The Manage tab now does what the desktop dashboard does: change models from the full provider catalog, manage provider keys (write-only, masked, reveal), create/edit profiles and SOUL.md, and browse/install/update skills. Manage data is cached to disk so a cold launch renders instantly.
+
+### Per-conversation agent profiles
+
+Switch the whole agent — model, persona (SOUL), and skills — from the chat header. The selection is **ephemeral and per-conversation** (bound to the session, like the official desktop): it never changes your server's default agent for other clients. The session drawer scopes to the active profile, opening one of its chats loads that profile's history, and the right agent is restored on cold start.
+
+### Redesigned chat input + seamless connection UX
+
+A cleaner Telegram-style input bar (pill field, one morphing Send/Voice/Stop/Steer/Queue button, no slash button). Network route handoffs (LAN↔Tailscale) and reconnects no longer repaint or reload the chat, and connection/update status now slide down as in-theme toasts over the content instead of pushing the UI around.
+
+### Voice
+
+The provider-native Realtime Agent keeps one session open across turns (follow-ups retain context), and long Hermes runs are promoted to tracked background tasks so the conversation stays responsive and the answer is spoken when it's ready.
+
+### Docs + branding
+
+The documentation site was rechromed to the app's cockpit theme and repositioned around the two-path story (just connect → give it hands), with a reworked Android getting-started funnel and a Google Play badge.
 
 ---
 
-## Verification
+## Upgrade notes
 
-- Relay/tool regression slice: `134 passed`
-- Android Kotlin compile: `:app:compileSideloadDebugKotlin` passed
-- Android Kotlin compile: `:app:compileGooglePlayDebugKotlin` passed
-- Dashboard build passed before deployment
-- Remote staging deploy restarted `hermes-relay` and `hermes-gateway`, both active
-
-## Post-install smoke
-
-- Install the sideload APK over the existing sideload app with `adb install -r`.
-- Existing pairing should survive a normal same-flavor update. Re-pair only if you uninstall app data, switch flavor/applicationId, revoke the device, or the server session store was intentionally cleared.
-- Confirm chat works over the selected route, then test voice with the saved Hermes API key.
-- For bridge media: try `android_share_media` or `POST /share_media` with a relay media token or host file path. The phone should show an on-device confirmation and then Android's native share UI.
-- For MMS: `android_send_mms` opens the composer with the attachment; it does not silently send MMS.
+- **Google Play submission:** the opt-in keep-alive feature adds a `FOREGROUND_SERVICE_SPECIAL_USE` service. Complete the Play Console **Foreground service permissions** declaration for `specialUse` at submission (see `docs/play-store-listing.md`).
+- **PDF attachments** over the gateway require `poppler-utils` (`pdftoppm`) on the Hermes host; without it, PDF attach reports an error and the message still sends as text.
+- `appVersionCode` is **12**.

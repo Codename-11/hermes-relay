@@ -446,6 +446,52 @@ class VoiceRoutesTests(AioHTTPTestCase):
         self.assertTrue(body["stt"]["enabled"])
         self.assertEqual(body["requirements"], {"tts": True, "stt": True})
 
+    async def test_voice_config_fills_selected_provider_details_from_hermes_config(
+        self,
+    ) -> None:
+        config_path = self._write_tmp(
+            ".yaml",
+            b"\n".join(
+                [
+                    b"tts:",
+                    b"  provider: xai",
+                    b"  xai:",
+                    b"    voice_id: leo",
+                    b"    sample_rate: 24000",
+                    b"stt:",
+                    b"  enabled: true",
+                    b"  provider: openai",
+                    b"  openai:",
+                    b"    model: whisper-1",
+                ]
+            ),
+        )
+        self._server().config.hermes_config_path = config_path
+        sys.modules["tools.tts_tool"]._load_tts_config = lambda: {
+            "provider": "xai",
+        }
+        sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {
+            "provider": "openai",
+        }
+        sys.modules["tools.voice_mode"].check_voice_requirements = lambda: {
+            "tts": True,
+            "stt": True,
+        }
+
+        token = await self._make_session()
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer(token)
+        )
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body["tts"]["provider"], "xai")
+        self.assertEqual(body["tts"]["voice_id"], "leo")
+        self.assertTrue(body["tts"]["enabled"])
+        self.assertEqual(body["stt"]["provider"], "openai")
+        self.assertEqual(body["stt"]["model"], "whisper-1")
+        self.assertTrue(body["stt"]["enabled"])
+
     async def test_voice_config_accepts_valid_hermes_api_bearer(self) -> None:
         calls = self._stub_api_token_validator({"api-token"})
         sys.modules["tools.tts_tool"]._load_tts_config = lambda: {

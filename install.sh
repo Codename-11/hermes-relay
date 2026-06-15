@@ -13,11 +13,14 @@
 #      directly into the venv's site-packages so Python's `site` module
 #      auto-loads it at every interpreter startup. The bootstrap monkey-
 #      patches `aiohttp.web.Application` so when the gateway builds its app,
-#      our extra `/api/sessions/*`, `/api/memory`, `/api/skills`, `/api/config`
-#      and `/api/available-models` routes get injected onto the same router
-#      the gateway is in the middle of populating. Feature-detected by route
-#      path — if your hermes-agent build already has these endpoints natively,
-#      the bootstrap no-ops cleanly so it's safe to ship across all versions.
+#      missing compatibility routes can be injected onto the same router the
+#      gateway is in the middle of populating. Current upstream already serves
+#      `/api/sessions/*` and read-only `/v1/skills` + `/v1/toolsets`; the
+#      bootstrap now mainly protects older core builds and remaining gaps such
+#      as `/api/memory`, legacy `/api/skills`, `/api/config`, and
+#      `/api/available-models`. Feature-detected by route path — if your
+#      hermes-agent build already has a route natively, the bootstrap leaves it
+#      alone.
 #   3. A symlink at ~/.hermes/plugins/hermes-relay → the clone's plugin/ dir
 #      so Hermes's plugin loader discovers + enables the plugin
 #   4. The skill(s) under skills/ into ~/.hermes/config.yaml as a scanned
@@ -27,10 +30,11 @@
 #      - ~/.local/bin/hermes-pair          → `<venv>/python -m plugin.pair "$@"`
 #      - ~/.local/bin/hermes-status        → `<venv>/python -m plugin.status "$@"`
 #      - ~/.local/bin/hermes-relay-update  → curl-pipe re-runs install.sh
-#      The pair/status shims exist because the upstream `hermes pair` plugin
-#      CLI path is blocked. The update shim is just a discoverable name for
-#      "re-run the canonical curl-pipe installer" — convenience UX, not a
-#      separate code path.
+#      Current upstream exposes plugin CLI commands, so `hermes pair` should
+#      work when the plugin is enabled. The pair/status shims remain
+#      script-friendly older-build fallbacks. The update shim is just a
+#      discoverable name for "re-run the canonical curl-pipe installer" —
+#      convenience UX, not a separate code path.
 #   6. A systemd user unit at ~/.config/systemd/user/hermes-relay.service
 #      (optional — only on hosts with a systemd user session; skipped on
 #      macOS, WSL-without-systemd, bare chroots, etc.). When installed,
@@ -314,8 +318,8 @@ ok "Installed $("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{
 
 # Drop the bootstrap .pth into the venv's site-packages so Python loads
 # `hermes_relay_bootstrap` at interpreter startup. This is what allows the
-# plugin to inject `/api/sessions/*` (and friends) onto the gateway's
-# aiohttp app at startup. The .pth has to live directly in site-packages —
+# plugin to inject missing compatibility routes onto the gateway's aiohttp app
+# at startup. The .pth has to live directly in site-packages —
 # setuptools' editable install does NOT ship data-files there, so we drop
 # it manually here. Idempotent: a second run overwrites the same file.
 #
@@ -330,8 +334,8 @@ if [ -n "$SITE_PKGS" ] && [ -d "$SITE_PKGS" ] && [ -f "$PTH_SRC" ]; then
     ok "Installed bootstrap .pth → $SITE_PKGS/hermes_relay_bootstrap.pth"
 else
     info "  Could not determine venv site-packages — bootstrap .pth NOT installed"
-    info "  This means /api/sessions/* won't be injected onto vanilla upstream"
-    info "  hermes-agent. Manually copy $PTH_SRC into your venv's site-packages."
+    info "  This means older hermes-agent builds won't get relay compatibility"
+    info "  routes. Manually copy $PTH_SRC into your venv's site-packages."
 fi
 
 # ── 3/6  Symlink plugin into Hermes plugin dir ─────────────────────────────

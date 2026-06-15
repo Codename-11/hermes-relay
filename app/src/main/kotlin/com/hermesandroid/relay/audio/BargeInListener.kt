@@ -8,6 +8,7 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -175,11 +176,26 @@ class BargeInListener internal constructor(
         _aecAttached.value = false
         readerJob = scope.launch(readerDispatcher) {
             try {
-                audioSource.start()
+                try {
+                    audioSource.start()
+                } catch (t: CancellationException) {
+                    throw t
+                } catch (t: Throwable) {
+                    Log.w(TAG, "AudioFrameSource.start failed: ${t.message}")
+                    return@launch
+                }
+                Log.i(TAG, "Barge-in AudioRecord reader started")
                 maybeAttachEffects()
 
                 while (isActive) {
-                    val read = audioSource.read(frameBuffer, VadEngine.FRAME_SIZE_SAMPLES)
+                    val read = try {
+                        audioSource.read(frameBuffer, VadEngine.FRAME_SIZE_SAMPLES)
+                    } catch (t: CancellationException) {
+                        throw t
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "AudioFrameSource.read failed; stopping reader: ${t.message}")
+                        break
+                    }
                     if (read <= 0) {
                         // Negative values are AudioRecord error codes; 0 means
                         // no data yet. Either way, yield briefly and retry
@@ -196,7 +212,16 @@ class BargeInListener internal constructor(
                         continue
                     }
 
-                    val result = vadEngine.analyze(frameBuffer)
+                    if (!isActive) break
+
+                    val result = try {
+                        vadEngine.analyze(frameBuffer)
+                    } catch (t: CancellationException) {
+                        throw t
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "VadEngine.analyze failed; stopping reader: ${t.message}")
+                        break
+                    }
                     if (result.probability > 0f) {
                         _maybeSpeech.tryEmit(Unit)
                     }
@@ -228,9 +253,14 @@ class BargeInListener internal constructor(
      * actual release happens in the reader coroutine's `finally` block, which
      * is typically a single frame later.
      */
-    fun stop() {
-        readerJob?.cancel()
+    fun stop(): Job? {
+        val job = readerJob
+        if (job?.isActive == true) {
+            Log.i(TAG, "Stopping barge-in AudioRecord reader")
+        }
+        job?.cancel()
         readerJob = null
+        return job
     }
 
     private suspend fun maybeAttachEffects() {
@@ -253,6 +283,7 @@ class BargeInListener internal constructor(
                     created.enabled = true
                     aec = created
                     _aecAttached.value = true
+                    Log.i(TAG, "AcousticEchoCanceler attached to session=$sessionId")
                 } else {
                     Log.i(TAG, "AcousticEchoCanceler.create returned null; continuing without")
                 }

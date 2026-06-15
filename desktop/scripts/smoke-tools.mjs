@@ -52,10 +52,22 @@ async function main() {
   // ── Experimental computer-use advertisement and fail-closed action ───
   const handlerSet = await import(pathToFileURL(path.join(distRoot, '..', 'handlerSet.js')).href)
   const defaultAdvertised = handlerSet.advertisedDesktopTools()
-  const explicitlyDisabled = handlerSet.advertisedDesktopTools({ computerUse: false })
-  if (!defaultAdvertised.includes('desktop_computer_action')) {
-    throw new Error('computer-use tools should advertise with normal desktop tools')
+  const defaultHandlers = handlerSet.desktopHandlers({ computerUse: false })
+  const enabledHandlers = handlerSet.desktopHandlers({ computerUse: true })
+  const flagAdvertised = handlerSet.advertisedDesktopTools({ computerUse: true })
+  if (defaultAdvertised.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should not advertise without the experimental flag')
   }
+  if ('desktop_computer_action' in defaultHandlers) {
+    throw new Error('computer-use handlers should not be served without the experimental flag')
+  }
+  if (!flagAdvertised.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should advertise when the experimental flag is enabled')
+  }
+  if (!('desktop_computer_action' in enabledHandlers)) {
+    throw new Error('computer-use handlers should be served when the experimental flag is enabled')
+  }
+  const explicitlyDisabled = handlerSet.advertisedDesktopTools({ computerUse: false })
   if (explicitlyDisabled.includes('desktop_computer_action')) {
     throw new Error('computer-use tools should be removable for explicit disable/test paths')
   }

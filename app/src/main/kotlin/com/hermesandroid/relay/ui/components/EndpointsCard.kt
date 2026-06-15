@@ -19,15 +19,19 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,9 +46,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.isKnownRole
+import com.hermesandroid.relay.network.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 
@@ -52,8 +58,14 @@ import kotlinx.coroutines.launch
  * ADR 24 — per-endpoint visibility + override card for the Connection
  * settings screen. Renders one row per [EndpointCandidate] stored for the
  * active device, with a health chip, a 3-dot menu (Prefer / Probe now /
- * View pin), and a bottom "Clear manual override" action when a preferred
- * role is set.
+ * View pin), and bottom clear actions when a switch/preference is set.
+ *
+ * Two distinct route actions, deliberately separated:
+ * - "Use now" (row button) — one-time switch. Holds until the next
+ *   disconnect, never persisted, cancelled by [onCancelUseNow].
+ * - "Prefer this route" (3-dot menu) — sticky policy. Persisted, restored
+ *   on app start, tried first on every resolve; cleared by
+ *   [onClearPreferred].
  *
  * Verbose by design — Bailey explicitly asked for per-row visibility, so we
  * do NOT collapse into a master row. The card itself is wrapped in a
@@ -67,26 +79,70 @@ import kotlinx.coroutines.launch
 fun EndpointsCard(
     endpoints: List<EndpointCandidate>,
     activeEndpoint: EndpointCandidate?,
+    /** Persisted sticky preference ([Connection.preferredRouteRole]). */
     preferredRole: String?,
+    /**
+     * Live transient override installed by "Use now" (or by preference
+     * restoration — equal to [preferredRole] in that case). Drives the
+     * automatic / preferred / manual annotation on the Current line.
+     */
+    manualOverrideRole: String?,
+    onUseNow: (EndpointCandidate) -> Unit,
+    onCancelUseNow: () -> Unit,
     onPreferEndpoint: (EndpointCandidate) -> Unit,
-    onClearOverride: () -> Unit,
+    onClearPreferred: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
+    /** True while a user-triggered route probe is in flight. */
+    isProbing: Boolean = false,
+    /**
+     * Last probe verdict for a route, or null when it has never been
+     * probed. Lambda (not a map) so the card stays decoupled from the
+     * resolver's cache-key scheme.
+     */
+    outcomeFor: (EndpointCandidate) -> RouteProbeOutcome? = { null },
+    /**
+     * Route management — the standard path's manual equivalent of a v3 QR's
+     * `endpoints` array. Null callbacks hide the corresponding affordance.
+     * Edit/Remove only appear on fallback rows (priority > 0); the primary
+     * row mirrors the connection's API URL and is edited there.
+     */
+    onAddRoute: (() -> Unit)? = null,
+    onEditRoute: ((EndpointCandidate) -> Unit)? = null,
+    onRemoveRoute: ((EndpointCandidate) -> Unit)? = null,
 ) {
     if (endpoints.isEmpty()) {
-        Text(
-            text = "No route candidates stored for this device yet. " +
-                "Scan a v3 pairing QR (Hermes 0.4.2+) to enable multi-route " +
-                "switching — LAN + Tailscale + public URLs.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "No route candidates stored for this connection yet. " +
+                    "Add a remote route (Tailscale, public URL) for automatic " +
+                    "switching when the phone leaves this network — or scan a " +
+                    "v3 pairing QR (Hermes 0.4.2+) if you use Relay.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (onAddRoute != null) {
+                TextButton(onClick = onAddRoute) {
+                    Text("Add route")
+                }
+            }
+        }
         return
     }
 
+    // A manual "Use now" switch is in effect when the live override differs
+    // from the sticky preference (preference restoration writes the same
+    // role into both, so equality means "preferred", not "manual").
+    val manualSwitchActive = manualOverrideRole != null &&
+        !manualOverrideRole.equals(preferredRole, ignoreCase = true)
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Current: ${activeEndpoint?.displayLabel() ?: "Resolving"}",
+            text = "Current: ${activeEndpoint?.displayLabel() ?: "Resolving"}" + when {
+                manualSwitchActive -> " · manual (until disconnect)"
+                manualOverrideRole != null -> " · preferred"
+                else -> " · automatic"
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -99,16 +155,39 @@ fun EndpointsCard(
                     activeEndpoint.api.host.equals(candidate.api.host, ignoreCase = true) &&
                     activeEndpoint.api.port == candidate.api.port,
                 isPreferred = preferredRole?.equals(candidate.role, ignoreCase = true) == true,
+                isProbing = isProbing,
+                outcome = outcomeFor(candidate),
+                onUseNow = { onUseNow(candidate) },
                 onPrefer = { onPreferEndpoint(candidate) },
+                onClearPrefer = onClearPreferred,
                 onProbeNow = onProbeNow,
                 onViewPin = onViewPin,
+                onEdit = onEditRoute?.takeIf { candidate.priority > 0 }
+                    ?.let { edit -> { edit(candidate) } },
+                onRemove = onRemoveRoute?.takeIf { candidate.priority > 0 }
+                    ?.let { remove -> { remove(candidate) } },
             )
         }
 
+        if (onAddRoute != null) {
+            HorizontalDivider()
+            TextButton(onClick = onAddRoute, modifier = Modifier.fillMaxWidth()) {
+                Text("Add route")
+            }
+        }
+
+        if (manualSwitchActive) {
+            HorizontalDivider()
+            TextButton(onClick = onCancelUseNow, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Cancel manual switch (back to ${preferredRole ?: "automatic"})",
+                )
+            }
+        }
         if (preferredRole != null) {
             HorizontalDivider()
-            TextButton(onClick = onClearOverride, modifier = Modifier.fillMaxWidth()) {
-                Text("Clear manual override (preferring $preferredRole)")
+            TextButton(onClick = onClearPreferred, modifier = Modifier.fillMaxWidth()) {
+                Text("Stop preferring $preferredRole (back to automatic)")
             }
         }
     }
@@ -122,12 +201,19 @@ private fun EndpointRow(
     candidate: EndpointCandidate,
     isActive: Boolean,
     isPreferred: Boolean,
+    isProbing: Boolean = false,
+    outcome: RouteProbeOutcome? = null,
+    onUseNow: () -> Unit,
     onPrefer: () -> Unit,
+    onClearPrefer: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
+    onEdit: (() -> Unit)? = null,
+    onRemove: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var pinDialogText by remember { mutableStateOf<String?>(null) }
+    var confirmRemove by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -174,21 +260,46 @@ private fun EndpointRow(
                         )
                     }
                 }
+                // Full URL, scheme included: http vs https decides whether
+                // the health probe TLS-handshakes, so two rows that both
+                // read "host:8642" can behave completely differently. The
+                // scheme must be visible to be debuggable.
                 Text(
-                    text = "${candidate.api.host}:${candidate.api.port}" +
+                    text = candidate.api.url +
                         (candidate.relay.transportHint?.let { " · $it" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
                 )
+                when {
+                    isProbing -> Text(
+                        text = "Checking…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    outcome == null -> Unit // never probed — say nothing
+                    outcome.reachable -> Text(
+                        text = "Reachable",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    else -> Text(
+                        text = "Unreachable — ${outcome.detail ?: "no detail"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
 
             // 3-dot overflow menu — actions per-row so the card stays flat
             // without needing to expand into a detail sheet. "View pin"
             // suspends to read CertPinStore, so we resolve it into a dialog
             // when the user taps it.
+            //
+            // "Use now" is the TRANSIENT switch (until disconnect); the
+            // sticky "Prefer this route" lives in the menu below.
             if (!isActive) {
-                TextButton(onClick = onPrefer) {
+                TextButton(onClick = onUseNow) {
                     Text("Use now")
                 }
             }
@@ -204,10 +315,25 @@ private fun EndpointRow(
                     onDismissRequest = { menuOpen = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Prefer this route") },
+                        text = {
+                            Column {
+                                Text(
+                                    if (isPreferred) "Stop preferring" else "Prefer this route",
+                                )
+                                Text(
+                                    text = if (isPreferred) {
+                                        "Back to automatic choice"
+                                    } else {
+                                        "Always try this route first"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
                         onClick = {
                             menuOpen = false
-                            onPrefer()
+                            if (isPreferred) onClearPrefer() else onPrefer()
                         },
                     )
                     DropdownMenuItem(
@@ -228,9 +354,52 @@ private fun EndpointRow(
                             }
                         },
                     )
+                    if (onEdit != null) {
+                        DropdownMenuItem(
+                            text = { Text("Edit route") },
+                            onClick = {
+                                menuOpen = false
+                                onEdit()
+                            },
+                        )
+                    }
+                    if (onRemove != null) {
+                        DropdownMenuItem(
+                            text = { Text("Remove route") },
+                            onClick = {
+                                menuOpen = false
+                                confirmRemove = true
+                            },
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (confirmRemove && onRemove != null) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text("Remove ${candidate.displayLabel()} route?") },
+            text = {
+                Text(
+                    text = "${candidate.api.host}:${candidate.api.port} will no longer be " +
+                        "probed as a fallback. You can add it back any time.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRemove = false
+                        onRemove()
+                    },
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemove = false }) { Text("Cancel") }
+            },
+        )
     }
 
     pinDialogText?.let { body ->
@@ -328,3 +497,154 @@ private fun roleIcon(role: String): ImageVector = when (role.lowercase()) {
     "public" -> Icons.Filled.Public
     else -> Icons.Filled.Shield
 }
+
+/**
+ * Add/edit dialog for an extra fallback route — the manual counterpart of a
+ * v3 pairing QR's `endpoints` array, so standard (no-Relay) connections can
+ * set up LAN ↔ Tailscale roaming without the plugin.
+ *
+ * The relay URL is derived from the API URL (same `:8767` convention the
+ * wizard uses); routes that need a custom relay URL still come from a QR.
+ *
+ * @param original null = add a new route; non-null = edit (pre-fills role +
+ *   URL, keeps the stored priority).
+ * @param onSave invoked with (role, apiUrl, resultCallback); the callback
+ *   receives a user-facing error string to render inline, or null on
+ *   success (the dialog then closes itself).
+ */
+@Composable
+fun RouteEditorDialog(
+    original: EndpointCandidate?,
+    onSave: (role: String, apiUrl: String, onResult: (String?) -> Unit) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val knownRoles = listOf("tailscale", "public")
+    var selectedRole by remember {
+        mutableStateOf(
+            when (original?.role?.lowercase()) {
+                null -> "tailscale"
+                in knownRoles -> original.role.lowercase()
+                else -> CUSTOM_ROLE
+            },
+        )
+    }
+    var customRole by remember {
+        mutableStateOf(
+            original?.role?.takeIf { it.lowercase() !in knownRoles }.orEmpty(),
+        )
+    }
+    var url by remember { mutableStateOf(original?.api?.url.orEmpty()) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+
+    val effectiveRole = if (selectedRole == CUSTOM_ROLE) customRole else selectedRole
+    val saveEnabled = !saving &&
+        url.isNotBlank() &&
+        (selectedRole != CUSTOM_ROLE || customRole.isNotBlank())
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text(if (original == null) "Add route" else "Edit route") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "A fallback route the phone switches to when the " +
+                        "primary stops answering — e.g. your server's " +
+                        "Tailscale or public URL.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedRole == "tailscale",
+                        onClick = { selectedRole = "tailscale" },
+                        label = { Text("Tailscale") },
+                    )
+                    FilterChip(
+                        selected = selectedRole == "public",
+                        onClick = { selectedRole = "public" },
+                        label = { Text("Public") },
+                    )
+                    FilterChip(
+                        selected = selectedRole == CUSTOM_ROLE,
+                        onClick = { selectedRole = CUSTOM_ROLE },
+                        label = { Text("Custom") },
+                    )
+                }
+                if (selectedRole == CUSTOM_ROLE) {
+                    OutlinedTextField(
+                        value = customRole,
+                        onValueChange = { customRole = it },
+                        label = { Text("Route name") },
+                        placeholder = { Text("wireguard-home") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                // Live preview of what will actually be saved — scheme and
+                // port defaults applied — so "what, which port, http or
+                // https?" is answered before Save, not after a failed probe.
+                val previewCandidate = remember(url, effectiveRole) {
+                    url.takeIf { it.isNotBlank() }?.let {
+                        Connection.endpointCandidateFromApiUrl(
+                            role = effectiveRole.ifBlank { "custom" },
+                            priority = original?.priority ?: 1,
+                            apiServerUrl = Connection.normalizeApiUrlInput(it),
+                            relayUrl = "",
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = {
+                        url = it
+                        errorText = null
+                    },
+                    label = { Text("API server URL or host") },
+                    placeholder = { Text("100.71.8.56 or http://host:8642") },
+                    singleLine = true,
+                    isError = errorText != null,
+                    supportingText = {
+                        Text(
+                            text = errorText ?: when {
+                                url.isBlank() ->
+                                    "Use the API server port (8642 by default) — " +
+                                        "not the dashboard's 9119. http:// is " +
+                                        "assumed unless you type https://."
+                                previewCandidate != null ->
+                                    "Will save: ${previewCandidate.api.url} — relay " +
+                                        "and dashboard URLs are derived from the host"
+                                else ->
+                                    "Enter a host/IP or an http(s):// URL " +
+                                        "(API port 8642, not dashboard 9119)"
+                            },
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = saveEnabled,
+                onClick = {
+                    saving = true
+                    onSave(effectiveRole, url) { error ->
+                        saving = false
+                        if (error == null) {
+                            onDismiss()
+                        } else {
+                            errorText = error
+                        }
+                    }
+                },
+            ) { Text(if (saving) "Saving…" else "Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") }
+        },
+    )
+}
+
+private const val CUSTOM_ROLE = "__custom__"

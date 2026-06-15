@@ -17,6 +17,7 @@
 
 import type { ParsedArgs } from '../cli.js'
 import { captureClipboardImage } from '../chatAttach.js'
+import { getActiveDesktopRelayUrl } from '../desktopConfig.js'
 import { getSession, listSessions } from '../remoteSessions.js'
 
 function wsToHttp(url: string): string {
@@ -42,9 +43,12 @@ async function resolveRemoteAndToken(args: ParsedArgs): Promise<{ url: string; t
 
   const stored = await listSessions()
   const urls = Object.keys(stored)
+  const activeDesktopUrl = await getActiveDesktopRelayUrl()
   let url: string
   if (argUrl || envUrl) {
     url = argUrl ?? envUrl!
+  } else if (activeDesktopUrl) {
+    url = activeDesktopUrl
   } else if (urls.length === 1) {
     url = urls[0]!
   } else if (urls.length === 0) {

@@ -1,0 +1,65 @@
+name: CI dashboard plugin
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "plugin/dashboard/**"
+      - "scripts/check-server-version-sync.py"
+      - ".github/workflows/ci-dashboard.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "plugin/dashboard/**"
+      - "scripts/check-server-version-sync.py"
+      - ".github/workflows/ci-dashboard.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-dashboard-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+jobs:
+  build-and-test:
+    name: Build and test dashboard plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: plugin/dashboard/package-lock.json
+
+      - name: Install dashboard deps
+        working-directory: plugin/dashboard
+        run: npm ci
+
+      - name: Build dashboard bundle
+        working-directory: plugin/dashboard
+        run: npm run build
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Verify server-owned version metadata
+        run: python scripts/check-server-version-sync.py
+
+      - name: Install dashboard API test deps
+        run: pip install -r relay_server/requirements.txt fastapi httpx pytest requests
+
+      - name: Run dashboard API tests
+        run: python -m unittest plugin.dashboard.test_plugin_api
+
+      - name: Verify dashboard bundle outputs
+        run: |
+          test -s plugin/dashboard/dist/index.js
+          test -s plugin/dashboard/dist/style.css
+          grep -q "hr-modal-card" plugin/dashboard/dist/style.css
