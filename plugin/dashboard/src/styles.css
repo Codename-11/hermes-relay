@@ -58,7 +58,10 @@
 .hermes-relay-plugin select,
 .hermes-relay-plugin textarea {
   font: inherit;
-  color: inherit;
+  /* color: inherit intentionally omitted — it leaks the container text colour
+     onto button backgrounds, making text unreadable when both resolve to the
+     same value (e.g. --hr-text cream on a cream-background button).
+     Each button variant controls its own colour via class utilities. */
 }
 
 .hermes-relay-plugin button {
