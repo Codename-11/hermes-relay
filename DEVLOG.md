@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-15 — Claude review required check and Dependabot PR cleanup
+
+**Why.** Open Dependabot PRs targeting `main` were blocked by the required `claude-review` check. Re-running a current Dependabot PR showed the Claude GitHub App token exchange succeeds, but `anthropics/claude-code-action` stops before review because the actor is `dependabot[bot]` and bot actors are not allow-listed. Dependabot-triggered runs also do not expose the same secret surface as human-authored PRs, so forcing Claude review on those PRs is the wrong gate.
+
+- **Workflow fix.** `.github/workflows/claude-code-review.yml` now detects bot-authored PRs with `github.event.pull_request.user.type == 'Bot'` and emits a passing no-op `claude-review` job. Human-authored PRs still run the full Claude Code Review action; aggregate `dev` -> `main` release PRs still use the existing no-op skip.
+- **Workflow self-change guard.** PRs that edit `claude-code-review.yml` now also no-op after checkout when the changed-file list includes that workflow. The Claude action requires the workflow file to match the default branch before app-token exchange, so workflow maintenance PRs must not invoke the action they are changing.
+- **Verification.** Confirmed `CLAUDE_CODE_OAUTH_TOKEN` was refreshed in repository secrets after Claude Code GitHub setup. Re-ran Claude Code Review on PR #46 and confirmed the current blocker was bot-actor policy, not GitHub App installation. `git diff --check` passes.
+
 ## 2026-06-14 — profile chat: turn-complete wipe + cross-transport session continuity
 
 **Why.** v1.0.0 polish (on `dev`, into release PR #61). After the per-profile session work landed, on-device testing of a non-default agent showed: a turn streamed fine (thinking + reply), then on turn-complete the chat **switched to a new/empty session** untouched; the just-finished conversation only reappeared in the drawer a moment later. Watched `adb logcat` during a repro to confirm root cause.
