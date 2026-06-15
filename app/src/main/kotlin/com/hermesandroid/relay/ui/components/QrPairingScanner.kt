@@ -68,8 +68,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.net.URI
 import java.util.concurrent.Executors
 import kotlin.math.max
 
@@ -132,7 +134,7 @@ import kotlin.math.max
  * }
  * ```
  *
- * The top-level fields configure the direct-chat Hermes API server. The
+ * The top-level fields configure the direct Hermes API server. The
  * optional [relay] block configures the Hermes-Relay WSS connection used by
  * the terminal and bridge channels. The [endpoints] list (v3+) carries an
  * ordered array of candidate endpoints; the phone picks the highest-priority
@@ -217,11 +219,16 @@ private val json = Json {
 }
 
 /**
- * Try to parse a scanned string as a Hermes pairing QR payload.
+ * Try to parse a scanned string as a Hermes connection QR payload.
  *
  * Accepts v1, v2, and v3 (or anything without a `hermes` field — we default
  * to `1`). Returns null when the payload is not valid JSON, has no `host`
  * field, or fails strict decoding.
+ *
+ * For standard Hermes setup, also accepts generic API-only QRs:
+ *  - a plain `http://host:8642` or `https://host:8642` URL
+ *  - JSON with `api_url`, `apiUrl`, `server_url`, `serverUrl`, or `url`, plus
+ *    optional `api_key`, `apiKey`, or `key`
  *
  * **Endpoint synthesis (ADR 24):** when the payload has no `endpoints`
  * array (v1/v2 QRs), a single priority-0 [EndpointCandidate] is materialized
@@ -233,6 +240,13 @@ private val json = Json {
  * role case, priority order, and unknown roles are all preserved.
  */
 fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
+    val trimmed = raw.trim()
+    return parseHermesRelayQr(trimmed)
+        ?: parseGenericApiJsonQr(trimmed)
+        ?: parseGenericApiUrlQr(trimmed)
+}
+
+private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
     return try {
         // Quick check: must contain a `host` field and be valid JSON. We no
         // longer reject based on the `hermes` version int — future v4+ QRs
@@ -260,6 +274,85 @@ fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
         }
     } catch (_: Exception) {
         null
+    }
+}
+
+private fun parseGenericApiJsonQr(raw: String): HermesPairingPayload? {
+    return try {
+        val obj = json.decodeFromString<JsonObject>(raw)
+        val apiUrl = firstString(
+            obj,
+            "api_url",
+            "apiUrl",
+            "server_url",
+            "serverUrl",
+            "url",
+        ) ?: return null
+        val apiKey = firstString(obj, "api_key", "apiKey", "key").orEmpty()
+        payloadFromApiUrl(apiUrl, apiKey)
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun parseGenericApiUrlQr(raw: String): HermesPairingPayload? {
+    return payloadFromApiUrl(raw, apiKey = "")
+}
+
+private fun firstString(obj: JsonObject, vararg names: String): String? {
+    return names.firstNotNullOfOrNull { name ->
+        obj[name]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+    }
+}
+
+private fun payloadFromApiUrl(apiUrl: String, apiKey: String): HermesPairingPayload? {
+    val uri = runCatching { URI(apiUrl.trim().trimEnd('/')) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase()
+    val tls = when (scheme) {
+        "http" -> false
+        "https" -> true
+        else -> return null
+    }
+    val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
+    val payload = HermesPairingPayload(
+        host = host,
+        port = if (uri.port > 0) uri.port else 8642,
+        key = apiKey.trim(),
+        tls = tls,
+        relay = null,
+    )
+    return payload.copy(endpoints = listOf(synthesizeGenericEndpoint(payload)))
+}
+
+private fun synthesizeGenericEndpoint(payload: HermesPairingPayload): EndpointCandidate {
+    val host = payload.host.lowercase()
+    val role = when {
+        host.endsWith(".ts.net") || host.startsWith("100.") -> "tailscale"
+        isPrivateLanHost(host) -> "lan"
+        else -> "public"
+    }
+    return EndpointCandidate(
+        role = role,
+        priority = 0,
+        api = ApiEndpoint(
+            host = payload.host,
+            port = payload.port,
+            tls = payload.tls,
+        ),
+        relay = RelayEndpoint(url = "", transportHint = null),
+    )
+}
+
+private fun isPrivateLanHost(host: String): Boolean {
+    if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true
+    val parts = host.split('.').mapNotNull { it.toIntOrNull() }
+    if (parts.size != 4) return false
+    return when {
+        parts[0] == 10 -> true
+        parts[0] == 172 && parts[1] in 16..31 -> true
+        parts[0] == 192 && parts[1] == 168 -> true
+        parts[0] == 169 && parts[1] == 254 -> true
+        else -> false
     }
 }
 
@@ -635,7 +728,7 @@ fun QrPairingScanner(
             // Instructions
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.padding(horizontal = 32.dp)
             ) {
                 Icon(
@@ -645,14 +738,14 @@ fun QrPairingScanner(
                     modifier = Modifier.size(32.dp)
                 )
                 Text(
-                    text = "Point at a Hermes pairing QR code",
-                    style = MaterialTheme.typography.bodyLarge,
+                    text = "Scan a Hermes setup QR",
+                    style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "Generate one on your server with: hermes-pair",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = "Ask Hermes: \"Generate a QR code with my API URL and API key.\" Relay pairing QRs require the Hermes-Relay plugin.",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )

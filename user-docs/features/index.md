@@ -9,15 +9,15 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | Feature | Description |
 |---------|-------------|
 | [Direct API Connection](/features/direct-api) | HTTP/SSE streaming to Hermes API Server |
-| [Voice Mode](/features/voice) | Real-time voice conversation — sphere listens, agent speaks back via your server's configured TTS/STT providers |
+| [Voice Mode](/features/voice) | Real-time voice conversation — you talk, the agent answers aloud via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |
-| [Connections](/features/connections) | Pair with multiple Hermes servers — one-tap switch from the top-bar chip |
+| [Connections](/features/connections) | Save multiple Hermes servers — one-tap switch from the top-bar chip |
 | [Profiles](/features/profiles) | Auto-discovered upstream agent directories — overlay model + SOUL on chat turns |
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
 | [Command Palette](/guide/chat#command-palette) | Searchable command browser — 29 gateway commands, personalities, 90+ skills |
 | [Slash Commands](/guide/chat#inline-autocomplete) | Inline autocomplete as you type `/` |
-| [QR Code Pairing](/guide/getting-started#qr-code-pairing-recommended) | Scan `hermes-pair` QR to auto-configure connection |
+| [Standard Setup](/guide/getting-started#connect-android-to-hermes) | Connect by API URL/key first; scan a QR only when you want Relay pairing |
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
 
@@ -135,7 +135,7 @@ For the full decision guide and install instructions for each, see [Release trac
 |---------|--------|
 | Push Notifications | Future — Agent-initiated alerts |
 | Memory Viewer | Future — View/edit agent memories |
-| Cross-device handoff | Future — Hand a task from phone to desktop terminal session |
+| Cross-device handoff | Future — Hand a task from your phone to a desktop hand |
 
 <style scoped>
 .track-badge {

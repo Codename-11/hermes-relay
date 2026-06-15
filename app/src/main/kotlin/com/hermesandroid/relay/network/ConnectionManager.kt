@@ -81,12 +81,21 @@ class ConnectionManager(
     private val context: Context? = null,
     /**
      * ADR 24 multi-endpoint resolver. When provided alongside [context] and
-     * a non-null [deviceIdProvider], every call to [connect] first consults
-     * the resolver before opening the WSS; on network changes the resolver
-     * is re-run and we hot-swap to the new winner. When null the manager
-     * uses the caller-supplied URL verbatim (pre-ADR-24 behavior).
+     * either [endpointCandidatesProvider] or a non-null [deviceIdProvider],
+     * every call to [connect] first consults the resolver before opening the
+     * WSS; on network changes the resolver is re-run and we hot-swap to the
+     * new winner. When null the manager uses the caller-supplied URL verbatim
+     * (pre-ADR-24 behavior).
      */
     private val endpointResolver: EndpointResolver? = null,
+    /**
+     * Candidate supplier for the active saved connection. This is the
+     * standard-Hermes route source: it works before Relay pairing, so API,
+     * dashboard, voice, and future Relay calls can hand off between LAN and
+     * Tailscale using the same resolver. If it returns an empty list, we fall
+     * back to the legacy per-device PairingPreferences source below.
+     */
+    private val endpointCandidatesProvider: (suspend () -> List<EndpointCandidate>)? = null,
     /**
      * Suspending supplier for the active device id. Used to key into
      * [PairingPreferences.getDeviceEndpoints] during resolution. `null`
@@ -164,18 +173,68 @@ class ConnectionManager(
      * user-preferred endpoint that doesn't respond to HEAD /health falls
      * back through the normal priority chain.
      *
-     * Cleared on [disconnect] per ADR 24's "clears on disconnect" semantics
-     * from the UI card.
+     * Two writers feed this: a sticky [Connection.preferredRouteRole] is
+     * restored into it on connection load, and the Routes card's transient
+     * "Use now" writes it directly without persisting. Cleared on
+     * [disconnect] per ADR 24's "clears on disconnect" semantics.
+     *
+     * Exposed as [manualRoleOverrideFlow] so the Routes card can label the
+     * current route as automatic / preferred / manually switched.
      */
-    @Volatile
-    private var manualRoleOverride: String? = null
+    private val _manualRoleOverride = MutableStateFlow<String?>(null)
+    val manualRoleOverrideFlow: StateFlow<String?> = _manualRoleOverride.asStateFlow()
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    /**
+     * Debounce job for network-change re-resolution. Android fires one
+     * onAvailable per satisfying network (Wi-Fi + cell + VPN can land within
+     * milliseconds of each other, and registration itself replays every
+     * current network), so each event cancels the previous pending resolve
+     * and the last one wins after a short settle window.
+     */
+    @Volatile
+    private var networkResolveJob: kotlinx.coroutines.Job? = null
+
+    /** Deferred reaction to a network loss — cancelled if a network returns within the grace. */
+    private var networkLossJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Set when a network loss outlives [NETWORK_LOSS_GRACE_MS] — only then may
+     * a re-resolve switch DOWN to a lower-priority endpoint. Prevents a
+     * transient probe miss (Wi-Fi settling) from switching routes and
+     * cancelling an in-flight turn. Cleared once a resolution is published.
+     */
+    @Volatile
+    private var sustainedLossDeclared = false
+
+    init {
+        // Register at construction, not on first connect(). Standard
+        // (no-Relay) connections never open the WSS socket, but their HTTP
+        // surfaces (chat, dashboard, voice) still need [activeEndpoint] to
+        // follow LAN/Tailscale handoffs — leaving registration inside
+        // connect() left the whole ADR 24 network-aware path dormant for
+        // exactly those users. No-op when [context] is null (tests).
+        ensureNetworkCallbackRegistered()
+    }
 
     companion object {
         private const val TAG = "ConnectionManager"
         private const val MAX_BACKOFF_MS = 30_000L
         private const val BASE_BACKOFF_MS = 1_000L
+        // Settle window before re-resolving after a network event. Long
+        // enough to coalesce the onAvailable burst of a handoff, short
+        // enough that a route swap still feels immediate.
+        private const val NETWORK_RESOLVE_DEBOUNCE_MS = 300L
+
+        /**
+         * Grace before reacting to a network loss. A transient blip (Wi-Fi
+         * power-save/roam, a brief drop, the OS swapping radios) recovers
+         * within this window and must NOT mark the active endpoint unreachable
+         * or switch routes — doing so rebuilds the chat client and cancels an
+         * in-flight turn. Only a loss sustained past the grace switches.
+         */
+        private const val NETWORK_LOSS_GRACE_MS = 6_000L
         // Matches plugin.relay.auth._BLOCK_SECONDS (5 min). If we see 429
         // on the WSS upgrade, we're IP-banned server-side — retrying at
         // our normal 1-30s cadence re-fills the ban bucket and keeps us
@@ -331,28 +390,37 @@ class ConnectionManager(
     private suspend fun resolveBestEndpointSafe(): EndpointCandidate? {
         val resolver = endpointResolver ?: return null
         val ctx = context ?: return null
-        val devicePull = deviceIdProvider ?: return null
 
-        val deviceId = try {
-            withTimeoutOrNull(1_000L) { devicePull() }
-        } catch (_: Exception) {
-            null
-        } ?: return null
-
-        val endpoints: List<EndpointCandidate> = try {
+        val endpoints = try {
             withTimeoutOrNull(1_000L) {
-                PairingPreferences.getDeviceEndpoints(ctx, deviceId).first()
+                endpointCandidatesProvider?.invoke()
+                    ?.takeIf { it.isNotEmpty() }
             }
         } catch (_: Exception) {
             null
-        } ?: emptyList()
+        } ?: run {
+            val devicePull = deviceIdProvider ?: return null
+            val deviceId = try {
+                withTimeoutOrNull(1_000L) { devicePull() }
+            } catch (_: Exception) {
+                null
+            } ?: return null
+
+            try {
+                withTimeoutOrNull(1_000L) {
+                    PairingPreferences.getDeviceEndpoints(ctx, deviceId).first()
+                }
+            } catch (_: Exception) {
+                null
+            } ?: emptyList()
+        }
 
         if (endpoints.isEmpty()) return null
 
         // Manual override: if the user pinned a role in the Endpoints card,
         // try that one first; fall through to the strict-priority algorithm
         // if it isn't reachable.
-        manualRoleOverride?.let { preferredRole ->
+        _manualRoleOverride.value?.let { preferredRole ->
             val preferred = endpoints.firstOrNull {
                 it.role.equals(preferredRole, ignoreCase = true)
             }
@@ -371,35 +439,58 @@ class ConnectionManager(
     /**
      * User-triggered re-probe. Forces a fresh resolve + reconnect regardless
      * of cache state. Backs the "Probe now" row action in the Endpoints card.
+     * Fire-and-forget wrapper around [probeAndReconnectNow] for callers that
+     * don't need the outcome.
      */
     fun probeAndReconnect() {
+        scope.launch { probeAndReconnectNow() }
+    }
+
+    /**
+     * Awaitable body of [probeAndReconnect]. Returns the resolved winner —
+     * or null when no candidate answered — so callers (probe-status UI) can
+     * report the outcome instead of guessing with a fixed delay.
+     *
+     * Unlike the pre-2026-06 version this ALWAYS publishes the resolve
+     * outcome to [activeEndpoint]: a standard (no relay socket) connection
+     * whose probes all failed used to early-return before publishing,
+     * leaving the Routes card stuck on "Resolving" with no feedback. The
+     * only exception is the live-socket transient-miss guard shared with
+     * [refreshActiveEndpoint].
+     */
+    suspend fun probeAndReconnectNow(): EndpointCandidate? {
         endpointResolver?.clearCache()
         val current = serverUrl
-        scope.launch {
-            val resolved = resolveBestEndpointSafe()
-            val targetUrl = resolved?.relay?.url ?: current ?: return@launch
-            val normalizedTarget = normalizeRelayUrl(targetUrl)
-            _activeEndpoint.value = resolved
-            // Reconnect when the winner changed, and also when the socket is
-            // stale/disconnected on the same winner. The latter makes the
-            // "Use now" route action an actual recovery path after Wi-Fi drop
-            // instead of a no-op that only updates preference state.
-            if (current == null) {
-                if (shouldReconnect && reconnectGate()) {
-                    Log.i(TAG, "probeAndReconnect: no current socket — connecting to $normalizedTarget")
-                    connectToUrlOnMainPath(targetUrl)
-                }
-            } else if (normalizedTarget != current) {
-                Log.i(TAG, "probeAndReconnect: swapping $current → $normalizedTarget")
-                connectToUrlOnMainPath(targetUrl, "Endpoint re-probe")
-            } else if (_connectionState.value == ConnectionState.Disconnected &&
-                shouldReconnect &&
-                reconnectGate()
-            ) {
-                Log.i(TAG, "probeAndReconnect: current route is stale — reconnecting $current")
-                doConnect(current)
-            }
+        val resolved = resolveBestEndpointSafe()
+        if (resolved == null && _connectionState.value == ConnectionState.Connected) {
+            // Transient probe miss while the relay socket is demonstrably up
+            // — keep the live route published rather than downgrading every
+            // HTTP surface to the saved URL. Mirrors refreshActiveEndpoint.
+            return _activeEndpoint.value
         }
+        _activeEndpoint.value = resolved
+        val targetUrl = resolved?.relay?.url ?: current ?: return resolved
+        val normalizedTarget = normalizeRelayUrl(targetUrl)
+        // Reconnect when the winner changed, and also when the socket is
+        // stale/disconnected on the same winner. The latter makes the
+        // "Use now" route action an actual recovery path after Wi-Fi drop
+        // instead of a no-op that only updates preference state.
+        if (current == null) {
+            if (shouldReconnect && reconnectGate()) {
+                Log.i(TAG, "probeAndReconnect: no current socket — connecting to $normalizedTarget")
+                connectToUrlOnMainPath(targetUrl)
+            }
+        } else if (normalizedTarget != current) {
+            Log.i(TAG, "probeAndReconnect: swapping $current → $normalizedTarget")
+            connectToUrlOnMainPath(targetUrl, "Endpoint re-probe")
+        } else if (_connectionState.value == ConnectionState.Disconnected &&
+            shouldReconnect &&
+            reconnectGate()
+        ) {
+            Log.i(TAG, "probeAndReconnect: current route is stale — reconnecting $current")
+            doConnect(current)
+        }
+        return resolved
     }
 
     /**
@@ -407,9 +498,22 @@ class ConnectionManager(
      * WSS reconnect. Used by HTTP-only surfaces (chat/voice/relay HTTP)
      * so they can follow LAN/Tailscale/VPN route changes even when the relay
      * socket is currently disconnected or intentionally not paired.
+     *
+     * @param clearProbeCache wipe the resolver's probe cache first. Pass
+     *   `true` from "the world may have changed" triggers (app resume,
+     *   network change) — otherwise a route that died within the positive
+     *   cache TTL (60s) can still be returned as the winner.
      */
-    suspend fun refreshActiveEndpoint(): EndpointCandidate? {
+    suspend fun refreshActiveEndpoint(clearProbeCache: Boolean = false): EndpointCandidate? {
+        if (clearProbeCache) endpointResolver?.clearCache()
         val resolved = resolveBestEndpointSafe()
+        if (resolved == null && _connectionState.value == ConnectionState.Connected) {
+            // Transient probe miss while the relay socket is demonstrably up
+            // (slow resume, mid-handoff blip) — keep publishing the live
+            // route instead of downgrading every HTTP surface to the saved
+            // URL. Mirrors scheduleNetworkReResolve's guard.
+            return _activeEndpoint.value
+        }
         _activeEndpoint.value = resolved
         return resolved
     }
@@ -420,11 +524,11 @@ class ConnectionManager(
      * cycle — call [probeAndReconnect] to apply immediately.
      */
     fun setManualRoleOverride(role: String?) {
-        manualRoleOverride = role?.takeIf { it.isNotBlank() }
-        Log.i(TAG, "manualRoleOverride now=${manualRoleOverride ?: "(cleared)"}")
+        _manualRoleOverride.value = role?.takeIf { it.isNotBlank() }
+        Log.i(TAG, "manualRoleOverride now=${_manualRoleOverride.value ?: "(cleared)"}")
     }
 
-    fun getManualRoleOverride(): String? = manualRoleOverride
+    fun getManualRoleOverride(): String? = _manualRoleOverride.value
 
     private fun markActiveEndpointUnreachable(reason: String) {
         val active = _activeEndpoint.value ?: return
@@ -432,26 +536,65 @@ class ConnectionManager(
         Log.i(TAG, "marked endpoint role=${active.role} unreachable ($reason)")
     }
 
-    private fun resolveAndSwitchIfNeeded(closeReason: String) {
+    /**
+     * Debounced network-change re-resolution, shared by both NetworkCallback
+     * events. Re-runs the resolver and publishes the winner to
+     * [activeEndpoint] so HTTP-only surfaces (chat, dashboard, standard
+     * voice) follow the route change even when no relay socket exists. When
+     * a socket IS up, additionally swaps it to a differing winner, or
+     * reconnects a disconnected socket on the same winner — preserving the
+     * pre-refactor relay-path behavior.
+     */
+    private fun scheduleNetworkReResolve(closeReason: String) {
         if (endpointResolver == null) return
-        val current = serverUrl ?: return
-        scope.launch {
+        networkResolveJob?.cancel()
+        networkResolveJob = scope.launch {
+            delay(NETWORK_RESOLVE_DEBOUNCE_MS)
+            val current = serverUrl
             val resolved = resolveBestEndpointSafe()
             if (resolved == null) {
-                _activeEndpoint.value = null
+                // Don't clear a live socket's endpoint on a transient probe
+                // miss — only drop the published route when nothing is
+                // actually connected.
+                if (_connectionState.value != ConnectionState.Connected) {
+                    _activeEndpoint.value = null
+                }
                 return@launch
             }
-            val newUrl = resolved.relay.url
-            val normalizedNew = normalizeRelayUrl(newUrl)
+            // Endpoint hysteresis: a transient blip can make the active
+            // (higher-priority) endpoint's health probe miss, so the resolver
+            // falls through to a LOWER-priority fallback. Switching on that
+            // transient miss rebuilds the chat client and CANCELS an in-flight
+            // turn. Don't switch DOWN in priority unless a sustained loss was
+            // actually declared (the onLost grace elapsed). Same/upgrade
+            // winners always publish.
+            val active = _activeEndpoint.value
+            if (active != null && resolved.priority > active.priority && !sustainedLossDeclared) {
+                Log.i(
+                    TAG,
+                    "re-resolve picked lower-priority ${resolved.role}(p${resolved.priority}) over " +
+                        "active ${active.role}(p${active.priority}) not confirmed dead — keeping active",
+                )
+                return@launch
+            }
+            sustainedLossDeclared = false
             _activeEndpoint.value = resolved
+            if (current == null) return@launch
+            // After an explicit disconnect() the route still publishes above
+            // (HTTP surfaces keep roaming), but no socket action: without
+            // this gate a network event whose winner differs from the last
+            // URL would resurrect a socket the user deliberately closed.
+            // (connectToUrlOnMainPath force-sets shouldReconnect = true, so
+            // the swap path never re-checked it.)
+            if (!shouldReconnect) return@launch
+            val normalizedNew = normalizeRelayUrl(resolved.relay.url)
             if (normalizedNew != current) {
-                Log.i(TAG, "endpoint fallback: swapping $current → $normalizedNew")
-                connectToUrlOnMainPath(newUrl, closeReason)
+                Log.i(TAG, "network change: swapping $current → $normalizedNew")
+                connectToUrlOnMainPath(resolved.relay.url, closeReason)
             } else if (_connectionState.value == ConnectionState.Disconnected &&
-                shouldReconnect &&
                 reconnectGate()
             ) {
-                Log.i(TAG, "endpoint fallback: same winner is disconnected — reconnecting $current")
+                Log.i(TAG, "network change: same winner is disconnected — reconnecting $current")
                 doConnect(current)
             }
         }
@@ -464,36 +607,33 @@ class ConnectionManager(
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Log.i(TAG, "network onAvailable — re-evaluating endpoint")
-                if (endpointResolver == null) return
-                val url = serverUrl ?: return
-                endpointResolver.clearCache()
-                scope.launch {
-                    val resolved = resolveBestEndpointSafe()
-                    val newUrl = resolved?.relay?.url
-                    if (newUrl == null) {
-                        if (_connectionState.value != ConnectionState.Connected) {
-                            _activeEndpoint.value = null
-                        }
-                        return@launch
-                    }
-                    val normalizedNew = normalizeRelayUrl(newUrl)
-                    _activeEndpoint.value = resolved
-                    // Only swap if the winner actually differs from the
-                    // currently-connected URL. Avoids dropping a healthy
-                    // socket on a no-op network flap (Wi-Fi scan, cell
-                    // handover that ends up on the same route, etc.).
-                    if (normalizedNew != url) {
-                        Log.i(TAG, "network change: swapping $url → $normalizedNew")
-                        connectToUrlOnMainPath(newUrl, "Network change — switching endpoint")
-                    }
-                }
+                // A network returned — cancel any pending loss reaction: the
+                // drop was transient, so don't switch routes / rebuild the chat
+                // client / cancel an in-flight turn. Re-resolve to pick the best
+                // route (usually the same one); the rebuild only fires if the
+                // URL actually moved.
+                networkLossJob?.cancel()
+                endpointResolver?.clearCache()
+                scheduleNetworkReResolve("Network change — switching endpoint")
             }
 
             override fun onLost(network: Network) {
-                Log.i(TAG, "network onLost — marking active endpoint unreachable and resolving fallback")
-                endpointResolver?.clearCache()
-                markActiveEndpointUnreachable("network lost")
-                resolveAndSwitchIfNeeded("Network lost — switching endpoint")
+                // Defer the reaction: a transient blip recovers within the grace
+                // (onAvailable cancels this job). Reacting immediately — marking
+                // the active endpoint unreachable + re-resolving to a fallback —
+                // switches routes mid-blip, which rebuilds the chat client and
+                // CANCELS the in-flight turn. The gateway client already handles
+                // its own socket reconnect across the blip.
+                Log.i(TAG, "network onLost — deferring fallback re-resolve by ${NETWORK_LOSS_GRACE_MS}ms")
+                networkLossJob?.cancel()
+                networkLossJob = scope.launch {
+                    delay(NETWORK_LOSS_GRACE_MS)
+                    Log.i(TAG, "network loss sustained past grace — marking active endpoint unreachable and resolving fallback")
+                    sustainedLossDeclared = true
+                    endpointResolver?.clearCache()
+                    markActiveEndpointUnreachable("network lost (sustained)")
+                    scheduleNetworkReResolve("Network lost — switching endpoint")
+                }
             }
         }
         try {
@@ -510,6 +650,8 @@ class ConnectionManager(
     }
 
     private fun unregisterNetworkCallback() {
+        networkLossJob?.cancel()
+        networkLossJob = null
         val ctx = context ?: return
         val cb = networkCallback ?: return
         try {
@@ -550,10 +692,11 @@ class ConnectionManager(
         webSocket = null
         _connectionState.value = ConnectionState.Disconnected
         _isInsecureConnection.value = false
-        // ADR 24: clear manual override on explicit disconnect — the
-        // Routes card's "Prefer this route" menu contract is that it lasts
-        // until the user disconnects, then resets to resolver-picked.
-        manualRoleOverride = null
+        // ADR 24: clear manual override on explicit disconnect — a "Use
+        // now" switch lasts until the user disconnects, then resets to
+        // resolver-picked. A sticky preferredRouteRole is re-installed by
+        // the ViewModel on the next connection load.
+        _manualRoleOverride.value = null
         _activeEndpoint.value = null
     }
 

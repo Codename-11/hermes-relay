@@ -19,6 +19,7 @@ import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.ComposeArrWorkaround
 import com.hermesandroid.relay.util.NavRouteRequest
@@ -37,7 +38,7 @@ class MainActivity : ComponentActivity() {
     // We do NOT call MediaProjectionHolder directly from here. On Android
     // 14+, getMediaProjection() must run from inside a foreground service
     // that has already called startForeground(type=mediaProjection), and
-    // that startForeground call must happen AFTER consent. So we hand the
+    // that startForeground call must happen AFT consent. So we hand the
     // result off to BridgeForegroundService, which:
     //   1. Upgrades its FGS type to SPECIAL_USE | MEDIA_PROJECTION
     //   2. Calls MediaProjectionHolder.acceptGrantInsideForegroundService
@@ -142,6 +143,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Returning to the app clears the one-slot "Hermes finished
+        // responding" notification — the chat surface is the answer.
+        TurnCompleteNotifier.cancel(this)
         // v0.4.1 — register this activity as the host for
         // KeyguardManager.requestDismissKeyguard. Cleared in onPause so
         // we don't leak the Activity past its lifecycle. The unattended-

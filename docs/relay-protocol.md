@@ -591,6 +591,47 @@ times, currency, percentages, versions, measurements, counts, paths, URLs, IDs,
 JSON, logs, stack traces, tables, and dense numeric strings should be spoken as
 human-readable summaries rather than raw character-by-character dumps.
 
+#### Background Hermes runs (ADR 33)
+
+Short Hermes runs answer in-line (the provider speaks the summary as soon as the
+brokered result returns). A run that exceeds `promote_after_ms` is **promoted**
+to a tracked background task so the provider event pump stays responsive instead
+of blocking on the run:
+
+```json
+{"type":"hermes.run.promoted","event_id":20,"source":"hermes","run_id":"...","tier":"promoted","promote_after_ms":6000,"spoken_handoff":true,"result_delivery":"speak_when_idle","call_id":"call-1"}
+{"type":"hermes.run.background_completed","event_id":41,"source":"hermes","run_id":"...","ok":true,"tool_count":2}
+```
+
+- On promotion the relay closes the pending provider function call with an
+  interim `{"status":"running_in_background"}` output (so the provider socket is
+  not left awaiting a tool result) and, when `spoken_handoff` is on, has the
+  provider speak a brief "I'm on it" line.
+- When the background run finishes, the relay emits
+  `hermes.run.background_completed`, waits for the audio **floor** to be idle,
+  then injects the result through the same forced-summary path so the provider
+  speaks the answer exactly once. `result_delivery` selects `speak_when_idle`
+  (default), `notify_then_speak`, or `visual_only`.
+- `hermes_run_task(mode="background")` skips the grace window and detaches
+  immediately (`tier:"durable"`), even when grace-period promotion is disabled.
+- `hermes.run.progress` carries two extra fields while a run is in flight:
+  `tier` (`foreground` | `promoted` | `durable`) and `floor`
+  (`idle` | `provider_speaking` | `hermes_filler` | `result_pending`). The relay
+  is the single floor owner — a completed background result never barges in, and
+  Android local filler is suppressed while the provider holds the floor.
+- A promoted run is cancellable via `response.cancel` (client) or the
+  `hermes_cancel` provider tool; if the WebSocket detaches mid-run, the
+  completion events replay through the resume event ring.
+
+Promotion is configured per profile under `realtime_voice` (relay) and exposed
+on `GET/PATCH /voice/realtime-agent/config` as a `promotion` block:
+`enabled` (default on), `promote_after_ms`, `background_default_mode`,
+`spoken_handoff`, `progress_spoken_after_ms`, `progress_repeat_ms`,
+`result_delivery`, and `max_background_runs`. The default-on path is safe because
+it closes the pending call rather than holding an open provider response; the
+`scripts/realtime-provider-idle-probe.py` verdict (see `docs/realtime-voice-poc.md`)
+confirms per-provider socket survival across the between-turns idle gap.
+
 If a provider-native realtime turn answers directly without Hermes, Android
 keeps the local user/assistant bubbles and marks that provider-only assistant
 turn as unsynced. The next normal Hermes chat/run request includes those

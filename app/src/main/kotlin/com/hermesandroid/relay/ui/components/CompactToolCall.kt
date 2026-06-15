@@ -1,5 +1,10 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -28,9 +34,11 @@ fun CompactToolCall(
     toolCall: ToolCall,
     modifier: Modifier = Modifier
 ) {
+    val isPreparing = toolCall.isGenerating && !toolCall.isComplete
     val statusText = when {
         toolCall.isComplete && toolCall.success == true -> "completed"
         toolCall.isComplete && toolCall.success == false -> "failed"
+        isPreparing -> "preparing"
         else -> "running"
     }
 
@@ -70,6 +78,24 @@ fun CompactToolCall(
 
         // Status indicator
         when {
+            // tool.generating parity with ToolProgressCard's "preparing"
+            // state — MoreHoriz in Muted with the same alpha breathe; the
+            // Cyan spinner stays reserved for actually-executing tools.
+            isPreparing -> {
+                val breathe = rememberInfiniteTransition(label = "compactToolGenerating")
+                val alpha = breathe.animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 0.9f,
+                    animationSpec = infiniteRepeatable(tween(900), repeatMode = RepeatMode.Reverse),
+                    label = "compactToolGeneratingAlpha",
+                ).value
+                Icon(
+                    imageVector = Icons.Filled.MoreHoriz,
+                    contentDescription = "Preparing",
+                    modifier = Modifier.size(12.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
+                )
+            }
             !toolCall.isComplete -> {
                 CircularProgressIndicator(
                     modifier = Modifier.size(10.dp),

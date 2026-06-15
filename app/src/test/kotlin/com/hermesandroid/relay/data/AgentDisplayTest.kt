@@ -29,21 +29,24 @@ class AgentDisplayTest {
     }
 
     @Test
-    fun effectiveProfile_fallsBackToAdvertisedDefaultProfile() {
+    fun effectiveProfile_isNullWithoutAnExplicitPick() {
+        // No fallback to the advertised "default" profile — its verbose SOUL
+        // summary must not replace the personality-derived agent name.
         val effective = AgentDisplay.effectiveProfile(
             selectedProfile = null,
             profiles = listOf(mizu, defaultProfile),
         )
 
-        assertEquals(defaultProfile, effective)
+        assertEquals(null, effective)
     }
 
     @Test
-    fun agentName_prefersProfileDescriptionThenProfileName() {
+    fun agentName_usesProfileNameNotVerboseDescription() {
+        // The name slot shows the NAME, even when a (verbose) description exists.
         assertEquals(
             "Mizu",
             AgentDisplay.agentName(
-                profile = mizu,
+                profile = mizu.copy(description = "Builds and maintains the codebase"),
                 selectedPersonality = "friendly",
                 defaultPersonality = "default-persona",
                 connectionLabel = "Lab",

@@ -25,7 +25,16 @@ jobs:
       issues: read
       id-token: write
     env:
-      IS_RELEASE_PR: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev' && startsWith(github.event.pull_request.title, 'release:') }}
+      # Any dev -> main PR is, by the branching model, the aggregate release PR
+      # (main only ever receives release merges from dev). Detect it by base+head
+      # alone — a title-format match (e.g. "release:") is fragile and silently
+      # let a "Release v1.0.0 …"-titled PR run the full review and time out.
+      IS_RELEASE_PR: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev' }}
+      # Bot-authored PRs such as Dependabot do not receive the same secret
+      # surface as human-authored PRs, and Claude Code rejects bot actors unless
+      # explicitly allow-listed. Keep the required check green with a no-op and
+      # rely on the dependency CI/status checks for those PRs.
+      IS_BOT_PR: ${{ github.event.pull_request.user.type == 'Bot' }}
 
     steps:
       - name: Skip aggregate release PR review
@@ -34,14 +43,40 @@ jobs:
           echo "Skipping Claude Code Review for aggregate dev -> main release PR."
           echo "Feature work is reviewed before it lands on dev; release PRs are gated by CI and release metadata checks."
 
+      - name: Skip bot-authored PR review
+        if: env.IS_BOT_PR == 'true'
+        run: |
+          echo "Skipping Claude Code Review for bot-authored PR."
+          echo "Bot PRs are gated by Required checks plus their path-specific CI jobs."
+
       - name: Checkout repository
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.IS_RELEASE_PR != 'true' && env.IS_BOT_PR != 'true'
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Depth 2 includes the pull_request merge commit's first parent, which
+          # lets the next step detect whether this PR changes the workflow file.
+          fetch-depth: 2
+
+      - name: Detect Claude review workflow changes
+        if: env.IS_RELEASE_PR != 'true' && env.IS_BOT_PR != 'true'
+        id: changed-workflow
+        shell: bash
+        run: |
+          if git rev-parse --verify HEAD^1 >/dev/null 2>&1 &&
+             git diff --name-only HEAD^1 HEAD | grep -Fxq ".github/workflows/claude-code-review.yml"; then
+            echo "claude_review_workflow=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "claude_review_workflow=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip Claude review workflow self-change
+        if: env.IS_RELEASE_PR != 'true' && env.IS_BOT_PR != 'true' && steps.changed-workflow.outputs.claude_review_workflow == 'true'
+        run: |
+          echo "Skipping Claude Code Review because this PR changes the review workflow itself."
+          echo "The Claude action requires this workflow file to match the default branch before it can exchange the app token."
 
       - name: Run Claude Code Review
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.IS_RELEASE_PR != 'true' && env.IS_BOT_PR != 'true' && steps.changed-workflow.outputs.claude_review_workflow != 'true'
         timeout-minutes: 15
         id: claude-review
         uses: anthropics/claude-code-action@v1

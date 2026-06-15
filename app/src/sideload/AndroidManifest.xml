@@ -38,6 +38,9 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -95,6 +98,9 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Maintains the sideload Device Control bridge while the user has explicitly enabled agent control." />
         </service>
+
+        <!-- Note: GatewayKeepAliveService ("Keep connected in background") is
+             declared in the MAIN manifest so both flavors ship it. -->
     </application>
 
 </manifest>

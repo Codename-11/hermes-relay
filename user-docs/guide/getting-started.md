@@ -4,251 +4,96 @@ import { withBase } from 'vitepress'
 
 # Installation & Setup
 
-## Prerequisites
+Three steps — install the app, point it at your Hermes, say hello. If your
+Hermes agent is already running, this takes about two minutes and needs nothing
+installed on the server.
 
-- Android device or emulator (API 26+ / Android 8.0+)
-- A running [Hermes Agent](https://hermes-agent.nousresearch.com) instance (v0.8.0+ recommended) with the API server enabled
-- Python 3.11+ on the server (for the pairing plugin)
+<div class="gs-steps">
+  <span>1 · Install the app</span>
+  <span>2 · Point it at Hermes</span>
+  <span>3 · Connect &amp; chat</span>
+</div>
 
-## Quick Start
+## 1. Install the app
 
-Three commands get you from zero to connected:
+The easiest way — install from Google Play and get automatic updates:
 
-### 1. Install the Android app
+<div class="gs-install-cta">
+  <StoreBadge />
+</div>
 
-Hermes-Relay ships in **two flavors** built from the same codebase:
+That's the **Google Play** build: chat, profiles, voice, terminal/TUI relay,
+media, the notification companion, relay sessions, and diagnostics. It's what
+most people want.
 
-- **Google Play** — easy install, automatic updates, chat, profiles, voice, terminal/TUI relay, media, notification companion, relay sessions, and diagnostics. It does not include AccessibilityService-backed screen reading or phone control.
-- **Sideload** — manual install from GitHub Releases, full feature set including hands-free voice control of your phone (the agent can read the screen, tap, type, swipe, and navigate apps for you).
+Prefer to install the APK by hand, or want the full phone-control feature set?
+That's the **Sideload** build — same app, plus the agent can read your screen,
+tap, type, and navigate apps for you.
 
-The two builds use different application IDs, so you can install both side-by-side and try them out. Most users want the Google Play version. Read the [Release tracks](/guide/release-tracks) page for the full feature comparison and a decision guide before you pick.
+::: details Google Play vs. Sideload — which build is right for me?
+Both flavors are built from the same codebase and install with **different
+application IDs**, so you can run them side-by-side and try both.
 
-Once you've decided: install from the [Play Store listing](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay), or grab the file ending in `-sideload-release.apk` from the newest Android release (`android-v*`; historical Android releases used bare `v*`) on [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases) and follow the [Sideload APK](#sideload-apk) section below for step-by-step install and integrity-verification instructions.
+| | Google Play | Sideload |
+|---|---|---|
+| Install | One tap, auto-updates | Manual APK from GitHub Releases |
+| Chat, voice, Manage | ✅ | ✅ |
+| Terminal / TUI relay, media, notifications | ✅ | ✅ |
+| Device Control (screen reading, taps, typing, vision navigation) | — | ✅ |
 
-### 2. Install the server plugin
-
-On the machine running your Hermes agent:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
-```
-
-The installer follows Hermes's canonical skill-distribution pattern:
-
-1. Clones the repo to `~/.hermes/hermes-relay/` (override with `$HERMES_RELAY_HOME`)
-2. `pip install -e ~/.hermes/hermes-relay/` into the hermes-agent venv — editable, so `git pull` is all that's needed to update the plugin
-3. Adds `~/.hermes/hermes-relay/skills` to `skills.external_dirs` in `~/.hermes/config.yaml` (idempotent YAML edit) so the `hermes-relay-pair` skill is picked up on every hermes-agent load
-4. Symlinks `~/.hermes/plugins/hermes-relay` → the clone's `plugin/` subdir
-5. Installs a thin `~/.local/bin/hermes-pair` shim that execs `python -m plugin.pair` inside the hermes-agent venv
-6. Installs a systemd user unit at `~/.config/systemd/user/hermes-relay.service` (optional — skipped on macOS, WSL-without-systemd, bare chroots)
-
-Restart hermes-agent after install.
-
-::: tip What you get
-- **Full Hermes-Relay Android app features** — sessions browser, conversation history on app restart, personality picker, command palette, memory management. Just install the plugin and it works.
-- **Full `android_*` bridge toolset for sideload phones** (tap, type, read screen, screenshot, open apps, send SMS, call, search contacts, share files/MMS attachments, etc.) — registered by the plugin only when `/bridge/status` reports a sideload Device Control phone
-- **`/hermes-relay-pair` slash command** — backed by the `devops/hermes-relay-pair` skill and usable from any Hermes chat surface
-- **`hermes-pair` shell shim** — for scripts and power-user flows
-- **Voice mode endpoints** on relay HTTP routes (transcribe, synthesize, voice config, streaming voice output, and Realtime Agent), with paired relay-session auth first and Hermes API-key fallback for chat+voice-only installs
-
-No separate skill install, no `qrencode` binary needed.
+Most users want **Google Play**. Pick **Sideload** if you want the agent to
+operate your phone for you. The [Release tracks](/guide/release-tracks) page has
+the full feature comparison and a decision guide.
 :::
 
-::: info Updating
-Because the installer uses `pip install -e` for the plugin and `external_dirs` for the skill, updates are a single command:
+::::details Sideload install — step by step (download, verify, install)
+Grab the signed APK directly from GitHub Releases — works on any Android 8.0+
+device.
 
-```bash
-cd ~/.hermes/hermes-relay && git pull && bash install.sh
-systemctl --user restart hermes-gateway hermes-relay
-```
-
-`bash install.sh` is idempotent — safe to re-run as often as you like. It re-applies every step against the existing install, picks up any new files, and rebuilds the systemd unit from the latest template.
-:::
-
-::: info Uninstalling
-A clean uninstaller ships in the same repo:
-
-```bash
-bash ~/.hermes/hermes-relay/uninstall.sh
-```
-
-Or if you don't have the clone any more:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/uninstall.sh | bash
-```
-
-The uninstaller reverses every install step in the opposite order, is idempotent, and never touches state shared with other Hermes tools (`~/.hermes/.env`, the gateway's `state.db`, the `hermes-agent` venv core). Useful flags:
-
-```bash
-bash uninstall.sh --dry-run         # preview without changing anything
-bash uninstall.sh --keep-clone      # leave ~/.hermes/hermes-relay in place
-bash uninstall.sh --remove-secret   # also wipe the QR signing identity
-```
-
-By default the QR signing secret at `~/.hermes/hermes-relay-qr-secret` is preserved, so re-installing keeps the same identity and any phones still holding their session tokens stay valid.
-:::
-
-### 3. Pair your phone
-
-You have two equivalent entry points — pick whichever fits where you already are:
-
-**From an active Hermes session** (shortest path if you're already chatting with the agent): type `/hermes-relay-pair` in any chat surface — CLI, Discord, Telegram, anywhere Hermes is listening. The `hermes-relay-pair` skill generates the QR and renders it inline for you. No shell required.
-
-**From a shell** (power-user / scriptable): on the server, run
-
-```bash
-hermes-pair
-```
-
-The dashed `hermes-pair` is a thin shim that execs `python -m plugin.pair` in the hermes-agent venv. Both routes share the same implementation and produce the same QR + plain-text output.
-
-::: warning `hermes pair` (with a space) is not currently exposed
-A top-level `hermes pair` sub-command would be nice, but hermes-agent v0.8.0's top-level argparser doesn't forward to third-party plugins' `register_cli_command()` dict yet. Use `/hermes-relay-pair` or the dashed `hermes-pair` shim in the meantime — both work today and will keep working once the upstream gap is closed.
-:::
-
-This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the values in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works inside Hermes's Rich TUI panel and over SSH with limited charsets.
-
-**One scan configures chat *and* the relay.** If you've already started the Hermes-Relay WSS server on the same host (see [Relay Server](#relay-server-optional) below), `hermes-pair` automatically detects it at `localhost:8767`, mints a fresh 6-char pairing code, pre-registers the code with the relay via its loopback-only `/pairing/register` endpoint, and embeds the relay URL and code in the same QR. The phone scans once and is ready for chat, terminal, and bridge.
-
-If the relay isn't running, `hermes-pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. Voice can use the saved Hermes API key too, so chat+voice does not require a paired Relay session. In manual setup, enter the API URL and API key first; the app derives the Relay URL from the same host on port `8767` and only asks for a manual override if `/voice/config` cannot be reached. Bridge Core, terminal/TUI, media, and sideload Device Control routes still require pairing. Plain-LAN voice testing with an API key requires HTTPS or a local runtime opt-in on the relay host: `hermes relay insecure-api-key on` while testing, then `hermes relay insecure-api-key off`. You can also force API-only mode explicitly:
-
-```bash
-hermes-pair --no-relay
-```
-
-#### Choosing session lifetime + channel grants
-
-By default the phone prompts you to pick a session TTL when you scan the QR (1 day / 7 days / 30 days / 90 days / 1 year / never expire). You can also **pre-set** the TTL and per-channel grants on the host side so the phone's picker dialog opens with your chosen values already selected:
-
-```bash
-# Pair for 7 days
-hermes-pair --ttl 7d
-
-# Pair indefinitely, limit terminal to 30 days and bridge to 1 day
-hermes-pair --ttl never --grants terminal=30d,bridge=1d
-
-# Short-lived dev session
-hermes-pair --ttl 1d
-```
-
-Supported duration formats: `1d`, `7d`, `30d`, `90d`, `1y`, `never` (or any `<number><unit>` combo where unit is `s`/`m`/`h`/`d`/`w`/`y`). Grants can be pre-set for `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, and `voice:tts` and are automatically clamped to the overall session TTL — a grant cannot outlive its session. If you omit voice grants, new sessions get them by default, and older sessions inherit voice from the `chat` grant.
-
-::: tip Camera unavailable? Use manual pairing
-If you can't scan a QR — for example you're SSH'd into the host from the same phone you want to pair, the host has no display attached, or there's no second camera-equipped device handy — Hermes-Relay ships a manual fallback flow. Open the app's **Settings → Connections → [active card] → Advanced → Manual pairing code (fallback)** section to read its locally-generated 6-char code, then on the host run:
-
-```bash
-hermes-pair --register-code ABCD12             # default 30d session
-hermes-pair --register-code ABCD12 --ttl 7d    # composes with --ttl / --grants
-```
-
-The command pre-registers your code with the local relay over loopback and prints a confirmation. Tap **Connect** in the same card and you're paired. Same 10-minute single-use expiry as QR codes; same TTL/grant rules — `--ttl` and `--grants` flags compose with `--register-code` exactly the same way they compose with the default QR flow.
-:::
-
-The phone's TTL picker dialog always opens on scan, preselected with your chosen values, so you have one final chance to confirm or override before the session is created. The selection you make is persisted as the new default for future pairs.
-
-::: tip Never expire
-`Never expire` is always available in the picker regardless of transport. The phone treats your intent as the trust model rather than gating on secure-transport detection — if you explicitly pick it, the session stays active until you revoke it from **Relay sessions**.
-:::
-
-#### Transport security — plain connections and pairing consent
-
-The app renders a **Transport Security** badge inside the active connection card's Security section:
-
-- 🔒 **Secure (TLS)** — paired over `wss://` / `https://`
-- 🔓 **Plain (on LAN / Tailscale / public URL)** — paired over `ws://` / `http://`; the label reflects the **currently active route** so a Tailscale fallback reads honestly even if you originally paired over LAN
-- 🔓 **Plain (no TLS)** — plain transport with no active-route information yet (cold start, or manual URL config before the first probe)
-
-Amber, not red — the trust model on `ws://` is the network perimeter, not TLS. A home/office LAN and a private Tailscale network are both legitimate trust domains for plain transport; the badge is factual, not alarming.
-
-**Three different consent gates** exist for plain transport, each firing at the moment that actually changes the threat model:
-
-1. **Scanning an all-plain QR** (no secure route in the candidate list) — one-time per install. The pairing confirm step renders a checkbox: *"I understand this pairing sends traffic in plain text — visible to anyone on the network."* Tick it once per install; the Pair button activates. Subsequent all-plain pairs don't re-prompt. Mixed QRs (LAN + Tailscale) are ungated — the secure fallback is your safety net.
-2. **First toggle of "Allow plain (unencrypted) connections"** in the active card's Advanced section — opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason displays on the badge afterward (though the role-aware label above usually overrides it).
-3. **Changing a paired TTL to "Never expire"** on a plain connection — inline warning, no forced confirm. The trust model is already established at pair time.
-
-The app also runs a **Trust On First Use** (TOFU) cert pinning check on `wss://` connections: on the first successful handshake it records the server's certificate fingerprint, and every subsequent connect verifies against it. If the cert changes (because the relay was rebuilt, the Let's Encrypt cert rolled over, or an MITM is happening), the connection fails loudly. Re-pairing via QR is taken as explicit consent to pin a new certificate.
-
-#### Relay sessions management
-
-**Settings → Connections → [active card] → Security → Relay sessions** (or simply **Settings → Relay sessions**) lists every phone currently paired with the relay — device name, transport badge, route list, session expiry, per-channel grant chips (tap the info icon next to *Channel grants* for an explanation of what each channel does), and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired phone can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
-
-::: tip Multiple Hermes servers
-The app supports pairing with more than one Hermes server (home + work, dev + prod, etc.) and switching with a single tap. Once you've paired the first server, open **Settings → Connections** to add a second — it launches the same QR flow. When you have two or more, a **Connection** radio list appears inside the agent sheet (tap the agent name in the Chat top bar), letting you switch without re-pairing. See [Connections](/features/connections) for the full model.
-:::
-
-::: warning Security
-The QR contains credentials — your API key if one is set, and the relay pairing code if a relay block was embedded. The pairing QR is now also signed with HMAC-SHA256 using a host-local secret (auto-created at `~/.hermes/hermes-relay-qr-secret`, mode 0o600). Don't screenshot or share it. The relay code is one-shot and expires in 10 minutes, but the API key is long-lived.
-:::
-
-## Hermes Server Setup
-
-Enable the API server in your Hermes configuration (`~/.hermes/.env`):
-
-```bash
-API_SERVER_ENABLED=true
-API_SERVER_KEY=your-secret-key-here
-API_SERVER_HOST=0.0.0.0  # Allow network access (default is localhost only)
-API_SERVER_PORT=8642
-```
-
-::: tip API key is optional for local setups
-If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, `hermes-pair` reads it automatically, and the dashboard's pair/repair QR flow now reads the same key through the relay so chat sessions and voice pairing stay in sync.
-:::
-
-## Sideload APK
-
-If you'd rather not use Google Play, you can install the signed APK directly from GitHub Releases. This works on any Android 8.0+ device.
-
-### 1. Download the APK
-
-Head to [github.com/Codename-11/hermes-relay/releases](https://github.com/Codename-11/hermes-relay/releases), open the newest Android release (`android-v*`; historical Android releases used bare `v*`), and grab the file ending in **`-sideload-release.apk`** from the assets list — for example, `hermes-relay-0.8.0-sideload-release.apk`. Every release is version-tagged, so the exact prefix changes each version but the `-sideload-release.apk` suffix stays constant.
-
-::: tip Why "sideload" and not "googlePlay"?
-Each release ships both a `-sideload-release.apk` (full Device Control set — screen reading, bridge channel, voice-to-bridge intents, vision-driven navigation) and a `-googlePlay-release.apk` (conservative Play Store build without AccessibilityService-backed screen reading or phone control). Most sideloaders want the `-sideload-` flavor. The two builds install with different application IDs, so you can have both side-by-side.
-:::
+**1. Download the APK.** Head to
+[github.com/Codename-11/hermes-relay/releases](https://github.com/Codename-11/hermes-relay/releases),
+open the newest Android release (`android-v*`; historical Android releases used
+bare `v*`), and grab the file ending in **`-sideload-release.apk`** — for
+example, `hermes-relay-1.0.0-sideload-release.apk`.
 
 ::: warning Download the .apk, not the .aab
-Each release also ships `-release.aab` files. That's the Android App Bundle format Google Play uses internally — it **won't install directly** on your device. Always pick a file ending in `.apk` for sideloading.
+Each release also ships `-release.aab` files. That's the Android App Bundle
+format Google Play uses internally — it **won't install directly** on your
+device. Always pick a file ending in `.apk`.
 :::
 
-### 2. Allow installs from your browser (first time only)
-
-Android blocks APKs from unknown sources by default. Before the install prompt appears, you'll need to grant permission to whichever app you used to download the file (usually Chrome, Firefox, or your Files app):
+**2. Allow installs from your browser (first time only).** Android blocks APKs
+from unknown sources by default:
 
 - **Settings → Apps → Special app access → Install unknown apps**
 - Pick the browser or file manager you downloaded the APK with
 - Toggle **Allow from this source**
 
-The exact wording varies by OEM (Samsung calls it "Install unknown apps", Pixel calls it "Install unknown apps", older versions use "Security → Unknown sources"), but the idea is the same.
+The exact wording varies by OEM (Samsung and Pixel both say "Install unknown
+apps"; older versions use "Security → Unknown sources"), but the idea is the same.
 
-### 3. Install it
+**3. Install it.** Open the downloaded APK from your Downloads notification or
+the Files app, then tap **Install**.
 
-Open the downloaded APK from your Downloads notification or the Files app, then tap **Install**. The first launch will walk you through onboarding and pairing.
+**4. Verify integrity (optional but recommended).** Every release ships a
+`SHA256SUMS.txt`. Compare your download's checksum before installing:
 
-### 4. Verify integrity (optional but recommended)
-
-Every release ships a `SHA256SUMS.txt` file alongside the APK. Compare the checksum of your download against it before installing:
-
-**macOS / Linux / Git Bash:**
-
-```bash
+::: code-group
+```bash [macOS / Linux / Git Bash]
 sha256sum hermes-relay-*-sideload-release.apk
 # Compare the output against the matching line in SHA256SUMS.txt
 ```
-
-**Windows PowerShell:**
-
-```powershell
+```powershell [Windows]
 Get-FileHash -Algorithm SHA256 hermes-relay-*-sideload-release.apk
 # Compare the Hash column against the matching line in SHA256SUMS.txt
 ```
+:::
 
 If the hashes don't match, **don't install** — redownload and try again.
 
-### 5. Verify the signing certificate (advanced)
-
-The APK is signed with the Codename-11 release keystore. If you want to confirm the signature matches the one Google Play pins to the app, check the SHA256 fingerprint of the certificate:
+**5. Verify the signing certificate (advanced).** The APK is signed with the
+Codename-11 release keystore. To confirm the signature matches the one Google
+Play pins to the app:
 
 - **Subject:** `CN=Bailey Dixon, Codename-11`
 - **SHA256 fingerprint:**
@@ -256,76 +101,203 @@ The APK is signed with the Codename-11 release keystore. If you want to confirm 
   A9:A4:2D:94:20:8B:94:B3:68:5B:01:93:E3:94:9B:90:50:AD:80:60:56:E7:16:3C:FC:E5:11:AF:68:0D:79:4B
   ```
 
-You can inspect it yourself with:
-
 ```bash
 keytool -printcert -jarfile hermes-relay-*-sideload-release.apk
 ```
+::::
 
-## Manual Install (from source)
-
-If you prefer to build the app yourself:
-
+::: details Build it yourself from source
 ```bash
 git clone https://github.com/Codename-11/hermes-relay.git
 cd hermes-relay
 scripts/dev.bat build    # Build debug APK
 scripts/dev.bat run      # Build + install + launch (requires connected device)
 ```
-
-## Manual Pairing
-
-If you don't want to use QR pairing, you can enter connection details by hand — either during the app's onboarding flow or later from Settings.
-
-**During onboarding:**
-
-1. The app opens with an onboarding flow
-2. On the **Connect** page, tap **Enter manually**
-3. Type your API Server URL (e.g., `http://192.168.1.100:8642`) and API Key
-4. Tap **Test Connection** to verify
-5. Optionally enter a **Relay URL** for Terminal/Bridge features
-6. Tap **Get Started**
-
-**After onboarding:** open **Settings → Connections**. Each paired server is a card in the list; the currently-active card expands inline to show status rows, endpoint details, and an **Advanced** section with manual URL config, insecure-mode toggle, and the manual pairing-code fallback flow. The per-card **Re-pair** button is the one-tap entry point for scanning a new QR. API Server URL, API Key, Relay URL, and Insecure Mode all live under the active card's **Advanced** expander, with **Save & Test** for each.
-
-The `hermes-pair` command always prints these same values as plain text alongside the QR code, so you can copy them directly.
-
-## Relay Server (Optional)
-
-The relay server is only needed for **Terminal** (remote shell) and **Bridge** (agent-driven phone control). Chat works without it.
-
-::: tip Start the relay
-```bash
-# If you installed the hermes-relay plugin (recommended):
-hermes relay start --no-ssl
-
-# Or directly from a repo checkout:
-python -m plugin.relay --no-ssl
-```
-Run this on the same machine as hermes-agent. If the relay is running when you execute `hermes-pair` (or `/hermes-relay-pair`), its URL and a freshly-registered pairing code are automatically embedded in the QR — you don't need to enter anything in the app.
 :::
 
-For persistent deployment, Docker, systemd, and TLS options, see the [Relay Server docs](/reference/relay-server).
+## 2. Point it at Hermes
 
-If you only saw an API-only QR earlier (because the relay wasn't running), just start the relay and re-run `hermes-pair` — the new QR will include the relay block.
+Hermes-Relay talks to two upstream Hermes surfaces:
 
-## Connecting from Anywhere (Tailscale, VPN, Public URL)
+- **API server** on `:8642` — Chat and sessions
+- **Dashboard** on `:9119` — Manage sign-in and admin screens
 
-Hermes-Relay supports **multi-endpoint pairing**: one QR carries every network path your server is reachable on, and the phone auto-picks whichever is reachable at the moment. Works across LAN / cell / tailnet / public reverse proxy without re-pairing when you change networks.
+::: tip Already have a Hermes server — or someone set one up for you?
+If Hermes is already running, or a more technical friend handed you a **server
+URL and key**, you're done with this step — skip straight to
+[step 3 (Connect)](#_3-connect-chat). Everything below is only for setting up the
+Hermes server itself the first time.
+:::
 
-**Default — `--mode auto`.** `hermes-pair --mode auto` (run on the server) probes the LAN, detects Tailscale if it's running, and emits an ordered candidate list in the QR. To include an external reverse-proxy or Cloudflare Tunnel URL, add `--public-url https://hermes.example.com`.
+You'll need a reachable [Hermes Agent](https://hermes-agent.nousresearch.com)
+instance (v0.8.0+ recommended). The Relay power-user plugin (step 4) additionally
+needs Python 3.11+ on the server.
 
-**Enable Tailscale on the server** with `hermes-relay-tailscale enable` — this fronts the loopback-bound relay port `8767` and Hermes API port `8642` with `tailscale serve`, using Tailscale's managed TLS + tailnet ACLs. Both ports matter: relay pairing covers terminal/bridge/control features, while chat and API-key voice use the Hermes API server. Skip this if you prefer a reverse proxy + Let's Encrypt, or a self-hosted VPN — both work identically as long as the phone can reach both services.
+::::details Set up Hermes + an API key (first-time server setup)
+**What the app actually needs** is three things: the Hermes API server
+**enabled**, **reachable from your phone**, and an **API key** — the bearer token
+the app sends to authenticate Chat. Installing Hermes and choosing a
+provider/model is ordinary Hermes setup, so we defer that to the official docs
+([Installation](https://hermes-agent.nousresearch.com/docs/getting-started/installation),
+[Nous Portal](https://hermes-agent.nousresearch.com/docs/integrations/nous-portal),
+[API Server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server)).
+The block below is just the app-facing minimum.
 
-**Forcing a specific mode at pair time** — `--mode` accepts `auto`, `lan`, `tailscale`, or `public`. `--prefer <role>` promotes a named role to priority 0 (e.g. `--prefer tailscale` for a QR biased toward the tailnet even when LAN is reachable). Role matching is open-vocabulary for endpoint roles emitted by operator tooling, but the built-in CLI modes are fixed.
+If Hermes is already installed and a provider is configured, skip the install and
+`hermes setup --portal` lines and run only the `.env` + `hermes gateway` part.
 
-**Override per-session on the phone** — Settings → Connections → [active card] → **Show routes** expander → row menu → **Prefer this route**.
+::: code-group
+```bash [macOS / Linux / WSL2 / Termux]
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+hermes setup --portal                      # log in / pick a provider — skip if already configured
 
-For the full matrix (Tailscale, Caddy + Let's Encrypt, Cloudflare Tunnel, self-hosted WireGuard, plaintext over trusted VPN) with working config blocks, see [Remote access](/guide/remote-access), [remote-access.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/remote-access.md), and the [Connections page](/features/connections#multi-endpoint-pairing-one-qr-for-every-network).
+# Pick any API_SERVER_KEY you like — you'll scan or type it into the app.
+# openssl just generates a strong random one; substitute your own if you prefer.
+mkdir -p ~/.hermes
+API_SERVER_KEY="$(openssl rand -hex 32)"
+cat >> ~/.hermes/.env <<EOF
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_PORT=8642
+API_SERVER_KEY=$API_SERVER_KEY
+EOF
+chmod 600 ~/.hermes/.env
 
-## Verify Connection
+echo "Android API URL: http://<this-computer-ip>:8642"
+echo "Android API key: $API_SERVER_KEY"
+hermes gateway
+```
+```powershell [Windows]
+iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+hermes setup --portal                      # log in / pick a provider — skip if already configured
 
-Once you're connected, the chat looks like this — streaming responses, tool cards, markdown rendering, and the personality picker all live:
+# Pick any API key you like — you'll scan or type it into the app.
+$HermesDir = Join-Path $HOME ".hermes"
+New-Item -ItemType Directory -Force $HermesDir | Out-Null
+$ApiKey = ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
+@"
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_PORT=8642
+API_SERVER_KEY=$ApiKey
+"@ | Add-Content (Join-Path $HermesDir ".env")
+
+Write-Host "Android API URL: http://<this-computer-ip>:8642"
+Write-Host "Android API key: $ApiKey"
+hermes gateway
+```
+:::
+
+What each line does: `API_SERVER_ENABLED=true` turns the API server on (it's off by
+default); `API_SERVER_HOST=0.0.0.0` makes it reachable on your network (Hermes
+defaults to `127.0.0.1`, which only the host itself can reach); `API_SERVER_PORT`
+is the port the app assumes; `API_SERVER_KEY` is the token the app sends on every
+request. Replace `<this-computer-ip>` with the address your phone can reach — a LAN
+IP, Tailscale name, or HTTPS reverse-proxy host. Don't use `127.0.0.1` from Android
+unless Hermes is running on the phone itself.
+
+::: warning Binding to 0.0.0.0 exposes the API to your whole network
+`0.0.0.0` lets any device on the same network reach the API server, which is why
+the bearer key matters. On a home LAN behind a router that's normally fine. On
+untrusted or public networks, don't expose it directly — keep the key set and
+front it with Tailscale or an HTTPS reverse proxy (see [Remote access](/guide/remote-access)).
+To limit it to a single interface, set `API_SERVER_HOST` to a specific LAN IP
+instead of `0.0.0.0`.
+:::
+
+::: tip The key is yours to choose — and you don't have to thumb-type it
+Three easy ways to get the key onto your phone (no 64-character typing required):
+- **Scan for Hermes on LAN** in the app finds the server automatically; you enter
+  the key once.
+- Ask your **Hermes agent to generate a QR code** containing the API URL and key —
+  for example a QR encoding `{"api_url":"http://<this-computer-ip>:8642","api_key":"<your-key>"}` —
+  then scan it from **Scan setup QR**.
+- Type it by hand. A memorable passphrase is easier to type; a random key is
+  stronger. Either works — and if your server runs with no key at all, leave the
+  app's key field blank.
+:::
+::::
+
+**Optional — only for Manage and voice.** Chat works fine without the dashboard.
+Set it up if you want to browse and install skills, switch models, manage keys,
+and edit profiles from your phone, or use voice on a vanilla install.
+
+::::details Enable Manage (Skills, Cron, Models, Keys) — run the dashboard
+For **Manage**, run the Hermes dashboard on a phone-reachable URL. Because your
+phone reaches it on a non-loopback address, the dashboard **requires auth** — it
+won't start on `0.0.0.0` without a provider configured — so set credentials
+*first*, then start it. On a trusted LAN or VPN, username/password is the quick
+path:
+
+::: code-group
+```bash [macOS / Linux]
+# Run on the Hermes host. Replace choose-a-strong-password with your own.
+DASHBOARD_SECRET="$(openssl rand -base64 32)"
+cat >> ~/.hermes/.env <<EOF
+HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
+HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=choose-a-strong-password
+HERMES_DASHBOARD_BASIC_AUTH_SECRET=$DASHBOARD_SECRET
+EOF
+chmod 600 ~/.hermes/.env
+
+hermes dashboard --no-open --host 0.0.0.0 --port 9119
+```
+```powershell [Windows]
+# Set the same HERMES_DASHBOARD_* values in $HOME\.hermes\.env (use your own password), then:
+hermes dashboard --no-open --host 0.0.0.0 --port 9119
+```
+:::
+
+You sign in with this username/password from the app's **Manage** tab the first
+time. For stronger setups Hermes also accepts a hashed password
+(`HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`) instead of plaintext, and for a
+public or hosted dashboard you should use Nous OAuth or self-hosted OIDC rather
+than a password — see the upstream
+[Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard) docs.
+On the host's own loopback the dashboard runs without auth; the credentials above
+are needed only because your phone connects over the network. (The dashboard also
+reads and writes `~/.hermes/.env`, which holds your keys and secrets.)
+
+::: warning Dashboard auth and API bearer auth are different
+The API key from the previous step is for Android Chat on `:8642`. Dashboard
+sign-in on `:9119` uses dashboard cookies plus short-lived `/api/ws` tickets.
+Android supports dashboard username/password and Nous/OIDC sign-in for Manage,
+but dashboard login does **not** create an API key.
+:::
+::::
+
+## 3. Connect & chat
+
+On first launch:
+
+1. Tap through the onboarding pages.
+2. On **Connect**, pick whichever is easiest:
+   - **Standard Hermes** → tap **Scan for Hermes on LAN** to auto-find the
+     server, then enter your key; or type the API URL
+     (`http://192.168.1.100:8642`) and key by hand.
+   - **Scan setup QR** → scan a QR containing your URL and key. There's no
+     upstream mobile-pairing command for the standard path yet, so the handy
+     trick is to ask your **Hermes agent to generate one** — a QR encoding
+     `{"api_url":"http://192.168.1.100:8642","api_key":"<your-key>"}` is accepted.
+3. Optional: add a Tailscale API URL such as `https://your-host.ts.net:8642` in
+   the **Remote access** field.
+4. Tap **Connect**.
+
+That's it — Chat is live, and the Manage surfaces (Skills, Cron, MCP, Profiles,
+Models/Config) light up too. Manage may ask you to sign in to the dashboard the
+first time; that same sign-in also unlocks voice for the connection. **Relay
+pairing is not required for any of this.**
+
+::: tip Home and away on one connection
+Save both a LAN URL and a Tailscale URL and Android probes them on every connect,
+using the highest-priority reachable one. Chat and Manage move together — LAN at
+home, Tailscale when you leave.
+:::
+
+### See it working
+
+Once you're connected, chat streams like this — responses, tool cards, markdown,
+and the personality picker, all live:
 
 <div class="demo-video-wrap">
   <video
@@ -339,7 +311,170 @@ Once you're connected, the chat looks like this — streaming responses, tool ca
   />
 </div>
 
+The chat header shows the agent name with a green pulse on the avatar when the
+API server is reachable. If the dot is red:
+
+- Is the Hermes agent running? (`hermes gateway`)
+- Is `API_SERVER_ENABLED=true`?
+- Can your phone reach the server? (same network, firewall rules)
+- Is the URL correct? (include the port, e.g. `:8642`)
+
+More: [Troubleshooting](/guide/troubleshooting) · [Chat guide](/guide/chat) ·
+[Connections](/features/connections).
+
+## 4. Optional — add Relay power tools
+
+Skip this unless you want **Terminal**, **Bridge** device control, **Relay
+sessions**, channel grants, or relay-backed device-control features. Chat, voice,
+and Manage all work without it.
+
+::::details Install the Relay plugin + pair
+On the Hermes host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+hermes relay start --no-ssl
+hermes pair
+```
+
+`hermes pair` is provided by the Hermes-Relay plugin through upstream Hermes'
+plugin CLI support; it is not a built-in Hermes core command. Then scan the QR in
+Android from **Settings → Connections → Pair Relay**, or from onboarding's **Scan
+setup QR** path. If the relay isn't running, the plugin can still print an
+API-only QR, so Chat works and Relay can be paired later.
+
+::: tip Start the relay
+```bash
+# If you installed the hermes-relay plugin (recommended):
+hermes relay start --no-ssl
+
+# Or directly from a repo checkout:
+python -m plugin.relay --no-ssl
+```
+Run this on the same machine as hermes-agent. On current upstream Hermes installs
+with the plugin enabled, the plugin-provided `hermes pair` is available — when the
+relay is running, its URL and a fresh pairing code are embedded in the QR
+automatically.
+:::
+
+For persistent deployment, Docker, systemd, and TLS options, see the
+[Relay Server docs](/reference/relay-server).
+
+If you only saw an API-only QR earlier (because the relay wasn't running), just
+start the relay and re-run `hermes pair` — the new QR will include the relay block.
+::::
+
+::: tip Multiple Hermes servers
+The app can save more than one Hermes server, such as Home and Work. Add or
+switch servers later in **Settings → Connections**.
+:::
+
+## Connecting from anywhere (Tailscale, VPN, public URL)
+
+Hermes-Relay supports **multi-endpoint pairing**: one QR carries every network
+path your server is reachable on, and the phone auto-picks whichever is reachable
+at the moment — LAN, cell, tailnet, or public reverse proxy — without re-pairing
+when you change networks.
+
+- **Default — `--mode auto`.** `hermes pair --mode auto` (on the server) probes
+  the LAN, detects Tailscale if it's running, and emits an ordered candidate list
+  in the QR. Add `--public-url https://hermes.example.com` to include an external
+  reverse-proxy or Cloudflare Tunnel URL.
+- **Enable Tailscale on the server** with `hermes-relay-tailscale enable` — this
+  fronts the loopback relay port `8767` and Hermes API port `8642` with
+  `tailscale serve`, using Tailscale's managed TLS + tailnet ACLs. (Both ports
+  matter: relay pairing covers terminal/bridge/control; chat and API-key voice
+  use the Hermes API server.) Prefer a reverse proxy + Let's Encrypt or a
+  self-hosted VPN? Both work identically as long as the phone can reach both
+  services.
+- **Force a mode at pair time** — `--mode` accepts `auto`, `lan`, `tailscale`, or
+  `public`. `--prefer <role>` promotes a named role to priority 0 (e.g.
+  `--prefer tailscale`).
+- **Override per-session on the phone** — Settings → Connections → [active card] →
+  **Show routes** → row menu → **Prefer this route**.
+
+For the full matrix (Tailscale, Caddy + Let's Encrypt, Cloudflare Tunnel,
+self-hosted WireGuard, plaintext over trusted VPN) with working config blocks,
+see [Remote access](/guide/remote-access) and the
+[Connections page](/features/connections#multi-endpoint-pairing-one-qr-for-every-network).
+
+## Reference
+
+::: details Dashboard login from Android (auth modes)
+Manage uses the Hermes dashboard/admin server and stores dashboard cookies
+separately from Relay pairing credentials.
+
+- **Dashboard auth disabled / open dashboard:** Manage works as long as Android
+  can reach the dashboard URL.
+- **Basic username/password login:** supported. Android posts to
+  `/auth/password-login` with the upstream `basic` provider, stores the dashboard
+  cookies, and checks `/api/auth/me`.
+- **Nous OAuth / OIDC redirect login:** supported. Android opens the dashboard's
+  `/auth/login?provider=...` flow in an in-app WebView, imports the resulting
+  cookies, checks `/api/auth/me`, and probes `/api/auth/ws-ticket`.
+- **Custom password providers:** supported when `/api/auth/providers` advertises
+  `supports_password: true`.
+
+Relay pairing does not replace dashboard login, and dashboard login does not mint
+an API key: it matches the Hermes Desktop remote-gateway path by authenticating
+`/api/ws` and `/api/pty` with dashboard cookies plus a single-use ticket from
+`/api/auth/ws-ticket`. API-key chat remains the fallback until Android's native
+dashboard-gateway chat adapter is wired in.
+:::
+
+::: details Manual connection setup (no QR)
+**During onboarding:**
+
+1. On the **Connect** page, tap **Standard Hermes**.
+2. Type your API server URL — e.g. `http://192.168.1.100:8642` — scan for Hermes
+   on LAN, or scan a generic QR containing the API URL/key.
+3. Enter the value you set in `API_SERVER_KEY` if the QR didn't include it.
+4. Optional: enter a Tailscale API URL such as `https://your-host.ts.net:8642`.
+5. Tap **Connect**.
+
+**After onboarding:** open **Settings → Connections**. Each Hermes host is a card;
+the active card expands inline to show status rows, route details, and an
+**Advanced** section with manual API URL/key config, Relay URL override,
+insecure-mode toggle, and the manual Relay pairing-code fallback. The per-card
+**Pair Relay** / **Re-pair** button scans a Relay QR when you need power tools.
+
+For Standard setup there is no built-in upstream mobile pairing command yet, so
+use LAN scan, copy/paste, or a generic QR with the API URL/key. If a QR includes
+a Relay block, Android shows the Relay pairing confirmation and TTL/grants picker;
+if it's API-only, Android saves the standard API/dashboard connection.
+:::
+
+::: details Uninstall the Relay plugin
+```bash
+bash ~/.hermes/hermes-relay/uninstall.sh
+# or, if the clone is already gone:
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/uninstall.sh | bash
+```
+Idempotent, and never touches state shared with other Hermes tools. Flags:
+`--dry-run`, `--keep-clone`, `--remove-secret`.
+:::
+
 <style scoped>
+.gs-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 1.25rem 0 2rem;
+}
+.gs-steps span {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-2);
+  background: var(--vp-c-bg-alt);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+}
+.gs-install-cta {
+  margin: 1.25rem 0 1.5rem;
+}
 .demo-video-wrap {
   display: flex;
   justify-content: center;
@@ -355,10 +490,3 @@ Once you're connected, the chat looks like this — streaming responses, tool ca
   background: #000;
 }
 </style>
-
-After onboarding, the chat header shows the agent name with an animated green pulse on the avatar when the API server is reachable. If the dot is red (no pulse), check:
-
-- Is the Hermes agent running? (`hermes gateway`)
-- Is `API_SERVER_ENABLED=true`?
-- Can your phone reach the server? (same network, firewall rules)
-- Is the URL correct? (include port, e.g., `:8642`)

@@ -383,8 +383,8 @@ export default {}
 <style scoped>
 /* ══════════════════════════════════════════════════════════════════════
    FeatureMatrix — flat, border-separated, single accent.
-   Matches the Nothing-inspired theme used by HermesFlow / InstallSection /
-   HeroDemo: Space Grotesk + Space Mono, --vp-c-brand-1 purple accent, no
+   Matches the relay cockpit theme used by HermesFlow / InstallSection /
+   HeroDemo: Space Grotesk + Space Mono, --vp-c-brand-1 Relay accent, no
    gradients, no shadows, no blur.
    ══════════════════════════════════════════════════════════════════════ */
 
@@ -571,7 +571,7 @@ export default {}
   letter-spacing: 0.04em;
 }
 .fm-cell-track--sl {
-  background: rgba(124, 58, 237, 0.04);
+  background: rgba(110, 124, 255, 0.06);
 }
 
 /* Support states — color, opacity, weight */

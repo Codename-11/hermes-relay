@@ -183,7 +183,7 @@ hermes-relay tools --remote <url> --json                # machine-readable
 
 ## `hermes-relay devices`
 
-Server-side paired-device management (the relay's `GET/DELETE/PATCH /sessions` HTTP API). Shows all paired devices across all your clients — Android phones, desktop CLIs, Ink TUIs — and lets you revoke or extend them.
+Server-side paired-device management (the relay's `GET/DELETE/PATCH /sessions` HTTP API). Shows all paired devices across all your clients — Android phones, CLI clients, Ink TUIs — and lets you revoke or extend them.
 
 ```bash
 hermes-relay devices                               # list (defaults to the one stored relay)

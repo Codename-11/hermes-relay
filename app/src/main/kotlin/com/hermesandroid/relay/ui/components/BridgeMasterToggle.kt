@@ -44,7 +44,7 @@ import com.hermesandroid.relay.viewmodel.BridgeStatus
  * Phase 3 Wave 1 — bridge-ui (`bridge-screen-ui`). Visual style mirrors the status
  * cards in `PairedDevicesScreen`: surfaceVariant background, 16dp padding,
  * 10dp row spacing. Uses [ConnectionStatusBadge] for the pulsing status dot
- * so the Bridge tab looks visually consistent with the Settings → Connection
+ * so the Bridge tab looks visually consistent with the Settings → Connections
  * section.
  *
  * The headline switch is `enabled = allowEnable` so users can't flip it on

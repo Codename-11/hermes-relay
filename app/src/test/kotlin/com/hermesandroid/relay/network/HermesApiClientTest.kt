@@ -1,8 +1,11 @@
 package com.hermesandroid.relay.network
 
+import com.hermesandroid.relay.network.models.SkillListResponse
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -171,6 +174,47 @@ class HermesApiClientTest {
         assertEquals(ChatMode.ENHANCED_HERMES, capabilities.toChatMode())
     }
 
+    @Test
+    fun parseCapabilitiesBody_prefersNativeUpstreamSessionFeatures() {
+        val body = """
+            {
+                "object": "hermes.api_server.capabilities",
+                "features": {
+                    "chat_completions": true,
+                    "run_events_sse": true,
+                    "session_resources": true,
+                    "session_chat_streaming": true,
+                    "skills_api": true
+                },
+                "endpoints": {
+                    "chat_completions": {"method": "POST", "path": "/v1/chat/completions"},
+                    "run_events": {"method": "GET", "path": "/v1/runs/{run_id}/events"},
+                    "sessions": {"method": "GET", "path": "/api/sessions"},
+                    "session_chat_stream": {"method": "POST", "path": "/api/sessions/{session_id}/chat/stream"},
+                    "skills": {"method": "GET", "path": "/v1/skills"},
+                    "toolsets": {"method": "GET", "path": "/v1/toolsets"}
+                }
+            }
+        """.trimIndent()
+
+        val capabilities = parseCapabilitiesBody(Json { ignoreUnknownKeys = true }, body)
+
+        assertEquals(true, capabilities?.sessionsApi)
+        assertEquals(true, capabilities?.sessionsChatStream)
+        assertEquals(true, capabilities?.portable)
+        assertEquals(true, capabilities?.runs)
+        assertEquals("sessions", capabilities?.preferredChatEndpoint())
+    }
+
+    @Test
+    fun parseCapabilitiesBody_returnsNullForUnrelatedJson() {
+        val body = """{"status":"ok"}"""
+
+        val capabilities = parseCapabilitiesBody(Json { ignoreUnknownKeys = true }, body)
+
+        assertNull(capabilities)
+    }
+
     // --- URL construction patterns ---
     // These verify the string patterns used by authRequest() inside the client.
 
@@ -218,6 +262,46 @@ class HermesApiClientTest {
         val baseUrl = "http://localhost:8642"
         val url = "$baseUrl/v1/models"
         assertEquals("http://localhost:8642/v1/models", url)
+    }
+
+    // --- Skills endpoint compatibility ---
+
+    @Test
+    fun skillEndpointOrder_prefersUpstreamV1ThenLegacyApiFallback() {
+        assertEquals(listOf("/v1/skills", "/api/skills"), HERMES_SKILL_ENDPOINTS)
+    }
+
+    @Test
+    fun skillListResponse_parsesUpstreamV1DataEnvelope() {
+        val body = """
+            {
+                "object": "list",
+                "data": [
+                    {"name": "android", "description": "Control phone", "category": "android"}
+                ]
+            }
+        """.trimIndent()
+
+        val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<SkillListResponse>(body)
+
+        assertEquals(1, parsed.data?.size)
+        assertEquals("android", parsed.data?.first()?.name)
+    }
+
+    @Test
+    fun parseSkillListBody_acceptsUpstreamV1DataEnvelope() {
+        val body = """
+            {
+                "object": "list",
+                "data": [
+                    {"name": "android", "description": "Control phone", "category": "android"}
+                ]
+            }
+        """.trimIndent()
+
+        val parsed = parseSkillListBody(Json { ignoreUnknownKeys = true }, body)
+
+        assertEquals(listOf("android"), parsed?.map { it.name })
     }
 
     @Test

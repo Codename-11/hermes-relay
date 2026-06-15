@@ -17,6 +17,7 @@ import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoiceIntentTrace
@@ -25,9 +26,13 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.network.RealtimeAgentSessionControl
+import com.hermesandroid.relay.network.RealtimeTurnInput
+import com.hermesandroid.relay.network.RealtimeVoiceSummary
 import com.hermesandroid.relay.network.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.VoiceHandoffEvent
+import com.hermesandroid.relay.network.VoiceAudioClient
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
@@ -63,6 +68,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import com.hermesandroid.relay.data.VoicePreferencesRepository
+import com.hermesandroid.relay.data.VoiceAudioRoute
 
 /**
  * Where we are in the voice conversation cycle. Used to drive the UI
@@ -131,6 +137,21 @@ data class VoiceUiState(
      * fresh turn (mic tap), whichever comes first.
      */
     val permissionDeniedCallout: PermissionDeniedCallout? = null,
+    /**
+     * ADR 33: non-null while a Hermes run has been promoted to (or started as) a
+     * background task. Drives a persistent "working on it" chip so the user
+     * knows a long task is still running after the spoken handoff. Cleared when
+     * the background run completes, is cancelled, or errors.
+     */
+    val backgroundRun: BackgroundRunState? = null,
+)
+
+/** ADR 33 background/promoted Hermes run surface for the voice overlay. */
+data class BackgroundRunState(
+    val runId: String? = null,
+    /** "promoted" (auto-detached long run) or "durable" (explicit mode=background). */
+    val tier: String = "promoted",
+    val message: String = "Working on it in the background…",
 )
 
 data class VoiceHandoffStatus(
@@ -238,9 +259,9 @@ data class VoiceStats(
  *   Idle → Listening (record mic) → Transcribing (upload) → Thinking
  *        → Speaking (sentence-buffered TTS) → Idle
  *
- * Requires [VoiceRecorder], [VoicePlayer], [RelayVoiceClient], and a
+ * Requires [VoiceRecorder], [VoicePlayer], [VoiceAudioClient], and a
  * [ChatViewModel] for sending the transcribed text through the normal
- * chat pipeline. All four are wired via [initialize] after construction.
+ * chat pipeline. Realtime Agent still uses [RelayVoiceClient].
  *
  * ### Sentence-boundary streaming TTS
  * The SSE stream emits text one token at a time, but TTS wants whole
@@ -265,10 +286,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val TTS_CACHE_CAP = 6 // keep the last N mp3s on disk
         private const val MAX_BROKERED_TOOL_STATUS_PER_MESSAGE = 2
         private const val STABLE_VOICE_INTERFACE_CONTEXT =
-            "Hermes Relay interface context for this turn:\n" +
+            "Hermes Android voice interface context for this turn:\n" +
                 "- Active voice engine: Hermes chat + voice output (hermes_voice_output).\n" +
-                "- Active route: Android mic -> relay STT /voice/transcribe -> " +
-                "normal Hermes chat stream -> relay voice output playback.\n" +
+                "- Active route: Android mic -> selected Hermes STT route -> " +
+                "normal Hermes chat stream -> selected Hermes TTS route playback.\n" +
                 "- This is not Realtime Agent mode. If the user asks which " +
                 "interface, path, or mode is active, answer from this context."
 
@@ -373,6 +394,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // --- Dependencies (injected via initialize) --------------------------
 
     private var voiceClient: RelayVoiceClient? = null
+    private var voiceAudioClient: VoiceAudioClient? = null
     private var chatViewModel: ChatViewModel? = null
     private var recorder: VoiceRecorder? = null
     private var player: VoicePlayer? = null
@@ -386,8 +408,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voicePreferencesJob: Job? = null
     private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
     private var realtimeTraceDetails: Boolean = false
+    private var realtimePersistentSession: Boolean = true
     private var realtimeAgentControl: RealtimeAgentSessionControl? = null
     private var realtimeConfirmationControl: RealtimeAgentSessionControl? = null
+
+    // === Persistent realtime-agent session (one socket across turns) ===
+    // The long-lived call to RelayVoiceClient.runRealtimeAgent(persistent) runs
+    // in realtimeSessionJob; further utterances are fed on realtimeTurnChannel.
+    // The per-turn event holders below are hoisted to fields so the single
+    // session-lived event callback can serve every turn; submitRealtimeTurn /
+    // the open path reset them at each turn boundary.
+    private var realtimeSessionJob: Job? = null
+    private var realtimeTurnChannel: kotlinx.coroutines.channels.Channel<RealtimeTurnInput>? = null
+    private var rtUserText: String = ""
+    private var rtAssistantMessageId: String = ""
+    private var rtConversationContext: List<RealtimeConversationContextMessage> = emptyList()
+    private val audioSeen = AtomicBoolean(false)
+    private val audioBytes = AtomicInteger(0)
+    private val bargeInStarted = AtomicBoolean(false)
+    private val lastRealtimeAudioEventId = AtomicLong(0L)
+    private var responseText = StringBuilder()
+    private var inputTranscript = StringBuilder()
+    private val spokenStatusKeys = mutableSetOf<String>()
     private var voiceRelayPreflight: (suspend () -> Result<Unit>)? = null
 
     // === PHASE3-voice-intents: voice→bridge intent routing ===
@@ -697,6 +739,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun initialize(
         voiceClient: RelayVoiceClient,
+        voiceAudioClient: VoiceAudioClient? = null,
         chatViewModel: ChatViewModel,
         recorder: VoiceRecorder,
         player: VoicePlayer,
@@ -734,6 +777,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceHandoffReporter: ((VoiceHandoffEvent) -> Unit)? = null,
     ) {
         this.voiceClient = voiceClient
+        this.voiceAudioClient = voiceAudioClient ?: RelayVoiceAudioClientAdapter(voiceClient)
         this.chatViewModel = chatViewModel
         this.recorder = recorder
         this.player = player
@@ -811,8 +855,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                                 "realtimeTraceDetails=${settings.realtimeTraceDetails}",
                         )
                     }
+                    // Switching engine away from Realtime Agent (or disabling the
+                    // persistent toggle) must drop any open persistent session.
+                    if (
+                        (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
+                            nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
+                        (realtimePersistentSession && !settings.realtimePersistentSession)
+                    ) {
+                        closeRealtimeSession()
+                    }
                     voiceEngineMode = nextEngineMode
                     realtimeTraceDetails = settings.realtimeTraceDetails
+                    realtimePersistentSession = settings.realtimePersistentSession
                     val mode = when (settings.interactionMode.lowercase()) {
                         "hold" -> InteractionMode.HoldToTalk
                         "continuous" -> InteractionMode.Continuous
@@ -1068,6 +1122,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
         try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
         cancelRealtimeAgentTurn("exit voice mode")
+        closeRealtimeSession()
         // B4: tear down the barge-in listener + timers before we kill the
         // player so AEC doesn't try to track a released audio session.
         stopBargeInListener()
@@ -1514,9 +1569,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         onResult: (Result<Unit>) -> Unit = {},
     ) {
         val app = getApplication<Application>()
-        val client = voiceClient
+        val audioClient = voiceAudioClient
+        val relayClient = voiceClient
         val p = player
-        if (client == null || p == null) {
+        if (audioClient == null || p == null) {
             onResult(Result.failure(IllegalStateException("Voice pipeline not initialized")))
             Toast.makeText(app, "Voice test failed: pipeline not initialized", Toast.LENGTH_SHORT).show()
             setError("Voice pipeline not initialized")
@@ -1524,7 +1580,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         val triggerToast = Toast.makeText(app, "Testing voice…", Toast.LENGTH_SHORT).also { it.show() }
         viewModelScope.launch {
-            val profileAwareResult = testVoiceViaVoiceOutput(client, sample)
+            val profileAwareResult = if (audioClient.route == VoiceAudioRoute.Relay && relayClient != null) {
+                testVoiceViaVoiceOutput(relayClient, sample)
+            } else {
+                null
+            }
             val result = if (profileAwareResult != null) {
                 if (profileAwareResult.isSuccess) {
                     triggerToast.cancel()
@@ -1533,9 +1593,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 Log.w(TAG, "profile-aware voice test failed; falling back to legacy synthesize: ${profileAwareResult.exceptionOrNull()?.message}")
-                client.synthesize(sample)
+                audioClient.synthesize(sample)
             } else {
-                client.synthesize(sample)
+                audioClient.synthesize(sample)
             }
             if (result.isFailure) {
                 triggerToast.cancel()
@@ -1705,9 +1765,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         inputPcm: ByteArray,
         inputSampleRate: Int,
     ) {
-        val client = voiceClient
+        val relayClient = voiceClient
+        val audioClient = voiceAudioClient
         val chatVm = chatViewModel
-        if (client == null || chatVm == null) {
+        if (audioClient == null || chatVm == null) {
             setError("Voice pipeline not initialized")
             return
         }
@@ -1724,6 +1785,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (engineModeForTurn == VoiceEngineMode.RealtimeAgent) {
+            val client = relayClient
+            if (client == null) {
+                setError("Realtime Agent needs a Relay voice route")
+                return
+            }
             Log.i(TAG, "Voice input routed to Realtime Agent")
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
@@ -1740,6 +1806,31 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     responseText = "",
                 )
             }
+            if (realtimePersistentSession) {
+                // Persistent conversation: one socket across turns. Open lazily on
+                // the first turn (the long-lived call runs in realtimeSessionJob),
+                // then feed further utterances on the channel. Fallback to one-shot
+                // if the toggle is off (Voice Settings).
+                if (realtimeSessionJob?.isActive == true && realtimeTurnChannel != null) {
+                    submitRealtimeTurn(chatVm, inputPcm, inputSampleRate)
+                } else {
+                    closeRealtimeSession()
+                    realtimeTurnChannel = kotlinx.coroutines.channels.Channel(
+                        kotlinx.coroutines.channels.Channel.UNLIMITED,
+                    )
+                    realtimeSessionJob = viewModelScope.launch {
+                        runRealtimeAgentTurn(
+                            client = client,
+                            chatVm = chatVm,
+                            userText = "",
+                            inputPcm = inputPcm,
+                            inputSampleRate = inputSampleRate,
+                            persistentOpen = true,
+                        )
+                    }
+                }
+                return
+            }
             runRealtimeAgentTurn(
                 client = client,
                 chatVm = chatVm,
@@ -1755,15 +1846,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Info,
             title = "Voice turn started",
-            detail = "Hermes voice output",
+            detail = "Hermes voice output (${audioClient.route.storageValue})",
         )
-        if (!runVoiceRelayPreflight("Hermes voice output")) return
 
         // Transcribe
         _uiState.update { it.copy(state = VoiceState.Transcribing, outputAudioActive = false) }
         val sttStartedAtMs = System.currentTimeMillis()
         val audioBytes = try { audioFile.length() } catch (_: Exception) { 0L }
-        val transcribeResult = client.transcribe(audioFile)
+        val transcribeResult = audioClient.transcribe(audioFile)
         val sttLatencyMs = System.currentTimeMillis() - sttStartedAtMs
         if (transcribeResult.isFailure) {
             val err = transcribeResult.exceptionOrNull()
@@ -2004,6 +2094,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         userText: String,
         inputPcm: ByteArray,
         inputSampleRate: Int,
+        persistentOpen: Boolean = false,
     ) {
         providerRealtimeAgentTurnActive.set(true)
         streamObserverJob?.cancel()
@@ -2031,19 +2122,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        val conversationContext = chatVm.realtimeAgentContextMessages()
-        val assistantMessageId = chatVm.startRealtimeAgentTurn(
+        // Per-turn event state is hoisted to fields so one session-lived callback
+        // serves every turn in persistent mode; reset them for this turn.
+        audioSeen.set(false)
+        audioBytes.set(0)
+        bargeInStarted.set(false)
+        lastRealtimeAudioEventId.set(0L)
+        responseText = StringBuilder()
+        inputTranscript = StringBuilder()
+        spokenStatusKeys.clear()
+        rtUserText = userText
+        rtConversationContext = chatVm.realtimeAgentContextMessages()
+        rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
             userText = userText,
             chatSessionId = chatVm.currentSessionId.value,
         )
+        val conversationContext = rtConversationContext
         val pcmPlayer = realtimePcmPlayer
-        val audioSeen = AtomicBoolean(false)
-        val audioBytes = AtomicInteger(0)
-        val bargeInStarted = AtomicBoolean(false)
-        val lastRealtimeAudioEventId = AtomicLong(0L)
-        val responseText = StringBuilder()
-        val inputTranscript = StringBuilder()
-        val spokenStatusKeys = mutableSetOf<String>()
 
         fun emitStatus(
             key: String,
@@ -2105,10 +2200,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 chatSessionId = chatVm.currentSessionId.value,
                 conversationContext = conversationContext,
                 onHandoff = ::recordVoiceHandoff,
+                turnInputs = if (persistentOpen) realtimeTurnChannel else null,
+                onTurnComplete = { summary -> onRealtimeTurnComplete(summary) },
             ) { event, control ->
                 realtimeAgentControl = control
                 chatVm.applyRealtimeAgentEvent(
-                    assistantMessageId = assistantMessageId,
+                    assistantMessageId = rtAssistantMessageId,
                     event = event,
                     showDetailedTrace = realtimeTraceDetails,
                 )
@@ -2119,13 +2216,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(
                             state = VoiceState.Listening,
                             outputAudioActive = false,
-                            transcribedText = inputTranscript.toString().ifBlank { userText },
+                            transcribedText = inputTranscript.toString().ifBlank { rtUserText },
                         )
                     }
                 }
                 "voice.input_transcript.final" -> {
                     inputTranscript.clear()
-                    inputTranscript.append(event.text ?: userText)
+                    inputTranscript.append(event.text ?: rtUserText)
                     _uiState.update {
                         it.copy(
                             state = VoiceState.Thinking,
@@ -2135,6 +2232,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.response.started", "hermes.run.started" -> {
+                    if (event.type == "hermes.run.started") {
+                        Log.i(
+                            TAG,
+                            "Realtime Hermes run started run=${event.runId ?: "?"} " +
+                                "session=${event.chatSessionId ?: "?"}",
+                        )
+                    }
                     _uiState.update {
                         it.copy(state = VoiceState.Thinking, outputAudioActive = false)
                     }
@@ -2172,6 +2276,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "hermes.run.progress" -> {
                     val line = realtimeHermesProgressLine(event.message)
+                    Log.i(
+                        TAG,
+                        "Realtime Hermes progress tier=${event.tier ?: "?"} " +
+                            "floor=${event.floor ?: "?"} status=${event.statusKey ?: "?"} " +
+                            "shouldSpeak=${event.shouldSpeak} run=${event.runId ?: "?"}",
+                    )
                     if (event.shouldSpeak) {
                         emitStatus(
                             key = "progress-${event.runId ?: "run"}-${event.statusKey ?: line}",
@@ -2187,6 +2297,40 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             responseText = line,
                         )
                     }
+                }
+                "hermes.run.promoted" -> {
+                    // The run detached to the background; the provider speaks the
+                    // handoff. Surface a persistent chip so the user knows a long
+                    // task is still in flight (ADR 33 Tier B/C).
+                    val tier = event.tier ?: "promoted"
+                    Log.i(
+                        TAG,
+                        "Realtime run promoted to background tier=$tier " +
+                            "run=${event.runId ?: "?"} session=${event.chatSessionId ?: "?"}",
+                    )
+                    _uiState.update {
+                        it.copy(
+                            backgroundRun = BackgroundRunState(
+                                runId = event.runId,
+                                tier = tier,
+                                message = if (tier == "durable") {
+                                    "Started a background task — I'll report back."
+                                } else {
+                                    "This is taking a moment — working on it in the background."
+                                },
+                            ),
+                        )
+                    }
+                }
+                "hermes.run.background_completed" -> {
+                    // Background run finished; the spoken summary follows via the
+                    // provider's forced-summary turn. Clear the chip.
+                    Log.i(
+                        TAG,
+                        "Realtime background run completed run=${event.runId ?: "?"} " +
+                            "ok=${event.success != false}",
+                    )
+                    _uiState.update { it.copy(backgroundRun = null) }
                 }
                 "hermes.confirmation.requested" -> {
                     val confirmationId = event.confirmationId
@@ -2269,6 +2413,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "hermes.run.cancelled" -> {
+                    Log.i(TAG, "Realtime Hermes run cancelled run=${event.runId ?: "?"}")
                     realtimeConfirmationControl = null
                     _uiState.update {
                         it.copy(
@@ -2276,6 +2421,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             outputAudioActive = false,
                             responseText = "Cancelled.",
                             hermesConfirmation = null,
+                            backgroundRun = null,
                         )
                     }
                 }
@@ -2294,19 +2440,22 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "voice.error" -> {
                     realtimeConfirmationControl = null
+                    val rawDetail = event.message ?: "Realtime agent failed"
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Voice,
                         severity = DiagnosticSeverity.Error,
                         title = "Realtime voice error",
-                        detail = event.message ?: "Realtime agent failed",
+                        detail = rawDetail,
                     )
-                    _uiState.update {
-                        it.copy(
-                            state = VoiceState.Error,
-                            error = event.message ?: "Realtime agent failed",
-                            hermesConfirmation = null,
-                        )
-                    }
+                    _uiState.update { it.copy(hermesConfirmation = null) }
+                    // Route the raw relay message through the classifier so
+                    // provider-auth (and other) failures surface a clear,
+                    // actionable message + a Voice-settings snackbar action
+                    // instead of a raw "xAI Realtime auth ..." provider string.
+                    surfaceError(
+                        java.io.IOException(rawDetail),
+                        context = "voice_config",
+                    )
                 }
                 }
             }
@@ -2335,7 +2484,76 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             title = "Realtime voice turn failed",
             detail = err?.message ?: "Unknown error",
         )
+        // A persistent session ending in error must drop so the next turn opens
+        // a fresh one rather than submitting into a dead channel.
+        closeRealtimeSession()
         surfaceError(err, context = "voice_config")
+    }
+
+    /**
+     * Per-turn completion in a persistent realtime session (ADR follow-up). The
+     * socket stays open; this just finalizes the spoken turn and re-arms
+     * continuous listening if enabled.
+     */
+    private fun onRealtimeTurnComplete(summary: RealtimeVoiceSummary) {
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Voice,
+            severity = DiagnosticSeverity.Info,
+            title = "Realtime voice turn complete",
+        )
+        Log.i(
+            TAG,
+            "Realtime persistent turn complete provider=${summary.provider} " +
+                "audioChunks=${summary.audioChunks}",
+        )
+        pendingInTtsQueue.set(0)
+        maybeAutoResume()
+    }
+
+    /**
+     * Submit a follow-up utterance onto the already-open persistent session
+     * (turns 2+). Mirrors the per-turn reset the open path does for turn 1.
+     */
+    private fun submitRealtimeTurn(chatVm: ChatViewModel, inputPcm: ByteArray, inputSampleRate: Int) {
+        val channel = realtimeTurnChannel ?: return
+        drainQueuedLocalTts()
+        try { player?.stop() } catch (_: Exception) { /* ignore */ }
+        firstFrameWatchdogJob?.cancel(); firstFrameWatchdogJob = null
+        clearSpokenChunksState()
+        audioSeen.set(false)
+        audioBytes.set(0)
+        bargeInStarted.set(false)
+        lastRealtimeAudioEventId.set(0L)
+        responseText = StringBuilder()
+        inputTranscript = StringBuilder()
+        spokenStatusKeys.clear()
+        rtUserText = ""
+        rtConversationContext = chatVm.realtimeAgentContextMessages()
+        rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
+            userText = "",
+            chatSessionId = chatVm.currentSessionId.value,
+        )
+        providerRealtimeAgentTurnActive.set(true)
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Thinking,
+                outputAudioActive = false,
+                transcribedText = null,
+                responseText = "",
+            )
+        }
+        val sent = channel.trySend(RealtimeTurnInput(inputPcm, inputSampleRate)).isSuccess
+        Log.i(TAG, "Realtime persistent turn submitted sent=$sent pcmBytes=${inputPcm.size}")
+    }
+
+    /** Tear down the persistent realtime session (voice-mode exit / engine switch). */
+    private fun closeRealtimeSession() {
+        val hadSession = realtimeTurnChannel != null || realtimeSessionJob != null
+        realtimeTurnChannel?.close()
+        realtimeTurnChannel = null
+        realtimeSessionJob?.cancel()
+        realtimeSessionJob = null
+        if (hadSession) Log.i(TAG, "Realtime persistent session closed")
     }
 
     private fun realtimeToolStatusLine(toolName: String?): String {
@@ -2615,7 +2833,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun shouldPreferRealtimeVoice(): Boolean =
         voiceOutputAvailable != false &&
             realtimePcmPlayer != null &&
-            voiceClient != null
+            voiceClient != null &&
+            voiceAudioClient?.route == VoiceAudioRoute.Relay
 
     private fun drainSentences() {
         while (true) {
@@ -2686,12 +2905,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // TTS consumer — two-coroutine pipeline: synth runs ahead of playback
     // ---------------------------------------------------------------------
     //
-    // Provider-neutral voice output is now the preferred path. It uses
-    // /voice/output/* to stream renderer PCM through the relay and writes
-    // those chunks directly to AudioTrack. The legacy synth/play workers stay
-    // alive underneath as the fallback path when the relay does not expose the
-    // output route, provider auth is missing, or a renderer fails before
-    // audio starts.
+    // Relay-selected voice output can stream renderer PCM through
+    // /voice/output/* and write chunks directly to AudioTrack. Standard
+    // upstream audio and Relay fallback both use the synth/play workers.
 
     private fun startRealtimeTtsConsumer() {
         realtimeTtsConsumerJob?.cancel()
@@ -3025,9 +3241,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             synthesize = { sentence ->
                 val synthStartedAtMs = System.currentTimeMillis()
                 try {
-                    val client = voiceClient
+                    val client = voiceAudioClient
                     val result = if (client == null) {
-                        Result.failure(IllegalStateException("voiceClient not initialized"))
+                        Result.failure(IllegalStateException("voice audio client not initialized"))
                     } else {
                         client.synthesize(sentence)
                     }
@@ -3899,6 +4115,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        closeRealtimeSession()
         // B4: release the listener + VAD engine native resources before
         // anything else. stopBargeInListener is defensive / idempotent.
         stopBargeInListener()
@@ -4167,14 +4384,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     errorCode == "permission_missing_sms" -> buildString {
                         append("**Send SMS — permission needed**")
                         append('\n')
-                        append("Grant SMS permission in Settings › Apps › Hermes Relay › Permissions.")
+                        append("Grant SMS permission in Settings › Apps › Hermes-Relay › Permissions.")
                     }
                     errorCode == "permission_missing_contacts" -> buildString {
                         append("**Send SMS — permission needed**")
                         append('\n')
                         append("Grant Contacts permission to look up '")
                         append(contact ?: "?")
-                        append("' in Settings › Apps › Hermes Relay › Permissions.")
+                        append("' in Settings › Apps › Hermes-Relay › Permissions.")
                     }
                     errorCode == "service_missing" -> buildString {
                         append("**Send SMS — bridge offline**")
