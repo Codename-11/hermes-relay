@@ -373,13 +373,6 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
         'Assist/control grants require local desktop-tool consent for this relay URL before task-scoped input grants can be created.'
       )
     }
-    if (!ctx.interactive) {
-      return failure(
-        'not_interactive',
-        'Assist/control grants require a visible local approval prompt. This desktop client is running non-interactively.',
-        { requested_mode: mode }
-      )
-    }
     const approval = await approveComputerGrant({
       mode,
       durationSeconds: normalizeComputerGrantDurationSeconds(args.duration_seconds),
@@ -388,7 +381,11 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
       interactive: ctx.interactive
     })
     if (!approval.approved) {
-      return failure('rejected', approval.reason, { requested_mode: mode })
+      return failure(
+        approval.reason.startsWith('non-interactive mode') ? 'not_interactive' : 'rejected',
+        approval.reason,
+        { requested_mode: mode }
+      )
     }
   }
   return {

@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hermes Voice Lab CLI Readme</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7f8;
+      --panel: #ffffff;
+      --text: #172027;
+      --muted: #64717d;
+      --line: #d7dee4;
+      --code-bg: #111820;
+      --code-text: #e8f0f5;
+      --accent: #20746b;
+      --accent-strong: #14554f;
+      --warn: #8c5a12;
+      --warn-bg: #fff5df;
+      --ok-bg: #e7f4ef;
+      --ok: #17614f;
+      --radius: 8px;
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1080px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+
+    header {
+      display: grid;
+      gap: 14px;
+      padding: 28px 0 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 4.5rem);
+      line-height: 0.98;
+      letter-spacing: 0;
+      max-width: 760px;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+
+    a {
+      color: var(--accent-strong);
+      font-weight: 650;
+    }
+
+    .eyebrow {
+      color: var(--accent-strong);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .lede {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 760px;
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 650;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    section,
+    aside {
+      min-width: 0;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .steps {
+      display: grid;
+      gap: 12px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .step-number {
+      width: 36px;
+      height: 36px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--ok-bg);
+      color: var(--ok);
+      font-weight: 800;
+      font-size: 0.95rem;
+      border: 1px solid color-mix(in srgb, var(--ok), transparent 65%);
+    }
+
+    pre {
+      margin: 10px 0 0;
+      padding: 14px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      background: var(--code-bg);
+      color: var(--code-text);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    code {
+      font-family:
+        "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono",
+        monospace;
+      font-size: 0.94em;
+    }
+
+    p code,
+    li code,
+    td code {
+      background: color-mix(in srgb, var(--line), transparent 55%);
+      border: 1px solid color-mix(in srgb, var(--line), transparent 20%);
+      border-radius: 5px;
+      padding: 1px 5px;
+      white-space: nowrap;
+    }
+
+    ul,
+    ol {
+      margin: 10px 0 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 6px;
+    }
+
+    .callout {
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in srgb, var(--accent), transparent 65%);
+      background: var(--ok-bg);
+      color: var(--ok);
+      padding: 12px;
+      font-weight: 650;
+    }
+
+    .callout.warning {
+      border-color: color-mix(in srgb, var(--warn), transparent 60%);
+      background: var(--warn-bg);
+      color: var(--warn);
+    }
+
+    .waveform {
+      height: 88px;
+      display: grid;
+      grid-template-columns: repeat(32, 1fr);
+      gap: 4px;
+      align-items: center;
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: var(--radius);
+      background: #12191f;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .waveform span {
+      display: block;
+      height: var(--h);
+      min-height: 6px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #9fe2d4, #3a9388);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 0.95rem;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    footer {
+      color: var(--muted);
+      font-size: 0.9rem;
+      padding-top: 20px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1418;
+        --panel: #151d23;
+        --text: #e7edf1;
+        --muted: #9aa8b3;
+        --line: #2a3842;
+        --accent: #62c8b9;
+        --accent-strong: #8de0d3;
+        --warn: #f0c879;
+        --warn-bg: #2d2413;
+        --ok-bg: #14302a;
+        --ok: #9ce0d1;
+      }
+    }
+
+    @media (max-width: 840px) {
+      main {
+        width: min(100% - 24px, 1080px);
+        padding-top: 18px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .step {
+        grid-template-columns: 30px minmax(0, 1fr);
+      }
+
+      .step-number {
+        width: 30px;
+        height: 30px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Hermes-Relay Voice Lab</p>
+      <h1>Realtime Voice / Streaming TTS CLI Readme</h1>
+      <p class="lede">
+        Use this provider lab to test voice providers, save WAV output,
+        capture JSONL event logs, compare expression settings, and separate
+        deterministic streaming TTS renderers from realtime voice-agent modes.
+      </p>
+      <div class="status-row" aria-label="Current status">
+        <span class="pill">Standalone CLI + relay voice routes</span>
+        <span class="pill">OpenAI + Grok + ElevenLabs</span>
+        <span class="pill">E2E approach eval</span>
+        <span class="pill">Streaming TTS target</span>
+        <span class="pill">Realtime agent test mode</span>
+        <span class="pill">Outputs ignored by git</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="stack">
+        <div class="panel">
+          <h2>Android Dev Build Test</h2>
+          <div class="steps">
+            <div class="step">
+              <span class="step-number">1</span>
+              <div>
+                <h3>Start the relay voice routes</h3>
+                <p class="muted">
+                  The Android dev path uses <code>/voice/output/*</code> for
+                  exact assistant speech and keeps <code>/voice/realtime/*</code>
+                  for provider-agent lab testing.
+                  Existing <code>/voice/config</code>,
+                  <code>/voice/transcribe</code>, and <code>/voice/synthesize</code>
+                  stay available as basic fallback utilities.
+                </p>
+                <pre><code>.\scripts\voice-relay-dev.ps1 -Provider grok</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <span class="step-number">2</span>
+              <div>
+                <h3>Pair the Android Studio dev build</h3>
+                <p class="muted">
+                  Use the normal relay pairing flow so the app has a relay
+                  session token with the <code>voice:realtime</code> grant.
+                </p>
+              </div>
+            </div>
+
+            <div class="step">
+              <span class="step-number">3</span>
+              <div>
+                <h3>Open voice mode or the dev testbench</h3>
+                <p class="muted">
+                  The main chat voice overlay uses the relay voice output path
+                  when available. For isolated provider checks, open
+                  <code>Settings > Voice</code>. Voice Output exposes
+                  profile-scoped provider/model/voice dropdowns from relay
+                  metadata, refreshes the selected provider's options on the
+                  relay before saving, and keeps advanced manual entry plus
+                  Save &amp; test. The
+                  experimental realtime provider editor is shown only when
+                  Developer options are unlocked. For the standalone dev
+                  testbench, open <code>Settings > Developer options >
+                  Realtime voice lab</code>.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Fast Path</h2>
+          <div class="steps">
+            <div class="step">
+              <span class="step-number">1</span>
+              <div>
+                <h3>Check the local setup</h3>
+                <p class="muted">Run this from the repo root.</p>
+                <pre><code>cd C:\Users\Bailey\Desktop\Open-Projects\hermes-relay
+python -m pip install -e ".[voice-lab]"
+.\scripts\voice-lab.ps1 -Mode doctor</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <span class="step-number">2</span>
+              <div>
+                <h3>List providers</h3>
+                <pre><code>.\scripts\voice-lab.ps1 -Mode providers</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <span class="step-number">3</span>
+              <div>
+                <h3>Run a free local smoke test</h3>
+                <pre><code>.\scripts\voice-lab.ps1 -Provider stub</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <span class="step-number">4</span>
+              <div>
+                <h3>Run Grok Voice Agent</h3>
+                <p class="muted">
+                  SuperGrok/Premium+ works through the lab-owned xAI OAuth flow,
+                  or you can use a direct xAI API key.
+                </p>
+                <pre><code>.\scripts\voice-lab.ps1 -Mode auth -Provider grok
+.\scripts\voice-lab.ps1 -Provider grok -Text "Hermes voice lab online."</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <span class="step-number">5</span>
+              <div>
+                <h3>Run OpenAI Realtime</h3>
+                <p class="muted">
+                  This spends API quota. The launcher uses
+                  <code>VOICE_TOOLS_OPENAI_KEY</code> or <code>OPENAI_API_KEY</code>
+                  from the environment or <code>VOICE_LAB_HOME\.env</code>.
+                </p>
+                <pre><code>.\scripts\voice-lab.ps1 -Provider openai -Text "Hermes voice lab online."</code></pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <span class="step-number">6</span>
+              <div>
+                <h3>Run the E2E approach eval</h3>
+                <p class="muted">
+                  This compares realtime providers and streaming TTS with the
+                  same acknowledgement, simulated tool wait, pronunciation, and
+                  volume-consistency prompts.
+                </p>
+                <pre><code>.\scripts\voice-lab.ps1 `
+  -Mode eval `
+  -Providers "xai_realtime,openai_realtime,elevenlabs_tts,stub" `
+  -OutputDir voice-lab-runs\e2e `
+  -Visual off `
+  -Json</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>What The Launcher Does</h2>
+          <p>
+            <code>scripts\voice-lab.ps1</code> wraps
+            <code>python -m plugin.voice_lab</code> with test-friendly defaults.
+            It picks a provider, creates an output directory, passes expression
+            settings, and writes run artifacts.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Default</th>
+                <th>Use</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>-Mode</code></td>
+                <td><code>run</code></td>
+                <td><code>doctor</code>, <code>providers</code>, <code>auth</code>, <code>tui</code>, <code>run</code>, <code>test</code>, <code>stt</code>, <code>s2s</code>, <code>bench</code>, or <code>eval</code>.</td>
+              </tr>
+              <tr>
+                <td><code>-Providers</code></td>
+                <td><code>xai_realtime,openai_realtime,elevenlabs_tts,stub</code></td>
+                <td>Provider matrix for <code>-Mode eval</code>.</td>
+              </tr>
+              <tr>
+                <td><code>-Provider</code></td>
+                <td><code>auto</code></td>
+                <td>Uses Grok when lab-owned xAI OAuth or an xAI key is available, then OpenAI, otherwise <code>stub</code>.</td>
+              </tr>
+              <tr>
+                <td><code>-OutputDir</code></td>
+                <td><code>voice-lab-runs</code></td>
+                <td>Where WAV files and JSONL event logs are written.</td>
+              </tr>
+              <tr>
+                <td><code>-InputAudio</code></td>
+                <td>none</td>
+                <td>Required for <code>-Mode stt</code> and <code>-Mode s2s</code>.</td>
+              </tr>
+              <tr>
+                <td><code>-Visual</code></td>
+                <td><code>on</code></td>
+                <td>Uses the Textual TUI for interactive <code>-Mode tui</code> sessions and shows the PCM waveform meter for one-shot runs.</td>
+              </tr>
+              <tr>
+                <td><code>-Play</code></td>
+                <td><code>false</code></td>
+                <td>Plays the generated WAV from the terminal after the provider run completes.</td>
+              </tr>
+              <tr>
+                <td><code>-Model</code></td>
+                <td><code>gpt-realtime-2</code></td>
+                <td>OpenAI Realtime model override.</td>
+              </tr>
+              <tr>
+                <td><code>-Voice</code></td>
+                <td><code>marin</code></td>
+                <td>OpenAI Realtime voice override.</td>
+              </tr>
+              <tr>
+                <td><code>-XAIModel</code></td>
+                <td><code>grok-voice-latest</code></td>
+                <td>xAI/Grok Voice Agent model override.</td>
+              </tr>
+              <tr>
+                <td><code>-XAIVoice</code></td>
+                <td><code>eve</code></td>
+                <td>xAI/Grok Voice Agent voice override.</td>
+              </tr>
+              <tr>
+                <td><code>-ElevenLabsModel</code></td>
+                <td><code>eleven_flash_v2_5</code></td>
+                <td>ElevenLabs streaming TTS model override.</td>
+              </tr>
+              <tr>
+                <td><code>-ElevenLabsVoice</code></td>
+                <td><code>JBFqnCBsd6RMkjVDRZzb</code></td>
+                <td>ElevenLabs voice ID override.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <h2>Common Commands</h2>
+          <h3>Persistent TUI lab</h3>
+          <pre><code>.\scripts\voice-lab.ps1 -Mode tui -Provider grok</code></pre>
+
+          <h3>Grok with SuperGrok OAuth</h3>
+          <pre><code>.\scripts\voice-lab.ps1 -Mode auth -Provider grok
+
+.\scripts\voice-lab.ps1 `
+  -Provider grok `
+  -Text "Testing Grok realtime speech output."</code></pre>
+
+          <h3>Grok with a one-off xAI key</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Provider grok `
+  -XAIKey "xai-..." `
+  -Text "Testing Grok realtime speech output."</code></pre>
+
+          <h3>Grok with tool-call event scaffolding</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Provider grok `
+  -ProviderOption tool_scaffold=true `
+  -Text "Run a voice tool-call test."</code></pre>
+
+          <h3>OpenAI with a one-off key</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Provider openai `
+  -OpenAIKey "sk-..." `
+  -Text "Testing realtime speech output."</code></pre>
+
+          <h3>OpenAI with a different voice</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Provider openai `
+  -Voice marin `
+  -Tone calm `
+  -Intensity 0.35 `
+  -Text "Read this in a precise, steady tone."</code></pre>
+
+          <h3>ElevenLabs streaming TTS</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Provider elevenlabs `
+  -ElevenLabsKey "..." `
+  -Text "Testing crisp streamed TTS output."</code></pre>
+
+          <h3>E2E approach evaluation</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Mode eval `
+  -Providers "xai_realtime,openai_realtime,elevenlabs_tts,stub" `
+  -OutputDir voice-lab-runs\e2e `
+  -Visual off `
+  -Json</code></pre>
+
+          <h3>Disable the waveform</h3>
+          <pre><code>.\scripts\voice-lab.ps1 -Provider grok -Visual off</code></pre>
+
+          <h3>Play the rendered WAV</h3>
+          <pre><code>.\scripts\voice-lab.ps1 -Provider grok -Text "Play this after rendering." -Play</code></pre>
+
+          <h3>Emit JSON for automation</h3>
+          <pre><code>.\scripts\voice-lab.ps1 -Provider stub -Json -Visual off</code></pre>
+
+          <h3>STT scaffold</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Mode stt `
+  -Provider stub `
+  -InputAudio voice-lab-runs\sample.wav `
+  -ExpectedText "expected transcript"</code></pre>
+
+          <h3>Speech-to-speech scaffold</h3>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Mode s2s `
+  -Provider stub `
+  -InputAudio voice-lab-runs\sample.wav `
+  -Text "I heard the sample and am responding."</code></pre>
+        </div>
+
+        <div class="panel">
+          <h2>Batch Runs</h2>
+          <p>
+            Create a text file with one prompt per non-empty line, then run
+            <code>-Mode bench</code>.
+          </p>
+          <pre><code>.\scripts\voice-lab.ps1 `
+  -Mode bench `
+  -Provider grok `
+  -ScriptFile .\scripts\voice-lab-phrases.txt `
+  -OutputDir voice-lab-runs `
+  -Visual on</code></pre>
+          <p class="muted">
+            Event logs are written under <code>voice-lab-runs\events</code>
+            unless <code>-NoEventLog</code> is passed.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h2>TUI Mode</h2>
+          <p>
+            The persistent TUI uses a Textual-backed, PulseForge-style keyboard
+            interface in an interactive terminal. Piped runs, <code>-Json</code>,
+            and <code>-Visual off</code> fall back to the simpler console loop
+            so automation stays clean.
+          </p>
+          <pre><code>.\scripts\voice-lab.ps1 -Mode tui -Provider grok</code></pre>
+          <ul>
+            <li>Reuse provider auth across turns.</li>
+            <li>Tab through dropdowns for provider, model, voice, emotion, tone, pace, style, and command execution.</li>
+            <li>Use footer keys: <code>F2</code> provider, <code>F3</code> command, <code>F4</code> prompt, <code>F5</code> emotion, <code>F6</code> tone, <code>F7</code> tool, <code>F8</code> play, <code>F9</code> replay, <code>F10</code> rerun, <code>Ctrl+Q</code> quit.</li>
+            <li>Use the command dropdown for run, replay, rerun, save, log, open log, provider option, play, tool, JSON, help, prompt focus, and quit.</li>
+            <li>Show generated PCM waveform, latency, provider status, and artifact paths per turn.</li>
+            <li>Fallback command mode still supports <code>:provider</code>, <code>:voice</code>, <code>:model</code>, <code>:emotion</code>, <code>:replay</code>, and <code>:save</code>.</li>
+            <li>Keep non-interactive <code>-Json -Visual off</code> commands stable for automation.</li>
+          </ul>
+        </div>
+      </section>
+
+      <aside class="stack">
+        <div class="panel">
+          <h2>Voice Output Framing</h2>
+          <p>
+            Normal assistant narration should be a speech renderer: final Hermes
+            text in, exact audio out. Realtime voice-agent providers stay
+            separate for speech-to-speech, provider turn-taking, and tool-event
+            experiments.
+          </p>
+          <ul>
+            <li><code>streaming_tts_renderer</code>: primary target for Grok TTS, OpenAI TTS, ElevenLabs, Hermes fallback, and short tool-status lines.</li>
+            <li><code>realtime_agent</code>: provider-agent mode for Grok/OpenAI Realtime experiments and non-executing tool-call scaffolds.</li>
+            <li>Hermes remains the owner of chat text, tool execution, approvals, and final answers.</li>
+            <li>Android sends the active profile to voice config/session routes so named profiles can keep separate <code>voice_output</code> and <code>realtime_voice</code> choices.</li>
+            <li>Provider option refreshes stay server-side, return grouped/searchable voice metadata, and validate model/voice/sample-rate compatibility before saving.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h2>Status</h2>
+          <div class="callout">
+            The Android voice overlay uses relay-mediated streaming TTS for
+            deterministic speech rendering and keeps realtime providers as
+            voice-agent test modes.
+          </div>
+          <ul>
+            <li>Current Android dev voice uses <code>/voice/output/config</code>, <code>/voice/output/session</code>, and <code>/voice/output/{session_id}</code> when available.</li>
+            <li>Basic fallback remains <code>/voice/config</code>, <code>/voice/transcribe</code>, and <code>/voice/synthesize</code>.</li>
+            <li>OpenAI Realtime and xAI/Grok Realtime are live provider adapters.</li>
+            <li>ElevenLabs streaming TTS is a live cascaded-voice comparison adapter.</li>
+            <li><code>xai_tts</code> and <code>openai_tts</code> are first-class streaming TTS renderers.</li>
+            <li>xAI custom voices are fetched with pagination and option results are cached briefly by the relay; OpenAI voices remain static from official docs.</li>
+            <li><code>stt</code> and <code>s2s</code> are standalone lab scaffolds, not relay route changes.</li>
+            <li><code>stub</code> is a local deterministic WAV generator.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h2>Credentials</h2>
+          <p>
+            The OpenAI provider reads <code>VOICE_TOOLS_OPENAI_KEY</code> first,
+            then <code>OPENAI_API_KEY</code>. Both can live in the shell
+            environment or <code>VOICE_LAB_HOME\.env</code>.
+          </p>
+          <pre><code>VOICE_TOOLS_OPENAI_KEY=sk-...</code></pre>
+          <p>
+            The Grok provider supports lab-owned xAI OAuth from
+            <code>VOICE_LAB_HOME\auth\xai-oauth.json</code>.
+            It also accepts <code>VOICE_TOOLS_XAI_KEY</code>, <code>XAI_API_KEY</code>,
+            or an ephemeral xAI realtime token.
+          </p>
+          <pre><code>.\scripts\voice-lab.ps1 -Mode auth -Provider grok
+VOICE_TOOLS_XAI_KEY=xai-...</code></pre>
+          <p>
+            The ElevenLabs provider reads <code>VOICE_TOOLS_ELEVENLABS_KEY</code>
+            first, then <code>ELEVENLABS_API_KEY</code>.
+          </p>
+          <pre><code>VOICE_TOOLS_ELEVENLABS_KEY=...</code></pre>
+          <div class="callout warning">
+            Do not commit API keys. Do not scrape Grok.com or X browser/session
+            cookies; use the lab-owned OAuth flow for subscription auth.
+          </div>
+          <p class="muted">
+            References:
+            <a href="https://docs.x.ai/developers/model-capabilities/audio/text-to-speech">xAI TTS</a>,
+            <a href="https://docs.x.ai/developers/model-capabilities/audio/voice-agent">xAI Voice Agent</a>,
+            <a href="https://developers.openai.com/api/docs/guides/text-to-speech">OpenAI TTS</a>,
+            <a href="https://developers.openai.com/api/docs/guides/realtime-conversations">OpenAI Realtime</a>,
+            <a href="https://auth.x.ai/.well-known/openid-configuration">xAI OAuth discovery</a>,
+            and <a href="https://x.ai/news/grok-hermes">xAI SuperGrok surface announcement</a>.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h2>Waveform</h2>
+          <p class="muted">
+            The CLI shows a compact terminal meter from generated PCM chunk RMS levels.
+            Before audio arrives, it idles low so provider connection state is still visible.
+          </p>
+          <div class="waveform" aria-hidden="true">
+            <span style="--h: 18%"></span>
+            <span style="--h: 36%"></span>
+            <span style="--h: 64%"></span>
+            <span style="--h: 28%"></span>
+            <span style="--h: 72%"></span>
+            <span style="--h: 46%"></span>
+            <span style="--h: 22%"></span>
+            <span style="--h: 58%"></span>
+            <span style="--h: 82%"></span>
+            <span style="--h: 44%"></span>
+            <span style="--h: 30%"></span>
+            <span style="--h: 68%"></span>
+            <span style="--h: 52%"></span>
+            <span style="--h: 24%"></span>
+            <span style="--h: 76%"></span>
+            <span style="--h: 40%"></span>
+            <span style="--h: 62%"></span>
+            <span style="--h: 34%"></span>
+            <span style="--h: 86%"></span>
+            <span style="--h: 48%"></span>
+            <span style="--h: 26%"></span>
+            <span style="--h: 70%"></span>
+            <span style="--h: 56%"></span>
+            <span style="--h: 32%"></span>
+            <span style="--h: 80%"></span>
+            <span style="--h: 42%"></span>
+            <span style="--h: 20%"></span>
+            <span style="--h: 60%"></span>
+            <span style="--h: 74%"></span>
+            <span style="--h: 38%"></span>
+            <span style="--h: 66%"></span>
+            <span style="--h: 28%"></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Artifacts</h2>
+          <ul>
+            <li><code>*.wav</code> contains the rendered audio.</li>
+            <li><code>*.jsonl</code> contains raw provider event summaries.</li>
+            <li><code>summary.json</code>, <code>runs.jsonl</code>, and <code>report.md</code> are written by <code>-Mode eval</code>.</li>
+            <li><code>-Play</code> plays the rendered WAV after the run.</li>
+            <li><code>voice-lab-runs/</code> and <code>realtime-voice-runs/</code> are ignored by git.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h2>Troubleshooting</h2>
+          <ul>
+            <li>Run <code>.\scripts\voice-lab.ps1 -Mode doctor</code> first.</li>
+            <li>If Grok fails immediately, run <code>.\scripts\voice-lab.ps1 -Mode auth -Provider grok</code>, or set <code>XAI_API_KEY</code> / <code>VOICE_TOOLS_XAI_KEY</code>.</li>
+            <li>If OpenAI fails immediately, verify the key exists and is not committed.</li>
+            <li>If provider output is noisy, use <code>-Visual off</code>.</li>
+            <li>If automation needs clean output, use <code>-Json -Visual off</code>.</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <footer>
+      Source docs: <a href="./realtime-voice-poc.md">realtime-voice-poc.md</a>.
+      Current standalone package: <code>plugin.voice_lab</code>.
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,3 +1,8 @@
+---
+name: relay-server
+description: Setup and run the Hermes-Relay server for Android chat support, terminal, bridge, and related relay features.
+---
+
 # Hermes-Relay Server
 
 Setup and run the Hermes-Relay Server for the Hermes-Relay Android app.

@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,18 +29,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
@@ -52,13 +54,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -85,10 +87,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.ConnectivityObserver
+import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.VoiceOutputConfig
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -111,31 +114,54 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.platform.LocalContext
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
+import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.RelayChromeIconButton
+import com.hermesandroid.relay.ui.components.RelayModeStrip
+import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
-import com.hermesandroid.relay.ui.components.StreamingDots
+import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
+import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayGridTexture
+import com.hermesandroid.relay.ui.theme.relayMetadataStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
+import kotlin.math.roundToInt
 import com.hermesandroid.relay.viewmodel.ChatViewModel
+import com.hermesandroid.relay.viewmodel.ChatConnectState
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
+import com.hermesandroid.relay.voice.VoiceOverlayHost
+import com.hermesandroid.relay.voice.VoiceOverlaySession
+import com.hermesandroid.relay.voice.openHermesFromOverlay
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -165,6 +191,7 @@ fun ChatScreen(
     chatViewModel: ChatViewModel,
     connectionViewModel: ConnectionViewModel,
     voiceViewModel: VoiceViewModel,
+    voiceClient: RelayVoiceClient? = null,
     maxBubbleWidth: Dp = 300.dp,
     // Deep-link nudge from Settings → Active Agent card: when `true`, the
     // AgentInfoSheet auto-opens on first composition and [onAgentSheetArgConsumed]
@@ -177,10 +204,17 @@ fun ChatScreen(
     // screen. Default no-op preserves existing test/preview call sites that
     // don't wire navigation.
     onNavigateToConnections: () -> Unit = {},
+    onNavigateToConnect: () -> Unit = onNavigateToConnections,
+    onNavigateToManage: () -> Unit = {},
+    onNavigateToBridge: () -> Unit = {},
+    onNavigateToTerminal: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
+    var voiceCompactMode by remember { mutableStateOf(false) }
     val chatAlpha by animateFloatAsState(
-        targetValue = if (voiceUiState.voiceMode) 0.4f else 1f,
+        targetValue = if (voiceUiState.voiceMode && !voiceCompactMode) 0.4f else 1f,
         animationSpec = tween(300),
         label = "chatAlpha",
     )
@@ -198,8 +232,11 @@ fun ChatScreen(
     // request; on grant, latch the pending-enter and fire enterVoiceMode() in
     // the callback. Denial shows an inline banner above the input.
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val voiceOverlayHost = remember { VoiceOverlayHost.install(context) }
     var pendingVoiceEnter by remember { mutableStateOf(false) }
     var micPermissionDenied by remember { mutableStateOf(false) }
+    var pendingVoiceOverlayPermission by remember { mutableStateOf(false) }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -231,18 +268,25 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    val voiceStats by voiceViewModel.voiceStats.collectAsState()
+    var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
+    var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
-    // Voice mode's /voice/transcribe and /voice/synthesize calls both go
-    // over the relay, but voice can authenticate with the saved Hermes API
-    // key or a paired Relay session. Gate the Mic button on voiceReady
-    // so chat+voice-only setups don't need the full pairing flow.
+    val chatConnectState by connectionViewModel.chatConnectState.collectAsState()
+    // Stable voice can use the standard Hermes dashboard audio routes or the
+    // optional Relay voice routes. Gate the mic on either route being usable;
+    // availability picks the actionable toast when neither is.
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
+    val standardVoiceSignInRouteHint by
+        connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
+    val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -257,7 +301,6 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
-    val networkStatus by connectionViewModel.networkStatus.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
@@ -267,6 +310,39 @@ fun ChatScreen(
     val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
+
+    // === Gateway desktop-parity state ===
+    val serverCommands by chatViewModel.serverCommands.collectAsState()
+    val contextUsage by chatViewModel.contextUsage.collectAsState()
+    val steerableTurn by chatViewModel.steerableTurn.collectAsState()
+    val steerNotice by chatViewModel.steerNotice.collectAsState()
+    val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
+    // Whether the NEXT turn would ride the gateway transport — gates the
+    // "Edit & resend" menu entry (conversation rewind needs the gateway).
+    // Per-turn steerability comes from [steerableTurn], which also covers
+    // the preflight-SSE-fallback window.
+    val streamingEndpointPref by connectionViewModel.streamingEndpoint.collectAsState()
+    val chatServerCapabilities by connectionViewModel.serverCapabilities.collectAsState()
+    val chatGatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val isGatewayTransport = remember(
+        streamingEndpointPref, chatServerCapabilities, chatGatewayAvailability,
+    ) {
+        connectionViewModel.resolveStreamingEndpoint(streamingEndpointPref) == "gateway"
+    }
+
+    // Pre-warm the gateway (connect + resume the current session) whenever the
+    // chat surface is visible, the app is foregrounded, and the gateway is the
+    // resolved transport — so the first send is warm (tens of ms to first
+    // token) instead of paying the cold connect + session.resume on the send
+    // path. Best-effort / idempotent; re-fires on return-to-foreground.
+    val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+    LaunchedEffect(isGatewayTransport, appForeground) {
+        if (isGatewayTransport && appForeground) chatViewModel.prewarmGateway()
+    }
+
+    // Edit-and-resend mode: long-press a user bubble → "Edit & resend"
+    // prefills the input; submit rewinds the conversation from that message.
+    var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
 
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
@@ -314,6 +390,14 @@ fun ChatScreen(
     var showCommandPalette by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
 
+    // Server command dispatch can ask the composer to prefill (e.g. /undo).
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.composerPrefill.collect { text ->
+            editingMessage = null
+            inputText = text.take(charLimit)
+        }
+    }
+
     // Settings → Active Agent deep-link: when the nav arg says "open the
     // sheet", flip `showAgentInfo` on and call [onAgentSheetArgConsumed] so
     // the host clears the arg. Keyed on [openAgentSheetOnEntry] so the
@@ -332,6 +416,140 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val realtimeAgentActive = voiceStats.voiceEngineMode == "realtime_agent"
+    val activeVoiceProvider = if (realtimeAgentActive) {
+        realtimeAgentConfig?.default_provider
+    } else {
+        voiceOutputConfig?.default_provider
+    }
+    val activeVoiceModel = if (realtimeAgentActive) {
+        realtimeAgentConfig?.default_model
+    } else {
+        voiceOutputConfig?.default_model
+    }
+    val activeVoiceName = if (realtimeAgentActive) {
+        realtimeAgentConfig?.default_voice
+    } else {
+        voiceOutputConfig?.default_voice
+    }
+    val activeVoiceScope = if (realtimeAgentActive) {
+        realtimeAgentConfig?.configScope
+    } else {
+        voiceOutputConfig?.configScope
+    }
+    val activeVoiceEnabled = if (realtimeAgentActive) {
+        realtimeAgentConfig?.enabled
+    } else {
+        voiceOutputConfig?.enabled
+    }
+
+    val showVoiceSystemOverlay: () -> Unit = {
+        if (!voiceOverlayHost.hasOverlayPermission()) {
+            pendingVoiceOverlayPermission = true
+            runCatching {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}"),
+                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                context.startActivity(intent)
+            }
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Enable Display over other apps, then return to start Voice Overlay.",
+                    duration = SnackbarDuration.Short,
+                )
+            }
+        } else {
+            pendingVoiceOverlayPermission = false
+            val shown = voiceOverlayHost.show(
+                VoiceOverlaySession(
+                    uiState = voiceViewModel.uiState,
+                    engineMode = voiceStats.voiceEngineMode,
+                    provider = activeVoiceProvider,
+                    model = activeVoiceModel,
+                    voice = activeVoiceName,
+                    profileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
+                        ?: selectedProfile?.name,
+                    configScope = activeVoiceScope,
+                    outputEnabled = activeVoiceEnabled,
+                    fallbackEnabled = voiceOutputConfig?.fallback_enabled,
+                    onStartListening = { voiceViewModel.startListening() },
+                    onStopListening = { voiceViewModel.stopListening() },
+                    onInterrupt = { voiceViewModel.interruptSpeaking() },
+                    onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
+                    onReturnToHermes = {
+                        openHermesFromOverlay(context)
+                        voiceOverlayHost.hide()
+                    },
+                    onDismissOverlay = { voiceOverlayHost.hide() },
+                    onExit = {
+                        voiceOverlayHost.hide()
+                        voiceViewModel.exitVoiceMode()
+                    },
+                ),
+            )
+            if (!shown) {
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        message = "Voice Overlay could not be started.",
+                        duration = SnackbarDuration.Short,
+                    )
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(voiceUiState.voiceMode) {
+        if (!voiceUiState.voiceMode) {
+            voiceOverlayHost.hide()
+            pendingVoiceOverlayPermission = false
+            voiceCompactMode = false
+        }
+    }
+
+    DisposableEffect(
+        lifecycleOwner,
+        pendingVoiceOverlayPermission,
+        voiceUiState.voiceMode,
+        voiceOutputConfig,
+        realtimeAgentConfig,
+        voiceStats.voiceEngineMode,
+    ) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && pendingVoiceOverlayPermission) {
+                when {
+                    voiceOverlayHost.hasOverlayPermission() && voiceUiState.voiceMode -> {
+                        showVoiceSystemOverlay()
+                    }
+                    !voiceOverlayHost.hasOverlayPermission() -> {
+                        pendingVoiceOverlayPermission = false
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "Voice Overlay permission was not granted.",
+                                duration = SnackbarDuration.Short,
+                            )
+                        }
+                    }
+                    else -> pendingVoiceOverlayPermission = false
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(voiceClient, voiceUiState.voiceMode, selectedProfile?.name) {
+        if (!voiceUiState.voiceMode) return@LaunchedEffect
+        val client = voiceClient ?: return@LaunchedEffect
+        val result = client.getVoiceOutputConfig()
+        if (result.isSuccess) {
+            voiceOutputConfig = result.getOrNull()
+        }
+        val realtimeResult = client.getRealtimeAgentConfig()
+        if (realtimeResult.isSuccess) {
+            realtimeAgentConfig = realtimeResult.getOrNull()
+        }
+    }
 
     // File picker for attachments (any file type)
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -368,8 +586,22 @@ fun ChatScreen(
     // visibleItemsInfo (which has to account for header/footer spacers and
     // the StreamingDots indicator). This is also the trigger that resumes
     // auto-follow after the user scrolls back down manually.
+    // "At bottom" with a small slop (~1.5 lines of text) rather than the exact
+    // `!canScrollForward`. A burst of streaming content — or a sub-frame layout
+    // gap before the auto-follow re-pins — can momentarily make the list
+    // scrollable-forward; the strict check would read that as "user scrolled
+    // away" and drop the follow. The slop keeps the Telegram-style follow
+    // sticky through streaming jitter while still flipping to "scrolled away"
+    // on a real read-up gesture.
+    val atBottomSlopPx = 140
     val isAtBottom by remember {
-        derivedStateOf { !listState.canScrollForward }
+        derivedStateOf {
+            val layout = listState.layoutInfo
+            val last = layout.visibleItemsInfo.lastOrNull()
+                ?: return@derivedStateOf true
+            last.index == layout.totalItemsCount - 1 &&
+                (last.offset + last.size) - layout.viewportEndOffset <= atBottomSlopPx
+        }
     }
 
     // True when the user has scrolled up (away from the bottom). The
@@ -399,8 +631,9 @@ fun ChatScreen(
         derivedStateOf { messages.isNotEmpty() && !isAtBottom }
     }
 
-    // Build all commands dynamically: built-in + personalities + server skills
-    val allCommands by remember(availableSkills, personalityNames) {
+    // Build all commands dynamically: built-in + personalities + server
+    // skills + (gateway) the server's commands.catalog
+    val allCommands by remember(availableSkills, personalityNames, serverCommands) {
         derivedStateOf {
             // Built-in hermes gateway commands (from hermes_cli/commands.py)
             // Only includes commands available via gateway (not cli_only)
@@ -457,7 +690,26 @@ fun ChatScreen(
                 )
             }
 
-            builtIn + personalities + skills
+            val base = builtIn + personalities + skills
+            if (serverCommands.isEmpty()) {
+                base
+            } else {
+                // Merge the gateway catalog as a 4th source: dedupe by
+                // command name with the server description winning;
+                // server-only commands append under their catalog category
+                // (or the palette's "server" bucket).
+                val serverByName = serverCommands.associateBy { it.command.lowercase() }
+                val merged = base.map { cmd ->
+                    serverByName[cmd.command.lowercase()]?.let { server ->
+                        cmd.copy(
+                            description = server.description,
+                            source = SlashCommand.SOURCE_SERVER,
+                        )
+                    } ?: cmd
+                }
+                val baseNames = base.map { it.command.lowercase() }.toSet()
+                merged + serverCommands.filter { it.command.lowercase() !in baseNames }
+            }
         }
     }
 
@@ -481,6 +733,16 @@ fun ChatScreen(
     // Refresh sessions when screen appears and API is ready
     LaunchedEffect(chatReady) {
         if (chatReady) {
+            chatViewModel.refreshSessions()
+        }
+    }
+
+    // Opening the drawer re-syncs the list — so a session created on another
+    // device (or one whose optimistic row was dropped on a profile switch)
+    // shows up without a manual reload. Cheap dashboard read; the optimistic
+    // row for the active session is preserved by ChatHandler.updateSessions.
+    LaunchedEffect(drawerState.isOpen) {
+        if (drawerState.isOpen && chatReady) {
             chatViewModel.refreshSessions()
         }
     }
@@ -570,8 +832,21 @@ fun ChatScreen(
                 val isListRebuild = prev != null
                     && snapshot.messageCount - prev.messageCount > 1
 
-                if (isListRebuild) {
-                    // Instant — no animation, no conflict with animateItem.
+                // Growth of the bubble we're already following (thinking /
+                // content / tool cards on the same message) arrives at token
+                // frequency on the gateway transport. animateScrollToItem
+                // per delta is a cancel/restart storm — each collectLatest
+                // cancellation strands the viewport mid-animation (showing
+                // earlier content) before the next one yanks it back:
+                // visible stutter when parked at the bottom during long
+                // reasoning. Pin instantly instead; reserve the animation
+                // for the discrete new-bubble event.
+                val isSameTurnGrowth = prev != null
+                    && snapshot.messageCount == prev.messageCount
+
+                if (isListRebuild || isSameTurnGrowth) {
+                    // Instant — no animation, no conflict with animateItem,
+                    // no pile-up at delta frequency.
                     listState.scrollToItem(lastIndex, Int.MAX_VALUE)
                 } else {
                     // scrollOffset = Int.MAX_VALUE → Compose clamps to
@@ -607,8 +882,10 @@ fun ChatScreen(
     // loading and a "default" entry shows up.
     val effectiveProfile by remember(selectedProfile, agentProfiles) {
         derivedStateOf {
-            selectedProfile
-                ?: agentProfiles.firstOrNull { it.name.equals("default", ignoreCase = true) }
+            AgentDisplay.effectiveProfile(
+                selectedProfile = selectedProfile,
+                profiles = agentProfiles,
+            )
         }
     }
 
@@ -629,34 +906,38 @@ fun ChatScreen(
     val agentDisplayName by remember {
         derivedStateOf {
             val profile = effectiveProfile
-            val fromProfile = when {
-                profile == null -> null
-                profile.description.isNotBlank() -> profile.description
-                profile.name.isNotBlank() -> profile.name.replaceFirstChar { it.uppercase() }
-                else -> null
-            }
-            fromProfile ?: run {
-                val personalityName = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
-                    defaultPersonality
-                } else {
-                    selectedPersonality
-                }
-                when {
-                    personalityName.isNotBlank() && personalityName != "default" ->
-                        personalityName.replaceFirstChar { it.uppercase() }
-                    !activeConnection?.label.isNullOrBlank() -> activeConnection!!.label
-                    else -> ""
-                }
-            }
+            AgentDisplay.agentName(
+                profile = profile,
+                selectedPersonality = selectedPersonality,
+                defaultPersonality = defaultPersonality,
+                connectionLabel = activeConnection?.label,
+            )
         }
     }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
+            val drawerTitle = if (selectedProfile != null) {
+                "$agentDisplayName sessions"
+            } else {
+                "Server default sessions"
+            }
+            val drawerSubtitle = when {
+                selectedProfile?.hasIsolatedApi == true ->
+                    "Profile API: ${selectedProfile?.apiServerUrl}"
+                selectedProfile != null ->
+                    "Compatibility overlay on ${activeConnection?.label ?: "active connection"}"
+                activeConnection?.label?.isNotBlank() == true ->
+                    "Connection: ${activeConnection?.label}"
+                else -> "Active connection"
+            }
             SessionDrawerContent(
                 sessions = sessions,
                 currentSessionId = currentSessionId,
+                scopeTitle = drawerTitle,
+                scopeSubtitle = drawerSubtitle,
+                isLoading = isLoadingSessions,
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }
@@ -680,7 +961,8 @@ fun ChatScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .radialNavyBackground(isDarkTheme = isDarkTheme)
+                .background(RelayRefresh.Background)
+                .relayGridTexture(alpha = 0.14f)
                 .imePadding()
                 .alpha(chatAlpha)
         ) {
@@ -704,15 +986,6 @@ fun ChatScreen(
                         else -> MaterialTheme.colorScheme.error
                     }
 
-                    // Customization cue — true when the user has overridden
-                    // the server defaults via either picker. Drives the 2dp
-                    // accent ring on the avatar (subtle, at-a-glance signal
-                    // that "you've customized this agent"). Personality
-                    // defaults to the sentinel "default" string — any other
-                    // value means explicit pick.
-                    val customized = selectedProfile != null ||
-                        selectedPersonality != "default"
-
                     // Single-line subtitle: when we have a model name we show
                     // `model · personality` so the user sees both dimensions
                     // at once. Before the server config lands (or while
@@ -721,21 +994,30 @@ fun ChatScreen(
                     // Model priority: profile.model (explicit or default
                     // profile pick) trumps /api/config's `serverModelName`.
                     // The profile picker is the more specific intent.
-                    val personalityLabel = when {
-                        selectedPersonality != "default" ->
-                            selectedPersonality.replaceFirstChar { it.uppercase() }
-                        defaultPersonality.isNotBlank() ->
-                            defaultPersonality.replaceFirstChar { it.uppercase() }
-                        else -> "Default"
-                    }
+                    val personalityLabel = AgentDisplay.personalityLabel(
+                        selectedPersonality = selectedPersonality,
+                        defaultPersonality = defaultPersonality,
+                    )
                     val modelName = effectiveProfile?.model
                         ?.takeIf { it.isNotBlank() }
                         ?: serverModelName
+                    // Subtext: a NON-default personality shown BEFORE the model
+                    // (e.g. "Catgirl \u00B7 gpt-5.5"); the default personality is
+                    // implied, so it's just the model. Falls back to the
+                    // personality label when there's no model name yet.
+                    val nonDefaultPersonality = selectedPersonality
+                        .takeIf {
+                            it.isNotBlank() &&
+                                it != "default" &&
+                                !it.equals(defaultPersonality, ignoreCase = true)
+                        }
+                        ?.replaceFirstChar { it.uppercase() }
                     val subtitleText = when {
                         !apiReachable -> statusText
-                        modelName.isNotBlank() ->
-                            "$modelName \u00B7 $personalityLabel"
-                        else -> personalityLabel
+                        else -> listOfNotNull(
+                            nonDefaultPersonality,
+                            modelName.takeIf { it.isNotBlank() },
+                        ).joinToString(" \u00B7 ").ifBlank { personalityLabel }
                     }
                     val subtitleColor = if (apiReachable) {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -748,34 +1030,15 @@ fun ChatScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.clickable { showAgentInfo = true }
                     ) {
-                        // Avatar — 40dp, optional 2dp primary-color accent ring
-                        // when the user has overridden any of the agent
-                        // defaults. Ring sits OUTSIDE the avatar circle; the
-                        // inner Surface is downsized by ring width so the
-                        // overall footprint stays at 40dp.
-                        val ringWidth = if (customized) 2.dp else 0.dp
-                        val innerSize = 40.dp - (ringWidth * 2)
+                        // Avatar — a plain 40dp circle whose letter swaps to the
+                        // active agent (profile or personality). No overlay ring:
+                        // the letter itself is the indicator.
                         Box(modifier = Modifier.size(40.dp)) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .then(
-                                        if (customized) {
-                                            Modifier.border(
-                                                width = ringWidth,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                shape = CircleShape,
-                                            )
-                                        } else Modifier
-                                    )
-                                    .padding(ringWidth),
-                                contentAlignment = Alignment.Center,
+                            Surface(
+                                modifier = Modifier.size(40.dp),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(innerSize),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary
-                                ) {
                                     // Cross-fade the letter when the
                                     // effective agent (profile or personality)
                                     // changes so the avatar feels alive on a
@@ -799,7 +1062,6 @@ fun ChatScreen(
                                         }
                                     }
                                 }
-                            }
                             ConnectionStatusBadge(
                                 isConnected = apiReachable,
                                 isConnecting = isConnecting,
@@ -818,8 +1080,28 @@ fun ChatScreen(
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )
+                            // Context escalation: ≥85% the subtitle gains a
+                            // " · NN% ctx" suffix in the caution ladder color
+                            // (Amber, Danger past 90%). The ambient strip
+                            // below the app bar covers the 50–85% range.
+                            val ctxFraction = contextUsage
+                            val subtitleAnnotated = buildAnnotatedString {
+                                append(subtitleText)
+                                if (apiReachable && ctxFraction != null && ctxFraction >= 0.85f) {
+                                    val ctxColor = if (ctxFraction >= 0.9f) {
+                                        RelayRefresh.Danger
+                                    } else {
+                                        RelayRefresh.Amber
+                                    }
+                                    withStyle(SpanStyle(color = ctxColor)) {
+                                        append(
+                                            " · ${(ctxFraction * 100).roundToInt()}% ctx"
+                                        )
+                                    }
+                                }
+                            }
                             Text(
-                                text = subtitleText,
+                                text = subtitleAnnotated,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = subtitleColor,
                                 maxLines = 1,
@@ -840,7 +1122,7 @@ fun ChatScreen(
                     activeEndpoint?.let { ep ->
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            color = RelayRefresh.Navy3.copy(alpha = 0.78f),
                             modifier = Modifier
                                 .padding(end = 4.dp)
                                 .clickable { onNavigateToConnections() },
@@ -848,7 +1130,7 @@ fun ChatScreen(
                             Text(
                                 text = ep.displayLabel(),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = RelayRefresh.Relay,
                                 modifier = Modifier.padding(
                                     horizontal = 8.dp,
                                     vertical = 4.dp,
@@ -856,53 +1138,48 @@ fun ChatScreen(
                             )
                         }
                     }
-                    // Ambient mode toggle (show/hide sphere visualization).
-                    // Profile + personality pickers moved into the agent sheet
-                    // that opens on title tap — the top bar no longer owns
-                    // those chips, reclaiming the horizontal space for a
-                    // cleaner title block.
-                    if (animationEnabled) {
-                        IconButton(onClick = { ambientMode = !ambientMode }) {
-                            Icon(
-                                imageVector = if (ambientMode) Icons.Filled.ChatBubble else Icons.Filled.AutoAwesome,
-                                contentDescription = if (ambientMode) "Show chat" else "Ambient mode",
-                                tint = if (ambientMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                    if (messages.isNotEmpty()) {
+                        RelayChromeIconButton(
+                            icon = Icons.Filled.Share,
+                            contentDescription = "Share conversation",
+                            onClick = { shareConversation(context, messages) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
                     }
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Code,
+                        contentDescription = "Terminal",
+                        onClick = onNavigateToTerminal,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Tune,
+                        contentDescription = "Settings",
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    // Ambient mode (fullscreen sphere) has no top-bar toggle —
+                    // it's a quiet gesture: long-press the conversation
+                    // background to enter, tap anywhere to return. A hint pill
+                    // on entry teaches the way back.
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
-
-            // Offline banner
-            AnimatedVisibility(
-                visible = networkStatus is ConnectivityObserver.Status.Lost ||
-                    networkStatus is ConnectivityObserver.Status.Unavailable
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.errorContainer)
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.WifiOff,
-                        contentDescription = "No internet",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        "No internet connection",
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
+            // Ambient context-window meter — 2dp strip at the seam between
+            // the app bar and the mode strip; composes to nothing below 50%.
+            ContextMeterBar(usedFraction = contextUsage)
+            RelayModeStrip(
+                selected = RelayPrimaryMode.Chat,
+                onModeSelected = { mode ->
+                    when (mode) {
+                        RelayPrimaryMode.Chat -> Unit
+                        RelayPrimaryMode.Manage -> onNavigateToManage()
+                        RelayPrimaryMode.Bridge -> onNavigateToBridge()
+                    }
+                },
+            )
 
             // Error banner with retry
             AnimatedVisibility(visible = error != null) {
@@ -949,12 +1226,25 @@ fun ChatScreen(
                 }
             }
 
-            // Ambient mode: fullscreen sphere visualization
+            // Ambient mode: fullscreen sphere visualization. Tap (or
+            // long-press) anywhere to return; a transient hint pill teaches
+            // the exit on every entry.
             if (ambientMode && animationEnabled) {
+                var showAmbientHint by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(2_800)
+                    showAmbientHint = false
+                }
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { ambientMode = false },
+                                onLongPress = { ambientMode = false },
+                            )
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     MorphingSphere(
@@ -963,6 +1253,24 @@ fun ChatScreen(
                         intensity = streamingIntensity,
                         toolCallBurst = toolCallBurst
                     )
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showAmbientHint,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 18.dp),
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                    ) {
+                        Text(
+                            text = "tap to return to chat",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
+                                .padding(horizontal = 12.dp, vertical = 5.dp),
+                        )
+                    }
                 }
             }
             // Message list or empty state
@@ -1005,42 +1313,115 @@ fun ChatScreen(
                         }
 
                         Text(
-                            text = "Start a conversation",
+                            text = when (chatConnectState) {
+                                // Name the agent when a profile is picked, so a
+                                // profile switch is legible in the thread itself
+                                // (not just the header) — the desktop's intro.
+                                ChatConnectState.Ready ->
+                                    if (selectedProfile != null) "Chat with $agentDisplayName" else "Start a conversation"
+                                ChatConnectState.Connecting -> "Connecting to Hermes…"
+                                ChatConnectState.NeedsConnection -> "Connect to Hermes"
+                            },
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
 
-                        if (!chatReady) {
-                            Spacer(modifier = Modifier.height(8.dp))
+                        // The selected agent's role/description — the rest of the
+                        // fresh-session intro, shown only when a profile is active.
+                        val profileBlurb = effectiveProfile?.description
+                            ?.trim()
+                            ?.takeIf { it.isNotBlank() && !it.equals(agentDisplayName, ignoreCase = true) }
+                        if (chatConnectState == ChatConnectState.Ready && profileBlurb != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Configure API server in Settings",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
+                                text = profileBlurb,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        // Suggestion chips
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            suggestions.forEach { suggestion ->
-                                AssistChip(
-                                    onClick = { inputText = suggestion },
-                                    label = {
+                        when (chatConnectState) {
+                            // Hydration finished and there is genuinely nothing
+                            // configured — the only state that shows the CTA.
+                            ChatConnectState.NeedsConnection -> {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                ElevatedCard(
+                                    colors = CardDefaults.elevatedCardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
+                                    ),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
                                         Text(
-                                            text = suggestion,
-                                            style = MaterialTheme.typography.bodySmall
+                                            text = "Chat needs a Standard Hermes API connection.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
-                                    },
-                                    colors = AssistChipDefaults.assistChipColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        Button(
+                                            onClick = onNavigateToConnect,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text("Connect Standard Hermes")
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Cold-start hydration / an active connection still
+                            // coming up. Quiet spinner — never the connect CTA.
+                            // A low-emphasis "Manage connections" escape hatch
+                            // keeps a genuinely-stuck connection recoverable.
+                            ChatConnectState.Connecting -> {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
                                     )
-                                )
+                                    Text(
+                                        text = "Getting things ready…",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                TextButton(onClick = onNavigateToConnections) {
+                                    Text("Manage connections")
+                                }
+                            }
+
+                            ChatConnectState.Ready -> {
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                // Suggestion chips
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    suggestions.forEach { suggestion ->
+                                        AssistChip(
+                                            onClick = { inputText = suggestion },
+                                            label = {
+                                                Text(
+                                                    text = suggestion,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            },
+                                            colors = AssistChipDefaults.assistChipColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        )
+                                    }
+                                }
                             }
                         }
 
@@ -1052,6 +1433,17 @@ fun ChatScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        // Quiet entry to ambient mode: long-press the
+                        // conversation background. Bubbles keep their own
+                        // long-press (copy) — they consume the gesture first,
+                        // so only presses on empty space land here.
+                        .pointerInput(animationEnabled) {
+                            detectTapGestures(
+                                onLongPress = {
+                                    if (animationEnabled) ambientMode = true
+                                },
+                            )
+                        }
                 ) {
                     // Ambient sphere behind messages
                     if (animationEnabled && animationBehindChat && !ambientMode) {
@@ -1078,10 +1470,12 @@ fun ChatScreen(
                             val message = messages[index]
 
                             // Skip empty bubbles (content stripped by annotation parser, no tool calls,
-                            // no attachments). Attachments keep the bubble alive for inbound media.
+                            // no attachments). Attachments keep the bubble alive for inbound media;
+                            // cards keep ask-card-only messages alive the same way.
                             if (message.content.isBlank() &&
                                 message.toolCalls.isEmpty() &&
                                 message.attachments.isEmpty() &&
+                                message.cards.isEmpty() &&
                                 !message.isStreaming
                             ) return@items
 
@@ -1123,6 +1517,35 @@ fun ChatScreen(
                                         chatViewModel.dispatchCardAction(msgId, cardKey, action)
                                     }
                                 },
+                                onCardInput = { msgId, cardKey, value ->
+                                    chatViewModel.answerAsk(msgId, cardKey, value)
+                                },
+                                onEditMessage = if (
+                                    isGatewayTransport &&
+                                    !isStreaming &&
+                                    message.role == MessageRole.USER &&
+                                    !message.id.startsWith("voice-intent-") &&
+                                    !message.id.startsWith("steer-")
+                                ) {
+                                    { msg ->
+                                        editingMessage = msg
+                                        inputText = msg.content.take(charLimit)
+                                    }
+                                } else {
+                                    null
+                                },
+                                onQuoteMessage = { text ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    val quoted = text.take(600)
+                                        .trim()
+                                        .lines()
+                                        .joinToString("\n") { line -> "> $line" }
+                                    inputText = if (inputText.isBlank()) {
+                                        "$quoted\n\n"
+                                    } else {
+                                        "$inputText\n$quoted\n\n"
+                                    }
+                                },
                                 onCopyMessage = { text ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     // The new Clipboard API is suspend-based, so the
@@ -1146,28 +1569,60 @@ fun ChatScreen(
                                 }
                             )
 
+                            // Steered sends live inside a server-side tool
+                            // result, not a user message — flag the local
+                            // bubble so the scrollback explains itself.
+                            if (message.role == MessageRole.USER && message.id.startsWith("steer-")) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    Text(
+                                        text = "↳ steered",
+                                        style = relayMetadataStyle(),
+                                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f),
+                                        modifier = Modifier.padding(top = 1.dp, end = 4.dp),
+                                    )
+                                }
+                            }
+
                             if (toolDisplay != "off") {
-                                message.toolCalls.forEach { toolCall ->
+                                // Subagent children (taskIndex != null) group
+                                // into lanes after the top-level tool cards;
+                                // the null group renders exactly as before.
+                                val laneGroups = message.toolCalls.groupBy { it.taskIndex }
+                                laneGroups[null]?.forEach { toolCall ->
                                     Spacer(modifier = Modifier.height(4.dp))
                                     when (toolDisplay) {
                                         "compact" -> CompactToolCall(toolCall = toolCall)
-                                        else -> ToolProgressCard(toolCall = toolCall)
+                                        else -> ToolProgressCard(
+                                            toolCall = toolCall,
+                                            messageTimestamp = message.timestamp,
+                                        )
                                     }
+                                }
+                                laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    SubagentLane(
+                                        taskIndex = taskIndex,
+                                        calls = laneGroups.getValue(taskIndex),
+                                    )
                                 }
                             }
                         }
 
-                        if (isStreaming) {
-                            item {
-                                StreamingDots(
-                                    modifier = Modifier
-                                        .padding(start = 12.dp, top = 4.dp)
-                                        .animateItem()
-                                )
-                            }
-                        }
-
-                        item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
+                        // NOTE: no standalone StreamingDots item here — the
+                        // streaming bubble already renders its own in-bubble
+                        // dots (MessageBubble), and a second indicator below
+                        // the bubble both read as a duplicate "typing" hint
+                        // and churned animateItem placement at the viewport
+                        // bottom on every delta (visible jitter at
+                        // gateway/token delta frequency). Same reason the
+                        // trailing spacer doesn't animateItem(): its position
+                        // shifts on every delta of the growing bubble above
+                        // it, and a constant 8dp gap gains nothing from
+                        // placement animation.
+                        item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
 
                     // Scroll-to-bottom FAB
@@ -1226,6 +1681,7 @@ fun ChatScreen(
                         inputText = if (cmd.command.contains(" ")) cmd.command + " " else "$base "
                     },
                     modifier = Modifier.padding(horizontal = 16.dp)
+
                 )
             }
 
@@ -1329,144 +1785,128 @@ fun ChatScreen(
                 }
             }
 
-            // Input bar with character limit
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.Bottom
-            ) {
-                // Attach file button
-                IconButton(
-                    onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
-                    modifier = Modifier.padding(bottom = 4.dp)
+            // Edit-and-resend mode chip — cancelable; submitting rewinds the
+            // conversation from the edited message (gateway only).
+            AnimatedVisibility(visible = editingMessage != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Attach file",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.tertiary,
                     )
-                }
-
-                // Command palette button
-                IconButton(
-                    onClick = { showCommandPalette = true },
-                    modifier = Modifier.padding(bottom = 4.dp)
-                ) {
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "/",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Editing — will rewind the conversation",
+                        style = relayMetadataStyle(),
+                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f),
+                        modifier = Modifier.weight(1f),
                     )
-                }
-
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { if (it.length <= charLimit) inputText = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = {
-                        Text(if (isStreaming && inputText.isBlank()) "Queue a message..." else "Message...")
-                    },
-                    maxLines = 4,
-                    enabled = chatReady,
-                    supportingText = if (inputText.length > charLimit - 200) {
-                        {
-                            Text(
-                                "${inputText.length}/$charLimit",
-                                color = if (inputText.length >= charLimit) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
-                    } else null
-                )
-
-                // Stop button — visible during streaming
-                AnimatedVisibility(visible = isStreaming) {
-                    IconButton(onClick = { chatViewModel.cancelStream() }) {
+                    IconButton(
+                        onClick = {
+                            editingMessage = null
+                            inputText = ""
+                        },
+                        modifier = Modifier.size(24.dp),
+                    ) {
                         Icon(
-                            imageVector = Icons.Filled.Stop,
-                            contentDescription = "Stop streaming",
-                            tint = MaterialTheme.colorScheme.error
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Cancel editing",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                }
-
-                // Trailing button — smart-swap between mic and send.
-                // Empty input → Mic (taps into voice mode overlay).
-                // Any typed text or attachment → Send (morph into send arrow,
-                // queues during streaming). Stop button during streaming is a
-                // separate IconButton above this one; both can coexist since
-                // they have distinct semantics.
-                val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
-                val sendEnabled = hasContent && chatReady
-                Box(
-                    modifier = if (sendEnabled && isDarkTheme && !isStreaming) {
-                        Modifier.purpleGlow(
-                            radius = 24.dp,
-                            alpha = 0.35f,
-                            isDarkTheme = true
-                        )
-                    } else Modifier
-                ) {
-                    if (hasContent) {
-                        IconButton(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
-                                inputText = ""
-                            },
-                            enabled = sendEnabled
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = if (isStreaming) "Queue message" else "Send message",
-                                tint = if (sendEnabled) {
-                                    if (isStreaming) MaterialTheme.colorScheme.tertiary
-                                    else MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
-                    } else {
-                        // Gate on voiceReady — voice mode needs a relay
-                        // route, but the app can derive it from the API URL
-                        // and authenticate with the saved Hermes API key or
-                        // a paired Relay session.
-                        IconButton(
-                            onClick = {
-                                if (voiceReady) {
-                                    requestVoiceMode()
-                                } else {
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        "Voice needs API key or pairing, plus a reachable relay route",
-                                        android.widget.Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                            },
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Mic,
-                                contentDescription = if (voiceReady) {
-                                    "Voice mode"
-                                } else {
-                                    "Voice mode unavailable"
-                                },
-                                tint = if (voiceReady) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                        .copy(alpha = 0.5f)
-                                },
-                            )
-                        }
                     }
                 }
             }
+
+            // Input bar — pill field with ONE trailing slot morphing
+            // Send / Voice / Stop / Steer / Queue. "+" taps the file picker,
+            // long-press opens the CommandPalette (the dedicated "/" button
+            // is gone — typing "/" still surfaces InlineAutocomplete).
+            val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
+            val trailing = when {
+                !isStreaming && hasContent -> ChatInputTrailing.SEND
+                !isStreaming -> ChatInputTrailing.VOICE
+                isStreaming && !hasContent -> ChatInputTrailing.STOP
+                steerableTurn -> ChatInputTrailing.STEER
+                else -> ChatInputTrailing.QUEUE
+            }
+            val inputCaption = when {
+                isStreaming && hasContent && steerableTurn ->
+                    "↳ sends now — Hermes adjusts mid-turn"
+                isStreaming && hasContent -> "↳ delivered after this turn finishes"
+                isStreaming && steerNotice != null -> steerNotice
+                else -> null
+            }
+            val inputPlaceholder = when {
+                editingMessage != null -> "Edit your message…"
+                isStreaming && steerableTurn -> "Steer the response…"
+                isStreaming -> "Queue a message..."
+                else -> "Message..."
+            }
+            ChatInputBar(
+                value = inputText,
+                onValueChange = { inputText = it },
+                placeholder = inputPlaceholder,
+                trailing = trailing,
+                onSend = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    val editing = editingMessage
+                    if (editing != null) {
+                        // Only drop the edit state once the rewind actually
+                        // dispatched — a silent gate must not eat the text.
+                        if (chatViewModel.regenerateFromMessage(editing.id, inputText)) {
+                            editingMessage = null
+                            inputText = ""
+                        } else {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    message = "Can't edit right now — wait for the current turn to finish",
+                                    duration = SnackbarDuration.Short,
+                                )
+                            }
+                        }
+                    } else {
+                        chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
+                        inputText = ""
+                    }
+                },
+                onVoice = {
+                    if (voiceReady) {
+                        requestVoiceMode()
+                    } else {
+                        android.widget.Toast.makeText(
+                            context,
+                            when (standardVoiceAvailability) {
+                                com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
+                                    standardVoiceSignInRouteHint?.let { route ->
+                                        "Voice needs a one-time sign-in on the $route route — open Manage"
+                                    } ?: "Voice needs dashboard sign-in — open Manage to sign in"
+                                com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
+                                    "This Hermes build has no voice routes — update hermes-agent or pair Relay"
+                                else ->
+                                    "Voice needs a reachable Hermes dashboard or Relay voice route"
+                            },
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+                onStop = { chatViewModel.cancelStream() },
+                onAttach = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onLongPressAttach = { showCommandPalette = true },
+                charLimit = charLimit,
+                caption = inputCaption,
+                voiceReady = voiceReady,
+                showVoiceHint = !voiceHintSeen,
+                onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
+                isDarkTheme = isDarkTheme,
+                enabled = chatReady,
+            )
         } // end Column
 
         // Mic permission denied banner — title + body + Open Settings action.
@@ -1531,6 +1971,7 @@ fun ChatScreen(
                 onMicTap = { voiceViewModel.startListening() },
                 onMicRelease = { voiceViewModel.stopListening() },
                 onInterrupt = { voiceViewModel.interruptSpeaking() },
+                onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                 onDismiss = { voiceViewModel.exitVoiceMode() },
                 onModeChange = { voiceViewModel.setInteractionMode(it) },
                 onClearError = { voiceViewModel.clearError() },
@@ -1540,11 +1981,25 @@ fun ChatScreen(
                 // Voice-first transcript: pass the last N chat messages so
                 // voice mode can show a compact rolling history including
                 // local-only voice-intent traces (agentName="Voice action").
-                // Bounded to 6 to keep voice mode visually focused on sphere
-                // + waveform + mic — the full scroll lives in the chat tab.
-                transcriptMessages = messages.takeLast(6),
+                // Bounded to 12 to keep voice mode focused while still
+                // preserving enough recent tool/context rows for voice turns.
+                transcriptMessages = messages.takeLast(12),
+                showThinking = showThinking,
+                voiceEngineMode = voiceStats.voiceEngineMode,
+                voiceOutputProvider = activeVoiceProvider,
+                voiceOutputModel = activeVoiceModel,
+                voiceOutputVoice = activeVoiceName,
+                voiceProfileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
+                    ?: selectedProfile?.name,
+                voiceConfigScope = activeVoiceScope,
+                voiceOutputEnabled = activeVoiceEnabled,
+                voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
+                onOverlayRequest = showVoiceSystemOverlay,
+                onCompactModeChange = { compact ->
+                    voiceCompactMode = compact
+                },
                 // === v0.4.1 JIT permission-denied chip ===
-                // Tap deep-links to Settings → Apps → Hermes Relay →
+                // Tap deep-links to Settings → Apps → Hermes-Relay →
                 // Permissions for the running package. Use BuildConfig
                 // .APPLICATION_ID rather than a hard-coded string so both
                 // the googlePlay and sideload flavors land on their own
@@ -1562,6 +2017,9 @@ fun ChatScreen(
                         context.startActivity(intent)
                     }
                     voiceViewModel.clearPermissionDeniedCallout()
+                },
+                onHermesConfirmationAnswer = { answer ->
+                    voiceViewModel.answerHermesConfirmation(answer)
                 },
                 // === END v0.4.1 ===
             )
@@ -1592,6 +2050,7 @@ fun ChatScreen(
             chatViewModel = chatViewModel,
             onDismiss = { showAgentInfo = false },
             onNavigateToConnections = onNavigateToConnections,
+            onNavigateToProfileInspector = onNavigateToProfileInspector,
         )
     }
 }
@@ -1646,4 +2105,38 @@ private fun DateSeparator(timestamp: Long) {
             )
         }
     }
+}
+
+/**
+ * Share the visible conversation as Markdown via the system share sheet.
+ * Role names are matched as strings so this helper stays decoupled from the
+ * MessageRole enum's package.
+ */
+private fun shareConversation(
+    context: android.content.Context,
+    messages: List<com.hermesandroid.relay.data.ChatMessage>,
+) {
+    val body = buildString {
+        appendLine("# Hermes conversation")
+        appendLine()
+        messages.forEach { message ->
+            if (message.content.isBlank()) return@forEach
+            val speaker = when {
+                message.role.name.equals("user", ignoreCase = true) -> "**You:**"
+                message.role.name.equals("assistant", ignoreCase = true) -> "**Hermes:**"
+                else -> "**System:**"
+            }
+            appendLine(speaker)
+            appendLine(message.content.trim())
+            appendLine()
+        }
+    }
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, body)
+        putExtra(android.content.Intent.EXTRA_SUBJECT, "Hermes conversation")
+    }
+    context.startActivity(
+        android.content.Intent.createChooser(intent, "Share conversation"),
+    )
 }

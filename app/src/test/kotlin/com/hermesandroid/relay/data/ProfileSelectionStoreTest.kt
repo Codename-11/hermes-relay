@@ -4,12 +4,11 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -39,7 +38,7 @@ class ProfileSelectionStoreTest {
 
     @Before
     fun setUp() {
-        scope = TestScope(StandardTestDispatcher() + Job())
+        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val file: File = tempFolder.newFile("profile_selections_test.preferences_pb")
         // PreferenceDataStoreFactory requires the backing file NOT exist yet;
         // TemporaryFolder.newFile() creates it, so we delete first.
@@ -57,20 +56,20 @@ class ProfileSelectionStoreTest {
     }
 
     @Test
-    fun unset_connection_emitsNull() = runTest {
+    fun unset_connection_emitsNull() = runBlocking {
         // Fresh store — every connection id reads as null until set.
         assertNull(store.selectedProfileFlow("conn-1").first())
         assertNull(store.selectedProfileFlow("conn-unknown").first())
     }
 
     @Test
-    fun set_then_get_roundTrips() = runTest {
+    fun set_then_get_roundTrips() = runBlocking {
         store.setSelectedProfile("conn-1", "mizu")
         assertEquals("mizu", store.selectedProfileFlow("conn-1").first())
     }
 
     @Test
-    fun set_null_clearsTheKey() = runTest {
+    fun set_null_clearsTheKey() = runBlocking {
         store.setSelectedProfile("conn-1", "mizu")
         assertEquals("mizu", store.selectedProfileFlow("conn-1").first())
 
@@ -82,7 +81,7 @@ class ProfileSelectionStoreTest {
     }
 
     @Test
-    fun clear_removesOnlyTheGivenConnection() = runTest {
+    fun clear_removesOnlyTheGivenConnection() = runBlocking {
         store.setSelectedProfile("conn-1", "mizu")
         store.setSelectedProfile("conn-2", "coder")
 
@@ -93,7 +92,7 @@ class ProfileSelectionStoreTest {
     }
 
     @Test
-    fun perConnectionKeys_areIndependent() = runTest {
+    fun perConnectionKeys_areIndependent() = runBlocking {
         // Writing to one connection must not touch another — the key
         // factory is the contract and regressions here would cascade.
         store.setSelectedProfile("conn-A", "alpha")
@@ -106,7 +105,7 @@ class ProfileSelectionStoreTest {
     }
 
     @Test
-    fun overwrite_replacesPriorValue() = runTest {
+    fun overwrite_replacesPriorValue() = runBlocking {
         store.setSelectedProfile("conn-1", "mizu")
         store.setSelectedProfile("conn-1", "coder")
         assertEquals("coder", store.selectedProfileFlow("conn-1").first())

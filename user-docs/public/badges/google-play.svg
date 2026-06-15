@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 72" role="img" aria-label="Get it on Google Play" width="240" height="72">
+  <defs>
+    <linearGradient id="gp-blue" x1="20" y1="17" x2="27" y2="55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00E1FF"/>
+      <stop offset="1" stop-color="#00A2FF"/>
+    </linearGradient>
+    <linearGradient id="gp-red" x1="20" y1="17" x2="54" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF5662"/>
+      <stop offset="1" stop-color="#E61E2A"/>
+    </linearGradient>
+    <linearGradient id="gp-yellow" x1="27" y1="36" x2="54" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD500"/>
+      <stop offset="1" stop-color="#FFC400"/>
+    </linearGradient>
+    <linearGradient id="gp-green" x1="20" y1="55" x2="54" y2="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00ED76"/>
+      <stop offset="1" stop-color="#00C45E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Badge plate — black with hairline border per Google badge guidelines -->
+  <rect x="0.75" y="0.75" width="238.5" height="70.5" rx="9" fill="#000000" stroke="#A6A6A6" stroke-width="1.5"/>
+
+  <!-- Google Play "play" mark — four facets meeting at the central seam -->
+  <path d="M20 17 L27 36 L20 55 Z" fill="url(#gp-blue)"/>
+  <path d="M20 17 L54 34.3 L27 36 Z" fill="url(#gp-red)"/>
+  <path d="M27 36 L54 34.3 L54 37.7 Z" fill="url(#gp-yellow)"/>
+  <path d="M20 55 L27 36 L54 37.7 Z" fill="url(#gp-green)"/>
+
+  <!-- Wordmark -->
+  <text x="68" y="29" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="10" letter-spacing="1.4">GET IT ON</text>
+  <text x="67" y="53" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="500" letter-spacing="0.2">Google Play</text>
+</svg>

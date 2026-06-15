@@ -80,7 +80,12 @@ DEFAULT_TTL_SECONDS: float = 30 * 24 * 3600  # 30 days
 DEFAULT_TERMINAL_CAP: float = 30 * 24 * 3600  # 30 days
 DEFAULT_BRIDGE_CAP: float = 7 * 24 * 3600  # 7 days
 DEFAULT_TUI_CAP: float = 30 * 24 * 3600  # 30 days (desktop TUI — Phase 1 MVP)
-VOICE_GRANT_KEYS: tuple[str, ...] = ("voice:config", "voice:stt", "voice:tts")
+VOICE_GRANT_KEYS: tuple[str, ...] = (
+    "voice:config",
+    "voice:stt",
+    "voice:tts",
+    "voice:realtime",
+)
 
 # Pairing codes still expire after 10 minutes regardless of session TTL.
 _PAIRING_CODE_TTL = 600.0
@@ -124,6 +129,7 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
             "voice:config": math.inf,
             "voice:stt": math.inf,
             "voice:tts": math.inf,
+            "voice:realtime": math.inf,
         }
 
     chat_exp = now + ttl_seconds
@@ -138,6 +144,7 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
         "voice:config": chat_exp,
         "voice:stt": chat_exp,
         "voice:tts": chat_exp,
+        "voice:realtime": chat_exp,
     }
 
 

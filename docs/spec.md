@@ -112,12 +112,12 @@ Connection lifecycle, auth, keepalive.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `expires_at` | epoch seconds or `null` | Session lifetime. `null` means never-expire (user explicitly picked "Never" in the TTL picker). Server-side `math.inf` serializes as `null`. |
-| `grants` | `{ channel: epoch \| null }` | Per-channel expiries. Keys today: `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, and `voice:tts`. Each grant is clamped to the session lifetime — a grant cannot outlive its session. `null` means the grant shares the session's never-expire. |
+| `grants` | `{ channel: epoch \| null }` | Per-channel expiries. Keys today: `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`, and `voice:realtime`. Each grant is clamped to the session lifetime — a grant cannot outlive its session. `null` means the grant shares the session's never-expire. |
 | `transport_hint` | `"wss"` / `"ws"` / `"unknown"` | What the server believes the phone is actually connected over. Drives the transport security badge and the TTL picker's default option on re-pair. |
-| `profiles` | `[{name, model, description, system_message}]` | **Added v0.6.0.** Relay-advertised list of upstream Hermes profiles discovered at `~/.hermes/profiles/*/`, plus a synthetic `"default"` entry for the root config. `system_message` carries the profile's `SOUL.md` content and may be `null`. Empty list when `RELAY_PROFILE_DISCOVERY_ENABLED=0`. See `docs/decisions.md` §21. |
+| `profiles` | `[{name, model, description, system_message, api_server_*}]` | **Added v0.6.0; expanded 2026-05-18.** Relay-advertised list of upstream Hermes profiles discovered at `~/.hermes/profiles/*/`, plus a synthetic `"default"` entry for the root config. `system_message` carries the profile's `SOUL.md` content and may be `null`. `api_server_enabled`, `api_server_url`, `api_server_host`, `api_server_port`, and `api_server_key_present` let Android route chat/session calls through a profile's own Hermes API server when it is running, without exposing the key. Empty list when `RELAY_PROFILE_DISCOVERY_ENABLED=0`. See `docs/decisions.md` §21. |
 
 #### Channel: `chat`
-**Note:** Chat connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2) — it does not traverse the relay. Voice, bridge, terminal, notifications, and inbound media DO go through the relay. Voice HTTP routes accept either a Relay session token with an active `voice:config`, `voice:stt`, or `voice:tts` grant, depending on the route, or the Hermes API bearer token; that API bearer exception does not apply to bridge, terminal, TUI, sessions, media, clipboard, profile writes, or Android control routes. Non-loopback API-bearer voice calls require HTTPS unless the local operator enables the runtime dev toggle with `hermes relay insecure-api-key on`. The chat SSE event types are:
+**Note:** Chat connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2) — it does not traverse the relay. Voice, bridge, terminal, notifications, and inbound media DO go through the relay. Voice HTTP/WSS routes accept either a Relay session token with an active `voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime` grant, depending on the route, or the Hermes API bearer token; that API bearer exception does not apply to bridge, terminal, TUI, sessions, media, clipboard, profile writes, or Android control routes. Non-loopback API-bearer voice calls require HTTPS unless the local operator enables the runtime dev toggle with `hermes relay insecure-api-key on`. The chat SSE event types are:
 
 | Event | Direction | Payload |
 |-------|-----------|---------|
@@ -161,12 +161,12 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Pairing is QR-driven. The operator runs the pair command on the host — either `/hermes-relay-pair` from any Hermes chat surface (backed by the `devops/hermes-relay-pair` skill) or the `hermes-pair` shell shim (a thin wrapper around `python -m plugin.pair`). Both share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (and the API server credentials) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
+Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (and the API server credentials) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
 As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.
 
 ```
-1. Operator runs /hermes-relay-pair (or hermes-pair) on the Hermes host,
+1. Operator runs `hermes pair` (or `/hermes-relay-pair`) on the Hermes host,
    optionally with --ttl <duration>, --grants terminal=7d,bridge=1d,
    --mode {auto,lan,tailscale,public} (default auto), --public-url <url>.
 2. The pair command reads the API server config (host/port/key) from
@@ -259,7 +259,7 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 
 - `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block; `3` is set when `endpoints` is present (ADR 24). All three versions parse on the current Android client.
 - `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` get styled UI; anything else renders as "Custom VPN (<role>)"). Per-endpoint entries intentionally carry **only** `api` + `relay` — the pairing code, TTL, and grants stay at the top level because they're per-pair artifacts, not per-endpoint. Full schema in ADR 24.
-- Top-level fields (`host`/`port`/`key`/`tls`) configure the direct-chat Hermes API Server. Unchanged since v1.
+- Top-level fields (`host`/`port`/`key`/`tls`) configure the direct Hermes API Server. Unchanged since v1.
 - `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
 - `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).
 - `relay.code` — 6-char one-shot pairing code from `A-Z / 0-9`. Expires 10 minutes after registration.
@@ -287,7 +287,7 @@ Implementation references:
 | Transport (default) | WSS / TLS 1.3 (**preferred**) |
 | Transport (opt-in) | Plain `ws://` — gated on `InsecureConnectionAckDialog` consent + reason picker (LAN-only / Tailscale or VPN / Local dev). Reason is displayed, not enforced — operator intent is the trust model. |
 | Transport indicator | `TransportSecurityBadge` in Settings + Session sheet + Paired Devices card. Three states: 🔒 secure / 🔓 insecure with reason / 🔓 insecure unknown. |
-| Pairing (host → phone) | `hermes-pair` / `/hermes-relay-pair` → `POST /pairing/register` (loopback-only) → QR embedded in operator's terminal or chat. |
+| Pairing (host → phone) | `hermes pair` / `/hermes-relay-pair` → `POST /pairing/register` (loopback-only) → QR embedded in operator's terminal or chat. |
 | Pairing (phone → host, Phase 3) | Stubbed at `POST /pairing/approve` — same wire shape, same loopback gate. Real UX pending bridge work. |
 | Session lifetime | User-selected at pair: 1d / 7d / 30d / 90d / 1y / **never**. Never is always selectable; operator intent is the trust model. |
 | Per-channel grants | One session token carries per-channel expiries for `chat`, `terminal`, `bridge`, `tui`, and split voice grants (`voice:config`, `voice:stt`, `voice:tts`). Grants are clamped to session lifetime. |
@@ -363,7 +363,7 @@ Bottom navigation bar with 4 tabs:
 - **Chat view** — message bubbles with markdown rendering, streaming text, tool call cards (Off/Compact/Detailed display modes)
 - **Input bar** — text field with 4096 char limit, `/` palette button, send button, stop button during streaming. Inline autocomplete on `/` keystroke + full searchable command palette (bottom sheet). Commands sourced from: 29 gateway built-ins, dynamic personalities from `config.agent.personalities`, and server skills from `GET /api/skills`.
 - **Empty state** — Logo + "Start a conversation" + suggestion chips that populate input
-- **Agent sheet — Profile section (v0.6.0)** — upstream Hermes profiles auto-discovered by the relay at `~/.hermes/profiles/*/`. Selecting one overlays `model` + `SOUL.md` (as `system_message`) on subsequent chat requests. Ephemeral — clears on Connection switch and app restart. Hidden when the server advertises no profiles. See `docs/decisions.md` §21.
+- **Agent sheet — Profile section (v0.6.0, updated 2026-05-18)** — upstream Hermes profiles auto-discovered by the relay at `~/.hermes/profiles/*/`. Selecting one routes chat/session calls to that profile's advertised `api_server_url` when present, giving proper Hermes isolation for sessions, memory, tools, provider auth, and SOUL/default model. If no profile API route is advertised, the app falls back to overlaying `model` + `SOUL.md` (as `system_message`) on the active Connection's API server. Selection is persisted per Connection/profile context. Hidden when the server advertises no profiles. See `docs/decisions.md` §21.
 - **Agent sheet — Personality section** — personalities fetched from `GET /api/config` (`config.agent.personalities`). Shows server default (from `config.display.personality`) + all configured. Active personality name shown on assistant chat bubbles.
 - **Streaming dots** — animated pulsing 3-dot indicator replaces static "streaming..." text
 - Displays: streaming delta text, tool progress cards (auto-expand while running, auto-collapse on complete), thinking/reasoning blocks (collapsible), per-message token counts + cost
@@ -391,10 +391,10 @@ The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafety
 
 ### Settings Tab
 - **Active agent card (v0.6.0)** — top-of-screen summary card showing the current Connection / Profile / Personality. Tap navigates to Chat and auto-opens the agent sheet via the `openAgentSheet` nav arg, giving Settings-originating users a one-tap path to change agent context without leaving the flow.
-- **Connections** (v0.6.0) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings treats a paired + briefly-disconnected connection as **Connecting** (amber) instead of **Disconnected** (red) to avoid scare-red during relay restarts. See `docs/decisions.md` §19.
+- **Connections** (v0.6.0+) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings briefly treats a paired + disconnected relay as **Connecting** during the reconnect grace window, then promotes it to **Relay unreachable - tap to reconnect** if the live socket does not recover. API / Relay / Session detail sheets include compact sanitized recent-activity tails, and **Settings -> Diagnostics** shows the consolidated app-level API, relay, session, endpoint, and voice activity buffer. See `docs/decisions.md` §19.
 - **Connection (single-server settings)** — unified "Pair with your server" card (primary action: Scan QR) with a single status summary covering API server, relay, and the active paired session. Collapsible "Manual configuration" card exposes API URL / API key / Relay URL / insecure-transport toggle + "Save & Test" (calls `RelayHttpClient.probeHealth`). **Pair wizard cross-validates URL schemes** in v0.6.0 (e.g. an API field with `wss://` surfaces an inline hint), and **stamps the active Connection's pairing metadata** on successful auth. Collapsible "Manual pairing code (fallback)" card for camera-less / SSH-only setups. Transport security badge (🔒 secure / 🔓 insecure-with-reason / 🔓 insecure-unknown) rendered inline. Paired Devices screen linked from here for the full device list + per-channel grant revoke.
 - **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
-- **Voice** — interaction mode (tap / hold / continuous), silence threshold slider, Auto-TTS toggle, provider info read from `/voice/config`, language picker, Test Voice button
+- **Voice** — voice engine selector (`Hermes Chat + Voice Output` stable, `Realtime Agent` experimental), global interaction mode (tap / hold / continuous), silence threshold slider, Auto-TTS toggle, selected-engine cards for default voice-output renderer settings from `/voice/output/config` or Realtime Agent broker settings from `/voice/realtime-agent/config`, global fallback TTS and STT provider info from `/voice/config`, language picker, and a Test Current Engine card that plays stable Voice Output or opens a provider-native Realtime Agent test session. Voice turns run a fast relay health preflight before uploading audio or opening a realtime provider session so a hung relay surfaces as a connection error instead of an indefinite Thinking state.
 - **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
 - **Appearance** — theme (auto/light/dark), dynamic colors toggle
 - **Data** — Backup, restore, reset with confirmation dialogs
@@ -431,8 +431,8 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/ws`, `/` | GET (upgrade) | WebSocket handler — main multiplexed channel |
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
 | `/pairing` | POST | Generate a new relay-side pairing code |
-| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`/hermes-relay-pair` skill or `hermes-pair` shim) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
-| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload for the dashboard pair/repair flow. |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard, desktop GUI, and CLI pair/repair flows. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
@@ -622,30 +622,30 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 
 #### 6.4.1 `android_*` tool surface
 
-Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side tool issues an HTTP request to the relay on loopback; the relay forwards it to the phone over WSS; the phone executes it via the accessibility service and returns a structured response. Flavor gating: tools marked **sideload-only** are gated on `BuildFlavor.current == SIDELOAD` via `FeatureFlags.BuildFlavor` and/or require manifest permissions only declared in `app/src/sideload/AndroidManifest.xml`.
+Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side Device Control tools issue HTTP requests to the relay on loopback; the relay forwards them to the phone over WSS; the sideload phone executes them via the accessibility service and returns structured responses. Google Play phones report `bridge.device_control_supported=false` from `/bridge/status`, so these tools are hidden from the agent and direct command probes fail closed with `error_code: device_control_sideload_only`.
 
 **Baseline (pre-v0.4 — shipped in Phase 3 Wave 1):**
 
 | Tool | HTTP route | Purpose | Flavor |
 |------|-----------|---------|--------|
-| `android_ping` | `GET /ping` | Liveness check — does not require master enable | both |
-| `android_screen` | `GET /screen` | Serialize the accessibility tree → `ScreenContent` | both |
-| `android_screenshot` | `GET /screenshot` | `MediaProjection` PNG → `MEDIA:hermes-relay://<token>` | both |
-| `android_current_app` | `GET /current_app` | Best-effort foregrounded package name; use `/screen` for verification | both |
-| `android_get_apps` (`/apps` legacy) | `GET /get_apps` | Installed launcher apps | both |
-| `android_tap` | `POST /tap` | Tap at `(x, y)` or on resolved `node_id` | both |
-| `android_tap_text` | `POST /tap_text` | Find text via accessibility tree, tap it (see A9 cascade below) | both |
-| `android_type` | `POST /type` | `ACTION_SET_TEXT` on focused input field | both |
-| `android_swipe` | `POST /swipe` | Gesture swipe with direction + distance | both |
-| `android_scroll` | `POST /scroll` | Scroll a specific container (resolves `node_id`) | both |
-| `android_open_app` | `POST /open_app` | Launch an app by package name | both |
-| `android_press_key` | `POST /press_key` | Curated global-action vocab (home/back/recents/notifications/quick_settings) — no raw `KeyEvent` injection | both |
-| `android_wait` | `POST /wait` | Clamped idle — max 15s | both |
+| `android_ping` | `GET /ping` | Liveness check — does not require master enable | sideload Device Control |
+| `android_screen` | `GET /screen` | Serialize the accessibility tree → `ScreenContent` | sideload Device Control |
+| `android_screenshot` | `GET /screenshot` | `MediaProjection` PNG → `MEDIA:hermes-relay://<token>` | sideload Device Control |
+| `android_current_app` | `GET /current_app` | Best-effort foregrounded package name; use `/screen` for verification | sideload Device Control |
+| `android_get_apps` (`/apps` legacy) | `GET /get_apps` | Installed launcher apps | sideload Device Control |
+| `android_tap` | `POST /tap` | Tap at `(x, y)` or on resolved `node_id` | sideload Device Control |
+| `android_tap_text` | `POST /tap_text` | Find text via accessibility tree, tap it (see A9 cascade below) | sideload Device Control |
+| `android_type` | `POST /type` | `ACTION_SET_TEXT` on focused input field | sideload Device Control |
+| `android_swipe` | `POST /swipe` | Gesture swipe with direction + distance | sideload Device Control |
+| `android_scroll` | `POST /scroll` | Scroll a specific container (resolves `node_id`) | sideload Device Control |
+| `android_open_app` | `POST /open_app` | Launch an app by package name | sideload Device Control |
+| `android_press_key` | `POST /press_key` | Curated global-action vocab (home/back/recents/notifications/quick_settings) — no raw `KeyEvent` injection | sideload Device Control |
+| `android_wait` | `POST /wait` | Clamped idle — max 15s | sideload Device Control |
 | `android_setup` | `POST /setup` | Permission bootstrap helper | both |
-| `android_navigate` | (dispatches `/screenshot` + `/tap_text`/`/tap`/`/type`/`/swipe`/`/press_key`) | Tier 4 vision-driven close-the-loop navigation | both |
+| `android_navigate` | (dispatches `/screenshot` + `/tap_text`/`/tap`/`/type`/`/swipe`/`/press_key`) | Tier 4 vision-driven close-the-loop navigation | sideload Device Control |
 | `android_notifications_recent` | `GET /notifications/recent` | Poll the notif-listener ring buffer (loopback-only for Python tool callers) | both |
 
-**v0.4 additions — Tier A (both flavors):**
+**v0.4 additions — Tier A (sideload Device Control):**
 
 | Tool | HTTP route | Purpose |
 |------|-----------|---------|
@@ -660,7 +660,7 @@ Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (
 | `android_media(action)` | `POST /media` | System-wide media control via `AudioManager.dispatchMediaKeyEvent` + `ACTION_MEDIA_BUTTON` broadcast. Actions: `play` / `pause` / `toggle` / `next` / `previous`. |
 | `android_macro(steps, name, pace_ms)` | (Python-side only) | Pure-Python batched workflow dispatcher. Iterates `steps` (each `{tool, args}`), stops on first failure, returns the full trace. No new HTTP route — dispatches to the existing tool handlers in-process. |
 
-**v0.4 additions — Tier B (both flavors):**
+**v0.4 additions — Tier B (sideload Device Control):**
 
 | Tool | HTTP route | Purpose |
 |------|-----------|---------|
@@ -671,7 +671,7 @@ Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (
 
 **v0.4 additions — Tier C (sideload-only):**
 
-Tier C tools add runtime permissions or user-mediated system share/compose handoffs that are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them, and phone-side route gates return structured `403` / `error_code: sideload_only`.
+Tier C tools add runtime permissions or user-mediated system share/compose handoffs that are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them, and phone-side route gates return structured `403` / `error_code: device_control_sideload_only`.
 
 | Tool | HTTP route | Purpose | Permission |
 |------|-----------|---------|------------|
@@ -779,7 +779,7 @@ The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"par
 **Status: largely shipped. v0.1.0 shipped to the Play Store under Axiom-Labs, LLC. Notification-channel-for-agent-messages is the one open item.**
 
 - [x] GitHub Actions: lint + build + test on every push (`.github/workflows/ci.yml`)
-- [x] GitHub Actions: release workflow — tag-triggered signed APK + AAB upload to GitHub Release (`.github/workflows/release.yml`)
+- [x] GitHub Actions: release workflow — `android-v*` tag-triggered signed APK + AAB upload to GitHub Release (`.github/workflows/release-android.yml`)
 - [x] Material You dynamic theming (Material 3 + dynamic color, user toggle in Appearance settings)
 - [x] Proper error states and empty states (`RelayErrorClassifier` → `HumanError` → global `LocalSnackbarHost`; MorphingSphere-backed empty chat state)
 - [x] App icon and branding (`ic_launcher*`, animated splash via `splash_icon_animated.xml`, MorphingSphere)
@@ -789,25 +789,42 @@ The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"par
 ### Phase V — Voice Mode
 **Status: shipped 2026-04-12**
 
-Real-time voice conversation via relay-hosted TTS/STT endpoints that wrap the hermes-agent venv's configured providers. Chat still goes directly to the API server — voice adds a modality on top, not a separate channel.
+Voice conversation runs via relay-hosted voice endpoints. Chat still goes
+directly to the API server; voice adds a modality on top, not a separate chat
+channel. The default exact assistant narration path is `/voice/output/*`, a
+first-class streaming TTS renderer. The older realtime lab path remains
+available at `/voice/realtime/*` for provider-agent experiments, while the
+experimental Realtime Agent engine uses `/voice/realtime-agent/*` to bind
+provider audio rendering to the Hermes session/tool loop.
+The basic `/voice/transcribe` and `/voice/synthesize` endpoints remain fallback
+utilities.
 
 **Server-side (plugin/relay):**
 - `POST /voice/transcribe` — multipart audio → `{text, provider}`. Wraps `tools.transcription_tools.transcribe_audio` in `asyncio.to_thread`.
-- `POST /voice/synthesize` — JSON `{text}` → `audio/mpeg` file. Wraps `tools.tts_tool.text_to_speech_tool`.
+- `POST /voice/synthesize` — JSON `{text}` → `audio/mpeg` file. Wraps `tools.tts_tool.text_to_speech_tool`; used as the basic fallback when streaming/realtime provider playback is unavailable.
 - `GET /voice/config` — provider availability + current settings from `tts:` / `stt:` in `~/.hermes/config.yaml`.
-- All three gated on the same bearer auth as `/media/*`.
+- `GET/PATCH /voice/output/config`, `POST /voice/output/session`, and `GET /voice/output/{session_id}` — relay-mediated streaming TTS renderer sessions. Android sends final Hermes text or brokered tool-status text and receives mono PCM deltas for direct `AudioTrack` playback. Session responses include resumable-session metadata and PCM events carry `event_id`/`audio_event_id`, so short route changes during stable speech playback can resume and replay missed audio without re-rendering. Config responses include provider option metadata (`providers[].models`, `providers[].voices`, `providers[].languages`, `providers[].sample_rates`) for first-class dropdowns.
+- `GET/PATCH /voice/realtime/config`, `POST /voice/realtime/session`, and `GET /voice/realtime/{session_id}` — relay-mediated realtime provider-agent sessions for lab/dev experiments. Android can send PCM input events and receives mono PCM provider deltas for direct `AudioTrack` playback. Realtime config responses expose the same provider option shape where known.
+- `GET/PATCH /voice/realtime-agent/config`, `POST /voice/realtime-agent/session`, and `GET /voice/realtime-agent/{session_id}` — experimental Hermes-brokered Realtime Agent engine. The broker binds active profile/chat session/auth, streams Android mic PCM to a native realtime provider such as `xai_realtime` or `openai_realtime`, normalizes provider transcript/audio/function-call events, mirrors Hermes session/tool/confirmation events into Android, and returns compact Hermes tool results to the provider for concise spoken follow-up. Session responses include resumable-session metadata (`resume_token`, `resume_supported`, `resume_ttl_ms`); server events carry `event_id`, audio deltas carry `audio_event_id`, and Android can resume a detached session through the current `effectiveRelayUrl` after short Wi-Fi/cellular/LAN/Tailscale changes without starting a second Hermes run. The only provider-facing tool surface is `hermes_run_task`, `hermes_get_status`, `hermes_cancel`, and `hermes_confirm`.
+- `GET /voice/output/providers/{provider_id}/options`, `GET /voice/realtime/providers/{provider_id}/options`, and `GET /voice/realtime-agent/providers/{provider_id}/options` — provider-specific option refresh before saving. Android calls these when a provider is selected so dynamic account-backed choices can be fetched by the relay without exposing provider secrets. xAI refreshes built-in/paginated custom voices when API/OAuth auth is available; ElevenLabs refreshes voices/models/languages with its API key; OpenAI uses static documented voice choices. Realtime Agent provider payloads include `supports_realtime_agent_native` so render/lab-only realtime support is not confused with native speech-to-speech Hermes tooling. Responses include `schema_version`, grouped voice metadata, recommended/custom flags, and model/voice compatibility hints when known. Unknown or unauthenticated discovery falls back to static provider metadata plus manual entry.
+- `POST /voice/output/providers/{provider_id}/validate`, `POST /voice/realtime/providers/{provider_id}/validate`, and `POST /voice/realtime-agent/providers/{provider_id}/validate` — pre-save validation for provider/model/voice/sample-rate selections. Unknown manual IDs return warnings; explicit incompatibilities return blocking errors.
+- Voice-output provider defaults are relay-owned under `voice_output:` in `~/.hermes-relay/config.yaml` (or `RELAY_VOICE_OUTPUT_CONFIG`), then overridden by `RELAY_VOICE_OUTPUT_*` env vars for temporary tests. Authenticated operator clients may patch safe defaults (`enabled`, `provider`, `model`, `voice`, `sample_rate`, `language`, `codec`, `optimize_streaming_latency`, `text_normalization`, `fallback_enabled`) through the relay. With `?profile=<name>`, the patch writes that profile's `voice_output:` section. Provider secrets and local auth paths stay server-side.
+- Realtime provider defaults are relay-owned under `realtime_voice:` in `~/.hermes-relay/config.yaml` (or `RELAY_REALTIME_VOICE_CONFIG`), then overridden by `RELAY_REALTIME_VOICE_*` env vars for temporary tests. Authenticated operator clients may patch safe defaults (`enabled`, `provider`, `model`, `voice`, `sample_rate`) through the relay. With `?profile=<name>`, the patch writes that profile's `realtime_voice:` section. Provider secrets and local auth paths stay server-side.
+- Voice routes are gated by narrow voice bearer auth (`voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime`) or a valid Hermes API bearer under the transport guard.
 
 **App-side:**
-- `VoiceRecorder` (MediaRecorder / MPEG-4 AAC / m4a / 16 kHz mono) + `VoicePlayer` (Media3 ExoPlayer + Visualizer for amplitude) with `StateFlow<Float>` amplitude for the orb. A single persistent `ExoPlayer` queues `MediaItem`s for gapless concatenation — no codec re-init between sentences.
-- `VoiceViewModel` state machine (`Idle / Listening / Transcribing / Thinking / Speaking / Error`). Assistant text is sanitized (markdown / tool-annotations / URLs / emoji-set stripped) on each delta before a coalescing chunker (`MIN_COALESCE_LEN=40`, `MAX_BUFFER_LEN=400` secondary-break escape, 800 ms timer flush) emits sentence-scale chunks onto a `Channel<String>` TTS queue. Two supervisor-scoped workers — a synth worker calling `/voice/synthesize` and a play worker appending to the ExoPlayer queue — run in parallel across a bounded `Channel<File>(capacity=2)` so sentence N+1 synthesizes while sentence N plays. Cancellation paths delete any unplayed cache files.
+- `VoiceRecorder` (`AudioRecord` / WAV / 16 kHz mono PCM) exposes both a STT upload file and raw PCM bytes for the realtime websocket input events.
+- `VoicePlayer` (Media3 ExoPlayer + Visualizer) remains the fallback `/voice/synthesize` playback surface.
+- `RealtimePcmPlayer` streams `/voice/output/*`, `/voice/realtime/*`, and `/voice/realtime-agent/*` PCM deltas directly to `AudioTrack`.
+- `VoiceViewModel` state machine (`Idle / Listening / Transcribing / Thinking / Speaking / Error`). Assistant text is sanitized (markdown / tool-annotations / URLs / emoji-set stripped) on each delta before a coalescing chunker (`MIN_COALESCE_LEN=40`, `MAX_BUFFER_LEN=400` secondary-break escape, 800 ms timer flush) emits sentence-scale chunks. The default queue calls `/voice/output/*` for exact renderer PCM playback; failed output turns fall back to the existing `/voice/synthesize` synth/play workers. The same stream observer watches Hermes-owned `ToolCall` state and speaks bounded status lines for running tools; execution, approval, and tool results remain in the Hermes chat/relay loop.
 - Server-side, `/voice/synthesize` runs a matching sanitizer (`plugin/relay/tts_sanitizer.py`) before handing text to the upstream `text_to_speech_tool` — defense-in-depth for any client that doesn't pre-sanitize.
 - **Barge-in** (opt-in, default off). While in `Speaking`, a `BargeInListener` runs a duplex `AudioRecord` (16 kHz mono PCM, `VOICE_COMMUNICATION` source) feeding 32 ms frames through a Silero VAD (`com.github.gkonovalov:android-vad:silero`). `AcousticEchoCanceler` + `NoiseSuppressor` attach to the ExoPlayer audio session so TTS output doesn't retrigger VAD. A single raw speech frame → `VoicePlayer.duck()` (volume 0.3f) with a 500 ms un-duck watchdog. `N` consecutive frames (2–3, sensitivity-tuned) → `interruptSpeaking()` (same cancellation path V4 wired for user taps). A 600 ms watchdog on `VoiceRecorder.amplitude` then decides: if the user keeps talking, new turn proceeds normally; if silence wins AND `resumeAfterInterruption=true`, `VoiceViewModel` re-enqueues the unplayed chunks from `spokenChunks[lastInterruptedAtChunkIndex+1..]` and flips back to `Speaking`. Settings UI exposes `BargeInPreferences` (enabled / sensitivity ∈ `Off/Low/Default/High` / resume) with an `AcousticEchoCanceler.isAvailable()`-driven compatibility badge.
-- Integrates with `ChatViewModel` by **observing** `messages: StateFlow` — no changes to chat code. Transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history.
+- Stable voice integrates with `ChatViewModel` by **observing** `messages: StateFlow`; transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history. Experimental Realtime Agent creates a mirrored chat turn and applies broker events directly so tool state, transcript text, assistant deltas, and final responses appear without leaving voice mode.
 - `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
 - `MorphingSphere` gains `SphereState.Listening` (soft blue/purple, subtle wobble with user amplitude) and `SphereState.Speaking` (vivid green/teal, dramatic core-warmth pulse with agent amplitude). Additive changes — existing call sites unchanged via defaulted `voiceAmplitude` / `voiceMode` params.
-- Voice Settings screen off the main Settings — interaction mode, silence threshold, TTS/STT provider labels, Test Voice button.
+- Voice Settings screen off the main Settings — voice engine selector, global interaction mode, silence threshold, selected-engine cards for editable voice-output provider/model/voice/language/latency/fallback settings or editable experimental Realtime Agent defaults, a global fallback TTS card, STT provider labels, active profile/scope labels, and Test Current Engine. Dropdowns come from relay-advertised provider metadata, refresh through provider-specific options routes when the selected provider changes, become searchable/grouped for large voice catalogs, and validate compatibility before saving, with advanced manual entry for raw provider/model/voice IDs. Voice routes receive the selected Hermes profile; the relay reports whether values came from profile config, relay config, or global fallback. Test Current Engine uses `/voice/output/*` playback for stable mode and `/voice/realtime-agent/*` provider-native session playback for realtime mode; normal assistant speech uses the same streaming renderer PCM path when available.
 
-See `docs/decisions.md` → **Voice Mode — Architecture** for the four key decisions (relay-hosted endpoints, buffer-not-stream client chunking, m4a-not-webm recorder, ChatViewModel observation pattern).
+See `docs/decisions.md` → **Voice Mode — Architecture** for the historical baseline decisions. Current voice mode records PCM/WAV for STT, routes stable assistant speech through `/voice/output/*`, keeps `/voice/realtime/*` as a provider-agent lab path, and exposes `/voice/realtime-agent/*` as an experimental Hermes-brokered engine.
 
 ### Phase 6 — Future
 **Priority: P3 — not for MVP**

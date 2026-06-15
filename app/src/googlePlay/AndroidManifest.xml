@@ -5,24 +5,23 @@
     Merged on top of `app/src/main/AndroidManifest.xml` by AGP when the
     `googlePlayDebug` / `googlePlayRelease` variants are built.
 
-    The AccessibilityService is declared exactly once in `app/src/main/AndroidManifest.xml`.
-    The flavor distinction is purely at the resource layer: this flavor's
-    `res/xml/accessibility_service_config.xml` carries the conservative use-case
-    description required for Google Play policy review, and `res/values/strings.xml`
-    carries the description string. Gradle's resource merger picks the right
-    files at build time, so we don't need to redeclare the <service> here.
+    Google Play ships Hermes Bridge Core only. It intentionally does not merge
+    any Device Control services or permissions.
 
     This file is intentionally kept as an empty overlay so future flavor-specific
     permissions / activities have an obvious home. Mirror structural additions
     in `app/src/sideload/AndroidManifest.xml` unless the change is intentionally
     track-specific.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- googlePlay inherits main manifest's specialUse-only FGS type
-         directly — no override needed. The sideload manifest ADDS
-         mediaProjection via tools:replace; googlePlay gets the safe
-         default. -->
+    <!-- Media3 ExoPlayer contributes a power-management permission from its
+         library manifest. Strip it from the merged Play artifact. -->
+    <uses-permission
+        android:name="android.permission.WAKE_LOCK"
+        tools:node="remove" />
+
     <application />
 
 </manifest>

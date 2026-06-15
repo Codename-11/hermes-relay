@@ -1,6 +1,6 @@
-# Installing the Desktop CLI <ExperimentalBadge />
+# Installing the CLI <ExperimentalBadge />
 
-One-liner installs on Windows / macOS / Linux. The installer downloads a prebuilt single-file binary — **no Node required, no Python required**.
+One-liner install on **Windows today — macOS / Linux builds coming soon**. The installer downloads a prebuilt single-file binary — **no Node required, no Python required**.
 
 ## Prerequisites
 
@@ -21,8 +21,8 @@ The script:
 2. Resolves the **latest** desktop release by querying the GitHub Releases API directly and picking the SemVer-max `desktop-v*` tag — prereleases included, so alpha builds aren't skipped (see CHANGELOG entry on alpha.11 for why this matters).
 3. Downloads `hermes-relay-win-x64.exe` and verifies SHA256 against the published `SHA256SUMS.txt`.
 4. Reads the existing binary's `--version` (if present) and prints one of:
-   - `existing install detected: 0.3.0-alpha.13 — upgrading to 0.3.0-alpha.14`
-   - `reinstalling 0.3.0-alpha.14`
+   - `existing install detected: 0.3.0-alpha.17 — upgrading to 0.3.0-alpha.18`
+   - `reinstalling 0.3.0-alpha.18`
    - `installing fresh`
 5. Installs to `%USERPROFILE%\.hermes\bin\hermes-relay.exe`.
 6. Drops a `hermes.cmd` shim next to the binary so `hermes <prompt>` works as a short alias — **collision-safe**: if a `hermes` already exists in the install dir (e.g. from a local hermes-agent install), the installer leaves it untouched and prints a skip notice.
@@ -49,17 +49,21 @@ Code signing (EV cert) is a v1.0 milestone — the experimental phase doesn't ju
 ### Pin a specific version
 
 ```powershell
-$env:HERMES_RELAY_VERSION = 'desktop-v0.3.0-alpha.14'
+$env:HERMES_RELAY_VERSION = 'desktop-v0.3.0-alpha.18'
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
-The version-aware readback compares full SemVer including the prerelease tail, so `desktop-v0.3.0-alpha.13` → `desktop-v0.3.0-alpha.14` is recognized as an upgrade rather than a reinstall.
+The version-aware readback compares full SemVer including the prerelease tail, so `desktop-v0.3.0-alpha.17` → `desktop-v0.3.0-alpha.18` is recognized as an upgrade rather than a reinstall.
 
 ### Uninstall
 
 See [Uninstall](#uninstall) below — the PowerShell one-liner reverses everything install.ps1 did (binary + `hermes.cmd` alias + user-PATH entry), with optional tiers for session-data purge and service cleanup.
 
 ## macOS / Linux — curl one-liner
+
+::: warning Coming soon
+macOS / Linux binaries aren't published yet — the installer script below is ready and documented ahead of those builds. Watch [Releases](https://github.com/Codename-11/hermes-relay/releases) for the first `darwin`/`linux` assets.
+:::
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
@@ -103,7 +107,7 @@ Apple Developer ID signing + notarization is a v1.0 milestone.
 ### Pin a specific version
 
 ```bash
-HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.14 \
+HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.18 \
   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
 ```
 
@@ -151,7 +155,7 @@ npx tsx src/cli.ts --help
 npx tsx src/cli.ts pair --remote ws://<host>:8767
 ```
 
-The package name in `desktop/package.json` is local workspace metadata today. The desktop CLI is not published to npm; use GitHub Release binaries or a local clone with `npm link`.
+The package name in `desktop/package.json` is local workspace metadata today. The CLI is not published to npm; use GitHub Release binaries or a local clone with `npm link`.
 
 ## Uninstall
 

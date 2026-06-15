@@ -94,14 +94,24 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
 
 **Branching model (as of 2026-04-19): `main` + `dev`.** Feature branches — `feature/<name>`, `fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back into `dev` via `--no-ff` PRs. `main` is released state only; it receives release merges from `dev` and nothing else. There is no straight-to-main exemption — even single-file typos go through `dev`.
 
-Release-prep commits (version bump, changelog promotion) land on `dev` first, then a `release: vX.Y.Z` PR merges `dev` → `main` with `--no-ff`. The tag is cut from `main` after the merge. See [RELEASE.md](RELEASE.md) for the full release process.
+Release-prep commits (version bump, changelog promotion) land on `dev` first, then a surface-specific release PR merges `dev` → `main` with `--no-ff`. Tags are cut from `main` after the merge: `android-vX.Y.Z`, `server-vX.Y.Z`, or `desktop-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release process.
+
+## Changelog & writing conventions
+
+This is a **public repo** — `CHANGELOG.md`, `DEVLOG.md`, the README, and everything under `docs/` ship publicly. Keep them clean:
+
+- **`CHANGELOG.md`** follows [Keep a Changelog](https://keepachangelog.com/) (Added / Changed / Fixed). Append your change to the `## [Unreleased]` block in the PR. Entries can carry detail while they accumulate, but at release-prep the version block is **condensed to crisp public bullets** (1–2 lines each) — the deep "how we debugged it" narrative belongs in commit messages and `DEVLOG.md`, not the public changelog.
+- **`DEVLOG.md`** is a factual engineering log — what changed, why, and how it was verified. Keep it depersonalized and third-person; it's a record, not a diary.
+- **No non-public wording anywhere committed:** no personal names (attribute impersonally — identity lives in git history), no real server hostnames/IPs or internal deployment names, no AI/assistant process self-narration, no fork/branch plumbing in user-facing notes. Generic example IPs in setup docs are fine.
+
+Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/play-store-listing.md`) are theme-framed and user-facing; see [RELEASE.md](RELEASE.md) §2 "Scrub for public distribution" for the full checklist.
 
 ## Testing
 
 - **Android unit tests:** `scripts/dev.bat test` (runs JUnit + MockK + Compose testing)
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
-CI is split into two path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes) and `.github/workflows/ci-relay.yml` (syntax check + unittest discover on plugin/Python changes). Both run on pushes to `main` and `dev` and on PRs targeting either.
+CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched.
 
 ## Questions?
 

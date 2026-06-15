@@ -122,8 +122,15 @@ fun MediaSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text(
-                        text = "Controls how the app handles files sent by tool results (screenshots, PDFs, etc.) over the relay.",
+                        text = "Controls how the app handles files sent by tool results " +
+                            "(screenshots, PDFs, etc.) over the relay.",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Relay only — these settings don't affect images you attach " +
+                            "in chat or anything on a standard (no-Relay) connection.",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 

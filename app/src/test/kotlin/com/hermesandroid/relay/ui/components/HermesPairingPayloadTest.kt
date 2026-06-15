@@ -271,6 +271,44 @@ class HermesPairingPayloadTest {
     }
 
     @Test
+    fun genericApiUrlQr_buildsStandardPayload() {
+        val payload = parseHermesPairingQr("https://hermes.example.com:8642")
+
+        assertNotNull(payload)
+        val parsed = payload!!
+        val endpoints = parsed.endpoints.orEmpty()
+        assertEquals("hermes.example.com", parsed.host)
+        assertEquals(8642, parsed.port)
+        assertTrue(parsed.tls)
+        assertEquals("", parsed.key)
+        assertNull(parsed.relay)
+        assertEquals("https://hermes.example.com:8642", parsed.serverUrl)
+        assertEquals(1, endpoints.size)
+        assertEquals("public", endpoints[0].role)
+    }
+
+    @Test
+    fun genericApiJsonQr_acceptsUrlAndApiKeyAliases() {
+        val raw = """
+            {
+              "api_url": "http://192.168.1.50:8642",
+              "api_key": "dev-key"
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        val parsed = payload!!
+        assertEquals("192.168.1.50", parsed.host)
+        assertEquals(8642, parsed.port)
+        assertFalse(parsed.tls)
+        assertEquals("dev-key", parsed.key)
+        assertNull(parsed.relay)
+        assertEquals("lan", parsed.endpoints.orEmpty()[0].role)
+    }
+
+    @Test
     fun missingHost_rejectsPayload() {
         // The parser's minimum contract: a payload without `host` is not
         // a pair QR — return null so the scanner keeps scanning.

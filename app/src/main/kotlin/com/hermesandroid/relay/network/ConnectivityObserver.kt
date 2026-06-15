@@ -19,16 +19,46 @@ class ConnectivityObserver(private val context: Context) {
 
     fun observe(): Flow<Status> = callbackFlow {
         val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
+        if (connectivityManager == null) {
+            trySend(Status.Unavailable)
+            awaitClose { }
+            return@callbackFlow
+        }
+
+        @Suppress("DEPRECATION")
+        fun hasAnyInternetNetwork(): Boolean =
+            connectivityManager.allNetworks.any { network ->
+                hasInternetCapability(connectivityManager.getNetworkCapabilities(network))
+            }
+
+        fun sendCurrentStatus(fallbackWhenNone: Status) {
+            trySend(statusForInternetAvailability(hasAnyInternetNetwork(), fallbackWhenNone))
+        }
 
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                trySend(Status.Available)
+                sendCurrentStatus(Status.Available)
             }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities,
+            ) {
+                sendCurrentStatus(
+                    if (hasInternetCapability(networkCapabilities)) {
+                        Status.Available
+                    } else {
+                        Status.Lost
+                    }
+                )
+            }
+
             override fun onLost(network: Network) {
-                trySend(Status.Lost)
+                sendCurrentStatus(Status.Lost)
             }
+
             override fun onUnavailable() {
-                trySend(Status.Unavailable)
+                sendCurrentStatus(Status.Unavailable)
             }
         }
 
@@ -39,13 +69,19 @@ class ConnectivityObserver(private val context: Context) {
         connectivityManager.registerNetworkCallback(request, callback)
 
         // Emit current state
-        val activeNetwork = connectivityManager.activeNetwork
-        val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
-        val isConnected = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-        trySend(if (isConnected) Status.Available else Status.Unavailable)
+        sendCurrentStatus(Status.Unavailable)
 
         awaitClose {
             connectivityManager.unregisterNetworkCallback(callback)
         }
     }
 }
+
+internal fun hasInternetCapability(caps: NetworkCapabilities?): Boolean =
+    caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+
+internal fun statusForInternetAvailability(
+    hasAnyInternetNetwork: Boolean,
+    fallbackWhenNone: ConnectivityObserver.Status,
+): ConnectivityObserver.Status =
+    if (hasAnyInternetNetwork) ConnectivityObserver.Status.Available else fallbackWhenNone
