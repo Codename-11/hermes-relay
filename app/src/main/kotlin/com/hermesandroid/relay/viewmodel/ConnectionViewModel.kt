@@ -27,6 +27,7 @@ import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
@@ -1142,16 +1143,42 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         return false
     }
 
+    /**
+     * Which transport's session slot to restore right now — or `null` when the
+     * decision is still pending (the gateway probe hasn't landed). A manual
+     * streaming-endpoint override resolves immediately; under `"auto"` the slot
+     * follows the gateway probe, and we deliberately DEFER while it's [Unknown]
+     * rather than guess SSE — otherwise a gateway connection would momentarily
+     * restore the wrong (or empty) slot before the probe confirms it. The
+     * gateway-availability collector re-runs the restore once it settles.
+     */
+    private fun activeSessionTransport(): SessionTransport? {
+        val preference = streamingEndpoint.value
+        if (preference != "auto") return SessionTransport.forEndpoint(preference)
+        return when (_gatewayAvailability.value) {
+            GatewayAvailability.Ready -> SessionTransport.GATEWAY
+            GatewayAvailability.Unknown -> null
+            else -> SessionTransport.SSE
+        }
+    }
+
     private fun refreshLastSessionForProfile(
         connectionId: String?,
         profileName: String?,
     ) {
         _lastSessionId.value = null
         if (connectionId == null) return
+        // Defer until the active transport is known — restoring an id the
+        // current transport can't resume is exactly what forks a session
+        // mid-conversation on a non-default profile.
+        val transport = activeSessionTransport() ?: return
         viewModelScope.launch {
             val profileScoped = profileSessionStore
-                .sessionIdFlow(connectionId, profileName)
+                .sessionIdFlow(connectionId, profileName, transport)
                 .first()
+            // Default profile shares the launch DB across both transports, so a
+            // pre-transport (untransported) pointer is still resumable — surface
+            // it as the fallback only for the server-default context.
             val legacyDefault = if (profileName == null) {
                 getApplication<Application>().relayDataStore.data
                     .first()[KEY_LAST_SESSION_ID]
@@ -1160,7 +1187,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
             if (
                 activeConnectionId.value == connectionId &&
-                _selectedProfile.value?.name == profileName
+                _selectedProfile.value?.name == profileName &&
+                activeSessionTransport() == transport
             ) {
                 _lastSessionId.value = profileScoped ?: legacyDefault
             }
@@ -3211,6 +3239,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
         }
+
+        // Cold-start restore timing: the gateway probe is async, so the first
+        // refreshLastSessionForProfile at connection-activate can run while
+        // availability is still Unknown — [activeSessionTransport] defers, leaving
+        // no session restored. Re-run once the probe settles, but only when
+        // nothing has been restored or started yet, so we never yank a session
+        // the user is already in.
+        viewModelScope.launch {
+            _gatewayAvailability.collect { availability ->
+                if (availability == GatewayAvailability.Unknown) return@collect
+                if (_lastSessionId.value != null) return@collect
+                val connectionId = activeConnectionId.value ?: return@collect
+                refreshLastSessionForProfile(connectionId, _selectedProfile.value?.name)
+            }
+        }
     }
 
     // --- Revalidation ----------------------------------------------------
@@ -4967,7 +5010,34 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val profileName = _selectedProfile.value?.name
         viewModelScope.launch {
             if (connectionId != null) {
-                profileSessionStore.setSessionId(connectionId, profileName, sessionId)
+                if (sessionId != null) {
+                    // Bucket by the id's own namespace: the prefix is the server's
+                    // ground truth about which transport can resume it, robust to a
+                    // turn that fell back from gateway to SSE.
+                    val transport = SessionTransport.forSessionId(sessionId)
+                    profileSessionStore.setSessionId(
+                        connectionId,
+                        profileName,
+                        transport,
+                        sessionId,
+                    )
+                } else {
+                    // A null clears only the ACTIVE transport's slot, and only when
+                    // that transport is known. A null while the gateway probe is
+                    // still pending (transport == null) — or right after a switch,
+                    // when availability is reset to Unknown — is a deferred-restore
+                    // transient forwarded by switchProfileContext, NOT a user clear;
+                    // clearing then would wipe a still-valid session before the
+                    // availability collector restores it.
+                    activeSessionTransport()?.let { transport ->
+                        profileSessionStore.setSessionId(
+                            connectionId,
+                            profileName,
+                            transport,
+                            null,
+                        )
+                    }
+                }
             }
             if (profileName == null) {
                 getApplication<Application>().relayDataStore.edit { preferences ->

@@ -737,6 +737,16 @@ fun ChatScreen(
         }
     }
 
+    // Opening the drawer re-syncs the list — so a session created on another
+    // device (or one whose optimistic row was dropped on a profile switch)
+    // shows up without a manual reload. Cheap dashboard read; the optimistic
+    // row for the active session is preserved by ChatHandler.updateSessions.
+    LaunchedEffect(drawerState.isOpen) {
+        if (drawerState.isOpen && chatReady) {
+            chatViewModel.refreshSessions()
+        }
+    }
+
     // Auto-scroll to bottom while streaming.
     //
     // Bugs the previous versions had:

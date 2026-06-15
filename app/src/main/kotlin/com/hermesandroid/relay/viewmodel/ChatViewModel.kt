@@ -2217,6 +2217,13 @@ class ChatViewModel : ViewModel() {
                     // prefers the `?profile=` dashboard loader on gateway connections.
                     val serverMessages = loadSessionHistory(sid)
                     handler.loadMessageHistory(serverMessages)
+                    // Re-sync the drawer now that the turn is persisted server-side.
+                    // The only other auto-refresh fires ~160ms after session creation
+                    // (RelayApp) — mid-stream, BEFORE the new session's first message
+                    // is persisted, so a brand-new chat would otherwise stay missing
+                    // from the drawer (carried only by the optimistic row) until a
+                    // manual reload. By message.complete the dashboard list includes it.
+                    refreshSessions()
                     drainQueue()
                 }
                 Unit
