@@ -486,30 +486,45 @@ package.
 
 ### 5. Upload to Play Console
 
-**Manual upload (default):**
+**Pick the track first.** The AAB is track-agnostic — the same
+`-googlePlay-release.aab` goes to whichever track you publish on. Choose by intent,
+not habit:
+
+- **Production** — the default for a stable GA release (`android-vX.Y.Z`). The
+  listing is live, so this is where real releases land. The org account is
+  D-U-N-S-verified, so the 14-day / 12-tester closed-testing gate does **not**
+  apply — you can publish straight to Production.
+- **Open / Closed testing** — only when you actually want a public/private beta
+  channel for this build.
+- **Internal testing** — only for a throwaway pre-release smoke check (e.g. a
+  prerelease tag), not for a GA. Don't default here.
+
+**Manual upload:**
 
 1. Download the file ending in `-googlePlay-release.aab` from the GitHub
-   Release assets (for example, `hermes-relay-0.3.0-googlePlay-release.aab`),
+   Release assets (for example, `hermes-relay-1.0.0-googlePlay-release.aab`),
    or use your local build at
    `app\build\outputs\bundle\googlePlayRelease\hermes-relay-<version>-googlePlay-release.aab`.
-2. In Play Console: **Release > Testing > Internal testing** (the 14-day
-   closed-testing rule does NOT apply to this account — see "Google Play
-   Console developer account" above).
+2. In Play Console, open the track you chose above — for a GA that's
+   **Release > Production**.
 3. **Create new release** > upload the AAB.
-4. Paste `RELEASE_NOTES.md` into the release notes field.
-5. **Review release** > **Start rollout.**
+4. Paste the Play "What's new" from `docs/play-store-listing.md` (≤500 chars) into
+   the release notes field. (`RELEASE_NOTES.md` is the GitHub-Release body, not the
+   Play field — don't paste that; it's over the limit.)
+5. **Review release** > **Start rollout** (set the staged-rollout percentage if you
+   want a gradual production ramp).
 
 **Automated upload (if `play-service-account.json` is configured):**
 
 ```bat
 scripts\dev.bat bundle
-gradlew publishReleaseBundle
+gradlew publishReleaseBundle --track=production
 ```
 
-Defaults to the `internal` track with `DRAFT` status (configured in the
-`play { }` block in `app/build.gradle.kts`). Override per-invocation with
-`--track=alpha` (= Closed testing), `--track=beta` (= Open testing), or
-`--track=production`.
+The `play { }` block in `app/build.gradle.kts` defaults to the `internal` track
+with `DRAFT` status as a safety net for unattended runs, so pass `--track` explicitly
+for a real release: `--track=production` (GA), or `--track=alpha` (Closed) /
+`--track=beta` (Open) for a beta channel.
 
 To promote an existing release between tracks without rebuilding:
 
@@ -517,18 +532,24 @@ To promote an existing release between tracks without rebuilding:
 gradlew promoteReleaseArtifact --from-track=internal --promote-track=alpha
 ```
 
-### 6. Promote through tracks
+### 6. Tracks (a menu, not a mandatory ladder)
 
-Typical path:
+The org account is exempt from the 14-day / 12-tester closed-testing rule, so a
+stable GA publishes **straight to Production** — there is no required promotion
+chain. The other tracks are opt-in tools, not steps you must climb:
 
-1. **Internal testing** — personal smoke test (no tester or time minimum)
-2. **Closed testing (alpha)** — optional for staged rollout; Axiom-Labs'
-   org account is exempt from the 14-day / 12-tester rule, so you can skip
-   straight from Internal to Production if the build is ready
-3. **Open testing (beta)** — optional public beta
-4. **Production** — live on the Play Store
+- **Production** — live on the Play Store. Where GA releases go.
+- **Open testing (beta)** — opt-in public beta channel.
+- **Closed testing (alpha)** — opt-in private beta (named tester lists).
+- **Internal testing** — throwaway smoke check (e.g. a prerelease tag), no tester
+  or time minimum.
 
-Promote via the Play Console UI or `gradlew promoteReleaseArtifact`.
+If you *do* stage through tracks, promote an existing release without rebuilding via
+the Play Console UI or:
+
+```bat
+gradlew promoteReleaseArtifact --from-track=internal --promote-track=production
+```
 
 ### 7. After release
 
