@@ -6,7 +6,8 @@
 
 - **Workflow fix.** `.github/workflows/claude-code-review.yml` now detects bot-authored PRs with `github.event.pull_request.user.type == 'Bot'` and emits a passing no-op `claude-review` job. Human-authored PRs still run the full Claude Code Review action; aggregate `dev` -> `main` release PRs still use the existing no-op skip.
 - **Workflow self-change guard.** PRs that edit `claude-code-review.yml` now also no-op after checkout when the changed-file list includes that workflow. The Claude action requires the workflow file to match the default branch before app-token exchange, so workflow maintenance PRs must not invoke the action they are changing.
-- **Verification.** Confirmed `CLAUDE_CODE_OAUTH_TOKEN` was refreshed in repository secrets after Claude Code GitHub setup. Re-ran Claude Code Review on PR #46 and confirmed the current blocker was bot-actor policy, not GitHub App installation. `git diff --check` passes.
+- **Dependency PR cleanup.** Batched overlapping Gradle version-catalog updates after the required-check fix: Kotlin `2.3.21`, Compose BOM `2026.05.01`, Navigation Compose `2.9.8`, Activity Compose `1.13.0`, DataStore `1.2.1`, Markdown Renderer `0.41.0`, Media3 `1.10.1`, and Foojay resolver `1.0.0`. The Android Gradle Plugin and `softprops/action-gh-release` bumps were already present on `main`, so their stale Dependabot PRs were superseded by current main state.
+- **Verification.** Confirmed `CLAUDE_CODE_OAUTH_TOKEN` was refreshed in repository secrets after Claude Code GitHub setup. Re-ran Claude Code Review on PR #46 and confirmed the current blocker was bot-actor policy, not GitHub App installation. `git diff --check`, `.\gradlew.bat lint`, `.\gradlew.bat assembleDebug`, and the focused `:app:testSideloadDebugUnitTest` CI slice pass with `ANDROID_HOME` pointed at the local SDK.
 
 ## 2026-06-14 — profile chat: turn-complete wipe + cross-transport session continuity
 

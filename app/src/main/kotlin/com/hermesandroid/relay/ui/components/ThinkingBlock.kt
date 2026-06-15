@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,9 +41,10 @@ fun ThinkingBlock(
     timestamp: Long? = null,
 ) {
     var expanded by remember { mutableStateOf(isStreaming) }
+    val locale = LocalLocale.current.platformLocale
     val timeLabel = timestamp?.let {
-        remember(it) {
-            java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+        remember(it, locale) {
+            java.text.SimpleDateFormat("h:mm a", locale)
                 .format(java.util.Date(it))
         }
     }

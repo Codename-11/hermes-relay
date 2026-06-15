@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -70,9 +71,10 @@ fun ToolProgressCard(
     var expanded by remember { mutableStateOf(!toolCall.isComplete && !toolCall.isGenerating) }
     val isPreparing = toolCall.isGenerating && !toolCall.isComplete
     val timeMillis = toolCall.completedAt ?: messageTimestamp
+    val locale = LocalLocale.current.platformLocale
     val timeLabel = timeMillis?.takeIf { toolCall.isComplete }?.let {
-        remember(it) {
-            java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+        remember(it, locale) {
+            java.text.SimpleDateFormat("h:mm a", locale)
                 .format(java.util.Date(it))
         }
     }
