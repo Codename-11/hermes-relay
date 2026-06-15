@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import com.hermesandroid.relay.data.BuildFlavor
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -62,9 +65,17 @@ import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.BridgeActivityLog
 import com.hermesandroid.relay.ui.components.BridgeMasterToggle
 import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
+import com.hermesandroid.relay.ui.components.RelayChromeIconButton
+import com.hermesandroid.relay.ui.components.RelayHeroPanel
+import com.hermesandroid.relay.ui.components.RelayModeStrip
+import com.hermesandroid.relay.ui.components.RelayPrimaryMode
+import com.hermesandroid.relay.ui.components.RelayReturnStrip
+import com.hermesandroid.relay.ui.components.RelayStatusPill
 // === v0.4.1 unattended-access ===
 import com.hermesandroid.relay.ui.components.UnattendedAccessRow
 // === END v0.4.1 unattended-access ===
+import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.viewmodel.BridgeViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -105,6 +116,13 @@ fun BridgeScreen(
     // === PHASE3-safety-rails: safety summary card ===
     onNavigateToBridgeSafety: () -> Unit = {},
     // === END PHASE3-safety-rails ===
+    onNavigateToChat: () -> Unit = {},
+    onNavigateToManage: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    returnTitle: String? = null,
+    returnSubtitle: String = "",
+    returnLabel: String = "Back",
+    onReturn: (() -> Unit)? = null,
 ) {
     val masterToggle by viewModel.masterToggle.collectAsState()
     val permissionStatus by viewModel.permissionStatus.collectAsState()
@@ -197,8 +215,16 @@ fun BridgeScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Bridge") },
+                actions = {
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Tune,
+                        contentDescription = "Settings",
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
         }
@@ -207,10 +233,45 @@ fun BridgeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .background(RelayRefresh.Background)
+                .relayGridTexture(alpha = 0.12f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            RelayModeStrip(
+                selected = RelayPrimaryMode.Bridge,
+                onModeSelected = { mode ->
+                    when (mode) {
+                        RelayPrimaryMode.Chat -> onNavigateToChat()
+                        RelayPrimaryMode.Manage -> onNavigateToManage()
+                        RelayPrimaryMode.Bridge -> Unit
+                    }
+                },
+            )
+            if (returnTitle != null && onReturn != null) {
+                RelayReturnStrip(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    title = returnTitle,
+                    subtitle = returnSubtitle,
+                    label = returnLabel,
+                    onClick = onReturn,
+                )
+            }
+            RelayHeroPanel(
+                title = if (relayReady) "Phone bridge is paired" else "Bridge controls are staged",
+                subtitle = if (relayReady) {
+                    "Terminal, voice, notification, media, and advanced phone controls share this grant."
+                } else {
+                    "Pair Relay to receive bridge commands. You can still configure permissions and safety before pairing."
+                },
+                action = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RelayStatusPill("relay", relayReady)
+                        RelayStatusPill("safety", true)
+                    }
+                },
+            )
             // Relay-not-connected banner. Bridge commands arrive over the
             // relay's WSS — when relay is Unpaired / Disconnected / URL
             // blank, the AccessibilityService + foreground service will
@@ -251,7 +312,7 @@ fun BridgeScreen(
                             )
                             Text(
                                 text = "Bridge commands travel over the relay. " +
-                                    "Pair a relay in Settings → Connection for " +
+                                    "Pair a relay in Settings → Connections for " +
                                     "the bridge to actually do anything.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,

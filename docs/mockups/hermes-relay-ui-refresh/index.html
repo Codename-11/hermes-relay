@@ -1,0 +1,1294 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hermes Relay UI Refresh Mockups</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f7f6f0;
+      --paper: #f7f3ea;
+      --muted: #a7a4b7;
+      --dim: #68647d;
+      --bg: #08090d;
+      --navy: #121426;
+      --navy-2: #191b31;
+      --navy-3: #22243c;
+      --line: rgba(247, 246, 240, 0.14);
+      --line-strong: rgba(247, 246, 240, 0.28);
+      --relay: #aebfff;
+      --purple: #8c5cff;
+      --electric: #111dff;
+      --cyan: #6bdcff;
+      --green: #58d36f;
+      --amber: #f2b14b;
+      --danger: #ff6b78;
+      --phone-w: 390px;
+      --radius: 8px;
+      font-family: "Bahnschrift", "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      letter-spacing: 0;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+        var(--bg);
+      background-size: 42px 42px;
+      color: var(--ink);
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+    }
+
+    a {
+      color: var(--relay);
+    }
+
+    .page {
+      width: min(1480px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 32px 0 56px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+      gap: 28px;
+      align-items: end;
+      padding: 8px 0 28px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+      filter: saturate(1.1);
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      max-width: 880px;
+      margin-top: 14px;
+      font-size: clamp(40px, 7vw, 92px);
+      line-height: 0.92;
+      font-weight: 780;
+      text-wrap: balance;
+    }
+
+    .hero-copy {
+      max-width: 620px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.55;
+    }
+
+    .ascii-panel {
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      padding: 18px;
+      background:
+        radial-gradient(circle at 1px 1px, rgba(247, 246, 240, 0.3) 1px, transparent 1.2px),
+        linear-gradient(135deg, rgba(17, 29, 255, 0.22), rgba(140, 92, 255, 0.08));
+      background-size: 9px 9px, auto;
+      min-height: 180px;
+      display: grid;
+      align-content: space-between;
+    }
+
+    .ascii-panel strong {
+      font-size: 13px;
+      color: var(--paper);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    }
+
+    .ascii-panel span {
+      color: var(--relay);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 28px;
+      line-height: 1.1;
+    }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 24px 0 34px;
+    }
+
+    .principle {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+      min-height: 112px;
+      background: rgba(18, 20, 38, 0.68);
+    }
+
+    .principle .num {
+      color: var(--electric);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .principle h2 {
+      margin-top: 8px;
+      font-size: 18px;
+      font-weight: 720;
+    }
+
+    .principle p {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .mockups {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(280px, 1fr));
+      gap: 18px;
+      align-items: start;
+    }
+
+    .mockup-block {
+      display: grid;
+      gap: 10px;
+    }
+
+    .caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 44px;
+    }
+
+    .caption h2 {
+      font-size: 17px;
+      font-weight: 740;
+    }
+
+    .caption span {
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .phone {
+      position: relative;
+      width: 100%;
+      max-width: var(--phone-w);
+      margin: 0 auto;
+      aspect-ratio: 390 / 844;
+      border: 1px solid rgba(247, 246, 240, 0.22);
+      border-radius: 28px;
+      overflow: hidden;
+      background: var(--navy);
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+    }
+
+    .phone::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        radial-gradient(circle at 1px 1px, rgba(174, 191, 255, 0.24) 1px, transparent 1.3px);
+      background-size: 100% 9px, 10px 10px;
+      mix-blend-mode: screen;
+      opacity: 0.16;
+      z-index: 4;
+    }
+
+    .status {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      color: var(--paper);
+      font-size: 13px;
+      font-weight: 700;
+      background: #0b0c12;
+    }
+
+    .status .icons {
+      display: flex;
+      gap: 7px;
+      align-items: center;
+      color: var(--paper);
+    }
+
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 62px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9, 10, 16, 0.94);
+    }
+
+    .hamburger,
+    .icon-btn,
+    .mini-icon {
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      background: rgba(247, 246, 240, 0.04);
+      color: var(--ink);
+    }
+
+    .hamburger,
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      font-size: 18px;
+      flex: 0 0 auto;
+    }
+
+    .mini-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .agent {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .avatar {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border: 1px solid rgba(174, 191, 255, 0.7);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: #121426;
+      background: var(--relay);
+      font-weight: 800;
+    }
+
+    .avatar::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      bottom: 0;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      border: 2px solid #0b0c12;
+    }
+
+    .agent h3 {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 16px;
+      font-weight: 780;
+    }
+
+    .agent p {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-top: 2px;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 10px;
+    }
+
+    .mode-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      background: #0d0e16;
+    }
+
+    .mode {
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .mode.active {
+      color: var(--paper);
+      border-color: var(--electric);
+      background: rgba(17, 29, 255, 0.34);
+    }
+
+    .content {
+      position: relative;
+      height: calc(100% - 34px - 62px - 49px - 30px);
+      overflow: hidden;
+      background: var(--navy);
+    }
+
+    .chat-content {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px;
+    }
+
+    .sphere {
+      position: absolute;
+      left: 50%;
+      top: 43%;
+      width: 190px;
+      height: 190px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, rgba(247, 246, 240, 0.95) 0 2px, transparent 2.3px),
+        radial-gradient(circle at center, rgba(140, 92, 255, 0.85), rgba(17, 29, 255, 0.12) 52%, transparent 70%);
+      background-size: 10px 10px, auto;
+      opacity: 0.72;
+      filter: contrast(1.15);
+      -webkit-mask-image: radial-gradient(circle, #000 0 58%, transparent 70%);
+      mask-image: radial-gradient(circle, #000 0 58%, transparent 70%);
+    }
+
+    .glyph {
+      position: absolute;
+      left: 16px;
+      top: 12px;
+      color: rgba(174, 191, 255, 0.25);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .thread {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .bubble {
+      width: fit-content;
+      max-width: 82%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(247, 246, 240, 0.05);
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .bubble.user {
+      justify-self: end;
+      background: rgba(174, 191, 255, 0.14);
+      border-color: rgba(174, 191, 255, 0.38);
+    }
+
+    .bubble.tool {
+      border-color: rgba(88, 211, 111, 0.38);
+      color: var(--green);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .composer {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 34px 34px 1fr 38px;
+      gap: 8px;
+      align-items: end;
+      padding-top: 12px;
+    }
+
+    .input {
+      min-height: 44px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      color: var(--muted);
+      background: rgba(8, 9, 13, 0.68);
+      font-size: 14px;
+    }
+
+    .send {
+      background: var(--relay);
+      color: #111426;
+      border-color: transparent;
+      font-weight: 900;
+    }
+
+    .quick-rail {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      position: absolute;
+      right: 12px;
+      bottom: 74px;
+      z-index: 2;
+    }
+
+    .quick-rail .quick {
+      border: 1px solid rgba(17, 29, 255, 0.65);
+      border-radius: 8px;
+      padding: 7px 9px;
+      background: rgba(17, 29, 255, 0.42);
+      color: var(--paper);
+      font-size: 11px;
+      font-weight: 760;
+    }
+
+    .bottom-status {
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 10px;
+      border-top: 1px solid var(--line);
+      background: #0b0c12;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .bottom-status strong {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .home-indicator {
+      height: 18px;
+      display: grid;
+      place-items: center;
+      background: #0b0c12;
+    }
+
+    .home-indicator span {
+      width: 130px;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(247, 246, 240, 0.48);
+    }
+
+    .manage-content,
+    .bridge-content,
+    .profile-content {
+      padding: 12px;
+      overflow: auto;
+    }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin: 4px 0 10px;
+    }
+
+    .section-title h3 {
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .section-title span {
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 10px;
+    }
+
+    .health {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .metric,
+    .tile,
+    .profile-card,
+    .session-row {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(247, 246, 240, 0.045);
+    }
+
+    .metric {
+      padding: 10px;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 17px;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 10px;
+    }
+
+    .tile-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .tile {
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 64px;
+      padding: 10px;
+    }
+
+    .tile h4 {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .tile p {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .tile.primary {
+      border-color: rgba(17, 29, 255, 0.68);
+      background: rgba(17, 29, 255, 0.22);
+    }
+
+    .chev {
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .bridge-hero {
+      min-height: 116px;
+      border: 1px solid rgba(17, 29, 255, 0.55);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      background:
+        radial-gradient(circle at 1px 1px, rgba(247, 246, 240, 0.38) 1px, transparent 1.2px),
+        rgba(17, 29, 255, 0.22);
+      background-size: 10px 10px, auto;
+    }
+
+    .bridge-hero h3 {
+      font-size: 18px;
+      font-weight: 820;
+    }
+
+    .bridge-hero p {
+      margin-top: 8px;
+      max-width: 260px;
+      color: var(--paper);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .bridge-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .action-pill {
+      border: 1px solid rgba(247, 246, 240, 0.28);
+      border-radius: 8px;
+      padding: 7px 10px;
+      background: rgba(8, 9, 13, 0.62);
+      color: var(--paper);
+      font-size: 11px;
+      font-weight: 780;
+    }
+
+    .action-pill.hot {
+      background: var(--paper);
+      color: #111426;
+    }
+
+    .profile-sheet {
+      border: 1px solid var(--line);
+      border-radius: 16px 16px 0 0;
+      background: #101118;
+      min-height: 100%;
+      padding: 14px 12px 18px;
+    }
+
+    .sheet-handle {
+      width: 48px;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(247, 246, 240, 0.5);
+      margin: 0 auto 14px;
+    }
+
+    .profile-card {
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .profile-card.active {
+      border-color: var(--relay);
+      background: rgba(174, 191, 255, 0.12);
+    }
+
+    .profile-card .top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .profile-card h4 {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 4px 6px;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 9px;
+    }
+
+    .tag.good {
+      color: var(--green);
+      border-color: rgba(88, 211, 111, 0.4);
+    }
+
+    .session-drawer {
+      position: absolute;
+      inset: 34px auto 18px 0;
+      z-index: 6;
+      width: 82%;
+      border-right: 1px solid var(--line);
+      border-radius: 0 18px 18px 0;
+      background: rgba(10, 11, 17, 0.97);
+      padding: 18px 14px;
+      box-shadow: 22px 0 50px rgba(0, 0, 0, 0.42);
+    }
+
+    .drawer-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .drawer-head h3 {
+      font-size: 22px;
+      font-weight: 760;
+    }
+
+    .search {
+      height: 36px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+
+    .drawer-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .drawer-tab {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 4px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .drawer-tab.active {
+      color: var(--paper);
+      border-color: var(--relay);
+    }
+
+    .session-row {
+      padding: 9px 10px;
+      margin-bottom: 7px;
+    }
+
+    .session-row b {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .session-row span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 9px;
+    }
+
+    .wide-section {
+      margin-top: 38px;
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(320px, 1.05fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .notes {
+      border-top: 1px solid var(--line);
+      padding-top: 20px;
+    }
+
+    .notes h2 {
+      font-size: 24px;
+      font-weight: 820;
+    }
+
+    .notes p {
+      margin-top: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .desktop-frame {
+      min-height: 430px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #0c0d13;
+      display: grid;
+      grid-template-columns: 220px 1fr 250px;
+      grid-template-rows: 34px 1fr 22px;
+    }
+
+    .desktop-titlebar {
+      grid-column: 1 / 4;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 10px;
+    }
+
+    .desktop-left,
+    .desktop-right {
+      padding: 12px;
+      background: rgba(247, 246, 240, 0.035);
+    }
+
+    .desktop-left {
+      border-right: 1px solid var(--line);
+    }
+
+    .desktop-right {
+      border-left: 1px solid var(--line);
+    }
+
+    .desktop-main {
+      padding: 12px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+      background:
+        radial-gradient(circle at 1px 1px, rgba(174, 191, 255, 0.18) 1px, transparent 1.2px),
+        var(--navy);
+      background-size: 12px 12px, auto;
+    }
+
+    .desktop-statusbar {
+      grid-column: 1 / 4;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 8px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 10px;
+    }
+
+    .rail-item {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .rail-item.active {
+      color: var(--paper);
+      border-color: var(--electric);
+      background: rgba(17, 29, 255, 0.22);
+    }
+
+    @media (max-width: 1180px) {
+      .mockups {
+        grid-template-columns: repeat(2, minmax(280px, 1fr));
+      }
+
+      .principles {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100% - 20px, 430px);
+        padding-top: 18px;
+      }
+
+      .hero,
+      .wide-section {
+        grid-template-columns: 1fr;
+      }
+
+      .mockups,
+      .principles {
+        grid-template-columns: 1fr;
+      }
+
+      .desktop-frame {
+        grid-template-columns: 1fr;
+      }
+
+      .desktop-left,
+      .desktop-right {
+        display: none;
+      }
+
+      .desktop-titlebar,
+      .desktop-statusbar {
+        grid-column: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <div class="brand-row">
+          <img class="brand-mark" src="../../../assets/logo.svg" alt="">
+          <span>Hermes Relay / UI refresh</span>
+        </div>
+        <h1 id="page-title">Chat first. Bridge visible. Settings lighter.</h1>
+        <p class="hero-copy">
+          A mockup direction that keeps Hermes Relay's dark sphere and lavender controls, then borrows the official Hermes Desktop language: compact chrome, hard electric-blue emphasis, a real status strip, sharper management surfaces, and profile-aware sessions.
+        </p>
+      </div>
+      <div class="ascii-panel" aria-label="visual motif">
+        <strong>Open Source / Relay cockpit</strong>
+        <span>/\-_=+|&lt;<br>- /= ~:*-/<br>VOICE WS TUI</span>
+      </div>
+    </section>
+
+    <section class="principles" aria-label="design principles">
+      <article class="principle">
+        <div class="num">01</div>
+        <h2>Primary Modes</h2>
+        <p>Use Chat, Manage, Bridge as the main modes. Put Terminal in the chrome so it is never buried.</p>
+      </article>
+      <article class="principle">
+        <div class="num">02</div>
+        <h2>Status, Not Tabs</h2>
+        <p>Replace the fat bottom navigation with a thin live state strip for model, relay, and safety.</p>
+      </article>
+      <article class="principle">
+        <div class="num">03</div>
+        <h2>Profiles Matter</h2>
+        <p>Make profile, SOUL, memory, skills, and connection switching feel like agent control, not app settings.</p>
+      </article>
+      <article class="principle">
+        <div class="num">04</div>
+        <h2>Official Hermes Edge</h2>
+        <p>Keep Relay's navy/purple base, but use electric blue, mono metadata, and sparse glyph texture.</p>
+      </article>
+    </section>
+
+    <section class="mockups" aria-label="mobile mockups">
+      <article class="mockup-block">
+        <div class="caption">
+          <h2>Chat Surface</h2>
+          <span>recommended default</span>
+        </div>
+        <div class="phone">
+          <div class="status"><span>8:42</span><span class="icons">5G ▰ 48</span></div>
+          <div class="bar">
+            <div class="hamburger">☰</div>
+            <div class="agent">
+              <div class="avatar">V</div>
+              <div>
+                <h3>Victor</h3>
+                <p>claude-opus-4.6 / focused</p>
+              </div>
+            </div>
+            <div class="icon-btn">⌘</div>
+            <div class="icon-btn">▣</div>
+          </div>
+          <div class="mode-strip">
+            <div class="mode active">Chat</div>
+            <div class="mode">Manage</div>
+            <div class="mode">Bridge</div>
+          </div>
+          <div class="content chat-content">
+            <div class="glyph">/\-_=+|&lt;  relay:local  ws:open</div>
+            <div class="sphere"></div>
+            <div class="thread">
+              <div class="bubble user">Can you check the relay sessions and keep the terminal nearby?</div>
+              <div class="bubble tool">terminal.attach · session: docker-server</div>
+              <div class="bubble">I found 3 active grants. Terminal is attached and ready.</div>
+            </div>
+            <div class="quick-rail">
+              <div class="quick">Terminal</div>
+              <div class="quick">Voice</div>
+            </div>
+            <div class="composer">
+              <div class="mini-icon">＋</div>
+              <div class="mini-icon">/</div>
+              <div class="input">Message Victor...</div>
+              <div class="icon-btn send">➤</div>
+            </div>
+          </div>
+          <div class="bottom-status"><span><strong>connected</strong> · tailscale</span><span>profile: victor</span></div>
+          <div class="home-indicator"><span></span></div>
+        </div>
+      </article>
+
+      <article class="mockup-block">
+        <div class="caption">
+          <h2>Manage Surface</h2>
+          <span>standard install path</span>
+        </div>
+        <div class="phone">
+          <div class="status"><span>8:42</span><span class="icons">5G ▰ 48</span></div>
+          <div class="bar">
+            <div class="hamburger">☰</div>
+            <div class="agent">
+              <div class="avatar">H</div>
+              <div>
+                <h3>Command Center</h3>
+                <p>local backend / api healthy</p>
+              </div>
+            </div>
+            <div class="icon-btn">⌘</div>
+            <div class="icon-btn">▣</div>
+          </div>
+          <div class="mode-strip">
+            <div class="mode">Chat</div>
+            <div class="mode active">Manage</div>
+            <div class="mode">Bridge</div>
+          </div>
+          <div class="content manage-content">
+            <div class="section-title">
+              <h3>Relay Hub</h3>
+              <span>standard</span>
+            </div>
+            <div class="health">
+              <div class="metric"><b>3</b><span>paired grants</span></div>
+              <div class="metric"><b>12 ms</b><span>relay ping</span></div>
+            </div>
+            <div class="tile-list">
+              <div class="tile primary">
+                <div class="mini-icon">⇄</div>
+                <div><h4>Connections</h4><p>Pair, switch, verify routes</p></div>
+                <div class="chev">›</div>
+              </div>
+              <div class="tile">
+                <div class="mini-icon">☤</div>
+                <div><h4>Profiles</h4><p>SOUL, memory, skills, sessions</p></div>
+                <div class="chev">›</div>
+              </div>
+              <div class="tile">
+                <div class="mini-icon">✦</div>
+                <div><h4>Skills + Tools</h4><p>Browse, enable, configure</p></div>
+                <div class="chev">›</div>
+              </div>
+              <div class="tile">
+                <div class="mini-icon">◷</div>
+                <div><h4>Automations</h4><p>Cron, background runs, delivery</p></div>
+                <div class="chev">›</div>
+              </div>
+            </div>
+          </div>
+          <div class="bottom-status"><span><strong>api</strong> · online</span><span>model: opus</span></div>
+          <div class="home-indicator"><span></span></div>
+        </div>
+      </article>
+
+      <article class="mockup-block">
+        <div class="caption">
+          <h2>Bridge Surface</h2>
+          <span>not hidden in settings</span>
+        </div>
+        <div class="phone">
+          <div class="status"><span>8:42</span><span class="icons">5G ▰ 48</span></div>
+          <div class="bar">
+            <div class="hamburger">☰</div>
+            <div class="agent">
+              <div class="avatar">B</div>
+              <div>
+                <h3>Bridge Core</h3>
+                <p>grant scope / phone relay</p>
+              </div>
+            </div>
+            <div class="icon-btn">⌘</div>
+            <div class="icon-btn">▣</div>
+          </div>
+          <div class="mode-strip">
+            <div class="mode">Chat</div>
+            <div class="mode">Manage</div>
+            <div class="mode active">Bridge</div>
+          </div>
+          <div class="content bridge-content">
+            <div class="bridge-hero">
+              <h3>Phone bridge is paired</h3>
+              <p>Terminal, voice, notification, media, and relay-session controls share this grant.</p>
+              <div class="bridge-actions">
+                <div class="action-pill hot">Open Terminal</div>
+                <div class="action-pill">Safety</div>
+              </div>
+            </div>
+            <div class="tile-list">
+              <div class="tile primary">
+                <div class="mini-icon">⌁</div>
+                <div><h4>Terminal</h4><p>Attach to relay shell</p></div>
+                <div class="chev">›</div>
+              </div>
+              <div class="tile">
+                <div class="mini-icon">◌</div>
+                <div><h4>Voice</h4><p>Provider, model, output voice</p></div>
+                <div class="chev">›</div>
+              </div>
+              <div class="tile">
+                <div class="mini-icon">▤</div>
+                <div><h4>Notifications</h4><p>Shared app notifications</p></div>
+                <div class="chev">›</div>
+              </div>
+              <div class="tile">
+                <div class="mini-icon">⚑</div>
+                <div><h4>Advanced Phone Control</h4><p>Sideload-only gated controls</p></div>
+                <div class="chev">›</div>
+              </div>
+            </div>
+          </div>
+          <div class="bottom-status"><span><strong>grant</strong> · 2h left</span><span>safety: on</span></div>
+          <div class="home-indicator"><span></span></div>
+        </div>
+      </article>
+
+      <article class="mockup-block">
+        <div class="caption">
+          <h2>Profile + Sessions</h2>
+          <span>agent management</span>
+        </div>
+        <div class="phone">
+          <div class="status"><span>8:42</span><span class="icons">5G ▰ 48</span></div>
+          <div class="bar">
+            <div class="hamburger">☰</div>
+            <div class="agent">
+              <div class="avatar">V</div>
+              <div>
+                <h3>Victor</h3>
+                <p>profile isolated api</p>
+              </div>
+            </div>
+            <div class="icon-btn">⌘</div>
+            <div class="icon-btn">▣</div>
+          </div>
+          <div class="content profile-content">
+            <div class="profile-sheet">
+              <div class="sheet-handle"></div>
+              <div class="section-title">
+                <h3>Agent Profiles</h3>
+                <span>3 loaded</span>
+              </div>
+              <div class="profile-card active">
+                <div class="top"><h4>Victor</h4><span class="tag good">active</span></div>
+                <div class="tag-row">
+                  <span class="tag">claude-opus-4.6</span>
+                  <span class="tag">SOUL</span>
+                  <span class="tag">memory</span>
+                  <span class="tag">skills 18</span>
+                </div>
+              </div>
+              <div class="profile-card">
+                <div class="top"><h4>Default Hermes</h4><span class="tag">server</span></div>
+                <div class="tag-row">
+                  <span class="tag">grok-4</span>
+                  <span class="tag">shared sessions</span>
+                </div>
+              </div>
+              <div class="profile-card">
+                <div class="top"><h4>Research VM</h4><span class="tag">remote</span></div>
+                <div class="tag-row">
+                  <span class="tag">tailscale</span>
+                  <span class="tag">tools locked</span>
+                </div>
+              </div>
+              <div class="tile primary">
+                <div class="mini-icon">⌕</div>
+                <div><h4>Inspect Victor</h4><p>Config, SOUL, memory, skills</p></div>
+                <div class="chev">›</div>
+              </div>
+            </div>
+          </div>
+          <div class="session-drawer">
+            <div class="drawer-head">
+              <h3>Sessions</h3>
+              <div class="mini-icon">＋</div>
+            </div>
+            <div class="search">Search sessions or id...</div>
+            <div class="drawer-tabs">
+              <div class="drawer-tab active">Victor</div>
+              <div class="drawer-tab">Pinned</div>
+              <div class="drawer-tab">Archive</div>
+            </div>
+            <div class="session-row"><b>Terminal smoke test</b><span>12m ago · 24 msgs · victor</span></div>
+            <div class="session-row"><b>Bridge Core pairing</b><span>55m ago · grant notes</span></div>
+            <div class="session-row"><b>Voice provider checks</b><span>Yesterday · xAI realtime</span></div>
+            <div class="session-row"><b>Remote backend setup</b><span>Apr 12 · tailscale</span></div>
+          </div>
+          <div class="bottom-status"><span><strong>profile</strong> · victor</span><span>sessions: filtered</span></div>
+          <div class="home-indicator"><span></span></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="wide-section">
+      <div class="notes">
+        <h2>Adaptive wide layout</h2>
+        <p>
+          On tablets, foldables, and desktop web surfaces, the same model becomes closer to official Hermes Desktop: sessions/profile navigation on the left, chat in the center, preview or terminal on the right, and a thin status bar across the bottom.
+        </p>
+        <p>
+          This gives Relay one mental model across phone and larger surfaces without forcing a permanent left sidebar onto a narrow phone screen.
+        </p>
+      </div>
+      <div class="desktop-frame" aria-label="wide adaptive mockup">
+        <div class="desktop-titlebar">
+          <span>Hermes Relay</span>
+          <span>/\-_=+|&lt; · command palette · settings</span>
+        </div>
+        <aside class="desktop-left">
+          <div class="rail-item active"><span>New chat</span><span>⌘</span></div>
+          <div class="rail-item"><span>Victor sessions</span><span>18</span></div>
+          <div class="rail-item"><span>Default sessions</span><span>42</span></div>
+          <div class="rail-item"><span>Research VM</span><span>7</span></div>
+          <div class="rail-item"><span>Archive</span><span>99+</span></div>
+        </aside>
+        <section class="desktop-main">
+          <div class="section-title">
+            <h3>Victor</h3>
+            <span>claude-opus-4.6 / connected</span>
+          </div>
+          <div class="thread">
+            <div class="bubble user">Open terminal beside this chat and inspect the relay.</div>
+            <div class="bubble tool">right-rail.terminal · attached</div>
+            <div class="bubble">Terminal is live in the preview rail. Relay health is green.</div>
+          </div>
+          <div class="composer">
+            <div class="mini-icon">＋</div>
+            <div class="mini-icon">/</div>
+            <div class="input">Message Victor...</div>
+            <div class="icon-btn send">➤</div>
+          </div>
+        </section>
+        <aside class="desktop-right">
+          <div class="section-title">
+            <h3>Bridge</h3>
+            <span>rail</span>
+          </div>
+          <div class="tile-list">
+            <div class="tile primary"><div class="mini-icon">⌁</div><div><h4>Terminal</h4><p>docker-server</p></div><div></div></div>
+            <div class="tile"><div class="mini-icon">▤</div><div><h4>Notifications</h4><p>2 apps shared</p></div><div></div></div>
+            <div class="tile"><div class="mini-icon">☤</div><div><h4>Profile</h4><p>Victor memory</p></div><div></div></div>
+          </div>
+        </aside>
+        <div class="desktop-statusbar">
+          <span>relay: connected · tailscale · grant 2h</span>
+          <span>model: opus · profile: victor · yolo off</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -27,13 +27,19 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,6 +62,11 @@ fun MessageBubble(
     isLastInGroup: Boolean = true,
     onCopyMessage: (String) -> Unit = {},
     /**
+     * Quote this message into the input field. Null hides the Quote entry in
+     * the long-press menu, so legacy call sites keep the copy-only behavior.
+     */
+    onQuoteMessage: ((String) -> Unit)? = null,
+    /**
      * Invoked when the user taps a FAILED inbound attachment card.
      * `attachmentIndex` is the position in [ChatMessage.attachments] so the
      * ViewModel can re-fetch the exact placeholder that needs re-trying.
@@ -74,7 +85,20 @@ fun MessageBubble(
      * card collapses) and forwards the action value per its mode.
      * Defaults to no-op so legacy callers / tests don't have to wire it.
      */
-    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit = { _, _, _ -> }
+    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit = { _, _, _ -> },
+    /**
+     * Invoked when the user submits a card's interactive input slot (the
+     * gateway ask cards — clarify answer, secret value, sudo confirm).
+     * Routed to [com.hermesandroid.relay.viewmodel.ChatViewModel.answerAsk]
+     * by ChatScreen; defaults to no-op for legacy callers.
+     */
+    onCardInput: (messageId: String, cardKey: String, value: String) -> Unit = { _, _, _ -> },
+    /**
+     * "Edit & resend" entry in the USER-bubble long-press menu — gateway
+     * transport only (the only path that supports rewinding the server
+     * conversation). Null hides the entry.
+     */
+    onEditMessage: ((ChatMessage) -> Unit)? = null,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -130,6 +154,18 @@ fun MessageBubble(
     val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
     val isDarkTheme = isSystemInDarkTheme()
 
+    // Pull generated/inline image links (`![alt](src)`) out of assistant
+    // content so they render as real images (remote URLs via Coil) or a
+    // graceful inline notice — not the blank element the markdown renderer
+    // emits for an image link. User/system bubbles keep their raw content.
+    val (markdownBody, inlineImages) = remember(message.content, isUser, isSystem) {
+        if (isUser || isSystem) {
+            message.content to emptyList()
+        } else {
+            extractChatInlineImages(message.content)
+        }
+    }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = alignment
@@ -144,11 +180,26 @@ fun MessageBubble(
             )
         }
 
+        if (!isUser && !isSystem && message.badges.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .widthIn(max = maxBubbleWidth)
+                    .padding(bottom = 4.dp, start = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                message.badges.take(4).forEach { badge ->
+                    MessagePathBadge(text = badge)
+                }
+            }
+        }
+
         // Thinking block (above the bubble, only for assistant messages)
         if (!isUser && showThinking && message.thinkingContent.isNotEmpty()) {
             ThinkingBlock(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
+                timestamp = message.timestamp,
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .padding(bottom = 4.dp)
@@ -162,6 +213,21 @@ fun MessageBubble(
         // is rendered as a separate Box so it hugs the bubble's left edge
         // regardless of content height (tall bubbles with multi-line
         // markdown stretch the bar via fillMaxHeight + IntrinsicSize).
+        //
+        // Suppress an otherwise-empty assistant bubble: a message that
+        // carries only thinking and/or tool calls (both rendered OUTSIDE
+        // this Surface — the ThinkingBlock above, the tool pills as separate
+        // rows) would otherwise paint a bare timestamp-only chip between the
+        // Thought-process block and the tool pill. Keep the bubble while
+        // streaming (StreamingDots is the live "working" indicator) and
+        // whenever there are cards/attachments to render inside it.
+        val showBubble = isUser || isSystem ||
+            message.content.isNotBlank() ||
+            message.isStreaming ||
+            message.cards.isNotEmpty() ||
+            message.attachments.isNotEmpty() ||
+            inlineImages.isNotEmpty()
+        if (showBubble) {
         Row(
             modifier = Modifier.widthIn(max = maxBubbleWidth),
             verticalAlignment = Alignment.Top,
@@ -176,6 +242,43 @@ fun MessageBubble(
                         .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f))
                 )
             }
+        // Long-press opens a compact action menu when a quote handler is
+        // wired; with copy as the only action it stays a direct copy so the
+        // one-action case doesn't pay a menu tap.
+        var showMessageActions by remember { mutableStateOf(false) }
+        val showEditAction = onEditMessage != null && isUser
+        if (onQuoteMessage != null || showEditAction) {
+            DropdownMenu(
+                expanded = showMessageActions,
+                onDismissRequest = { showMessageActions = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Copy") },
+                    onClick = {
+                        showMessageActions = false
+                        onCopyMessage(message.content)
+                    },
+                )
+                if (onQuoteMessage != null) {
+                    DropdownMenuItem(
+                        text = { Text("Quote in reply") },
+                        onClick = {
+                            showMessageActions = false
+                            onQuoteMessage(message.content)
+                        },
+                    )
+                }
+                if (showEditAction) {
+                    DropdownMenuItem(
+                        text = { Text("Edit & resend") },
+                        onClick = {
+                            showMessageActions = false
+                            onEditMessage(message)
+                        },
+                    )
+                }
+            }
+        }
         Surface(
             shape = bubbleShape,
             color = backgroundColor,
@@ -191,7 +294,13 @@ fun MessageBubble(
                 )
                 .combinedClickable(
                     onClick = {},
-                    onLongClick = { onCopyMessage(message.content) }
+                    onLongClick = {
+                        if (onQuoteMessage != null || showEditAction) {
+                            showMessageActions = true
+                        } else {
+                            onCopyMessage(message.content)
+                        }
+                    }
                 )
                 .semantics { contentDescription = a11yDescription }
         ) {
@@ -205,14 +314,28 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Markdown for assistant messages
-                        if (message.content.isNotEmpty()) {
+                        // Markdown for assistant messages (image links stripped
+                        // out — rendered separately below).
+                        if (markdownBody.isNotEmpty()) {
                             MarkdownContent(
-                                content = message.content,
+                                content = markdownBody,
                                 textColor = textColor
                             )
                         }
                     }
+                }
+
+                // Inline generated images (assistant only) — rendered OUTSIDE
+                // the SelectionContainer (they're not selectable text). Remote
+                // http(s) URLs load via Coil; server-local paths and load
+                // failures degrade to a notice that says why, instead of a
+                // blank space.
+                if (!isUser && !isSystem && inlineImages.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    ChatInlineImages(
+                        images = inlineImages,
+                        maxWidth = maxBubbleWidth - 24.dp,
+                    )
                 }
 
                 // Rich cards — rendered between the markdown body and
@@ -231,6 +354,9 @@ fun MessageBubble(
                             dispatches = message.cardDispatches,
                             onActionTap = { key, action ->
                                 onCardAction(message.id, key, action)
+                            },
+                            onInputSubmit = { key, value ->
+                                onCardInput(message.id, key, value)
                             },
                             maxWidth = maxBubbleWidth - 24.dp,
                             modifier = Modifier.padding(vertical = 2.dp),
@@ -284,6 +410,24 @@ fun MessageBubble(
             }
         }
         } // end Row (bubble + optional leading accent bar)
+        } // end if (showBubble)
+    }
+}
+
+@Composable
+private fun MessagePathBadge(text: String) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

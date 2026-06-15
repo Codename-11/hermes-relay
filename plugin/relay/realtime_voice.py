@@ -11,6 +11,7 @@ import secrets
 import struct
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
 DEFAULT_SAMPLE_WIDTH = 2
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_XAI_OAUTH_DEFAULT_TTL_SECONDS = 21_600
 
 
 @dataclass(slots=True)
@@ -650,31 +652,46 @@ def _xai_auth_path(config: RelayConfig) -> Path:
     return home / "auth" / "xai-oauth.json"
 
 
+def _xai_auth_paths(config: RelayConfig) -> list[Path]:
+    paths = [_xai_auth_path(config)]
+    hermes_home = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
+    paths.append(hermes_home / "auth.json")
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path.expanduser())
+        if key not in seen:
+            seen.add(key)
+            unique.append(path.expanduser())
+    return unique
+
+
 def _read_relay_xai_oauth_token(config: RelayConfig) -> _RelayXAIToken | None:
-    path = _xai_auth_path(config)
-    try:
-        store = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(store, dict):
-        return None
-    for label, tokens in _xai_oauth_token_candidates(store):
-        access_token = str(tokens.get("access_token", "") or "").strip()
-        if not access_token:
+    for path in _xai_auth_paths(config):
+        try:
+            store = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             continue
-        expires_at_ms = _int_or_none(tokens.get("expires_at_ms"))
-        if expires_at_ms is not None:
+        if not isinstance(store, dict):
+            continue
+        for label, tokens in _xai_oauth_token_candidates(store):
+            access_token = str(tokens.get("access_token", "") or "").strip()
+            if not access_token:
+                continue
+            expires_at_ms = _xai_oauth_expires_at_ms(tokens)
+            if expires_at_ms is None:
+                continue
             now_ms = int(time.time() * 1000)
             if expires_at_ms <= now_ms + 120_000:
                 continue
-        base_url = str(
-            tokens.get("base_url", "") or store.get("base_url", "") or ""
-        ).strip()
-        return _RelayXAIToken(
-            access_token=access_token,
-            source=f"{label} in {path}",
-            base_url=base_url or None,
-        )
+            base_url = str(
+                tokens.get("base_url", "") or store.get("base_url", "") or ""
+            ).strip()
+            return _RelayXAIToken(
+                access_token=access_token,
+                source=f"{label} in {path}",
+                base_url=base_url or None,
+            )
     return None
 
 
@@ -710,10 +727,68 @@ def _xai_oauth_token_candidates(store: dict[str, Any]) -> list[tuple[str, dict[s
         if isinstance(provider, dict):
             provider_tokens = provider.get("tokens")
             if isinstance(provider_tokens, dict):
-                candidates.append(("Hermes auth providers.xai-oauth", provider_tokens))
+                candidates.append(
+                    (
+                        "Hermes auth providers.xai-oauth",
+                        _xai_oauth_tokens_with_context(provider_tokens, provider),
+                    )
+                )
 
     candidates.append(("relay xai oauth root", store))
     return candidates
+
+
+def _xai_oauth_tokens_with_context(
+    tokens: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    payload = dict(tokens)
+    for key in ("last_refresh", "issued_at", "created_at", "refreshed_at", "base_url"):
+        if key not in payload and context.get(key) is not None:
+            payload[key] = context[key]
+    return payload
+
+
+def _xai_oauth_expires_at_ms(tokens: dict[str, Any]) -> int | None:
+    explicit = _int_or_none(tokens.get("expires_at_ms"))
+    if explicit is not None:
+        return explicit
+    expires_in = _int_or_none(tokens.get("expires_in"))
+    issued_at_ms = _xai_oauth_issued_at_ms(tokens)
+    if issued_at_ms is None:
+        return None
+    if expires_in is None:
+        expires_in = _XAI_OAUTH_DEFAULT_TTL_SECONDS
+    return issued_at_ms + expires_in * 1000
+
+
+def _xai_oauth_issued_at_ms(tokens: dict[str, Any]) -> int | None:
+    for key in ("issued_at_ms", "created_at_ms", "refreshed_at_ms"):
+        value = _int_or_none(tokens.get(key))
+        if value is not None:
+            return value
+    for key in ("last_refresh", "issued_at", "created_at", "refreshed_at"):
+        value = tokens.get(key)
+        if isinstance(value, str) and value.strip():
+            parsed = _parse_timestamp_ms(value.strip())
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _parse_timestamp_ms(value: str) -> int | None:
+    numeric = _int_or_none(value)
+    if numeric is not None:
+        return numeric if numeric > 10_000_000_000 else numeric * 1000
+    try:
+        if value.endswith("Z"):
+            value = f"{value[:-1]}+00:00"
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp() * 1000)
 
 
 def _xai_auth_status(config: RelayConfig) -> dict[str, Any]:
@@ -731,6 +806,7 @@ def _xai_auth_status(config: RelayConfig) -> dict[str, Any]:
         "xai_env_names": env_present,
         "xai_oauth": oauth is not None,
         "xai_oauth_path": str(_xai_auth_path(config)),
+        "xai_oauth_paths": [str(path) for path in _xai_auth_paths(config)],
         "xai_oauth_source": oauth.source if oauth else None,
     }
 

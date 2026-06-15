@@ -18,6 +18,8 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
+import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.ComposeArrWorkaround
 import com.hermesandroid.relay.util.NavRouteRequest
@@ -36,7 +38,7 @@ class MainActivity : ComponentActivity() {
     // We do NOT call MediaProjectionHolder directly from here. On Android
     // 14+, getMediaProjection() must run from inside a foreground service
     // that has already called startForeground(type=mediaProjection), and
-    // that startForeground call must happen AFTER consent. So we hand the
+    // that startForeground call must happen AFT consent. So we hand the
     // result off to BridgeForegroundService, which:
     //   1. Upgrades its FGS type to SPECIAL_USE | MEDIA_PROJECTION
     //   2. Calls MediaProjectionHolder.acceptGrantInsideForegroundService
@@ -50,6 +52,10 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val data = result.data
+        if (!BuildFlavor.isSideload) {
+            Log.w(TAG, "Ignoring MediaProjection result on Google Play Bridge Core build")
+            return@registerForActivityResult
+        }
         if (result.resultCode == RESULT_OK && data != null) {
             Log.i(TAG, "MediaProjection consent granted — handing off to FGS")
             BridgeForegroundService.grantMediaProjection(this, result.resultCode, data)
@@ -88,13 +94,15 @@ class MainActivity : ComponentActivity() {
         // Hand the launcher to the process-singleton rendezvous so
         // BridgeViewModel.requestScreenCapture() can fire the consent
         // dialog without holding an Activity reference.
-        ScreenCaptureRequester.install {
-            val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
-                as MediaProjectionManager
-            try {
-                mediaProjectionLauncher.launch(mgr.createScreenCaptureIntent())
-            } catch (t: Throwable) {
-                Log.w(TAG, "failed to launch MediaProjection consent: ${t.message}")
+        if (BuildFlavor.isSideload) {
+            ScreenCaptureRequester.install {
+                val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                    as MediaProjectionManager
+                try {
+                    mediaProjectionLauncher.launch(mgr.createScreenCaptureIntent())
+                } catch (t: Throwable) {
+                    Log.w(TAG, "failed to launch MediaProjection consent: ${t.message}")
+                }
             }
         }
         // === END PHASE3-bridge-ui-followup ===
@@ -135,20 +143,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Returning to the app clears the one-slot "Hermes finished
+        // responding" notification — the chat surface is the answer.
+        TurnCompleteNotifier.cancel(this)
         // v0.4.1 — register this activity as the host for
         // KeyguardManager.requestDismissKeyguard. Cleared in onPause so
         // we don't leak the Activity past its lifecycle. The unattended-
         // access manager only attempts dismiss when an activity is
         // registered AND the user has opted in.
-        UnattendedAccessManager.setHostActivity(this)
+        if (BuildFlavor.isSideload) {
+            UnattendedAccessManager.setHostActivity(this)
+        }
         // Re-probe the credential-lock state on resume so the Bridge
         // tab badge updates immediately if the user just changed their
         // lock screen in system Settings between app sessions.
-        UnattendedAccessManager.refreshKeyguardState()
+        if (BuildFlavor.isSideload) {
+            UnattendedAccessManager.refreshKeyguardState()
+        }
     }
 
     override fun onPause() {
-        UnattendedAccessManager.setHostActivity(null)
+        if (BuildFlavor.isSideload) {
+            UnattendedAccessManager.setHostActivity(null)
+        }
         super.onPause()
     }
 
@@ -157,7 +174,9 @@ class MainActivity : ComponentActivity() {
         // Drop the launcher closure so we don't hold a stale Activity ref
         // after destroy. ScreenCaptureRequester.request() will return false
         // until the next MainActivity instance reinstalls itself.
-        ScreenCaptureRequester.uninstall()
+        if (BuildFlavor.isSideload) {
+            ScreenCaptureRequester.uninstall()
+        }
         // === END PHASE3-bridge-ui-followup ===
         super.onDestroy()
     }

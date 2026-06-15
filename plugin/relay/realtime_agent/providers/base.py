@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from plugin.voice_lab.expressions import VoiceExpression
 from plugin.voice_lab.metrics import MetricsRecorder
 from plugin.voice_lab.providers.base import VoiceRequest, VoiceResponse
 from plugin.voice_lab.registry import default_registry
+
+from ..models import (
+    ProviderEvent,
+    RealtimeAgentCapabilities,
+    RealtimeAgentSessionConfig,
+)
 
 AudioSink = Callable[[bytes, dict[str, Any]], None]
 
@@ -64,3 +70,33 @@ class RealtimeAgentProviderAdapter:
             )
 
         return await asyncio.to_thread(_run)
+
+
+class RealtimeAgentConnection(Protocol):
+    async def send_audio(self, pcm: bytes, sample_rate: int) -> None: ...
+
+    async def commit_audio(self) -> None: ...
+
+    async def send_text(self, text: str) -> None: ...
+
+    async def clear_audio(self) -> None: ...
+
+    async def cancel_response(self) -> None: ...
+
+    async def send_tool_result(self, call_id: str, output: dict[str, Any]) -> None: ...
+
+    async def request_response(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    def events(self) -> AsyncIterator[ProviderEvent]: ...
+
+
+class RealtimeAgentProvider(Protocol):
+    provider_id: str
+    capabilities: RealtimeAgentCapabilities
+
+    async def connect(
+        self,
+        config: RealtimeAgentSessionConfig,
+    ) -> RealtimeAgentConnection: ...

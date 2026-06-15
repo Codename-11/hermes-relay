@@ -12,8 +12,10 @@ import kotlinx.serialization.Serializable
  * upstream layout (one directory per profile under `~/.hermes/profiles/`)
  * and added [systemMessage], sourced from each profile's `SOUL.md`.
  *
- * A Profile is a NAMED AGENT CONFIG within a Connection. Switching profile
- * changes the active agent identity for the Android chat surface:
+ * A Profile is an upstream Hermes profile context within a Connection.
+ * Upstream stores named profiles as separate Hermes homes under
+ * `~/.hermes/profiles/<name>/`. Switching profile changes the active agent
+ * identity for the Android chat surface:
  *  - which profile API server the phone routes chat/session calls to when
  *    the relay advertises [apiServerUrl];
  *  - which profile name the phone sends to the server for new sessions and

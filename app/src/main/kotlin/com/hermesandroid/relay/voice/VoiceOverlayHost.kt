@@ -32,10 +32,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -229,6 +231,7 @@ class VoiceOverlayHost(context: Context) {
 
 data class VoiceOverlaySession(
     val uiState: StateFlow<VoiceUiState>,
+    val engineMode: String? = null,
     val provider: String?,
     val model: String?,
     val voice: String?,
@@ -252,6 +255,7 @@ private fun VoiceFloatingOverlayPill(
 ) {
     val uiState by session.uiState.collectAsState()
     var minimized by remember { mutableStateOf(false) }
+    val engineText = voiceEngineLabel(session.engineMode)
     val providerText = voiceProviderLabel(
         session.provider,
         session.model,
@@ -329,7 +333,7 @@ private fun VoiceFloatingOverlayPill(
                         )
                     }
                     Text(
-                        text = "$stateText · $profileText · $providerText",
+                        text = "$stateText · $engineText · $profileText · $providerText",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -343,6 +347,17 @@ private fun VoiceFloatingOverlayPill(
                     onInterrupt = session.onInterrupt,
                     onPauseAutoMode = session.onPauseAutoMode,
                 )
+                IconButton(
+                    onClick = session.onExit,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Exit voice mode",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
 
             if (uiState.state == VoiceState.Transcribing || uiState.state == VoiceState.Thinking) {
@@ -399,17 +414,20 @@ private fun VoiceFloatingOverlayBubble(
     val tapAction = when (uiState.state) {
         VoiceState.Idle, VoiceState.Error -> "start listening"
         VoiceState.Listening -> "stop listening"
-        else -> "stop voice"
+        VoiceState.Speaking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) "pause auto mode" else "interrupt"
+        VoiceState.Transcribing, VoiceState.Thinking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) "pause auto mode" else "interrupt"
     }
     val containerColor = when (uiState.state) {
         VoiceState.Listening, VoiceState.Speaking -> Color(0xFFE53935)
-        VoiceState.Transcribing, VoiceState.Thinking -> MaterialTheme.colorScheme.tertiary
+        VoiceState.Transcribing, VoiceState.Thinking -> Color(0xFFE53935)
         VoiceState.Error -> MaterialTheme.colorScheme.error
         VoiceState.Idle -> MaterialTheme.colorScheme.primary
     }
     val icon = when (uiState.state) {
         VoiceState.Listening, VoiceState.Speaking -> Icons.Filled.Stop
-        VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.GraphicEq
+        VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.Stop
         VoiceState.Idle, VoiceState.Error -> Icons.Filled.Mic
     }
 
@@ -601,7 +619,10 @@ private fun MicControlButton(
     onInterrupt: () -> Unit,
     onPauseAutoMode: () -> Unit,
 ) {
-    val isHot = uiState.state != VoiceState.Idle && uiState.state != VoiceState.Error
+    val isStopAction = uiState.state == VoiceState.Listening ||
+        uiState.state == VoiceState.Speaking ||
+        uiState.state == VoiceState.Transcribing ||
+        uiState.state == VoiceState.Thinking
     Surface(
         modifier = Modifier
             .size(44.dp)
@@ -614,14 +635,25 @@ private fun MicControlButton(
                     onInterrupt = onInterrupt,
                     onPauseAutoMode = onPauseAutoMode,
                 )
-            },
+        },
         shape = CircleShape,
-        color = if (isHot) Color(0xFFE53935) else MaterialTheme.colorScheme.primary,
+        color = when {
+            isStopAction -> Color(0xFFE53935)
+            uiState.state == VoiceState.Transcribing || uiState.state == VoiceState.Thinking ->
+                Color(0xFFE53935)
+            uiState.state == VoiceState.Error -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.primary
+        },
         shadowElevation = 4.dp,
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
-                imageVector = if (isHot) Icons.Filled.Stop else Icons.Filled.Mic,
+                imageVector = when {
+                    isStopAction -> Icons.Filled.Stop
+                    uiState.state == VoiceState.Transcribing || uiState.state == VoiceState.Thinking ->
+                        Icons.Filled.Stop
+                    else -> Icons.Filled.Mic
+                },
                 contentDescription = "Voice overlay mic",
                 tint = Color.White,
                 modifier = Modifier.size(22.dp),
@@ -645,7 +677,14 @@ private fun dispatchMicAction(
                 onStopListening()
             }
         }
-        VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> {
+        VoiceState.Speaking -> {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                onPauseAutoMode()
+            } else {
+                onInterrupt()
+            }
+        }
+        VoiceState.Transcribing, VoiceState.Thinking -> {
             if (uiState.interactionMode == InteractionMode.Continuous) {
                 onPauseAutoMode()
             } else {
@@ -692,6 +731,15 @@ private fun voiceProviderLabel(
     val modelPart = model?.takeIf { it.isNotBlank() }
     val voicePart = voice?.takeIf { it.isNotBlank() }
     return listOfNotNull(providerPart, modelPart, voicePart).joinToString(" / ")
+}
+
+private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
+    "realtime_agent" -> "Realtime Agent"
+    "hermes_voice_output" -> "Hermes voice"
+    null, "" -> "Voice engine ..."
+    else -> engineMode
+        .replace('_', ' ')
+        .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }
 
 fun openHermesFromOverlay(context: Context) {

@@ -12,10 +12,10 @@ import java.util.concurrent.TimeUnit
 /**
  * Sideload-only update checker.
  *
- * Fetches the latest GitHub release for this repo and returns an
+ * Fetches the latest Android GitHub release for this repo and returns an
  * [UpdateCheckResult]. Callers on `googlePlay` builds should treat this
  * as a no-op — the Play Store handles update delivery and the repo's
- * GitHub Releases may expose different artifacts.
+ * GitHub Releases also include desktop and server artifacts.
  *
  * Network + JSON runs on [Dispatchers.IO].
  *
@@ -27,8 +27,8 @@ import java.util.concurrent.TimeUnit
 object UpdateChecker {
     private const val REPO_OWNER = "Codename-11"
     private const val REPO_NAME  = "hermes-relay"
-    private const val RELEASES_LATEST_URL =
-        "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
+    private const val RELEASES_URL =
+        "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases?per_page=100"
 
     private const val USER_AGENT = "hermes-relay-android"
 
@@ -46,7 +46,7 @@ object UpdateChecker {
     }
 
     /**
-     * Fetch the latest release and compare with the running build.
+     * Fetch the latest Android release and compare with the running build.
      *
      * On `googlePlay` flavour this always returns [UpdateCheckResult.UpToDate]
      * because the Play Store track owns update delivery — we don't want the
@@ -58,7 +58,7 @@ object UpdateChecker {
         }
 
         val request = Request.Builder()
-            .url(RELEASES_LATEST_URL)
+            .url(RELEASES_URL)
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "$USER_AGENT/${BuildConfig.VERSION_NAME}")
             .build()
@@ -72,9 +72,16 @@ object UpdateChecker {
                 }
                 val body = resp.body?.string()
                     ?: return@withContext UpdateCheckResult.Error("Empty response body")
-                val release = json.decodeFromString<GitHubRelease>(body)
+                val release = json.decodeFromString<List<GitHubRelease>>(body)
+                    .asSequence()
+                    .filter { !it.prerelease }
+                    .filter { isAndroidReleaseTag(it.tagName) }
+                    .maxWithOrNull { a, b ->
+                        compareVersions(releaseVersion(a.tagName), releaseVersion(b.tagName))
+                    }
+                    ?: return@withContext UpdateCheckResult.UpToDate
 
-                val latest = release.tagName
+                val latest = releaseVersion(release.tagName)
                 val current = BuildConfig.VERSION_NAME
                 val cmp = compareVersions(current, latest)
                 if (cmp >= 0) {
@@ -84,7 +91,7 @@ object UpdateChecker {
                 val apkAsset = findSideloadApkAsset(release.assets)
                 return@withContext UpdateCheckResult.Available(
                     AvailableUpdate(
-                        latestVersion = latest.removePrefix("v"),
+                        latestVersion = latest,
                         currentVersion = current,
                         releasePageUrl = release.htmlUrl,
                         apkUrl = apkAsset?.browserDownloadUrl,
@@ -99,6 +106,16 @@ object UpdateChecker {
         }
     }
 
+    private fun isAndroidReleaseTag(tagName: String): Boolean {
+        return tagName.startsWith("android-v") || LEGACY_ANDROID_TAG.matches(tagName)
+    }
+
+    private fun releaseVersion(tagName: String): String {
+        return tagName
+            .removePrefix("android-v")
+            .removePrefix("v")
+    }
+
     /**
      * Find the sideload APK asset. Our release artifacts are named
      * `hermes-relay-<version>-sideload-release.apk` via `archivesName` in
@@ -110,4 +127,6 @@ object UpdateChecker {
             n.endsWith(".apk") && n.contains("sideload")
         }
     }
+
+    private val LEGACY_ANDROID_TAG = Regex("""^v\d+\.\d+\.\d+(?:[-+].*)?$""")
 }

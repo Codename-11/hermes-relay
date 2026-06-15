@@ -1,87 +1,80 @@
-# Play Store Listing — Hermes-Relay v0.7.0
+# Play Store Listing — Hermes-Relay
 
-> Temporary reference for Google Play Console submission. Delete after listing is live.
+> Reference copy for the Google Play Console submission.
 
 ## Short Description (≤80 chars)
 
-Native Android client for your self-hosted Hermes AI agent
+Your Hermes AI agent, in your pocket — chat, voice, and control.
 
-## Full Description
+## Full Description (plain text, no markdown — paste as-is; ≤4000 chars)
 
-**Hermes-Relay** is a native Android client for the Hermes agent platform. Connect to your self-hosted Hermes AI agent and chat in real time — directly from your phone.
+Hermes-Relay is the native Android client for the Hermes agent platform. Point it at your own Hermes server and chat with your agent, talk to it hands-free, and manage it — models, keys, skills, profiles — from anywhere.
 
-Built for developers and AI enthusiasts who run their own Hermes agent instance. This is not a hosted AI service — it's a companion app for your own infrastructure.
+It's not a hosted AI service. It's a companion app for the Hermes agent you run, and it talks only to the servers you configure.
 
-━━━ HOW IT WORKS ━━━
+QUICK START
 
-Hermes-Relay connects directly to your Hermes API Server over HTTP/SSE for real-time streaming chat. Point it at your server, optionally scan a QR code to auto-configure, and start talking to your agent.
+1. Run hermes-agent with its API server enabled on your computer or home server.
+2. Install Hermes-Relay and enter your server's address (for example http://192.168.1.100:8642).
+3. The setup wizard checks what your server supports and shows a readiness card — then you're talking.
 
-━━━ FEATURES ━━━
+A plain Hermes install is enough. Chat, management, and voice all work with no plugin or extra services.
 
-◆ Direct API Streaming
-Chat with your Hermes agent over SSE. Responses stream in token-by-token with animated typing indicators. Send follow-up messages while the agent is still responding.
+HOW IT WORKS
 
-◆ Session Management
-Create, switch, rename, and delete chat sessions. Full message history is preserved per session with auto-generated titles.
+Chat streams directly from your Hermes API Server in real time. Manage and voice use your Hermes dashboard with one sign-in. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
 
-◆ Rich Rendering
-Full markdown support — syntax-highlighted code blocks, bold, italic, links, and lists. Collapsible reasoning blocks when your agent uses extended thinking.
+GOOGLE PLAY BUILD
 
-◆ Personality Picker
-Switch between agent personalities configured on your server. The active personality name appears on chat bubbles so you always know who you're talking to.
+The Google Play build ships Hermes Bridge Core only. It has no AccessibilityService Device Control: it cannot read your screen, tap, type, swipe, screenshot, send SMS, place calls, or access contacts or location. Device Control is reserved for sideload builds distributed outside Google Play.
 
-◆ Command Palette
-Searchable command browser with 29 gateway commands, dynamic personality commands, and server skill discovery. Type "/" in chat for inline autocomplete.
+FEATURES
 
-◆ Tool Progress Display
-See what your agent is doing in real time. Configurable tool display (Off / Compact / Detailed) with type-specific icons, duration tracking, and auto-expand/collapse.
+◆ Streaming Chat — real-time and token-by-token, with live reasoning, markdown, tool-call visibility, image/PDF/file attachments, mid-turn steering, edit-and-resend, and a searchable command palette.
+◆ Manage Your Agent — the Hermes dashboard on your phone: switch models from your provider catalog, manage provider keys (masked), edit profiles, and browse, install, and update skills.
+◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Relay-paired setups add per-profile voices and an experimental realtime engine.
+◆ Works Away From Home — add a Tailscale or public URL and the app switches routes automatically; when a server is unreachable it tells you what to fix instead of just going red.
+◆ Sessions — create, switch, rename, and delete chats; message history loads on demand.
+◆ Multiple Servers & Profiles — connect to more than one server (home and work) and switch in a tap; overlay an agent profile or personality per conversation.
+◆ Relay Power Tools (optional) — pair by QR code for a remote terminal, relay-session management, and per-feature grants.
+◆ Notification Companion (optional) — forward notification metadata to your paired relay so your assistant can summarize it. Toggle it anytime in system settings.
+◆ Stats for Nerds — local-only counters for response timing, token usage, cost, and stream health.
+◆ Material You — Material 3 dynamic color, light/dark/system themes, and haptics.
 
-◆ File Attachments
-Attach images, documents, and other files to your messages. Configurable size limits in Settings.
+SECURITY & PRIVACY
 
-◆ QR Code Pairing
-Run hermes-pair on your server to generate a QR code. Scan it from the app to auto-configure your connection — no manual URL entry needed.
+• API keys and relay tokens are stored in encrypted Android storage
+• HTTPS is enforced for remote connections; cleartext only for localhost/LAN
+• No telemetry, ads, tracking, or third-party analytics SDKs
+• Notification access and the microphone are optional and user-controlled
+• All app traffic goes only to servers you configure
 
-◆ Stats for Nerds
-Built-in analytics: time-to-first-token, completion times, token usage per message with cost estimates, peak activity times, and stream health. Bar charts rendered on Canvas.
-
-◆ Material You Design
-Full Material 3 with dynamic color theming. Light, dark, and system-auto modes. Animated splash screen and haptic feedback throughout.
-
-◆ ASCII Morphing Sphere
-An animated 3D character sphere greets you on the empty chat screen. Toggle ambient fullscreen mode or display it behind messages as a subtle background effect.
-
-━━━ SECURITY ━━━
-
-• API keys stored in AES-256-GCM encrypted storage
-• HTTPS enforced for remote connections
-• Cleartext permitted only for localhost/LAN development servers
-• No telemetry, no analytics sent externally
-• All data stays between your phone and your server
-
-━━━ REQUIREMENTS ━━━
+REQUIREMENTS
 
 • Android 8.0 or later (API 26+)
-• A running Hermes agent instance (https://github.com/NousResearch/hermes-agent)
-• Network access to your server (local network or internet)
+• A running Hermes agent (chat, management, and voice need nothing else)
+• Optional Hermes relay service for power tools (terminal, notifications, media)
+• Network access to your server (local network, VPN, or internet)
 
-━━━ OPEN SOURCE ━━━
+OPEN SOURCE
 
-Hermes-Relay is MIT licensed. Source code, documentation, and issue tracking available on GitHub.
+Hermes-Relay is MIT licensed. Source, docs, and issue tracking are on GitHub.
 
 This app is a community project and is not affiliated with or endorsed by NousResearch.
 
-## Release Notes (v0.7.0)
+## Release Notes
 
-Profiles, voice settings, and realtime voice polish.
+Paste into Play Console → **What's new** (≤500 characters):
 
-• Profile switching now keeps chat/session state separate per Hermes profile
-• Selected agent names stay visible through streamed and finalized replies
-• Voice settings can load and save provider/model/voice choices per profile
-• Smoother voice playback with balanced output coalescing and waveform polish
-• Continuous voice mode start/stop behavior is more predictable
-• Barge-in remains available as an experimental setting with clearer caveats
-• Relay adds profile voice config, provider options, and realtime voice test routes
+```
+Hermes-Relay 1.0 — our biggest release.
+
+Standard path: chat, Manage, and voice now run on a plain Hermes agent, no plugin. The relay plugin is optional now — Advanced power tools only.
+
+Chat streams reasoning live, attaches images/PDFs/files, steers a running turn, and edits & resends. Switch agent profiles per conversation. Manage hits desktop-dashboard parity.
+
+Plus a redesigned input bar, seamless LAN/Tailscale handoffs, and a broad polish + QoL pass.
+```
 
 ## Category
 
@@ -94,4 +87,30 @@ Not designed for children.
 
 ## Tags
 
-ai, agent, hermes, developer tools, chat, self-hosted, open source
+ai, agent, hermes, developer tools, chat, voice, self-hosted, remote, open source
+
+## Play Console Declarations
+
+Submission-time declarations the Play Console requires — keep in sync with the merged `googlePlay` manifest.
+
+### Foreground service permissions
+
+The Play build declares **`FOREGROUND_SERVICE_SPECIAL_USE`** for `GatewayKeepAliveService`, backing the opt-in **Keep connected in background** feature (off by default). At submission, complete **App content → Foreground service permissions** for `specialUse`:
+
+- **Use case:** maintains a persistent connection to the user's own Hermes agent server so the assistant stays responsive and delivers replies while the app is backgrounded.
+- **Why a foreground service:** it's a real-time, user-initiated streaming connection that must survive Doze / background execution limits; `dataSync` is force-stopped after a 6-hour/day cap on Android 15, so `specialUse` is the only fit for "stay connected."
+- **User control:** off by default; enabled only via *Settings → Chat → Keep connected in background*; shows an ongoing notification with a **Disconnect** action; ends when the app is swiped from recents.
+- Google usually asks for a short screen recording of the toggle + notification.
+
+The Play build does **not** declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` or the Device Control accessibility/bridge services — those are sideload-only.
+
+### Data safety
+
+No data collection or sharing to declare: no telemetry, ads, or third-party analytics SDKs; all traffic goes only to user-configured servers; credentials are stored in encrypted on-device storage. Mirror the **Security & Privacy** section above when filling the Data safety form.
+
+### Sensitive / runtime permissions in the Play build
+
+- `RECORD_AUDIO` — Voice mode, requested at use.
+- `POST_NOTIFICATIONS` — turn-complete + keep-alive notifications, requested on API 33+.
+- `CAMERA` — QR pairing / attachments, requested at use.
+- Notification listener (companion) — user-enabled in system settings.

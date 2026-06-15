@@ -1,17 +1,36 @@
-v0.7.0 - Profiles, voice settings, and realtime voice polish
+v1.0.0 - The 1.0 release
+
+Standard path
+* Chat, Manage, and voice now work on a plain Hermes agent — no relay
+  plugin required. The plugin is optional and only adds power tools.
+
+Chat
+* New gateway transport streams the agent's reasoning live, so the
+  Thinking block fills in during generation instead of after.
+* Warm-start + opt-in "Keep connected in background" make returning to a
+  conversation fast.
+* Attachments at desktop parity: images, PDFs, and files upload over the
+  gateway. If a connection can't carry a file, you'll see a notice
+  instead of a silent drop.
+* Steer a running turn, edit & resend your messages, watch subagent
+  lanes, and a context-window meter — plus turn-complete notifications.
+* Tap an image to open it full-screen (pinch to zoom); save or share
+  images and other attachments.
+* Redesigned input bar: pill field, one morphing Send/Voice/Stop button.
 
 Profiles
-* Profile switching now keeps profile-specific chat/session state separate.
-* Default/Victor display is normalized so the selected agent name stays visible.
-* Profile API URL handling is safer for remote Hermes profile servers.
+* Switch the whole agent — model, persona, and skills — per conversation.
+  The drawer scopes to the active profile, and switching is ephemeral: it
+  never changes your server's default agent.
+
+Manage
+* Models, provider keys, profiles + SOUL.md, and a skills hub — parity
+  with the desktop dashboard. Cached for instant cold-launch.
 
 Voice
-* Voice settings can show and save provider/model/voice choices per profile.
-* Voice output uses balanced coalescing for smoother replies.
-* Waveform and playback state better follow real audio output.
-* Continuous mode no longer starts a session just because auto mode is enabled.
-* Barge-in is now clearly marked experimental with known self-capture caveats.
+* Realtime Agent keeps one session across turns; long runs continue in
+  the background and are spoken when ready.
 
-Relay
-* Added relay-owned profile voice config, provider options, streaming voice output,
-  and realtime voice playground endpoints for OpenAI/xAI/ElevenLabs testing.
+Polish
+* Seamless LAN/Tailscale handoffs (no chat reload), slide-down status
+  toasts, and a broad round of fixes.

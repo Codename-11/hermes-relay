@@ -32,8 +32,8 @@ interface DiagramDef {
   }>
 }
 
-const edgeStyle = { stroke: '#7C3AED', strokeWidth: 1.5 }
-const edgeDim = { stroke: '#333', strokeWidth: 1 }
+const edgeStyle = { stroke: '#6E7CFF', strokeWidth: 1.5 }
+const edgeDim = { stroke: '#33365A', strokeWidth: 1 }
 const edgeAnimated = true
 
 const diagrams: Record<string, DiagramDef> = {
@@ -119,7 +119,7 @@ const diagrams: Record<string, DiagramDef> = {
       // Completion
       { id: 'e9', source: 'delta', target: 'complete', style: edgeStyle },
       { id: 'e10', source: 'tool-pending', target: 'tool-completed', style: edgeDim, label: 'success' },
-      { id: 'e11', source: 'tool-started', target: 'tool-failed', style: { stroke: '#EF4444', strokeWidth: 1 }, label: 'error' },
+      { id: 'e11', source: 'tool-started', target: 'tool-failed', style: { stroke: '#FF6B78', strokeWidth: 1 }, label: 'error' },
       { id: 'e12', source: 'complete', target: 'run', animated: edgeAnimated, style: edgeStyle },
       { id: 'e13', source: 'tool-completed', target: 'run', style: edgeDim },
     ],
@@ -202,27 +202,30 @@ function handleFitView() {
 <style>
 @import '@vue-flow/core/dist/style.css';
 
+/* Diagrams stay dark in both modes — cockpit instrument panels, like
+   terminal screenshots. Palette mirrors RelayRefresh (navy, warm-white
+   hairlines, Relay periwinkle accent). */
 .hermes-flow-wrapper {
   position: relative;
-  border: 1px solid #222;
+  border: 1px solid rgba(247, 246, 240, 0.14);
   border-radius: 8px;
-  background: #0A0A0A;
+  background: #0B0C12;
   margin: 16px 0;
   overflow: hidden;
 }
 
 /* Override Vue Flow background */
 .hermes-flow-wrapper .vue-flow {
-  background: #0A0A0A !important;
+  background: #0B0C12 !important;
 }
 
 /* Edge labels */
 .hermes-flow-wrapper .vue-flow__edge-textbg {
-  fill: #0A0A0A;
+  fill: #0B0C12;
 }
 
 .hermes-flow-wrapper .vue-flow__edge-text {
-  fill: #999;
+  fill: #A7A4B7;
   font-family: 'Space Mono', monospace;
   font-size: 10px;
 }
@@ -258,17 +261,17 @@ function handleFitView() {
   justify-content: center;
   width: 28px;
   height: 28px;
-  background: #1A1A1A;
-  border: 1px solid #333;
+  background: #191B31;
+  border: 1px solid rgba(247, 246, 240, 0.18);
   border-radius: 4px;
-  color: #999;
+  color: #A7A4B7;
   cursor: pointer;
   transition: border-color 0.2s, color 0.2s;
 }
 
 .hermes-flow-btn:hover {
-  border-color: #7C3AED;
-  color: #E8E8E8;
+  border-color: #6E7CFF;
+  color: #F7F6F0;
 }
 
 /* Pan cursor */
@@ -281,7 +284,7 @@ function handleFitView() {
 }
 
 .hermes-flow-fallback {
-  color: #666;
+  color: #68647D;
   font-family: 'Space Mono', monospace;
   font-size: 12px;
   padding: 24px;

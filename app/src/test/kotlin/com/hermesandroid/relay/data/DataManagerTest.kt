@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.data
 
+import com.hermesandroid.relay.auth.ConnectionAuthSecrets
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -99,45 +100,65 @@ class DataManagerTest {
         assertTrue("JSON should contain 'onboardingCompleted'", jsonStr.contains("\"onboardingCompleted\""))
     }
 
-    // --- Backup does NOT contain sensitive data ---
+    // --- Sensitive full-backup marker ---
 
     @Test
-    fun backup_doesNotContainApiKey() {
+    fun backup_marksSensitiveDataByDefault() {
+        val backup = DataManager.AppBackup()
+
+        assertTrue(backup.containsSensitiveData)
+    }
+
+    @Test
+    fun backup_connectionSecrets_roundTrip() {
         val backup = DataManager.AppBackup(
-            apiServerUrl = "http://localhost:8642",
-            theme = "auto"
+            connections = listOf(
+                Connection(
+                    id = "id-a",
+                    label = "local",
+                    apiServerUrl = "http://localhost:8642",
+                    relayUrl = "ws://localhost:8767",
+                    tokenStoreKey = "hermes_auth_id-a",
+                ),
+            ),
+            activeConnectionId = "id-a",
+            connectionSecrets = listOf(
+                DataManager.ConnectionSecretBackup(
+                    connectionId = "id-a",
+                    tokenStoreKey = "hermes_auth_id-a",
+                    auth = ConnectionAuthSecrets(
+                        sessionToken = "relay-session-token",
+                        refreshToken = "refresh-token",
+                        deviceId = "device-id",
+                        apiKey = "api-key",
+                        pairedSessionMetaJson = """{"transport_hint":"wss"}""",
+                    ),
+                    dashboardCookies = listOf(
+                        DataManager.DashboardCookieBackup(
+                            name = "hermes_session",
+                            value = "cookie-value",
+                            expiresAt = Long.MAX_VALUE,
+                            domain = "localhost",
+                            path = "/",
+                            secure = false,
+                            httpOnly = true,
+                            hostOnly = true,
+                            persistent = false,
+                        ),
+                    ),
+                ),
+            ),
         )
+
         val jsonStr = json.encodeToString(backup)
+        val restored = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
-        assertFalse("Backup should not contain 'apiKey'", jsonStr.contains("\"apiKey\""))
-        assertFalse("Backup should not contain 'api_key'", jsonStr.contains("\"api_key\""))
-    }
-
-    @Test
-    fun backup_doesNotContainSessionToken() {
-        val backup = DataManager.AppBackup()
-        val jsonStr = json.encodeToString(backup)
-
-        assertFalse("Backup should not contain 'session_token'", jsonStr.contains("\"session_token\""))
-        assertFalse("Backup should not contain 'sessionToken'", jsonStr.contains("\"sessionToken\""))
-    }
-
-    @Test
-    fun backup_doesNotContainDeviceId() {
-        val backup = DataManager.AppBackup()
-        val jsonStr = json.encodeToString(backup)
-
-        assertFalse("Backup should not contain 'device_id'", jsonStr.contains("\"device_id\""))
-        assertFalse("Backup should not contain 'deviceId'", jsonStr.contains("\"deviceId\""))
-    }
-
-    @Test
-    fun backup_doesNotContainBearerToken() {
-        val backup = DataManager.AppBackup()
-        val jsonStr = json.encodeToString(backup)
-
-        assertFalse("Backup should not contain 'token'", jsonStr.contains("\"token\""))
-        assertFalse("Backup should not contain 'bearer'", jsonStr.lowercase().contains("\"bearer\""))
+        assertTrue(jsonStr.contains("relay-session-token"))
+        assertTrue(jsonStr.contains("api-key"))
+        assertEquals("id-a", restored.activeConnectionId)
+        assertEquals("relay-session-token", restored.connectionSecrets[0].auth.sessionToken)
+        assertEquals("api-key", restored.connectionSecrets[0].auth.apiKey)
+        assertEquals("cookie-value", restored.connectionSecrets[0].dashboardCookies[0].value)
     }
 
     // --- Serialization round-trip ---
@@ -249,7 +270,7 @@ class DataManagerTest {
         val result = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
         assertNotNull(result)
-        assertEquals(4, result.version)
+        assertEquals(5, result.version)
         assertNull(result.serverUrl)
         assertNull(result.apiServerUrl)
         assertNull(result.relayUrl)
@@ -280,9 +301,9 @@ class DataManagerTest {
     // --- Format version handling ---
 
     @Test
-    fun backup_defaultVersion_isFour() {
+    fun backup_defaultVersion_isFive() {
         val backup = DataManager.AppBackup()
-        assertEquals(4, backup.version)
+        assertEquals(5, backup.version)
     }
 
     @Test
@@ -348,6 +369,21 @@ class DataManagerTest {
                 apiServerUrl = "http://10.0.0.5:8642",
                 relayUrl = "wss://10.0.0.5:8767",
                 tokenStoreKey = "hermes_auth_id-b",
+                routeCandidates = listOf(
+                    EndpointCandidate(
+                        role = "lan",
+                        priority = 0,
+                        api = ApiEndpoint(host = "10.0.0.5", port = 8642, tls = false),
+                        relay = RelayEndpoint(url = "ws://10.0.0.5:8767", transportHint = "ws"),
+                    ),
+                    EndpointCandidate(
+                        role = "tailscale",
+                        priority = 1,
+                        api = ApiEndpoint(host = "hermes.ts.net", port = 8642, tls = true),
+                        relay = RelayEndpoint(url = "wss://hermes.ts.net:8767", transportHint = "wss"),
+                    ),
+                ),
+                preferredRouteRole = "tailscale",
                 pairedAt = 1_700_000_000L,
                 transportHint = "wss",
                 expiresAt = 1_700_100_000L,
@@ -359,6 +395,8 @@ class DataManagerTest {
         val restored = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
         assertEquals(connections, restored.connections)
+        assertEquals("tailscale", restored.connections[1].preferredRouteRole)
+        assertEquals("hermes.ts.net", restored.connections[1].routeCandidates[1].api.host)
     }
 
     @Test

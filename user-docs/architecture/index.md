@@ -4,6 +4,8 @@
 
 The app maintains two independent connection paths — direct HTTP/SSE for chat, persistent WSS for relay channels.
 
+For a compact shareable reference covering connection paths, transport boundaries, pairing/session lifecycle, and operator controls, see the [Relay Architecture Spec](/architecture/relay-architecture-spec).
+
 <HermesFlow diagram="architecture" height="260px" />
 
 | Path | Protocol | Server | Purpose |
@@ -68,7 +70,7 @@ The relay connection (bridge/terminal) uses a pairing code for initial setup, th
 
 <HermesFlow diagram="auth-flow" height="200px" />
 
-Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim) on the Hermes host mints the code and pre-registers it with the relay via a loopback-only `/pairing/register` endpoint before embedding it in the QR — so the phone never types a code by hand. Session tokens are stored in EncryptedSharedPreferences backed by Android Keystore.
+Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim) on the Hermes host mints the code and pre-registers it with the relay via a loopback-only `/pairing/register` endpoint before embedding it in the QR — so the phone never types a code by hand. Session tokens are stored in EncryptedSharedPreferences backed by Android Keystore.
 
 ## Direct API vs Relay
 

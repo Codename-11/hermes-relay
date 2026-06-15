@@ -9,23 +9,31 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+from collections import deque
+import hashlib
+import hmac
 import json
+import logging
 import os
 import secrets
 import struct
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from aiohttp import WSMsgType, web
 
+from plugin.voice_lab.auth import load_voice_lab_env_file
 from plugin.voice_lab.providers.base import ProviderRunError, ProviderUnavailable
 from plugin.voice_lab.registry import default_registry
 
 from ..config import (
     RelayConfig,
     default_realtime_voice_config_path,
+    hermes_api_server_key,
     save_realtime_voice_config_file,
 )
 from ..profile_voice import (
@@ -42,15 +50,71 @@ from ..provider_options import (
 )
 from ..realtime_voice import _read_relay_xai_oauth_token, _websocket_url_from_base
 from ..voice_auth import AuthPrincipal, require_voice_auth
+from .floor import FloorMouth, RealtimeFloor
 from .hermes_tool_broker import HermesTaskRequest, HermesToolBroker
+from .models import (
+    CLIENT_MSG_HERMES_CONFIRM,
+    CLIENT_MSG_INPUT_AUDIO_APPEND,
+    CLIENT_MSG_INPUT_AUDIO_CLEAR,
+    CLIENT_MSG_INPUT_AUDIO_COMMIT,
+    CLIENT_MSG_CLIENT_ACK,
+    CLIENT_MSG_PLAYBACK_DRAINED,
+    CLIENT_MSG_RESPONSE_CREATE,
+    CLIENT_MSG_RESPONSE_CANCEL,
+    CLIENT_MSG_SESSION_CLOSE,
+    CLIENT_MSG_SESSION_RESUME,
+    CLIENT_MSG_SESSION_START,
+    HERMES_TOOL_SCHEMAS,
+    HERMES_TOOL_SURFACE,
+    ProviderEvent,
+    ProviderEventKind,
+    RealtimeAgentSessionConfig,
+    SERVER_EVT_INPUT_AUDIO_RECEIVED,
+    SERVER_EVT_INPUT_TRANSCRIPT_DELTA,
+    SERVER_EVT_INPUT_TRANSCRIPT_FINAL,
+    SERVER_EVT_OUTPUT_AUDIO_DELTA,
+    SERVER_EVT_OUTPUT_AUDIO_DONE,
+    SERVER_EVT_PLAYBACK_DRAIN_REQUESTED,
+    SERVER_EVT_REPLAY_DONE,
+    SERVER_EVT_REPLAY_STARTED,
+    SERVER_EVT_RESPONSE_DELTA,
+    SERVER_EVT_RESPONSE_DONE,
+    SERVER_EVT_RESPONSE_STARTED,
+    SERVER_EVT_HERMES_RUN_PROGRESS,
+    SERVER_EVT_HERMES_RUN_PROMOTED,
+    SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED,
+    SERVER_EVT_SESSION_DETACHED,
+    SERVER_EVT_SESSION_READY,
+    SERVER_EVT_SESSION_RESUMED,
+    SERVER_EVT_SESSION_RESUME_FAILED,
+    ToolCallEvent,
+)
 from .providers import adapter_for
-from .providers.base import RealtimeAgentRenderConfig
+from .providers.base import RealtimeAgentConnection, RealtimeAgentProvider, RealtimeAgentRenderConfig
+from .providers.openai import OpenAIRealtimeAgentProvider
+from .providers.xai import XAIRealtimeAgentProvider
 
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
 DEFAULT_SAMPLE_WIDTH = 2
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
-_TOOL_SURFACE = ("hermes_run_task", "hermes_get_status", "hermes_cancel", "hermes_confirm")
+_TOOL_SURFACE = HERMES_TOOL_SURFACE
+_PLAYBACK_DRAIN_TIMEOUT_SECONDS = 2.5
+_PRE_HERMES_STATUS_LEAD_SECONDS = 0.75
+_HERMES_PROGRESS_INTERVAL_SECONDS = 5.0
+_HERMES_SPOKEN_PROGRESS_AFTER_SECONDS = 15.0
+_HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS = 30.0
+_RESUME_TTL_SECONDS = 30.0
+# Max time a completed background result waits for the floor to clear before it
+# is spoken anyway (ADR 33 Tier B result delivery).
+_BACKGROUND_FLOOR_WAIT_SECONDS = 12.0
+_EVENT_RING_LIMIT = 256
+_AUDIO_RING_LIMIT = 96
+_PROFILE_SOUL_PROMPT_MAX_CHARS = 6000
+_PROFILE_MEMORY_PROMPT_MAX_FILES = 4
+_PROFILE_MEMORY_PROMPT_MAX_CHARS = 6000
+_PROFILE_MEMORY_FILE_PROMPT_MAX_CHARS = 2000
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -68,6 +132,76 @@ class RealtimeAgentSession:
     bearer_token: str | None
     created_at: float
     event_log_path: Path
+    resume_token_hash: str
+    auth_session_device_id: str | None = None
+    auth_token_hash: str | None = None
+    context_messages: tuple[dict[str, str], ...] = ()
+    resume_ttl_seconds: float = _RESUME_TTL_SECONDS
+    resume_deadline: float | None = None
+    attached_ws: web.WebSocketResponse | None = None
+    detached_at: float | None = None
+    closed: bool = False
+    explicit_close_requested: bool = False
+    event_seq: int = 0
+    audio_seq: int = 0
+    input_chunk_seq: int = 0
+    event_ring: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=_EVENT_RING_LIMIT)
+    )
+    audio_ring: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=_AUDIO_RING_LIMIT)
+    )
+    acked_event_id_by_client: int = 0
+    acked_audio_event_id_by_client: int = 0
+    played_audio_event_id_by_client: int = 0
+    acked_input_chunk_id_by_client: int = 0
+    native_connection: RealtimeAgentConnection | None = None
+    native_provider_task: asyncio.Task[None] | None = None
+    native_playback_drained: asyncio.Event | None = None
+    native_close_task: asyncio.Task[None] | None = None
+    native_input_audio_bytes: int = 0
+    native_response_requested_for_input: bool = False
+    native_forced_preamble_active: bool = False
+    native_forced_preamble_transcript: str | None = None
+    native_forced_preamble_response_id: str | None = None
+    native_forced_preamble_audio_seen: bool = False
+    native_forced_hermes_turn_active: bool = False
+    native_forced_summary_active: bool = False
+    native_forced_summary_done: bool = False
+    native_forced_summary_response_id: str | None = None
+    native_forced_summary_result: dict[str, Any] | None = None
+    native_forced_summary_buffer: list[dict[str, Any]] = field(default_factory=list)
+    native_forced_summary_text_parts: list[str] = field(default_factory=list)
+    native_hermes_required_transcript: str | None = None
+    native_hermes_required_reason: str | None = None
+    hermes_run_id: str | None = None
+    hermes_run_status: str = "idle"
+    hermes_run_tier: str = "foreground"
+    hermes_answer_started: bool = False
+    pending_confirmation_id: str | None = None
+    cancel_requested: bool = False
+    hermes_task: asyncio.Task[dict[str, Any]] | None = None
+    # ADR 33 promotion state (populated from realtime_voice settings at create).
+    promotion_enabled: bool = False
+    promote_after_ms: int = 6000
+    spoken_handoff: bool = True
+    result_delivery: str = "speak_when_idle"
+    promoted_transcript: str | None = None
+    background_delivery_task: asyncio.Task[None] | None = None
+    response_ids_awaiting_tool_followup: set[str] = field(default_factory=set)
+    response_ids_started: set[str] = field(default_factory=set)
+    provider_response_audio_seen: set[str] = field(default_factory=set)
+    hermes_active_tool_call_id: str | None = None
+    hermes_active_tool_name: str | None = None
+    hermes_last_tool_name: str | None = None
+    hermes_last_tool_status: str | None = None
+    hermes_last_tool_message: str | None = None
+    hermes_completed_tool_count: int = 0
+    hermes_seen_tool_call_ids: set[str] = field(default_factory=set)
+    hermes_last_spoken_progress_at: float = 0.0
+    hermes_last_spoken_progress_key: str | None = None
+    profile_prompt_context: dict[str, Any] = field(default_factory=dict)
+    floor: RealtimeFloor = field(default_factory=RealtimeFloor)
 
 
 class RealtimeAgentHandler:
@@ -78,6 +212,10 @@ class RealtimeAgentHandler:
         self.registry = default_registry()
         self.sessions: dict[str, RealtimeAgentSession] = {}
         self.hermes = HermesToolBroker(config.webapi_url)
+        self.native_providers: dict[str, RealtimeAgentProvider] = {
+            OpenAIRealtimeAgentProvider.provider_id: OpenAIRealtimeAgentProvider(),
+            XAIRealtimeAgentProvider.provider_id: XAIRealtimeAgentProvider(),
+        }
 
     async def handle_config(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:realtime")
@@ -165,7 +303,21 @@ class RealtimeAgentHandler:
         self._validate_provider(provider)
 
         chat_session_id = _str_option(payload, "chat_session_id")
+        broker_bearer_token = _hermes_broker_bearer_token(
+            principal,
+            request_bearer=bearer_token,
+            config=self.config,
+        )
+        context_messages = _parse_context_messages(payload.get("context_messages"))
+        fetch_context_messages = getattr(self.hermes, "fetch_context_messages", None)
+        if not context_messages and chat_session_id and callable(fetch_context_messages):
+            context_messages = await self.hermes.fetch_context_messages(
+                session_id=chat_session_id,
+                bearer_token=broker_bearer_token,
+                limit=14,
+            )
         session_id = secrets.token_urlsafe(18)
+        resume_token, resume_token_hash = _new_resume_token()
         event_log_path = self._new_event_log_path(session_id)
         session = RealtimeAgentSession(
             session_id=session_id,
@@ -178,9 +330,24 @@ class RealtimeAgentHandler:
             config_scope=str(settings["config_scope"]),
             config_path=settings.get("config_path"),
             auth_kind=principal.kind,
-            bearer_token=bearer_token if principal.kind == "hermes_api" else None,
+            bearer_token=broker_bearer_token,
             created_at=time.time(),
             event_log_path=event_log_path,
+            resume_token_hash=resume_token_hash,
+            resume_ttl_seconds=_configured_resume_ttl_seconds(),
+            auth_session_device_id=(
+                principal.session.device_id if principal.session is not None else None
+            ),
+            auth_token_hash=_token_hash(bearer_token),
+            context_messages=context_messages,
+            profile_prompt_context=_profile_prompt_context(
+                self.config,
+                str(settings.get("profile") or profile or "default"),
+            ),
+            promotion_enabled=bool(settings.get("promotion_enabled", False)),
+            promote_after_ms=int(settings.get("promote_after_ms", 6000)),
+            spoken_handoff=bool(settings.get("spoken_handoff", True)),
+            result_delivery=str(settings.get("result_delivery", "speak_when_idle")),
         )
         self.sessions[session_id] = session
         self._log(session, "voice.realtime_agent.session.created")
@@ -190,6 +357,9 @@ class RealtimeAgentHandler:
                 "success": True,
                 "session_id": session_id,
                 "websocket_path": f"/voice/realtime-agent/{session_id}",
+                "resume_token": resume_token,
+                "resume_supported": True,
+                "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
                 "provider": provider,
                 "model": model,
                 "voice": voice,
@@ -198,6 +368,7 @@ class RealtimeAgentHandler:
                 "protocol": "hermes.voice.realtime_agent.v0",
                 "profile": session.profile,
                 "chat_session_id": session.chat_session_id,
+                "context_message_count": len(session.context_messages),
                 "config_scope": session.config_scope,
                 "config_path": str(session.config_path) if session.config_path else None,
                 "fallback_to_global": bool(settings["fallback_to_global"]),
@@ -209,15 +380,25 @@ class RealtimeAgentHandler:
     async def handle_ws(self, request: web.Request) -> web.StreamResponse:
         if not self.enabled:
             raise web.HTTPNotFound(text="realtime agent voice is disabled")
-        await require_voice_auth(request, "voice:realtime")
+        principal = await require_voice_auth(request, "voice:realtime")
 
         session_id = request.match_info.get("session_id", "")
         session = self.sessions.get(session_id)
         if session is None:
             raise web.HTTPNotFound(text="unknown realtime agent session")
+        if session.closed:
+            raise web.HTTPGone(text="realtime agent session is closed")
+        if not self._auth_matches_session(session, principal, _bearer_from_request(request)):
+            raise web.HTTPForbidden(text="realtime agent session belongs to another principal")
+
+        if session.provider in self.native_providers:
+            return await self._handle_provider_native_ws(request, session)
 
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=2 * 1024 * 1024)
         await ws.prepare(request)
+        session.attached_ws = ws
+        session.detached_at = None
+        session.resume_deadline = None
         await self._send(ws, session, self._ready_event(session))
 
         input_audio_bytes = 0
@@ -240,9 +421,18 @@ class RealtimeAgentHandler:
                     continue
 
                 msg_type = str(payload.get("type", "")).strip()
-                if msg_type == "session.start":
-                    await self._send(ws, session, self._ready_event(session))
-                elif msg_type == "input_audio.append":
+                if msg_type == CLIENT_MSG_SESSION_START:
+                    if _str_option(payload, "resume_token"):
+                        await self._handle_resume_message(ws, session, payload)
+                    elif session.detached_at is not None:
+                        await self._handle_resume_message(ws, session, payload)
+                    else:
+                        await self._send(ws, session, self._ready_event(session))
+                elif msg_type == CLIENT_MSG_SESSION_RESUME:
+                    await self._handle_resume_message(ws, session, payload)
+                elif msg_type == CLIENT_MSG_CLIENT_ACK:
+                    self._handle_client_ack(session, payload)
+                elif msg_type == CLIENT_MSG_INPUT_AUDIO_APPEND:
                     byte_count, input_sample_rate = await self._handle_input_audio(
                         ws,
                         session,
@@ -250,7 +440,7 @@ class RealtimeAgentHandler:
                         input_audio_bytes,
                     )
                     input_audio_bytes += byte_count
-                elif msg_type in {"input_audio.commit", "response.create"}:
+                elif msg_type in {CLIENT_MSG_INPUT_AUDIO_COMMIT, CLIENT_MSG_RESPONSE_CREATE}:
                     if running is not None and not running.done():
                         await self._send_error(ws, session, "response already running")
                         continue
@@ -263,7 +453,7 @@ class RealtimeAgentHandler:
                             input_sample_rate,
                         )
                     )
-                elif msg_type == "response.cancel":
+                elif msg_type == CLIENT_MSG_RESPONSE_CANCEL:
                     if running is not None and not running.done():
                         running.cancel()
                     await self._send(
@@ -271,7 +461,7 @@ class RealtimeAgentHandler:
                         session,
                         {"type": "hermes.run.cancelled", "session_id": session.chat_session_id},
                     )
-                elif msg_type == "hermes.confirm":
+                elif msg_type == CLIENT_MSG_HERMES_CONFIRM:
                     await self._send(
                         ws,
                         session,
@@ -281,15 +471,2152 @@ class RealtimeAgentHandler:
                             "answer": _str_option(payload, "answer"),
                         },
                     )
-                elif msg_type == "session.close":
+                elif msg_type == CLIENT_MSG_SESSION_CLOSE:
+                    session.explicit_close_requested = True
                     await ws.close()
                 else:
                     await self._send_error(ws, session, f"unsupported message type: {msg_type}")
         finally:
+            if session.attached_ws is ws:
+                session.attached_ws = None
             if running is not None and not running.done():
                 running.cancel()
+            session.closed = True
             self._log(session, "voice.realtime_agent.session.closed")
         return ws
+
+    async def _handle_provider_native_ws(
+        self,
+        request: web.Request,
+        session: RealtimeAgentSession,
+    ) -> web.StreamResponse:
+        ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=2 * 1024 * 1024)
+        await ws.prepare(request)
+        was_detached = session.detached_at is not None
+        session.attached_ws = ws
+        if not was_detached:
+            session.detached_at = None
+            session.resume_deadline = None
+            if session.native_close_task is not None and not session.native_close_task.done():
+                session.native_close_task.cancel()
+
+        connection = session.native_connection
+        if connection is None:
+            provider = self.native_providers[session.provider]
+            try:
+                connection = await provider.connect(self._native_session_config(session))
+            except (ProviderUnavailable, ProviderRunError) as exc:
+                await self._send_error(ws, session, str(exc), provider=session.provider)
+                await ws.close()
+                return ws
+            except Exception as exc:
+                await self._send_error(
+                    ws,
+                    session,
+                    f"realtime agent provider connection failed: {exc.__class__.__name__}: {exc}",
+                    provider=session.provider,
+                )
+                await ws.close()
+                return ws
+            session.native_connection = connection
+            session.native_playback_drained = asyncio.Event()
+            session.native_provider_task = asyncio.create_task(
+                self._pump_provider_events(
+                    ws,
+                    session,
+                    connection,
+                    session.native_playback_drained,
+                )
+            )
+
+        if not was_detached:
+            await self._send(ws, session, self._ready_event(session))
+        provider_task = session.native_provider_task
+        intentional_close = False
+        try:
+            async for msg in ws:
+                if msg.type == WSMsgType.ERROR:
+                    break
+                if msg.type != WSMsgType.TEXT:
+                    await self._send_error(ws, session, "unsupported websocket frame")
+                    continue
+                try:
+                    payload = json.loads(msg.data)
+                except json.JSONDecodeError:
+                    await self._send_error(ws, session, "invalid JSON message")
+                    continue
+                if not isinstance(payload, dict):
+                    await self._send_error(ws, session, "message must be a JSON object")
+                    continue
+
+                msg_type = str(payload.get("type", "")).strip()
+                if msg_type == CLIENT_MSG_SESSION_START:
+                    if _str_option(payload, "resume_token"):
+                        await self._handle_resume_message(ws, session, payload)
+                    elif session.detached_at is not None:
+                        await self._handle_resume_message(ws, session, payload)
+                    else:
+                        await self._send(ws, session, self._ready_event(session))
+                elif msg_type == CLIENT_MSG_SESSION_RESUME:
+                    await self._handle_resume_message(ws, session, payload)
+                elif msg_type == CLIENT_MSG_CLIENT_ACK:
+                    self._handle_client_ack(session, payload)
+                elif msg_type == CLIENT_MSG_INPUT_AUDIO_APPEND:
+                    decoded = await self._decode_input_audio_payload(ws, session, payload)
+                    if decoded is None:
+                        continue
+                    chunk, sample_rate = decoded
+                    chunk_id = _int_option(
+                        payload,
+                        "chunk_id",
+                        session.input_chunk_seq + 1,
+                    )
+                    if chunk_id <= session.input_chunk_seq:
+                        await self._send(
+                            ws,
+                            session,
+                            {
+                                "type": SERVER_EVT_INPUT_AUDIO_RECEIVED,
+                                "input_chunk_id": chunk_id,
+                                "byte_count": len(chunk),
+                                "total_bytes": session.native_input_audio_bytes,
+                                "sample_rate": sample_rate,
+                                "duplicate": True,
+                            },
+                        )
+                        continue
+                    await connection.send_audio(chunk, sample_rate)
+                    session.native_input_audio_bytes += len(chunk)
+                    session.input_chunk_seq = max(session.input_chunk_seq, chunk_id)
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_INPUT_AUDIO_RECEIVED,
+                            "input_chunk_id": chunk_id,
+                            "byte_count": len(chunk),
+                            "total_bytes": session.native_input_audio_bytes,
+                            "sample_rate": sample_rate,
+                        },
+                    )
+                elif msg_type == CLIENT_MSG_INPUT_AUDIO_COMMIT:
+                    session.native_response_requested_for_input = False
+                    await connection.commit_audio()
+                elif msg_type == CLIENT_MSG_RESPONSE_CREATE:
+                    text = _str_option(payload, "text")
+                    if not text:
+                        await self._send_error(
+                            ws,
+                            session,
+                            "response.create requires text for realtime-agent text tests",
+                        )
+                        continue
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_INPUT_TRANSCRIPT_FINAL,
+                            "text": text,
+                            "source": "client_text",
+                        },
+                    )
+                    await connection.send_text(text[:5000])
+                elif msg_type == CLIENT_MSG_INPUT_AUDIO_CLEAR:
+                    await connection.clear_audio()
+                elif msg_type == CLIENT_MSG_RESPONSE_CANCEL:
+                    self._cancel_active_hermes(session)
+                    await connection.cancel_response()
+                    await connection.clear_audio()
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": "hermes.run.cancelled",
+                            "session_id": session.chat_session_id,
+                            "run_id": session.hermes_run_id,
+                        },
+                    )
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_RESPONSE_DONE,
+                            "provider": session.provider,
+                            "model": session.model,
+                            "voice": session.voice,
+                            "event_log_path": str(session.event_log_path),
+                            "chat_session_id": session.chat_session_id,
+                            "run_id": session.hermes_run_id,
+                            "cancelled": True,
+                        },
+                    )
+                elif msg_type == CLIENT_MSG_PLAYBACK_DRAINED:
+                    self._handle_client_ack(session, payload)
+                    if session.native_playback_drained is not None:
+                        session.native_playback_drained.set()
+                elif msg_type == CLIENT_MSG_HERMES_CONFIRM:
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": "hermes.confirmation.forwarded",
+                            "confirmation_id": _str_option(payload, "confirmation_id"),
+                            "answer": _str_option(payload, "answer"),
+                        },
+                    )
+                elif msg_type == CLIENT_MSG_SESSION_CLOSE:
+                    intentional_close = True
+                    session.explicit_close_requested = True
+                    await ws.close()
+                else:
+                    await self._send_error(ws, session, f"unsupported message type: {msg_type}")
+                if provider_task is not None and provider_task.done():
+                    break
+        finally:
+            if session.attached_ws is not ws:
+                self._log(
+                    session,
+                    "voice.realtime_agent.websocket.superseded_closed",
+                    {
+                        "type": "voice.realtime_agent.websocket.superseded_closed",
+                        "reason": "newer_websocket_attached",
+                    },
+                )
+            else:
+                session.attached_ws = None
+                should_close = (
+                    intentional_close
+                    or session.explicit_close_requested
+                    or session.closed
+                    or provider_task is None
+                    or provider_task.done()
+                )
+                if should_close:
+                    await self._close_native_session(session, "closed")
+                else:
+                    await self._detach_native_session(session, "websocket_disconnected")
+        return ws
+
+    async def _detach_native_session(
+        self,
+        session: RealtimeAgentSession,
+        reason: str,
+    ) -> None:
+        if session.closed:
+            return
+        now = time.time()
+        session.detached_at = now
+        session.resume_deadline = now + session.resume_ttl_seconds
+        await self._send(
+            None,
+            session,
+            {
+                "type": SERVER_EVT_SESSION_DETACHED,
+                "session_id": session.session_id,
+                "reason": reason,
+                "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
+            },
+        )
+        self._log(
+            session,
+            "voice.realtime_agent.session.detached",
+            {
+                "type": "voice.realtime_agent.session.detached",
+                "reason": reason,
+                "resume_deadline": session.resume_deadline,
+            },
+        )
+        if session.native_close_task is not None and not session.native_close_task.done():
+            session.native_close_task.cancel()
+        session.native_close_task = asyncio.create_task(
+            self._close_detached_native_session_after_ttl(session)
+        )
+
+    async def _close_detached_native_session_after_ttl(
+        self,
+        session: RealtimeAgentSession,
+    ) -> None:
+        try:
+            await asyncio.sleep(session.resume_ttl_seconds)
+        except asyncio.CancelledError:
+            return
+        if session.attached_ws is not None or session.detached_at is None or session.closed:
+            return
+        await self._close_native_session(session, "resume_ttl_expired")
+
+    async def _close_native_session(
+        self,
+        session: RealtimeAgentSession,
+        reason: str,
+    ) -> None:
+        if session.closed:
+            return
+        session.closed = True
+        session.detached_at = None
+        session.resume_deadline = None
+        if session.native_close_task is not None and not session.native_close_task.done():
+            session.native_close_task.cancel()
+        provider_task = session.native_provider_task
+        if provider_task is not None and not provider_task.done():
+            provider_task.cancel()
+        delivery_task = session.background_delivery_task
+        if delivery_task is not None and not delivery_task.done():
+            delivery_task.cancel()
+        session.background_delivery_task = None
+        connection = session.native_connection
+        if connection is not None:
+            await connection.close()
+        session.native_connection = None
+        session.native_provider_task = None
+        session.native_playback_drained = None
+        self._log(
+            session,
+            "voice.realtime_agent.session.closed",
+            {
+                "type": "voice.realtime_agent.session.closed",
+                "reason": reason,
+            },
+        )
+
+    async def _handle_resume_message(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        payload: dict[str, Any],
+    ) -> None:
+        if not self._resume_token_matches(session, _str_option(payload, "resume_token")):
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                    "session_id": session.session_id,
+                    "reason": "invalid_resume_token",
+                },
+                record=False,
+            )
+            await ws.close(code=4003, message=b"invalid resume token")
+            return
+        if session.resume_deadline is not None and time.time() > session.resume_deadline:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                    "session_id": session.session_id,
+                    "reason": "resume_expired",
+                },
+                record=False,
+            )
+            await ws.close(code=4008, message=b"resume expired")
+            await self._close_native_session(session, "resume_expired")
+            return
+
+        last_event_id = _int_option(payload, "last_event_id", 0)
+        last_audio_event_id = _int_option(payload, "last_audio_event_id", 0)
+        played_audio_event_id = _int_option(payload, "last_played_audio_event_id", 0)
+        last_input_chunk_id = _int_option(payload, "last_input_chunk_id", 0)
+        session.acked_event_id_by_client = max(session.acked_event_id_by_client, last_event_id)
+        session.acked_audio_event_id_by_client = max(
+            session.acked_audio_event_id_by_client,
+            last_audio_event_id,
+        )
+        session.played_audio_event_id_by_client = max(
+            session.played_audio_event_id_by_client,
+            played_audio_event_id,
+        )
+        session.acked_input_chunk_id_by_client = max(
+            session.acked_input_chunk_id_by_client,
+            last_input_chunk_id,
+        )
+        session.detached_at = None
+        session.resume_deadline = None
+        if session.native_close_task is not None and not session.native_close_task.done():
+            session.native_close_task.cancel()
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_SESSION_RESUMED,
+                "session_id": session.session_id,
+                "last_event_id": last_event_id,
+                "last_audio_event_id": last_audio_event_id,
+                "last_played_audio_event_id": played_audio_event_id,
+                "last_input_chunk_id": last_input_chunk_id,
+            },
+            record=False,
+        )
+        await self._replay_session_events(
+            ws,
+            session,
+            last_event_id=last_event_id,
+            last_audio_event_id=last_audio_event_id,
+            played_audio_event_id=played_audio_event_id,
+        )
+
+    async def _replay_session_events(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        *,
+        last_event_id: int,
+        last_audio_event_id: int,
+        played_audio_event_id: int,
+    ) -> None:
+        audio_floor = max(last_audio_event_id, played_audio_event_id)
+        replay_events: list[dict[str, Any]] = []
+        for event in list(session.event_ring):
+            event_id = _event_int(event, "event_id")
+            audio_event_id = _event_int(event, "audio_event_id")
+            if audio_event_id > 0:
+                if audio_event_id <= audio_floor:
+                    continue
+            elif event_id <= last_event_id:
+                continue
+            replay_events.append(dict(event))
+
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_REPLAY_STARTED,
+                "session_id": session.session_id,
+                "from_event_id": last_event_id,
+                "from_audio_event_id": last_audio_event_id,
+                "replay_event_count": len(replay_events),
+            },
+            record=False,
+        )
+        for event in replay_events:
+            replay = dict(event)
+            replay["replayed"] = True
+            if not await self._send_json_best_effort(ws, session, replay):
+                return
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_REPLAY_DONE,
+                "session_id": session.session_id,
+                "replay_event_count": len(replay_events),
+            },
+            record=False,
+        )
+
+    def _handle_client_ack(
+        self,
+        session: RealtimeAgentSession,
+        payload: dict[str, Any],
+    ) -> None:
+        event_id = _int_option(payload, "event_id", 0)
+        audio_event_id = _int_option(payload, "audio_event_id", 0)
+        played_audio_event_id = _int_option(payload, "played_audio_event_id", 0)
+        input_chunk_id = _int_option(payload, "input_chunk_id", 0)
+        session.acked_event_id_by_client = max(session.acked_event_id_by_client, event_id)
+        session.acked_audio_event_id_by_client = max(
+            session.acked_audio_event_id_by_client,
+            audio_event_id,
+        )
+        session.played_audio_event_id_by_client = max(
+            session.played_audio_event_id_by_client,
+            played_audio_event_id,
+        )
+        session.acked_input_chunk_id_by_client = max(
+            session.acked_input_chunk_id_by_client,
+            input_chunk_id,
+        )
+
+    def _resume_token_matches(
+        self,
+        session: RealtimeAgentSession,
+        token: str | None,
+    ) -> bool:
+        if not token:
+            return False
+        return hmac.compare_digest(_token_hash(token), session.resume_token_hash)
+
+    def _auth_matches_session(
+        self,
+        session: RealtimeAgentSession,
+        principal: AuthPrincipal,
+        bearer_token: str,
+    ) -> bool:
+        if principal.kind != session.auth_kind:
+            return False
+        if principal.kind == "relay_session":
+            device_id = principal.session.device_id if principal.session is not None else None
+            return bool(device_id) and device_id == session.auth_session_device_id
+        return hmac.compare_digest(_token_hash(bearer_token), session.auth_token_hash or "")
+
+    def _native_session_config(
+        self,
+        session: RealtimeAgentSession,
+    ) -> RealtimeAgentSessionConfig:
+        return RealtimeAgentSessionConfig(
+            provider=session.provider,
+            model=session.model,
+            voice=session.voice,
+            sample_rate=session.sample_rate,
+            profile=session.profile,
+            hermes_session_id=session.chat_session_id,
+            instructions=_native_instructions(session),
+            provider_options=self._provider_options(session, {}),
+            tools=HERMES_TOOL_SCHEMAS,
+        )
+
+    def _should_forward_provider_response_event(
+        self,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> bool:
+        response_id = str(event.response_id or "").strip()
+        if session.native_forced_summary_done:
+            self._log(
+                session,
+                "voice.response.suppressed_after_forced_summary",
+                {
+                    "type": "voice.response.suppressed_after_forced_summary",
+                    "response_id": response_id or None,
+                    "provider": session.provider,
+                },
+            )
+            return False
+        if not session.native_forced_summary_active:
+            return True
+
+        marker = response_id or "__blank_response_id__"
+        if session.native_forced_summary_response_id is None:
+            session.native_forced_summary_response_id = marker
+        if session.native_forced_summary_response_id != marker:
+            self._log(
+                session,
+                "voice.response.suppressed_duplicate_forced_summary",
+                {
+                    "type": "voice.response.suppressed_duplicate_forced_summary",
+                    "response_id": response_id or None,
+                    "accepted_response_id": (
+                        None
+                        if session.native_forced_summary_response_id == "__blank_response_id__"
+                        else session.native_forced_summary_response_id
+                    ),
+                    "provider": session.provider,
+                },
+            )
+            return False
+        return True
+
+    def _mark_provider_response_started(
+        self,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> bool:
+        response_id = str(event.response_id or "").strip()
+        if not response_id:
+            return True
+        if response_id in session.response_ids_started:
+            return False
+        session.response_ids_started.add(response_id)
+        return True
+
+    def _mark_provider_response_done(
+        self,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> None:
+        if not session.native_forced_summary_active:
+            return
+        response_id = str(event.response_id or "").strip() or "__blank_response_id__"
+        if session.native_forced_summary_response_id not in {None, response_id}:
+            return
+        session.native_forced_summary_response_id = response_id
+        session.native_forced_summary_active = False
+        session.native_forced_summary_done = True
+        session.native_forced_summary_result = None
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_text_parts.clear()
+
+    async def _start_forced_hermes_preamble(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        transcript: str,
+        force_reason: str,
+    ) -> None:
+        if session.native_forced_preamble_active or session.native_forced_hermes_turn_active:
+            return
+        session.native_forced_summary_active = False
+        session.native_forced_summary_done = False
+        session.native_forced_summary_response_id = None
+        session.native_forced_summary_result = None
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_text_parts.clear()
+        session.native_forced_preamble_active = True
+        session.native_forced_preamble_transcript = transcript
+        session.native_forced_preamble_response_id = None
+        session.native_forced_preamble_audio_seen = False
+        self._log(
+            session,
+            "voice.hermes_forced_preamble.started",
+            {
+                "type": "voice.hermes_forced_preamble.started",
+                "reason": force_reason,
+                "transcript_preview": _compact_status_text(transcript),
+                "provider": session.provider,
+            },
+        )
+        with contextlib.suppress(Exception):
+            await connection.cancel_response()
+        await connection.send_text(_forced_hermes_preamble_prompt(transcript))
+
+    def _should_forward_forced_preamble_event(
+        self,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> bool:
+        response_id = str(event.response_id or "").strip()
+        marker = response_id or "__blank_response_id__"
+        if session.native_forced_preamble_response_id is None:
+            session.native_forced_preamble_response_id = marker
+        if session.native_forced_preamble_response_id == marker:
+            return True
+        self._log(
+            session,
+            "voice.hermes_forced_preamble.suppressed_extra_response",
+            {
+                "type": "voice.hermes_forced_preamble.suppressed_extra_response",
+                "response_id": response_id or None,
+                "accepted_response_id": (
+                    None
+                    if session.native_forced_preamble_response_id == "__blank_response_id__"
+                    else session.native_forced_preamble_response_id
+                ),
+                "provider": session.provider,
+            },
+        )
+        return False
+
+    async def _finish_forced_hermes_preamble_and_run(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        playback_drained: asyncio.Event,
+        *,
+        reason: str,
+    ) -> None:
+        transcript = (session.native_forced_preamble_transcript or "").strip()
+        response_id = session.native_forced_preamble_response_id
+        audio_seen = session.native_forced_preamble_audio_seen
+        session.native_forced_preamble_active = False
+        session.native_forced_preamble_transcript = None
+        session.native_forced_preamble_response_id = None
+        session.native_forced_preamble_audio_seen = False
+        if not transcript:
+            self._log(
+                session,
+                "voice.hermes_forced_preamble.no_transcript",
+                {
+                    "type": "voice.hermes_forced_preamble.no_transcript",
+                    "reason": reason,
+                    "provider": session.provider,
+                },
+            )
+            return
+
+        self._log(
+            session,
+            "voice.hermes_forced_preamble.finished",
+            {
+                "type": "voice.hermes_forced_preamble.finished",
+                "reason": reason,
+                "response_id": None if response_id == "__blank_response_id__" else response_id,
+                "audio_seen": audio_seen,
+                "provider": session.provider,
+            },
+        )
+        await self._run_forced_hermes_turn_from_transcript(
+            ws,
+            session,
+            connection,
+            playback_drained,
+            transcript,
+            speak_pre_status=not audio_seen,
+        )
+
+    async def _pump_provider_events(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        playback_drained: asyncio.Event,
+    ) -> None:
+        async for event in connection.events():
+            if event.kind == ProviderEventKind.READY:
+                continue
+            if event.kind == ProviderEventKind.INPUT_TRANSCRIPT_DELTA:
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_INPUT_TRANSCRIPT_DELTA,
+                        "delta": str(event.payload.get("delta") or ""),
+                    },
+                )
+            elif event.kind == ProviderEventKind.INPUT_TRANSCRIPT_FINAL:
+                text = str(event.payload.get("text") or "")
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_INPUT_TRANSCRIPT_FINAL,
+                        "text": text,
+                    },
+                )
+                if text and not session.native_response_requested_for_input:
+                    session.native_response_requested_for_input = True
+                    force_reason = _force_hermes_reason_for_transcript(text)
+                    if force_reason:
+                        session.native_forced_summary_active = False
+                        session.native_forced_summary_done = False
+                        session.native_forced_summary_response_id = None
+                        session.native_forced_summary_result = None
+                        session.native_forced_summary_buffer.clear()
+                        session.native_forced_summary_text_parts.clear()
+                        session.native_hermes_required_transcript = text
+                        session.native_hermes_required_reason = force_reason
+                        self._log(
+                            session,
+                            "voice.hermes_required.provider_native",
+                            {
+                                "type": "voice.hermes_required.provider_native",
+                                "reason": force_reason,
+                                "strategy": "provider_function_call",
+                                "transcript_preview": _compact_status_text(text),
+                                "provider": session.provider,
+                            },
+                        )
+                        await connection.request_response()
+                    else:
+                        session.native_forced_summary_active = False
+                        session.native_forced_summary_done = False
+                        session.native_forced_summary_response_id = None
+                        session.native_forced_summary_result = None
+                        session.native_forced_summary_buffer.clear()
+                        session.native_forced_summary_text_parts.clear()
+                        session.native_hermes_required_transcript = None
+                        session.native_hermes_required_reason = None
+                        await connection.request_response()
+            elif event.kind == ProviderEventKind.RESPONSE_STARTED:
+                if session.native_forced_preamble_active:
+                    if not self._should_forward_forced_preamble_event(session, event):
+                        continue
+                    if not self._mark_provider_response_started(session, event):
+                        continue
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_RESPONSE_STARTED,
+                            "provider": session.provider,
+                            "model": session.model,
+                            "voice": session.voice,
+                            "session_id": session.session_id,
+                            "chat_session_id": session.chat_session_id,
+                            "response_id": event.response_id,
+                            "phase": "forced_hermes_preamble",
+                        },
+                    )
+                    continue
+                if session.native_forced_summary_active:
+                    if self._should_forward_provider_response_event(session, event):
+                        session.native_forced_summary_buffer.append(
+                            {
+                                "type": SERVER_EVT_RESPONSE_STARTED,
+                                "provider": session.provider,
+                                "model": session.model,
+                                "voice": session.voice,
+                                "session_id": session.session_id,
+                                "chat_session_id": session.chat_session_id,
+                                "response_id": event.response_id,
+                            }
+                        )
+                    continue
+                if not self._should_forward_provider_response_event(session, event):
+                    continue
+                if not self._mark_provider_response_started(session, event):
+                    continue
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_RESPONSE_STARTED,
+                        "provider": session.provider,
+                        "model": session.model,
+                        "voice": session.voice,
+                        "session_id": session.session_id,
+                        "chat_session_id": session.chat_session_id,
+                        "response_id": event.response_id,
+                    },
+                )
+            elif event.kind == ProviderEventKind.OUTPUT_TEXT_DELTA:
+                if session.native_forced_preamble_active:
+                    if not self._should_forward_forced_preamble_event(session, event):
+                        continue
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_RESPONSE_DELTA,
+                            "source": "provider",
+                            "delta": str(event.payload.get("delta") or ""),
+                            "response_id": event.response_id,
+                            "phase": "forced_hermes_preamble",
+                        },
+                    )
+                    continue
+                if session.native_forced_summary_active:
+                    if self._should_forward_provider_response_event(session, event):
+                        delta = str(event.payload.get("delta") or "")
+                        session.native_forced_summary_text_parts.append(delta)
+                        session.native_forced_summary_buffer.append(
+                            {
+                                "type": SERVER_EVT_RESPONSE_DELTA,
+                                "source": "provider",
+                                "delta": delta,
+                                "response_id": event.response_id,
+                            }
+                        )
+                    continue
+                if not self._should_forward_provider_response_event(session, event):
+                    continue
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_RESPONSE_DELTA,
+                        "source": "provider",
+                        "delta": str(event.payload.get("delta") or ""),
+                        "response_id": event.response_id,
+                    },
+                )
+            elif event.kind == ProviderEventKind.AUDIO_DELTA:
+                # The provider is producing audio for this response; take the
+                # floor so filler/relay-TTS can't overlap (ADR 33).
+                session.floor.acquire(FloorMouth.PROVIDER)
+                if session.native_forced_preamble_active:
+                    if not self._should_forward_forced_preamble_event(session, event):
+                        continue
+                    payload = await self._provider_audio_delta_event(ws, session, event)
+                    if payload is not None:
+                        payload["phase"] = "forced_hermes_preamble"
+                        session.native_forced_preamble_audio_seen = True
+                        await self._send(ws, session, payload)
+                    continue
+                if session.native_forced_summary_active:
+                    if self._should_forward_provider_response_event(session, event):
+                        payload = await self._provider_audio_delta_event(ws, session, event)
+                        if payload is not None:
+                            session.native_forced_summary_buffer.append(payload)
+                    continue
+                if not self._should_forward_provider_response_event(session, event):
+                    continue
+                await self._send_provider_audio_delta(ws, session, event)
+            elif event.kind == ProviderEventKind.AUDIO_DONE:
+                # Provider finished emitting audio for this response; release the
+                # floor so a pending background result / filler can proceed.
+                session.floor.release(FloorMouth.PROVIDER)
+                if session.native_forced_preamble_active:
+                    if not self._should_forward_forced_preamble_event(session, event):
+                        continue
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_OUTPUT_AUDIO_DONE,
+                            "response_id": event.response_id,
+                            "phase": "forced_hermes_preamble",
+                        },
+                    )
+                    continue
+                if session.native_forced_summary_active:
+                    if self._should_forward_provider_response_event(session, event):
+                        session.native_forced_summary_buffer.append(
+                            {
+                                "type": SERVER_EVT_OUTPUT_AUDIO_DONE,
+                                "response_id": event.response_id,
+                            }
+                        )
+                    continue
+                if not self._should_forward_provider_response_event(session, event):
+                    continue
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_OUTPUT_AUDIO_DONE,
+                        "response_id": event.response_id,
+                    },
+                )
+            elif event.kind == ProviderEventKind.FUNCTION_CALL_COMPLETED:
+                if session.native_forced_preamble_active:
+                    call = _tool_call_from_provider_event(event)
+                    self._log(
+                        session,
+                        "voice.hermes_forced_preamble.tool_call_suppressed",
+                        {
+                            "type": "voice.hermes_forced_preamble.tool_call_suppressed",
+                            "response_id": str(event.response_id or "").strip() or None,
+                            "tool_name": call.name or None,
+                            "call_id": call.call_id or None,
+                            "provider": session.provider,
+                        },
+                    )
+                    with contextlib.suppress(Exception):
+                        await connection.cancel_response()
+                    await self._finish_forced_hermes_preamble_and_run(
+                        ws,
+                        session,
+                        connection,
+                        playback_drained,
+                        reason="tool_call_suppressed",
+                    )
+                    continue
+                if session.native_forced_summary_active:
+                    await self._handle_forced_summary_tool_call(
+                        ws,
+                        session,
+                        connection,
+                        playback_drained,
+                        event,
+                    )
+                    continue
+                if session.native_forced_summary_done:
+                    self._log(
+                        session,
+                        "voice.response.suppressed_forced_summary_tool_call",
+                        {
+                            "type": "voice.response.suppressed_forced_summary_tool_call",
+                            "response_id": str(event.response_id or "").strip() or None,
+                            "provider": session.provider,
+                        },
+                    )
+                    continue
+                if not self._should_forward_provider_response_event(session, event):
+                    continue
+                await self._handle_provider_tool_call(
+                    ws,
+                    session,
+                    connection,
+                    playback_drained,
+                    event,
+                )
+            elif event.kind == ProviderEventKind.RESPONSE_DONE:
+                # Safety net: a response may end without a clean AUDIO_DONE.
+                session.floor.release(FloorMouth.PROVIDER)
+                if session.native_forced_preamble_active:
+                    if not self._should_forward_forced_preamble_event(session, event):
+                        continue
+                    await self._finish_forced_hermes_preamble_and_run(
+                        ws,
+                        session,
+                        connection,
+                        playback_drained,
+                        reason="response_done",
+                    )
+                    continue
+                if self._is_intermediate_tool_response_done(session, event):
+                    continue
+                if session.native_forced_summary_active:
+                    if not self._should_forward_provider_response_event(session, event):
+                        continue
+                    await self._finish_forced_summary_provider_response(ws, session, event)
+                    continue
+                if not self._should_forward_provider_response_event(session, event):
+                    continue
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_RESPONSE_DONE,
+                        "provider": session.provider,
+                        "model": session.model,
+                        "voice": session.voice,
+                        "event_log_path": str(session.event_log_path),
+                        "chat_session_id": session.chat_session_id,
+                        "response_id": event.response_id,
+                    },
+                )
+                self._mark_provider_response_done(session, event)
+            elif event.kind == ProviderEventKind.ERROR:
+                if session.native_forced_preamble_active:
+                    self._log(
+                        session,
+                        "voice.hermes_forced_preamble.provider_error",
+                        {
+                            "type": "voice.hermes_forced_preamble.provider_error",
+                            "message": str(event.payload.get("message") or "provider error"),
+                            "provider": session.provider,
+                        },
+                    )
+                    await self._finish_forced_hermes_preamble_and_run(
+                        ws,
+                        session,
+                        connection,
+                        playback_drained,
+                        reason="provider_error",
+                    )
+                    continue
+                await self._send_error(
+                    ws,
+                    session,
+                    str(event.payload.get("message") or "provider error"),
+                    provider=session.provider,
+                )
+
+    async def _send_provider_audio_delta(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> None:
+        payload = await self._provider_audio_delta_event(ws, session, event)
+        if payload is not None:
+            marker = str(event.response_id or "").strip() or "__blank_response_id__"
+            session.provider_response_audio_seen.add(marker)
+            await self._send(ws, session, payload)
+
+    async def _provider_audio_delta_event(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> dict[str, Any] | None:
+        chunk = event.payload.get("audio")
+        audio64 = event.payload.get("audio_base64")
+        if isinstance(chunk, bytes):
+            audio_bytes = chunk
+            encoded = (
+                audio64
+                if isinstance(audio64, str) and audio64
+                else base64.b64encode(audio_bytes).decode("ascii")
+            )
+        elif isinstance(audio64, str) and audio64:
+            try:
+                audio_bytes = base64.b64decode(audio64)
+            except Exception:
+                await self._send_error(ws, session, "provider audio delta was invalid")
+                return
+            encoded = audio64
+        else:
+            await self._send_error(ws, session, "provider audio delta missing audio")
+            return None
+        peak, rms = _pcm_levels(audio_bytes)
+        return {
+            "type": SERVER_EVT_OUTPUT_AUDIO_DELTA,
+            "audio_base64": encoded,
+            "byte_count": len(audio_bytes),
+            "sample_rate": session.sample_rate,
+            "channels": DEFAULT_CHANNELS,
+            "sample_width": DEFAULT_SAMPLE_WIDTH,
+            "peak_level": peak,
+            "rms_level": rms,
+            "response_id": event.response_id,
+        }
+
+    async def _finish_forced_summary_provider_response(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> None:
+        provider_text = "".join(session.native_forced_summary_text_parts).strip()
+        result = session.native_forced_summary_result or {}
+        response_id = str(event.response_id or "").strip() or "__blank_response_id__"
+        if _is_bad_forced_summary_response(provider_text):
+            fallback_text = _forced_summary_fallback_text(result)
+            self._log(
+                session,
+                "voice.response.forced_summary_fallback",
+                {
+                    "type": "voice.response.forced_summary_fallback",
+                    "response_id": None if response_id == "__blank_response_id__" else response_id,
+                    "provider": session.provider,
+                    "reason": _bad_forced_summary_reason(provider_text),
+                    "provider_text_preview": _compact_status_text(provider_text),
+                    "fallback_preview": _compact_status_text(fallback_text),
+                },
+            )
+            session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_text_parts.clear()
+            session.native_forced_summary_active = False
+            session.native_forced_summary_done = True
+            session.native_forced_summary_response_id = response_id
+            session.native_forced_summary_result = None
+            fallback_response_id = f"forced-summary-fallback-{session.event_seq + 1}"
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_STARTED,
+                    "provider": session.provider,
+                    "model": session.model,
+                    "voice": session.voice,
+                    "session_id": session.session_id,
+                    "chat_session_id": session.chat_session_id,
+                    "response_id": fallback_response_id,
+                    "source": "hermes",
+                },
+            )
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_DELTA,
+                    "source": "hermes",
+                    "delta": fallback_text,
+                    "response_id": fallback_response_id,
+                },
+            )
+            await self._render_provider_audio(
+                ws,
+                session,
+                fallback_text,
+                {},
+                response_id=fallback_response_id,
+            )
+            return
+
+        buffered = list(session.native_forced_summary_buffer)
+        for buffered_event in buffered:
+            await self._send(ws, session, buffered_event)
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_RESPONSE_DONE,
+                "provider": session.provider,
+                "model": session.model,
+                "voice": session.voice,
+                "event_log_path": str(session.event_log_path),
+                "chat_session_id": session.chat_session_id,
+                "response_id": None if response_id == "__blank_response_id__" else response_id,
+            },
+        )
+        self._mark_provider_response_done(session, event)
+
+    async def _handle_forced_summary_tool_call(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        playback_drained: asyncio.Event,
+        event: ProviderEvent,
+    ) -> None:
+        call = _tool_call_from_provider_event(event)
+        response_id = str(event.response_id or "").strip()
+        if response_id:
+            session.response_ids_awaiting_tool_followup.add(response_id)
+        session.native_forced_summary_response_id = None
+        result = session.native_forced_summary_result
+        self._log(
+            session,
+            "voice.response.forced_summary_tool_call_reused",
+            {
+                "type": "voice.response.forced_summary_tool_call_reused",
+                "response_id": response_id or None,
+                "tool_name": call.name or None,
+                "call_id": call.call_id or None,
+                "has_cached_result": result is not None,
+                "provider": session.provider,
+            },
+        )
+        if not call.call_id or result is None:
+            with contextlib.suppress(Exception):
+                await connection.cancel_response()
+            return
+
+        await self._request_playback_drain(
+            ws,
+            session,
+            playback_drained,
+            call_id=call.call_id,
+            tool_name=call.name or "hermes_run_task",
+            reason="forced_summary",
+        )
+        delivered = await self._send_provider_tool_result(
+            ws,
+            session,
+            connection,
+            call.call_id,
+            _forced_summary_tool_result(result),
+        )
+        if not delivered:
+            return
+        if not await self._request_provider_response(ws, session, connection, call.call_id):
+            return
+
+    async def _handle_provider_tool_call(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        playback_drained: asyncio.Event,
+        event: ProviderEvent,
+    ) -> None:
+        call = _tool_call_from_provider_event(event)
+        if call.is_hermes_tool() and event.response_id:
+            session.response_ids_awaiting_tool_followup.add(event.response_id)
+        if call.name == "hermes_run_task":
+            if session.native_hermes_required_transcript is not None:
+                self._log(
+                    session,
+                    "voice.hermes_required.provider_tool_call",
+                    {
+                        "type": "voice.hermes_required.provider_tool_call",
+                        "reason": session.native_hermes_required_reason,
+                        "call_id": call.call_id,
+                        "response_id": str(event.response_id or "").strip() or None,
+                        "provider": session.provider,
+                    },
+                )
+            session.native_hermes_required_transcript = None
+            session.native_hermes_required_reason = None
+            if self._provider_response_had_audio(session, event.response_id):
+                await self._request_playback_drain(
+                    ws,
+                    session,
+                    playback_drained,
+                    call_id=call.call_id,
+                    tool_name=call.name,
+                    reason="pre_hermes_ack",
+                )
+            await self._send_pre_hermes_status(
+                ws,
+                session,
+                call.call_id,
+                should_speak=False,
+            )
+        result = await self._run_brokered_tool(ws, session, call)
+        if result.get("promoted"):
+            await self._begin_background_delivery(
+                ws,
+                session,
+                connection,
+                origin="provider_tool_call",
+                call_id=call.call_id,
+                transcript=str(call.arguments.get("text") or ""),
+            )
+            return
+        delivered = await self._send_provider_tool_result(
+            ws,
+            session,
+            connection,
+            call.call_id,
+            result,
+        )
+        if not delivered:
+            return
+        if call.name == "hermes_run_task" and result.get("cancelled"):
+            return
+        await self._request_playback_drain(
+            ws,
+            session,
+            playback_drained,
+            call_id=call.call_id,
+            tool_name=call.name,
+            reason="tool_result_summary",
+        )
+        if not await self._request_provider_response(ws, session, connection, call.call_id):
+            return
+
+    def _provider_response_had_audio(
+        self,
+        session: RealtimeAgentSession,
+        response_id: str | None,
+    ) -> bool:
+        marker = str(response_id or "").strip() or "__blank_response_id__"
+        return marker in session.provider_response_audio_seen
+
+    async def _request_playback_drain(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        playback_drained: asyncio.Event,
+        *,
+        call_id: str | None,
+        tool_name: str | None,
+        reason: str,
+        timeout_seconds: float = _PLAYBACK_DRAIN_TIMEOUT_SECONDS,
+    ) -> bool:
+        playback_drained.clear()
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_PLAYBACK_DRAIN_REQUESTED,
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "reason": reason,
+                "timeout_ms": int(timeout_seconds * 1000),
+            },
+        )
+        try:
+            await asyncio.wait_for(
+                playback_drained.wait(),
+                timeout=timeout_seconds,
+            )
+            self._log(
+                session,
+                "voice.playback_drain.completed",
+                {
+                    "type": "voice.playback_drain.completed",
+                    "call_id": call_id,
+                    "reason": reason,
+                },
+            )
+            return True
+        except asyncio.TimeoutError:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "voice.playback_drain.timeout",
+                    "call_id": call_id,
+                    "reason": reason,
+                    "timeout_ms": int(timeout_seconds * 1000),
+                },
+            )
+            return False
+
+    async def _send_provider_tool_result(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        call_id: str,
+        result: dict[str, Any],
+    ) -> bool:
+        try:
+            await connection.send_tool_result(call_id, result)
+            return True
+        except Exception as exc:
+            await self._send_error(
+                ws,
+                session,
+                "Realtime provider closed before Hermes result could be delivered.",
+                error_code="provider_tool_result_send_failed",
+                call_id=call_id,
+            )
+            self._log(
+                session,
+                "voice.provider_tool_result_send_failed",
+                {
+                    "type": "voice.provider_tool_result_send_failed",
+                    "call_id": call_id,
+                    "error": str(exc),
+                },
+            )
+            await self._close_native_session(session, "provider_tool_result_send_failed")
+            return False
+
+    async def _request_provider_response(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        call_id: str,
+    ) -> bool:
+        try:
+            await connection.request_response()
+            return True
+        except Exception as exc:
+            await self._send_error(
+                ws,
+                session,
+                "Realtime provider closed before it could summarize the Hermes result.",
+                error_code="provider_response_request_failed",
+                call_id=call_id,
+            )
+            self._log(
+                session,
+                "voice.provider_response_request_failed",
+                {
+                    "type": "voice.provider_response_request_failed",
+                    "call_id": call_id,
+                    "error": str(exc),
+                },
+            )
+            await self._close_native_session(session, "provider_response_request_failed")
+            return False
+
+    async def _run_forced_hermes_turn_from_transcript(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        playback_drained: asyncio.Event,
+        transcript: str,
+        *,
+        speak_pre_status: bool = True,
+    ) -> None:
+        if session.native_forced_hermes_turn_active:
+            return
+        session.native_forced_hermes_turn_active = True
+        session.native_forced_summary_active = False
+        session.native_forced_summary_done = False
+        session.native_forced_summary_response_id = None
+        session.native_forced_summary_result = None
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_text_parts.clear()
+        call_id = f"forced-hermes-{session.event_seq + 1}"
+        try:
+            with contextlib.suppress(Exception):
+                await connection.cancel_response()
+            if speak_pre_status:
+                await self._send_pre_hermes_status(ws, session, call_id)
+            result = await self._run_brokered_tool(
+                ws,
+                session,
+                ToolCallEvent(
+                    call_id=call_id,
+                    name="hermes_run_task",
+                    arguments={
+                        "text": transcript,
+                        "profile": session.profile or "",
+                        "session_id": session.chat_session_id or "",
+                        "mode": "run",
+                    },
+                ),
+            )
+            if result.get("promoted"):
+                await self._begin_background_delivery(
+                    ws,
+                    session,
+                    connection,
+                    origin="forced",
+                    call_id=None,
+                    transcript=transcript,
+                )
+                return
+            if result.get("cancelled"):
+                return
+            if result.get("ok") is False:
+                await self._send_error(
+                    ws,
+                    session,
+                    str(result.get("error") or "Hermes failed"),
+                    provider=session.provider,
+                )
+                return
+
+            session.native_forced_summary_active = True
+            session.native_forced_summary_done = False
+            session.native_forced_summary_response_id = None
+            session.native_forced_summary_result = dict(result)
+            session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_text_parts.clear()
+            with contextlib.suppress(Exception):
+                await connection.cancel_response()
+            await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+        finally:
+            session.native_forced_hermes_turn_active = False
+
+    async def _send_pre_hermes_status(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        call_id: str | None,
+        *,
+        should_speak: bool = True,
+    ) -> None:
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_HERMES_RUN_PROGRESS,
+                "source": "hermes",
+                "session_id": session.chat_session_id,
+                "chat_session_id": session.chat_session_id,
+                "run_id": session.hermes_run_id,
+                "status": "starting",
+                "message": "I'll check Hermes.",
+                "status_key": "run:checking_hermes",
+                "should_speak": should_speak,
+                "call_id": call_id,
+                "active_tool_name": None,
+                "last_tool_name": None,
+                "completed_tool_count": session.hermes_completed_tool_count,
+            },
+        )
+        if _PRE_HERMES_STATUS_LEAD_SECONDS > 0:
+            await asyncio.sleep(_PRE_HERMES_STATUS_LEAD_SECONDS)
+
+    def _is_intermediate_tool_response_done(
+        self,
+        session: RealtimeAgentSession,
+        event: ProviderEvent,
+    ) -> bool:
+        response_id = str(event.response_id or "").strip()
+        if not response_id:
+            return False
+        if response_id not in session.response_ids_awaiting_tool_followup:
+            return False
+        session.response_ids_awaiting_tool_followup.discard(response_id)
+        if session.native_forced_summary_active:
+            session.native_forced_summary_response_id = None
+            session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_text_parts.clear()
+        self._log(
+            session,
+            "voice.response.intermediate_done",
+            {
+                "type": "voice.response.intermediate_done",
+                "response_id": response_id,
+                "reason": "tool_followup_pending",
+            },
+        )
+        return True
+
+    async def _run_brokered_tool(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        call: ToolCallEvent,
+    ) -> dict[str, Any]:
+        if call.name != "hermes_run_task":
+            return await self._execute_brokered_tool(ws, session, call)
+
+        task = asyncio.create_task(self._execute_brokered_tool(ws, session, call))
+        session.hermes_task = task
+        # Tier C: an explicit mode="background" request detaches immediately,
+        # even when grace-period promotion is otherwise off.
+        force_background = str(call.arguments.get("mode") or "").strip().lower() == "background"
+        promote_after = 0.0 if force_background else self._promote_after_seconds(session)
+        try:
+            if promote_after is None:
+                return await task
+            try:
+                # Shield so a promotion timeout cancels only the wait, not the run.
+                return await asyncio.wait_for(asyncio.shield(task), timeout=promote_after)
+            except asyncio.TimeoutError:
+                # Tier B/C: detach the run to the background and hand control back
+                # to the pump (ADR 33). The task keeps running;
+                # _deliver_background_result awaits and delivers it.
+                session.hermes_run_tier = "durable" if force_background else "promoted"
+                session.promoted_transcript = str(call.arguments.get("text") or "").strip()
+                self._log(
+                    session,
+                    "voice.hermes_run.promoted",
+                    {
+                        "type": "voice.hermes_run.promoted",
+                        "run_id": session.hermes_run_id,
+                        "promote_after_ms": session.promote_after_ms,
+                        "call_id": call.call_id,
+                    },
+                )
+                return {
+                    "ok": True,
+                    "promoted": True,
+                    "run_id": session.hermes_run_id,
+                    "session_id": session.chat_session_id,
+                    "interface": _interface_context(session),
+                }
+        except asyncio.CancelledError:
+            session.hermes_run_status = "cancelled"
+            return {
+                "ok": False,
+                "cancelled": True,
+                "run_id": session.hermes_run_id,
+                "session_id": session.chat_session_id,
+                "interface": _interface_context(session),
+            }
+        finally:
+            # A promoted task is still running; keep it referenced for delivery.
+            if session.hermes_task is task and task.done():
+                session.hermes_task = None
+
+    def _promote_after_seconds(self, session: RealtimeAgentSession) -> float | None:
+        """Grace window before a run is promoted, or None when promotion is off."""
+        if not session.promotion_enabled:
+            return None
+        return max(0.0, session.promote_after_ms / 1000.0)
+
+    async def _begin_background_delivery(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        *,
+        origin: str,
+        call_id: str | None,
+        transcript: str,
+    ) -> None:
+        """Hand a promoted run off to the background and notify the client.
+
+        The Hermes task keeps running (it is still referenced by
+        ``session.hermes_task``); ``_deliver_background_result`` awaits it and
+        speaks the result when the floor is clear.
+        """
+        session.promoted_transcript = transcript or session.promoted_transcript
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_HERMES_RUN_PROMOTED,
+                "source": "hermes",
+                "session_id": session.chat_session_id,
+                "chat_session_id": session.chat_session_id,
+                "run_id": session.hermes_run_id,
+                "tier": session.hermes_run_tier if session.hermes_run_tier in ("promoted", "durable") else "promoted",
+                "promote_after_ms": session.promote_after_ms,
+                "spoken_handoff": session.spoken_handoff,
+                "result_delivery": session.result_delivery,
+                "call_id": call_id,
+            },
+        )
+        speak = session.spoken_handoff and session.result_delivery != "visual_only"
+        if origin == "provider_tool_call" and call_id:
+            # Close the pending provider function call so the socket is not left
+            # awaiting tool output for the whole background run.
+            interim = {
+                "ok": True,
+                "status": "running_in_background",
+                "run_id": session.hermes_run_id,
+                "instruction": (
+                    "The task is running in the background. Briefly acknowledge "
+                    "that you've started and will report back; do not answer yet."
+                ),
+                "interface": _interface_context(session),
+            }
+            if await self._send_provider_tool_result(ws, session, connection, call_id, interim):
+                if speak:
+                    await self._request_provider_response(ws, session, connection, call_id)
+        elif origin == "forced" and speak:
+            with contextlib.suppress(Exception):
+                await connection.send_text(_background_handoff_prompt(transcript))
+
+        if (
+            session.background_delivery_task is not None
+            and not session.background_delivery_task.done()
+        ):
+            session.background_delivery_task.cancel()
+        session.background_delivery_task = asyncio.create_task(
+            self._deliver_background_result(ws, session, connection)
+        )
+
+    async def _deliver_background_result(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+    ) -> None:
+        task = session.hermes_task
+        if task is None:
+            return
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            session.hermes_run_status = "cancelled"
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "hermes.run.cancelled",
+                    "session_id": session.chat_session_id,
+                    "run_id": session.hermes_run_id,
+                },
+            )
+            session.hermes_run_tier = "foreground"
+            return
+        except Exception as exc:  # noqa: BLE001 - surface as a voice error
+            await self._send_error(
+                ws,
+                session,
+                f"background Hermes run failed: {exc.__class__.__name__}: {exc}",
+                provider=session.provider,
+            )
+            session.hermes_run_tier = "foreground"
+            return
+        finally:
+            if session.hermes_task is task:
+                session.hermes_task = None
+
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED,
+                "source": "hermes",
+                "session_id": session.chat_session_id,
+                "chat_session_id": session.chat_session_id,
+                "run_id": session.hermes_run_id,
+                "ok": bool(result.get("ok", True)),
+                "tool_count": result.get("tool_count", session.hermes_completed_tool_count),
+            },
+        )
+
+        if result.get("cancelled"):
+            session.hermes_run_tier = "foreground"
+            return
+        if result.get("ok") is False:
+            await self._send_error(
+                ws,
+                session,
+                str(result.get("error") or "Hermes failed"),
+                provider=session.provider,
+            )
+            session.hermes_run_tier = "foreground"
+            return
+
+        if session.result_delivery == "visual_only":
+            await self._emit_background_text_only(ws, session, result)
+            session.hermes_run_tier = "foreground"
+            return
+
+        # speak_when_idle / notify_then_speak: wait for the floor to clear, then
+        # have the provider speak a natural summary via the forced-summary path.
+        session.floor.note_result_ready()
+        await self._await_floor_idle_for_result(session)
+        await self._inject_background_summary(ws, session, connection, result)
+        session.hermes_run_tier = "foreground"
+
+    async def _await_floor_idle_for_result(
+        self,
+        session: RealtimeAgentSession,
+        *,
+        timeout: float = _BACKGROUND_FLOOR_WAIT_SECONDS,
+    ) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if session.floor.consume_result_if_idle():
+                return True
+            await asyncio.sleep(0.05)
+        # Timed out waiting for the floor; deliver anyway.
+        session.floor.clear_result()
+        return False
+
+    async def _inject_background_summary(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        result: dict[str, Any],
+    ) -> None:
+        transcript = session.promoted_transcript or ""
+        session.native_forced_summary_active = True
+        session.native_forced_summary_done = False
+        session.native_forced_summary_response_id = None
+        session.native_forced_summary_result = dict(result)
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_text_parts.clear()
+        with contextlib.suppress(Exception):
+            await connection.cancel_response()
+        await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+
+    async def _emit_background_text_only(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        result: dict[str, Any],
+    ) -> None:
+        text = str(result.get("text") or result.get("answer") or result.get("summary") or "").strip()
+        response_id = f"background-visual-{session.event_seq + 1}"
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_RESPONSE_STARTED,
+                "provider": session.provider,
+                "model": session.model,
+                "voice": session.voice,
+                "session_id": session.session_id,
+                "chat_session_id": session.chat_session_id,
+                "response_id": response_id,
+                "source": "hermes",
+                "delivery": "visual_only",
+            },
+        )
+        if text:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_DELTA,
+                    "source": "hermes",
+                    "delta": text,
+                    "response_id": response_id,
+                },
+            )
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_RESPONSE_DONE,
+                "provider": session.provider,
+                "model": session.model,
+                "voice": session.voice,
+                "event_log_path": str(session.event_log_path),
+                "chat_session_id": session.chat_session_id,
+                "response_id": response_id,
+                "delivery": "visual_only",
+            },
+        )
+
+    async def _execute_brokered_tool(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        call: ToolCallEvent,
+    ) -> dict[str, Any]:
+        if not call.is_hermes_tool():
+            return {
+                "ok": False,
+                "error": f"tool is not allowed: {call.name}",
+                "allowed_tools": list(_TOOL_SURFACE),
+            }
+        interface_context = _interface_context(session)
+        if call.name == "hermes_get_status":
+            run_id = str(call.arguments.get("run_id") or session.hermes_run_id or "").strip()
+            return {
+                "ok": True,
+                "run_id": run_id or None,
+                "status": session.hermes_run_status,
+                "session_id": session.chat_session_id,
+                "pending_confirmation_id": session.pending_confirmation_id,
+                "active_tool_name": session.hermes_active_tool_name,
+                "last_tool_name": session.hermes_last_tool_name,
+                "last_tool_status": session.hermes_last_tool_status,
+                "last_tool_message": session.hermes_last_tool_message,
+                "completed_tool_count": session.hermes_completed_tool_count,
+                "interface": interface_context,
+            }
+        if call.name == "hermes_cancel":
+            run_id = str(call.arguments.get("run_id") or session.hermes_run_id or "").strip()
+            self._cancel_active_hermes(session)
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "hermes.run.cancelled",
+                    "session_id": session.chat_session_id,
+                    "run_id": run_id or session.hermes_run_id,
+                },
+            )
+            return {
+                "ok": True,
+                "run_id": run_id or session.hermes_run_id,
+                "status": session.hermes_run_status,
+                "session_id": session.chat_session_id,
+                "interface": interface_context,
+            }
+        if call.name == "hermes_confirm":
+            confirmation_id = str(call.arguments.get("confirmation_id") or "").strip()
+            answer = str(call.arguments.get("answer") or "").strip()
+            if not confirmation_id or not answer:
+                return {"ok": False, "error": "hermes_confirm requires confirmation_id and answer"}
+            session.pending_confirmation_id = None
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "hermes.confirmation.forwarded",
+                    "confirmation_id": confirmation_id,
+                    "answer": answer,
+                },
+            )
+            return {
+                "ok": True,
+                "confirmation_id": confirmation_id,
+                "status": "forwarded_to_hermes_ui",
+                "interface": interface_context,
+            }
+        if call.name != "hermes_run_task":
+            return {"ok": False, "error": f"unsupported Hermes tool: {call.name}"}
+
+        text = str(call.arguments.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "hermes_run_task requires text"}
+        profile = str(call.arguments.get("profile") or session.profile or "").strip() or None
+        chat_session_id = (
+            str(call.arguments.get("session_id") or session.chat_session_id or "").strip()
+            or None
+        )
+        final_parts: list[str] = []
+        error_message: str | None = None
+        session.cancel_requested = False
+        session.hermes_run_status = "running"
+        self._reset_hermes_progress_state(session)
+        progress_task = asyncio.create_task(self._send_hermes_run_progress(ws, session))
+        try:
+            async for hermes_event in self.hermes.stream_task(
+                HermesTaskRequest(
+                    text=text[:5000],
+                    profile=profile,
+                    session_id=chat_session_id,
+                    bearer_token=session.bearer_token,
+                    interface_context=interface_context,
+                )
+            ):
+                if hermes_event.get("type") == "hermes.session.bound":
+                    bound = str(hermes_event.get("session_id") or "").strip()
+                    if bound:
+                        session.chat_session_id = bound
+                run_id = str(hermes_event.get("run_id") or "").strip()
+                if run_id:
+                    session.hermes_run_id = run_id
+                if hermes_event.get("type") == "hermes.run.started":
+                    session.hermes_run_status = "running"
+                elif hermes_event.get("type") == "hermes.run.completed":
+                    session.hermes_run_status = "completed"
+                elif hermes_event.get("type") == "hermes.confirmation.requested":
+                    confirmation_id = str(hermes_event.get("confirmation_id") or "").strip()
+                    session.pending_confirmation_id = confirmation_id or session.pending_confirmation_id
+                    session.hermes_run_status = "waiting_for_confirmation"
+                if hermes_event.get("type") == SERVER_EVT_RESPONSE_DELTA:
+                    final_parts.append(str(hermes_event.get("delta") or ""))
+                    if not session.hermes_answer_started:
+                        session.hermes_answer_started = True
+                        session.hermes_last_tool_message = "Hermes is drafting a response."
+                        await self._send(
+                            ws,
+                            session,
+                            {
+                                "type": SERVER_EVT_HERMES_RUN_PROGRESS,
+                                "source": "hermes",
+                                "session_id": session.chat_session_id,
+                                "chat_session_id": session.chat_session_id,
+                                "run_id": session.hermes_run_id,
+                                "status": session.hermes_run_status,
+                                "message": session.hermes_last_tool_message,
+                                "status_key": "run:drafting",
+                                "should_speak": False,
+                                "active_tool_name": session.hermes_active_tool_name,
+                                "last_tool_name": session.hermes_last_tool_name,
+                                "completed_tool_count": session.hermes_completed_tool_count,
+                            },
+                        )
+                elif hermes_event.get("type") == "voice.response.turn_completed":
+                    content = str(hermes_event.get("content") or "")
+                    if content and not final_parts:
+                        final_parts.append(content)
+                elif hermes_event.get("type") == "voice.error":
+                    error_message = str(hermes_event.get("message") or "Hermes error")
+                for event_to_send in self._prepare_hermes_progress_events(session, hermes_event):
+                    if not _should_forward_hermes_progress_event(event_to_send):
+                        continue
+                    await self._send(ws, session, _event_with_hermes_source(event_to_send))
+                if session.cancel_requested:
+                    session.hermes_run_status = "cancelled"
+                    return {
+                        "ok": False,
+                        "cancelled": True,
+                        "run_id": session.hermes_run_id,
+                        "session_id": session.chat_session_id,
+                        "interface": interface_context,
+                    }
+        finally:
+            progress_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await progress_task
+
+        if error_message:
+            session.hermes_run_status = "error"
+            return {
+                "ok": False,
+                "error": error_message,
+                "run_id": session.hermes_run_id,
+                "session_id": session.chat_session_id,
+                "interface": interface_context,
+            }
+        final_text = "".join(final_parts).strip()
+        speech_safe_text = _provider_safe_answer_for_speech(final_text)
+        if session.hermes_run_status == "running":
+            session.hermes_run_status = "completed"
+        return {
+            "ok": True,
+            "status": "completed",
+            "run_id": session.hermes_run_id,
+            "session_id": session.chat_session_id,
+            "profile": profile,
+            "text": speech_safe_text,
+            "answer": speech_safe_text,
+            "summary": speech_safe_text[:1200],
+            "raw_text_omitted": speech_safe_text != final_text[: len(speech_safe_text)],
+            "tool_count": session.hermes_completed_tool_count,
+            "last_tool_name": session.hermes_last_tool_name,
+            "interface": interface_context,
+            "spoken_response": "provider_generated_after_hermes_result",
+            "provider_instruction": (
+                "Use the Hermes text/answer fields as the authoritative context "
+                "for the spoken reply. Summarize naturally; do not say you lack context. "
+                "Do not read raw JSON, logs, tables, IDs, or command output verbatim."
+            ),
+        }
+
+    def _reset_hermes_progress_state(self, session: RealtimeAgentSession) -> None:
+        session.hermes_active_tool_call_id = None
+        session.hermes_active_tool_name = None
+        session.hermes_last_tool_name = None
+        session.hermes_last_tool_status = None
+        session.hermes_last_tool_message = None
+        session.hermes_answer_started = False
+        session.hermes_completed_tool_count = 0
+        session.hermes_seen_tool_call_ids.clear()
+        session.hermes_last_spoken_progress_at = 0.0
+        session.hermes_last_spoken_progress_key = None
+
+    def _prepare_hermes_progress_events(
+        self,
+        session: RealtimeAgentSession,
+        hermes_event: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        event = dict(hermes_event)
+        event_type = str(event.get("type") or "").strip()
+        if "chat_session_id" not in event and session.chat_session_id:
+            event["chat_session_id"] = session.chat_session_id
+        if "run_id" not in event and session.hermes_run_id:
+            event["run_id"] = session.hermes_run_id
+
+        if event_type in {"hermes.tool.started", "hermes.tool.delta"}:
+            call_id = _tool_call_key(event)
+            tool_name = _tool_name_from_event(event)
+            is_thinking_delta = event_type == "hermes.tool.delta" and (
+                not tool_name or tool_name in {"hermes", "_thinking", "thinking"}
+            )
+            synthetic: list[dict[str, Any]] = []
+            if (
+                event_type == "hermes.tool.delta"
+                and call_id
+                and not is_thinking_delta
+                and call_id not in session.hermes_seen_tool_call_ids
+            ):
+                synthetic.append(
+                    {
+                        "type": "hermes.tool.started",
+                        "session_id": event.get("session_id") or session.chat_session_id,
+                        "chat_session_id": event.get("chat_session_id") or session.chat_session_id,
+                        "run_id": event.get("run_id") or session.hermes_run_id,
+                        "tool_call_id": call_id,
+                        "tool_name": tool_name or "hermes",
+                        "arguments": event.get("arguments") or event.get("args"),
+                        "synthetic": True,
+                        "message": _tool_status_line(tool_name, started=True),
+                    }
+                )
+            if call_id and not is_thinking_delta:
+                session.hermes_seen_tool_call_ids.add(call_id)
+                session.hermes_active_tool_call_id = call_id
+            if tool_name and not is_thinking_delta:
+                session.hermes_active_tool_name = tool_name
+                session.hermes_last_tool_name = tool_name
+                session.hermes_last_tool_status = "running"
+            delta = str(event.get("delta") or event.get("message") or "").strip()
+            if delta:
+                session.hermes_last_tool_message = _compact_status_text(delta)
+                event.setdefault("message", session.hermes_last_tool_message)
+            return [*synthetic, event]
+
+        if event_type in {"hermes.tool.completed", "hermes.tool.failed"}:
+            call_id = _tool_call_key(event)
+            tool_name = _tool_name_from_event(event)
+            synthetic: list[dict[str, Any]] = []
+            if call_id and call_id not in session.hermes_seen_tool_call_ids:
+                synthetic_started = {
+                    "type": "hermes.tool.started",
+                    "session_id": event.get("session_id") or session.chat_session_id,
+                    "chat_session_id": event.get("chat_session_id") or session.chat_session_id,
+                    "run_id": event.get("run_id") or session.hermes_run_id,
+                    "tool_call_id": call_id,
+                    "tool_name": tool_name or "hermes",
+                    "arguments": event.get("arguments") or event.get("args"),
+                    "synthetic": True,
+                    "message": _tool_status_line(tool_name, started=True),
+                }
+                synthetic.append(synthetic_started)
+                session.hermes_seen_tool_call_ids.add(call_id)
+            if event_type == "hermes.tool.completed":
+                session.hermes_completed_tool_count += 1
+                session.hermes_last_tool_status = "completed"
+            else:
+                session.hermes_last_tool_status = "failed"
+            if tool_name:
+                session.hermes_last_tool_name = tool_name
+            if call_id and call_id == session.hermes_active_tool_call_id:
+                session.hermes_active_tool_call_id = None
+                session.hermes_active_tool_name = None
+            elif tool_name and tool_name == session.hermes_active_tool_name:
+                session.hermes_active_tool_name = None
+            event.setdefault("message", _tool_status_line(tool_name, started=False))
+            return [*synthetic, event]
+
+        return [event]
+
+    async def _send_hermes_run_progress(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+    ) -> None:
+        started_at = time.time()
+        while True:
+            await asyncio.sleep(_HERMES_PROGRESS_INTERVAL_SECONDS)
+            now = time.time()
+            status = session.hermes_run_status
+            if status not in {"running", "waiting_for_confirmation"}:
+                return
+            elapsed_seconds = now - started_at
+            message, status_key = _hermes_progress_status(session)
+            speakable_progress = status_key != "run:drafting" and not (
+                status_key.startswith("progress:")
+                and "drafting a response" in status_key.lower()
+            )
+            should_speak = (
+                speakable_progress
+                and elapsed_seconds >= _HERMES_SPOKEN_PROGRESS_AFTER_SECONDS
+                and session.floor.can_speak(FloorMouth.ANDROID_FILLER)
+                and (
+                    session.hermes_last_spoken_progress_key != status_key
+                    or now - session.hermes_last_spoken_progress_at
+                    >= _HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS
+                )
+            )
+            if should_speak:
+                session.hermes_last_spoken_progress_at = now
+                session.hermes_last_spoken_progress_key = status_key
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_HERMES_RUN_PROGRESS,
+                    "source": "hermes",
+                    "session_id": session.chat_session_id,
+                    "chat_session_id": session.chat_session_id,
+                    "run_id": session.hermes_run_id,
+                    "status": status,
+                    "message": message,
+                    "status_key": status_key,
+                    "should_speak": should_speak,
+                    "floor": session.floor.state_label(),
+                    "tier": session.hermes_run_tier,
+                    "active_tool_name": session.hermes_active_tool_name,
+                    "last_tool_name": session.hermes_last_tool_name,
+                    "completed_tool_count": session.hermes_completed_tool_count,
+                    "elapsed_ms": int(elapsed_seconds * 1000),
+                },
+            )
+
+    def _cancel_active_hermes(self, session: RealtimeAgentSession) -> None:
+        session.cancel_requested = True
+        session.hermes_run_status = "cancelled"
+        task = session.hermes_task
+        if task is None or task.done():
+            return
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task is not current:
+            task.cancel()
 
     @property
     def enabled(self) -> bool:
@@ -299,7 +2626,10 @@ class RealtimeAgentHandler:
 
     def config_payload(self, profile: str | None = None) -> dict[str, Any]:
         settings = realtime_voice_settings(self.config, profile)
-        providers = [info.to_dict() for info in self.registry.provider_infos()]
+        providers = [
+            self._realtime_agent_provider_payload(info.to_dict())
+            for info in self.registry.provider_infos()
+        ]
         return {
             "success": True,
             "enabled": bool(settings["enabled"]),
@@ -314,14 +2644,24 @@ class RealtimeAgentHandler:
             "default_voice": settings["voice"],
             "sample_rate": settings["sample_rate"] or DEFAULT_SAMPLE_RATE,
             "providers": providers,
-            "auth": _xai_auth_status(self.config),
+            "auth": _realtime_provider_auth_status(self.config),
             "profile": settings["profile"],
             "config_scope": settings["config_scope"],
             "fallback_to_global": settings["fallback_to_global"],
             "tool_surface": list(_TOOL_SURFACE),
+            "promotion": {
+                "enabled": bool(settings["promotion_enabled"]),
+                "promote_after_ms": int(settings["promote_after_ms"]),
+                "background_default_mode": settings["background_default_mode"],
+                "spoken_handoff": bool(settings["spoken_handoff"]),
+                "progress_spoken_after_ms": int(settings["progress_spoken_after_ms"]),
+                "progress_repeat_ms": int(settings["progress_repeat_ms"]),
+                "result_delivery": settings["result_delivery"],
+                "max_background_runs": int(settings["max_background_runs"]),
+            },
             "limits": [
                 "Hermes owns tools, confirmations, memory, and transcript state.",
-                "Provider receives only broker-approved response text and audio rendering context.",
+                "Native realtime providers receive relay-brokered mic PCM and only the approved Hermes function surface.",
                 "If provider audio fails, switch Voice engine back to Hermes chat + voice output.",
             ],
         }
@@ -333,13 +2673,14 @@ class RealtimeAgentHandler:
     ) -> dict[str, Any]:
         info = self._validate_realtime_provider(provider_id)
         settings = realtime_voice_settings(self.config, profile)
-        provider = info.to_dict()
+        provider = self._realtime_agent_provider_payload(info.to_dict())
         dynamic = await asyncio.to_thread(
             fetch_realtime_provider_options,
             provider_id,
             xai_auth=_xai_option_auth(self.config),
         )
         merge_provider_options(provider, dynamic.get("provider", {}))
+        provider = self._realtime_agent_provider_payload(provider)
         return {
             "success": True,
             "mode": "realtime_agent",
@@ -358,6 +2699,17 @@ class RealtimeAgentHandler:
             "tool_surface": list(_TOOL_SURFACE),
         }
 
+    def _realtime_agent_provider_payload(self, provider: dict[str, Any]) -> dict[str, Any]:
+        provider = dict(provider)
+        provider_id = str(provider.get("id") or "")
+        native = provider_id in self.native_providers
+        provider["supports_realtime_agent_native"] = native
+        if native:
+            provider["supports_realtime"] = True
+            provider["supports_speech_to_speech"] = True
+            provider["supports_tool_use"] = True
+        return provider
+
     async def _handle_input_audio(
         self,
         ws: web.WebSocketResponse,
@@ -365,27 +2717,42 @@ class RealtimeAgentHandler:
         payload: dict[str, Any],
         previous_bytes: int,
     ) -> tuple[int, int]:
-        audio64 = str(payload.get("audio_base64", "") or "").strip()
-        if not audio64:
-            await self._send_error(ws, session, "input_audio.append missing audio_base64")
+        decoded = await self._decode_input_audio_payload(ws, session, payload)
+        if decoded is None:
             return 0, DEFAULT_SAMPLE_RATE
-        try:
-            chunk = base64.b64decode(audio64)
-        except Exception:
-            await self._send_error(ws, session, "input_audio.append audio_base64 is invalid")
-            return 0, DEFAULT_SAMPLE_RATE
-        sample_rate = _int_option(payload, "sample_rate", DEFAULT_SAMPLE_RATE)
+        chunk, sample_rate = decoded
+        chunk_id = _int_option(payload, "chunk_id", session.input_chunk_seq + 1)
+        session.input_chunk_seq = max(session.input_chunk_seq, chunk_id)
         await self._send(
             ws,
             session,
             {
-                "type": "voice.input_audio.received",
+                "type": SERVER_EVT_INPUT_AUDIO_RECEIVED,
+                "input_chunk_id": chunk_id,
                 "byte_count": len(chunk),
                 "total_bytes": previous_bytes + len(chunk),
                 "sample_rate": sample_rate,
             },
         )
         return len(chunk), sample_rate
+
+    async def _decode_input_audio_payload(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        payload: dict[str, Any],
+    ) -> tuple[bytes, int] | None:
+        audio64 = str(payload.get("audio_base64", "") or "").strip()
+        if not audio64:
+            await self._send_error(ws, session, "input_audio.append missing audio_base64")
+            return None
+        try:
+            chunk = base64.b64decode(audio64)
+        except Exception:
+            await self._send_error(ws, session, "input_audio.append audio_base64 is invalid")
+            return None
+        sample_rate = _int_option(payload, "sample_rate", DEFAULT_SAMPLE_RATE)
+        return chunk, sample_rate
 
     async def _run_agent(
         self,
@@ -400,7 +2767,7 @@ class RealtimeAgentHandler:
             await self._send_error(
                 ws,
                 session,
-                "realtime agent mode requires client transcript text for this MVP",
+                "render-after-Hermes compatibility mode requires client transcript text",
             )
             return
         text = text[:5000]
@@ -436,6 +2803,7 @@ class RealtimeAgentHandler:
                 profile=session.profile,
                 session_id=session.chat_session_id,
                 bearer_token=session.bearer_token,
+                interface_context=_interface_context(session),
             )
         ):
             if event.get("type") == "hermes.session.bound":
@@ -467,11 +2835,16 @@ class RealtimeAgentHandler:
         session: RealtimeAgentSession,
         text: str,
         payload: dict[str, Any],
+        *,
+        response_id: str | None = None,
     ) -> None:
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
         output_path = session.event_log_path.with_suffix(".wav")
         provider_options = self._provider_options(session, payload)
+        # Relay TTS is a primary mouth; take the floor for the whole render so it
+        # cannot overlap provider audio or filler (ADR 33).
+        session.floor.acquire(FloorMouth.RELAY_TTS)
 
         def audio_sink(chunk: bytes, meta: dict[str, Any]) -> None:
             peak, rms = _pcm_levels(chunk)
@@ -487,6 +2860,7 @@ class RealtimeAgentHandler:
                     "label": meta.get("label"),
                     "peak_level": peak,
                     "rms_level": rms,
+                    "response_id": response_id,
                 },
             )
 
@@ -517,9 +2891,11 @@ class RealtimeAgentHandler:
                 await self._send(ws, session, event)
             response = await task
         except (ProviderUnavailable, ProviderRunError) as exc:
+            session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(ws, session, str(exc), provider=session.provider)
             return
         except Exception as exc:
+            session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(
                 ws,
                 session,
@@ -528,7 +2904,14 @@ class RealtimeAgentHandler:
             )
             return
 
-        await self._send(ws, session, {"type": "voice.output_audio.done"})
+        await self._send(
+            ws,
+            session,
+            {
+                "type": "voice.output_audio.done",
+                "response_id": response_id,
+            },
+        )
         await self._send(
             ws,
             session,
@@ -541,10 +2924,12 @@ class RealtimeAgentHandler:
                 "event_log_path": str(session.event_log_path),
                 "chat_session_id": session.chat_session_id,
                 "final_text": text,
+                "response_id": response_id,
                 "metrics": response.metrics.to_dict(),
                 "metadata": _safe_metadata(response.metadata),
             },
         )
+        session.floor.release(FloorMouth.RELAY_TTS)
 
     def _provider_options(
         self,
@@ -570,19 +2955,43 @@ class RealtimeAgentHandler:
             self.registry.info(provider)
         except KeyError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
+        if provider == "stub" or provider in self.native_providers:
+            return
+        raise web.HTTPBadRequest(
+            text=f"{provider} is not a native realtime-agent provider"
+        )
 
     def _validate_realtime_provider(self, provider: str):
         try:
             info = self.registry.info(provider)
         except KeyError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
+        if provider == "stub" or provider in self.native_providers:
+            return info
         if not info.supports_realtime and provider != "stub":
             raise web.HTTPBadRequest(text=f"{provider} is not a realtime voice provider")
-        return info
+        raise web.HTTPBadRequest(
+            text=f"{provider} is not a native realtime-agent provider"
+        )
 
     def _validate_config_updates(self, payload: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, Any] = {}
-        allowed = {"enabled", "provider", "model", "voice", "sample_rate"}
+        allowed = {
+            "enabled",
+            "provider",
+            "model",
+            "voice",
+            "sample_rate",
+            # ADR 33 promotion fields.
+            "promotion_enabled",
+            "promote_after_ms",
+            "background_default_mode",
+            "spoken_handoff",
+            "progress_spoken_after_ms",
+            "progress_repeat_ms",
+            "result_delivery",
+            "max_background_runs",
+        }
         unsupported = sorted(set(payload) - allowed)
         if unsupported:
             raise web.HTTPBadRequest(
@@ -606,6 +3015,43 @@ class RealtimeAgentHandler:
             if sample_rate is None or sample_rate < 8_000 or sample_rate > 96_000:
                 raise web.HTTPBadRequest(text="sample_rate must be between 8000 and 96000")
             updates["sample_rate"] = sample_rate
+        if "promotion_enabled" in payload:
+            value = _bool_value(payload["promotion_enabled"])
+            if value is None:
+                raise web.HTTPBadRequest(text="promotion_enabled must be a boolean")
+            updates["promotion_enabled"] = value
+        if "spoken_handoff" in payload:
+            value = _bool_value(payload["spoken_handoff"])
+            if value is None:
+                raise web.HTTPBadRequest(text="spoken_handoff must be a boolean")
+            updates["spoken_handoff"] = value
+        for ms_field, lo, hi in (
+            ("promote_after_ms", 0, 120_000),
+            ("progress_spoken_after_ms", 0, 600_000),
+            ("progress_repeat_ms", 0, 600_000),
+        ):
+            if ms_field in payload:
+                value = _int_value(payload[ms_field])
+                if value is None or value < lo or value > hi:
+                    raise web.HTTPBadRequest(text=f"{ms_field} must be between {lo} and {hi}")
+                updates[ms_field] = value
+        if "max_background_runs" in payload:
+            value = _int_value(payload["max_background_runs"])
+            if value is None or value < 1 or value > 4:
+                raise web.HTTPBadRequest(text="max_background_runs must be between 1 and 4")
+            updates["max_background_runs"] = value
+        if "background_default_mode" in payload:
+            mode = _bounded_string(payload["background_default_mode"], "background_default_mode", max_len=20)
+            if mode not in ("promote", "foreground"):
+                raise web.HTTPBadRequest(text="background_default_mode must be 'promote' or 'foreground'")
+            updates["background_default_mode"] = mode
+        if "result_delivery" in payload:
+            delivery = _bounded_string(payload["result_delivery"], "result_delivery", max_len=24)
+            if delivery not in ("speak_when_idle", "notify_then_speak", "visual_only"):
+                raise web.HTTPBadRequest(
+                    text="result_delivery must be speak_when_idle, notify_then_speak, or visual_only"
+                )
+            updates["result_delivery"] = delivery
         if not updates:
             raise web.HTTPBadRequest(text="no realtime agent config fields supplied")
         return updates
@@ -628,22 +3074,61 @@ class RealtimeAgentHandler:
             "event_log_path": str(session.event_log_path),
             "mode": "realtime_agent",
             "experimental": True,
+            "resume_supported": True,
+            "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
+            "last_event_id": session.event_seq,
+            "last_audio_event_id": session.audio_seq,
+            "last_input_chunk_id": session.input_chunk_seq,
             "profile": session.profile,
             "chat_session_id": session.chat_session_id,
             "config_scope": session.config_scope,
             "config_path": str(session.config_path) if session.config_path else None,
             "tool_surface": list(_TOOL_SURFACE),
+            "interface": _interface_context(session),
         }
 
     async def _send(
         self,
-        ws: web.WebSocketResponse,
+        ws: web.WebSocketResponse | None,
         session: RealtimeAgentSession,
         event: dict[str, Any],
+        *,
+        record: bool = True,
     ) -> None:
+        if "event_id" not in event:
+            session.event_seq += 1
+            event["event_id"] = session.event_seq
+        if event.get("type") == SERVER_EVT_OUTPUT_AUDIO_DELTA and "audio_event_id" not in event:
+            session.audio_seq += 1
+            event["audio_event_id"] = session.audio_seq
         event.setdefault("at_ms", round((time.time() - session.created_at) * 1000, 3))
+        if record:
+            snapshot = dict(event)
+            session.event_ring.append(snapshot)
+            if "audio_event_id" in snapshot:
+                session.audio_ring.append(snapshot)
         self._log(session, str(event["type"]), event)
-        await ws.send_json(event)
+        target = session.attached_ws
+        await self._send_json_best_effort(target, session, event)
+
+    async def _send_json_best_effort(
+        self,
+        target: web.WebSocketResponse | None,
+        session: RealtimeAgentSession,
+        event: dict[str, Any],
+    ) -> bool:
+        if target is None or target.closed:
+            return False
+        try:
+            await target.send_json(event)
+            return True
+        except (OSError, RuntimeError) as exc:
+            logger.debug(
+                "Realtime-agent send skipped for detached session %s: %s",
+                session.session_id,
+                exc,
+            )
+            return False
 
     async def _send_error(
         self,
@@ -671,6 +3156,638 @@ class RealtimeAgentHandler:
             fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
 
 
+def _native_instructions(session: RealtimeAgentSession) -> str:
+    profile = session.profile or "default"
+    interface_context = _interface_context(session)
+    engine_label = interface_context["engine_label"]
+    stable_label = interface_context["stable_engine_label"]
+    current_date = interface_context["current_date"]
+    current_time = interface_context["current_time"]
+    current_timezone = interface_context["current_timezone"]
+    context_block = _provider_context_block(session.context_messages)
+    profile_block = _profile_prompt_block(session.profile_prompt_context)
+    return (
+        "You are the provider-native speech loop for Hermes Relay. Keep replies "
+        "brief and conversational. Active interface: "
+        f"{engine_label} ({interface_context['engine']}) through Android Voice Mode, "
+        f"provider={interface_context['provider']}, model={interface_context['model']}, "
+        f"voice={interface_context['voice']}. This is not the stable {stable_label} "
+        f"path. Current relay date/time: {current_date} {current_time} "
+        f"{current_timezone}. If the user asks for today's date or current time, "
+        "answer from this relay-local context; do not infer it from model "
+        "training data. "
+        "If the user asks which mode, path, or interface is active, answer "
+        "plainly from this context and explain that the active realtime provider "
+        "owns speech recognition and speech output while Hermes remains the "
+        "authority for tools, "
+        "memory, profile context, confirmations, and persistence. For any request "
+        "that needs memory, profile context, app/desktop/phone tools, confirmations, "
+        "durable chat state, research, checks, current facts, news, external data, "
+        "or any information not present in this prompt/session context, call "
+        "hermes_run_task instead of answering directly. If Hermes cannot verify "
+        "the requested information, say that briefly instead of guessing. "
+        "Provider-native realtime sessions are ephemeral; Hermes is the durable "
+        "conversation memory. The relay may seed recent normal chat and realtime "
+        "voice turns into this provider session. Use that seeded context for "
+        "follow-up references such as 'this', 'that', 'it', 'the previous result', "
+        "or 'that integration' when it is sufficient. If the needed context is "
+        "missing, stale, tool-derived, or requires verification, call hermes_run_task "
+        "before answering. Do not say you lack context before a Hermes call. You "
+        "may speak one brief acknowledgement such as 'I'll check Hermes' or "
+        "'I'll check that' before the tool call, then call hermes_run_task "
+        "immediately. Do not give a substantive answer until Hermes returns. "
+        "The relay will provide restrained status while Hermes runs. "
+        "Route through Hermes for latest/recent/versioned data, device/desktop/app "
+        "state, personal/session/project context, side effects, high-stakes or "
+        "precision-sensitive answers, explicit check/verify/look-up requests, and "
+        "media, files, screenshots, attachments, or artifacts. Answer directly only "
+        "for small talk, timeless facts, basic reasoning/math, wording help, or "
+        "questions fully contained in the current utterance/session context. "
+        "When Hermes returns tool output, speak a natural concise summary; do not "
+        "claim missing context if the function output contains a result. If a "
+        "message says Hermes has already handled the request, treat it as the "
+        "final answer step: do not call tools, do not say you will check, and "
+        "summarize the provided Hermes result directly. Format speech for "
+        "listening: say dates, "
+        "times, currency, percentages, versions, measurements, and counts in "
+        "natural spoken form. Summarize long IDs, hashes, UUIDs, URLs, file paths, "
+        "JSON, logs, stack traces, tables, and dense numeric strings instead of "
+        "reading them character by character; include exact raw values only when "
+        "short and important. If raw values are not useful to hear, say a brief "
+        "label such as 'plus a few IDs and raw values' and summarize the meaning. "
+        f"{context_block}"
+        f"{profile_block}"
+        f"Active profile: {profile}. Do not use non-Hermes web, search, social, "
+        "MCP, or built-in provider tools."
+    )
+
+
+def _event_with_hermes_source(event: dict[str, Any]) -> dict[str, Any]:
+    event_type = str(event.get("type") or "")
+    if event_type.startswith("hermes.") or event_type == SERVER_EVT_RESPONSE_DELTA:
+        out = dict(event)
+        out.setdefault("source", "hermes")
+        return out
+    return event
+
+
+def _tool_call_from_provider_event(event: ProviderEvent) -> ToolCallEvent:
+    call = event.payload.get("call")
+    if isinstance(call, ToolCallEvent):
+        return call
+    return ToolCallEvent(
+        call_id=str(event.payload.get("call_id") or ""),
+        name=str(event.payload.get("name") or ""),
+        arguments=dict(event.payload.get("arguments") or {}),
+    )
+
+
+def _should_forward_hermes_progress_event(event: dict[str, Any]) -> bool:
+    event_type = str(event.get("type") or "").strip()
+    return event_type not in {SERVER_EVT_RESPONSE_DELTA, "voice.response.turn_completed"}
+
+
+def _parse_context_messages(value: Any) -> tuple[dict[str, str], ...]:
+    if not isinstance(value, list):
+        return ()
+    messages: list[dict[str, str]] = []
+    for item in value[-20:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant", "system"}:
+            continue
+        content = _compact_context_text(str(item.get("content") or ""))
+        if not content:
+            continue
+        source = _compact_context_text(str(item.get("source") or ""))[:80]
+        message = {"role": role, "content": content}
+        if source:
+            message["source"] = source
+        messages.append(message)
+    return tuple(messages[-14:])
+
+
+def _provider_context_block(messages: tuple[dict[str, str], ...]) -> str:
+    if not messages:
+        return ""
+    lines = [
+        "Recent shared chat context is seeded below. Treat it as prior turns "
+        "from the same Hermes conversation, oldest to newest:"
+    ]
+    for message in messages:
+        role = message.get("role", "user").capitalize()
+        source = message.get("source")
+        source_part = f" ({source})" if source else ""
+        lines.append(f"- {role}{source_part}: {message.get('content', '')}")
+    lines.append("End recent shared chat context. ")
+    return "\n".join(lines) + "\n"
+
+
+def _profile_prompt_context(config: RelayConfig, profile: str | None) -> dict[str, Any]:
+    profile_name = (profile or "default").strip() or "default"
+    profile_entry = _profile_entry(config, profile_name)
+    if profile_entry is None and profile_name != "default":
+        profile_entry = _profile_entry(config, "default")
+
+    soul = ""
+    description = ""
+    if profile_entry:
+        soul = _compact_profile_prompt_text(
+            str(profile_entry.get("system_message") or ""),
+            _PROFILE_SOUL_PROMPT_MAX_CHARS,
+        )
+        description = _compact_context_text(str(profile_entry.get("description") or ""))
+
+    memories = _profile_memory_snippets(config, profile_name)
+    return {
+        "profile": profile_name,
+        "description": description,
+        "soul": soul,
+        "memories": memories,
+    }
+
+
+def _profile_entry(config: RelayConfig, profile: str) -> dict[str, Any] | None:
+    for entry in config.profiles:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("name") or "") == profile:
+            return entry
+    return None
+
+
+def _profile_memory_snippets(config: RelayConfig, profile: str) -> list[dict[str, str]]:
+    home = _profile_home_for_prompt(config, profile)
+    if home is None:
+        return []
+    memories_dir = home / "memories"
+    if not memories_dir.is_dir():
+        return []
+    try:
+        md_files = [
+            path
+            for path in memories_dir.iterdir()
+            if path.is_file() and path.suffix == ".md"
+        ]
+    except OSError:
+        return []
+    priority = {"MEMORY.md": 0, "USER.md": 1}
+    md_files.sort(key=lambda path: (priority.get(path.name, 2), path.name.lower()))
+
+    entries: list[dict[str, str]] = []
+    total_chars = 0
+    for path in md_files[:_PROFILE_MEMORY_PROMPT_MAX_FILES]:
+        remaining = _PROFILE_MEMORY_PROMPT_MAX_CHARS - total_chars
+        if remaining <= 0:
+            break
+        limit = min(_PROFILE_MEMORY_FILE_PROMPT_MAX_CHARS, remaining)
+        try:
+            text = path.read_text(encoding="utf-8")[: limit + 1]
+        except Exception:
+            logger.warning(
+                "Realtime profile memory prompt read failed for %s",
+                path,
+                exc_info=True,
+            )
+            continue
+        content = _compact_profile_prompt_text(text, limit)
+        if not content:
+            continue
+        total_chars += len(content)
+        entries.append({"filename": path.name, "content": content})
+    return entries
+
+
+def _profile_home_for_prompt(config: RelayConfig, profile: str) -> Path | None:
+    root = Path(config.hermes_config_path).expanduser().parent
+    profile_name = (profile or "default").strip() or "default"
+    if profile_name == "default":
+        return root if root.exists() else None
+    if profile_name in {".", ".."} or "/" in profile_name or "\\" in profile_name:
+        return None
+    home = root / "profiles" / profile_name
+    return home if home.is_dir() else None
+
+
+def _profile_prompt_block(context: dict[str, Any]) -> str:
+    if not context:
+        return ""
+    soul = str(context.get("soul") or "").strip()
+    memories = context.get("memories")
+    description = str(context.get("description") or "").strip()
+    if not soul and not description and not memories:
+        return ""
+
+    profile = str(context.get("profile") or "default")
+    lines = [
+        "Hermes profile identity context follows. Use it for voice, identity, "
+        "style, and stable background only; call Hermes for current facts, "
+        "tool work, confirmations, and anything requiring durable authority.",
+        f"Profile: {profile}.",
+    ]
+    if description:
+        lines.append(f"Description: {description}")
+    if soul:
+        lines.append("SOUL.md:")
+        lines.append(soul)
+    if isinstance(memories, list) and memories:
+        lines.append("Profile memory snippets:")
+        for item in memories:
+            if not isinstance(item, dict):
+                continue
+            filename = str(item.get("filename") or "memory.md")
+            content = str(item.get("content") or "").strip()
+            if content:
+                lines.append(f"[{filename}]")
+                lines.append(content)
+    lines.append("End Hermes profile identity context.")
+    return "\n".join(lines) + "\n"
+
+
+def _compact_profile_prompt_text(value: str, max_chars: int) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def _compact_context_text(value: str) -> str:
+    text = " ".join(value.strip().split())
+    if len(text) <= 1500:
+        return text
+    return text[:1497].rstrip() + "..."
+
+
+def _tool_call_key(event: dict[str, Any]) -> str:
+    for key in ("tool_call_id", "call_id", "id"):
+        value = event.get(key)
+        if value:
+            return str(value).strip()
+    tool_name = _tool_name_from_event(event)
+    return tool_name or ""
+
+
+def _tool_name_from_event(event: dict[str, Any]) -> str:
+    for key in ("tool_name", "name", "tool"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            nested = value.get("name") or value.get("tool_name")
+            if nested:
+                return str(nested).strip()
+    return ""
+
+
+def _compact_status_text(value: str) -> str:
+    text = " ".join(value.strip().split())
+    if len(text) <= 120:
+        return text
+    return text[:117].rstrip() + "..."
+
+
+def _provider_safe_answer_for_speech(value: str, *, max_chars: int = 1800) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    compact = " ".join(text.split())
+    parsed = _try_parse_json(text)
+    if isinstance(parsed, dict):
+        summarized = _summarize_tool_payload_for_speech(parsed)
+        if summarized:
+            return summarized[:max_chars].rstrip()
+    if isinstance(parsed, list):
+        return f"Hermes returned {len(parsed)} structured result items; summarize the outcome without reading raw JSON."
+    if len(compact) <= max_chars and not _looks_like_raw_machine_output(compact):
+        return compact
+    excerpt = compact[: max_chars - 3].rstrip()
+    return f"{excerpt}..."
+
+
+def _try_parse_json(value: str) -> Any | None:
+    stripped = value.strip()
+    if not stripped or stripped[0] not in "{[":
+        return None
+    try:
+        return json.loads(stripped)
+    except Exception:
+        return None
+
+
+def _summarize_tool_payload_for_speech(payload: dict[str, Any]) -> str | None:
+    name = str(payload.get("name") or payload.get("tool_name") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    if name and description:
+        return f"Hermes returned the {name} result: {_compact_status_text(description)}"
+
+    output = payload.get("output")
+    if isinstance(output, str) and output.strip():
+        compact_output = " ".join(output.split())
+        if len(compact_output) <= 700:
+            return f"Hermes returned command output: {compact_output}"
+        return (
+            "Hermes returned command output. Key excerpt: "
+            f"{compact_output[:700].rstrip()}..."
+        )
+
+    error = payload.get("error") or payload.get("message")
+    if isinstance(error, str) and error.strip():
+        return f"Hermes returned: {_compact_status_text(error)}"
+
+    keys = [str(key) for key in payload.keys()][:6]
+    if keys:
+        return (
+            "Hermes returned a structured tool result with fields "
+            f"{', '.join(keys)}; summarize the outcome without reading raw JSON."
+        )
+    return None
+
+
+def _looks_like_raw_machine_output(value: str) -> bool:
+    raw_markers = ("{", "}", "[", "]", "===", "Traceback", "Exception:", "HTTP ", "\\n")
+    if sum(1 for marker in raw_markers if marker in value) >= 2:
+        return True
+    if value.count(":") >= 8 and value.count(",") >= 8:
+        return True
+    return False
+
+
+def _spoken_tool_label(tool_name: str | None) -> str:
+    normalized = (tool_name or "").strip().lower()
+    if not normalized:
+        return "Hermes"
+    if "desktop" in normalized:
+        return "desktop"
+    if normalized.startswith("android") or "phone" in normalized:
+        return "phone"
+    if "search" in normalized:
+        return "search"
+    if "browser" in normalized or "web" in normalized:
+        return "web"
+    if "terminal" in normalized or "shell" in normalized or normalized == "bash":
+        return "terminal"
+    if "skill" in normalized:
+        return "Hermes skill"
+    if "memory" in normalized:
+        return "memory"
+    if "file" in normalized or "read" in normalized or "write" in normalized:
+        return "files"
+    return normalized.replace("_", " ")
+
+
+def _tool_status_line(tool_name: str | None, *, started: bool) -> str:
+    label = _spoken_tool_label(tool_name)
+    if started:
+        if label == "terminal":
+            return "Running command."
+        if label == "desktop":
+            return "Searching desktop."
+        if label == "phone":
+            return "Checking phone."
+        if label == "web" or label == "search":
+            return "Searching."
+        if label == "Hermes skill":
+            return "Checking Hermes skill."
+        return f"Using {label}."
+    if label == "terminal":
+        return "Command finished."
+    if label == "desktop":
+        return "Desktop check finished."
+    if label == "phone":
+        return "Phone check finished."
+    if label == "Hermes skill":
+        return "Hermes skill loaded."
+    return f"Finished {label}."
+
+
+def _hermes_progress_status(session: RealtimeAgentSession) -> tuple[str, str]:
+    if session.hermes_run_status == "waiting_for_confirmation":
+        return "Waiting for confirmation.", "confirmation"
+    if session.hermes_active_tool_name:
+        line = _tool_status_line(session.hermes_active_tool_name, started=True)
+        return line, f"tool:{session.hermes_active_tool_name}:running"
+    if session.hermes_last_tool_status == "completed" and session.hermes_last_tool_name:
+        label = _spoken_tool_label(session.hermes_last_tool_name)
+        return f"Finished {label}; Hermes is summarizing.", f"tool:{session.hermes_last_tool_name}:done"
+    if session.hermes_last_tool_status == "failed" and session.hermes_last_tool_name:
+        label = _spoken_tool_label(session.hermes_last_tool_name)
+        return f"{label.capitalize()} failed; Hermes is handling it.", f"tool:{session.hermes_last_tool_name}:failed"
+    if session.hermes_last_tool_message:
+        return session.hermes_last_tool_message, f"progress:{session.hermes_last_tool_message}"
+    return "Waiting for Hermes response.", "run:waiting_hermes"
+
+
+def _should_force_hermes_for_transcript(text: str) -> bool:
+    return _force_hermes_reason_for_transcript(text) is not None
+
+
+def _force_hermes_reason_for_transcript(text: str) -> str | None:
+    normalized = " ".join(text.lower().strip().split())
+    if not normalized:
+        return None
+    phrase_reasons = (
+        ("look up", "lookup"),
+        ("lookup", "lookup"),
+        ("search", "research"),
+        ("research", "research"),
+        ("verify", "verification"),
+        ("check", "check"),
+        ("current", "current_data"),
+        ("latest", "current_data"),
+        ("recent", "current_data"),
+        ("today", "current_time"),
+        ("right now", "current_time"),
+        ("news", "current_data"),
+        ("status", "status"),
+        ("version", "versioned_data"),
+        ("release", "versioned_data"),
+        ("logs", "logs"),
+        ("adb", "device_logs"),
+        ("desktop", "tool_surface"),
+        ("phone", "tool_surface"),
+        ("android", "tool_surface"),
+        ("server", "tool_surface"),
+        ("relay", "relay_context"),
+        ("gateway", "relay_context"),
+        ("hermes", "hermes_context"),
+        ("tailscale", "network_context"),
+        ("wifi", "network_context"),
+        ("wi-fi", "network_context"),
+        ("last call", "previous_tool_result"),
+        ("last tool", "previous_tool_result"),
+        ("previous call", "previous_tool_result"),
+        ("previous tool", "previous_tool_result"),
+        ("tool output", "previous_tool_result"),
+        ("tool result", "previous_tool_result"),
+        ("final tool", "previous_tool_result"),
+        ("final output", "previous_tool_result"),
+        ("no data back", "previous_tool_result"),
+        ("data back", "previous_tool_result"),
+        ("didn't get any data", "previous_tool_result"),
+        ("did not get any data", "previous_tool_result"),
+        ("didn't read", "previous_tool_result"),
+        ("did not read", "previous_tool_result"),
+        ("that call", "previous_tool_result"),
+        ("that result", "previous_tool_result"),
+        ("that output", "previous_tool_result"),
+        ("what happened", "previous_tool_result"),
+    )
+    for phrase, reason in phrase_reasons:
+        if phrase in normalized:
+            return reason
+    return None
+
+
+def _forced_hermes_preamble_prompt(transcript: str) -> str:
+    return (
+        "This is a pre-Hermes acknowledgement turn for the user's voice request. "
+        "Speak exactly: I'll check Hermes. Do not call tools. Do not add any "
+        "other words. After this acknowledgement the relay will run Hermes.\n\n"
+        f"User request: {transcript.strip()[:1000]}"
+    )
+
+
+def _background_handoff_prompt(transcript: str) -> str:
+    return (
+        "The user's request is now running in the background and may take a "
+        "little while. Speak one short, natural acknowledgement that you've "
+        "started on it and will report back, for example: 'I'm on it — I'll let "
+        "you know.' Do not call tools, do not answer the request yet, and do not "
+        "ask for a run id.\n\n"
+        f"User request: {transcript.strip()[:1000]}"
+    )
+
+
+def _forced_hermes_summary_prompt(transcript: str, result: dict[str, Any]) -> str:
+    answer = str(
+        result.get("answer")
+        or result.get("text")
+        or result.get("summary")
+        or result.get("error")
+        or ""
+    ).strip()
+    if not answer:
+        answer = "Hermes completed the request but did not return a spoken summary."
+    summary = _provider_safe_answer_for_speech(answer, max_chars=1400)
+    metadata = {
+        "run_id": result.get("run_id"),
+        "session_id": result.get("session_id"),
+        "tool_count": result.get("tool_count"),
+        "last_tool_name": result.get("last_tool_name"),
+    }
+    return (
+        "Hermes has already handled the user's previous voice request. "
+        "This is the final spoken answer step. Do not call any tools, do not "
+        "say you will check, and do not ask for a run id. Speak a concise "
+        "natural summary based only on the Hermes result below.\n\n"
+        f"User request: {transcript.strip()[:1000]}\n"
+        f"Hermes result: {summary}\n"
+        f"Metadata: {json.dumps(metadata, sort_keys=True)}"
+    )
+
+
+def _forced_summary_tool_result(result: dict[str, Any]) -> dict[str, Any]:
+    output = dict(result)
+    output["ok"] = bool(output.get("ok", True))
+    output["spoken_response"] = "provider_generated_after_cached_hermes_result"
+    output["provider_instruction"] = (
+        "Hermes already completed this request. Use this cached Hermes result "
+        "as the authoritative tool output and speak the final concise answer now. "
+        "Do not call another tool, do not say you will check, and do not read raw "
+        "JSON, logs, IDs, or command output verbatim."
+    )
+    return output
+
+
+def _forced_summary_fallback_text(result: dict[str, Any]) -> str:
+    answer = str(
+        result.get("answer")
+        or result.get("text")
+        or result.get("summary")
+        or result.get("error")
+        or ""
+    ).strip()
+    if not answer:
+        answer = "Hermes completed the request but did not return a spoken summary."
+    return _provider_safe_answer_for_speech(answer, max_chars=1400)
+
+
+def _is_bad_forced_summary_response(text: str) -> bool:
+    return _bad_forced_summary_reason(text) is not None
+
+
+def _bad_forced_summary_reason(text: str) -> str | None:
+    normalized = " ".join(text.lower().strip().split())
+    if not normalized:
+        return "empty_summary"
+    if "run id" in normalized or "hermes_run_task" in normalized:
+        return "asked_for_run_id"
+    bad_phrases = (
+        "i'll check",
+        "i will check",
+        "let me check",
+        "i can check",
+        "i'll fetch",
+        "i will fetch",
+        "i can fetch",
+        "share it and",
+        "share the",
+        "let me know what task",
+        "what task you'd like",
+        "what task you would like",
+        "do you have",
+        "handy",
+    )
+    for phrase in bad_phrases:
+        if phrase in normalized:
+            return "acknowledgement_not_summary"
+    if len(normalized) <= 80 and any(
+        phrase in normalized
+        for phrase in ("got it", "sure", "okay", "ok")
+    ) and "check" in normalized:
+        return "short_acknowledgement"
+    return None
+
+
+def _interface_context(session: RealtimeAgentSession) -> dict[str, Any]:
+    return {
+        "client_surface": "android_voice_mode",
+        "engine": "realtime_agent",
+        "engine_label": "Realtime Agent",
+        "stable_engine": "hermes_voice_output",
+        "stable_engine_label": "Hermes chat + voice output",
+        "provider": session.provider,
+        "model": session.model,
+        "voice": session.voice,
+        "profile": session.profile or "default",
+        "chat_session_id": session.chat_session_id,
+        "config_scope": session.config_scope,
+        "path_summary": (
+            "Android mic PCM -> relay provider-native realtime session -> "
+            "Hermes brokered tools when needed -> Android PCM playback"
+        ),
+        **_relay_time_context(),
+    }
+
+
+def _relay_time_context() -> dict[str, str]:
+    now = datetime.now().astimezone()
+    offset = now.strftime("%z")
+    if offset:
+        offset = f"{offset[:3]}:{offset[3:]}"
+    zone = now.tzname() or "local"
+    timezone = f"{zone} (UTC{offset})" if offset else zone
+    return {
+        "current_date": now.date().isoformat(),
+        "current_time": now.strftime("%H:%M:%S"),
+        "current_timezone": timezone,
+        "current_datetime": now.isoformat(timespec="seconds"),
+    }
+
+
 async def _optional_json(request: web.Request) -> dict[str, Any]:
     if request.can_read_body:
         try:
@@ -690,6 +3807,39 @@ def _bearer_from_request(request: web.Request) -> str:
     if not auth_header.startswith("Bearer "):
         return ""
     return auth_header[len("Bearer ") :].strip()
+
+
+def _new_resume_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    return token, _token_hash(token)
+
+
+def _configured_resume_ttl_seconds() -> float:
+    value = _int_value(os.getenv("RELAY_VOICE_RESUME_TTL_MS"))
+    if value is not None and value > 0:
+        return value / 1000.0
+    return _RESUME_TTL_SECONDS
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _hermes_broker_bearer_token(
+    principal: AuthPrincipal,
+    *,
+    request_bearer: str,
+    config: RelayConfig,
+) -> str | None:
+    if principal.kind == "hermes_api":
+        return request_bearer or None
+    token = hermes_api_server_key(config)
+    if token is None:
+        logger.info(
+            "Realtime-agent Hermes broker has no relay-side Hermes API bearer; "
+            "continuing without Authorization for open/local WebAPI targets"
+        )
+    return token
 
 
 def _run_dir(config: RelayConfig) -> Path:
@@ -732,6 +3882,38 @@ def _xai_auth_status(config: RelayConfig) -> dict[str, Any]:
     }
 
 
+def _realtime_provider_auth_status(config: RelayConfig) -> dict[str, Any]:
+    status = _xai_auth_status(config)
+    status["xai_oauth"] = bool(status.get("xai_oauth_configured"))
+    xai_env_names = _configured_env_names(
+        (
+            "VOICE_TOOLS_XAI_KEY",
+            "XAI_API_KEY",
+            "GROK_API_KEY",
+            "XAI_REALTIME_CLIENT_SECRET",
+            "XAI_EPHEMERAL_TOKEN",
+            "VOICE_LAB_XAI_OAUTH_ACCESS_TOKEN",
+        )
+    )
+    openai_env_names = _configured_env_names(
+        (
+            "OPENAI_REALTIME_API_KEY",
+            "OPENAI_API_KEY",
+            "VOICE_TOOLS_OPENAI_KEY",
+        )
+    )
+    status["xai_env"] = bool(xai_env_names)
+    status["xai_env_names"] = xai_env_names
+    status["openai_env"] = bool(openai_env_names)
+    status["openai_env_names"] = openai_env_names
+    return status
+
+
+def _configured_env_names(names: tuple[str, ...]) -> list[str]:
+    load_voice_lab_env_file()
+    return [name for name in names if os.getenv(name, "").strip()]
+
+
 def _str_option(payload: dict[str, Any], key: str) -> str | None:
     value = payload.get(key)
     if isinstance(value, str):
@@ -756,6 +3938,20 @@ def _int_value(value: Any) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _event_int(event: dict[str, Any], key: str) -> int:
+    value = event.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0
 
 
 def _bool_value(value: Any) -> bool | None:

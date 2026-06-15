@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import deque
+import hashlib
+import hmac
 import json
 import math
 import os
 import secrets
 import struct
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -48,12 +51,15 @@ from .provider_options import (
     validate_provider_selection,
 )
 from .realtime_voice import _read_relay_xai_oauth_token
-from .voice_auth import require_voice_auth
+from .voice_auth import AuthPrincipal, require_voice_auth
 
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
 DEFAULT_SAMPLE_WIDTH = 2
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_RESUME_TTL_SECONDS = 30.0
+_EVENT_RING_LIMIT = 256
+_AUDIO_RING_LIMIT = 96
 
 
 @dataclass(slots=True)
@@ -73,6 +79,29 @@ class VoiceOutputSession:
     config_path: Path | None
     created_at: float
     event_log_path: Path
+    resume_token_hash: str
+    auth_kind: str
+    auth_session_device_id: str | None = None
+    auth_token_hash: str | None = None
+    resume_ttl_seconds: float = _RESUME_TTL_SECONDS
+    resume_deadline: float | None = None
+    attached_ws: web.WebSocketResponse | None = None
+    detached_at: float | None = None
+    closed: bool = False
+    explicit_close_requested: bool = False
+    event_seq: int = 0
+    audio_seq: int = 0
+    event_ring: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=_EVENT_RING_LIMIT)
+    )
+    audio_ring: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=_AUDIO_RING_LIMIT)
+    )
+    acked_event_id_by_client: int = 0
+    acked_audio_event_id_by_client: int = 0
+    played_audio_event_id_by_client: int = 0
+    response_task: asyncio.Task[None] | None = None
+    close_task: asyncio.Task[None] | None = None
 
 
 class VoiceOutputHandler:
@@ -153,7 +182,8 @@ class VoiceOutputHandler:
         )
 
     async def handle_create_session(self, request: web.Request) -> web.StreamResponse:
-        await require_voice_auth(request, "voice:tts")
+        principal = await require_voice_auth(request, "voice:tts")
+        bearer_token = _bearer_from_request(request)
 
         payload = await _optional_json(request)
         profile = request_profile(payload, request.query)
@@ -171,6 +201,7 @@ class VoiceOutputHandler:
         self._validate_provider(provider)
 
         session_id = secrets.token_urlsafe(18)
+        resume_token, resume_token_hash = _new_resume_token()
         event_log_path = self._new_event_log_path(session_id)
         session = VoiceOutputSession(
             session_id=session_id,
@@ -188,6 +219,13 @@ class VoiceOutputHandler:
             config_path=settings.get("config_path"),
             created_at=time.time(),
             event_log_path=event_log_path,
+            resume_token_hash=resume_token_hash,
+            auth_kind=principal.kind,
+            resume_ttl_seconds=_configured_resume_ttl_seconds(),
+            auth_session_device_id=(
+                principal.session.device_id if principal.session is not None else None
+            ),
+            auth_token_hash=_token_hash(bearer_token),
         )
         self.sessions[session_id] = session
         self._log(session, "voice.output.session.created")
@@ -197,6 +235,9 @@ class VoiceOutputHandler:
                 "success": True,
                 "session_id": session_id,
                 "websocket_path": f"/voice/output/{session_id}",
+                "resume_token": resume_token,
+                "resume_supported": True,
+                "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
                 "provider": provider,
                 "model": model,
                 "voice": voice,
@@ -213,18 +254,29 @@ class VoiceOutputHandler:
     async def handle_ws(self, request: web.Request) -> web.StreamResponse:
         if not self.enabled:
             raise web.HTTPNotFound(text="voice output is disabled")
-        await require_voice_auth(request, "voice:tts")
+        principal = await require_voice_auth(request, "voice:tts")
 
         session_id = request.match_info.get("session_id", "")
         session = self.sessions.get(session_id)
         if session is None:
             raise web.HTTPNotFound(text="unknown voice output session")
+        if session.closed:
+            raise web.HTTPGone(text="voice output session is closed")
+        if not self._auth_matches_session(session, principal, _bearer_from_request(request)):
+            raise web.HTTPForbidden(text="voice output session belongs to another principal")
 
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=2 * 1024 * 1024)
         await ws.prepare(request)
-        await self._send(ws, session, self._ready_event(session))
+        was_detached = session.detached_at is not None
+        session.attached_ws = ws
+        if not was_detached:
+            session.detached_at = None
+            session.resume_deadline = None
+            if session.close_task is not None and not session.close_task.done():
+                session.close_task.cancel()
+            await self._send(ws, session, self._ready_event(session))
 
-        running: asyncio.Task[None] | None = None
+        intentional_close = False
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.ERROR:
@@ -244,20 +296,45 @@ class VoiceOutputHandler:
 
                 msg_type = str(payload.get("type", "")).strip()
                 if msg_type == "session.start":
-                    await self._send(ws, session, self._ready_event(session))
+                    if _str_option(payload, "resume_token") or session.detached_at is not None:
+                        await self._handle_resume_message(ws, session, payload)
+                    else:
+                        await self._send(ws, session, self._ready_event(session))
+                elif msg_type == "session.resume":
+                    await self._handle_resume_message(ws, session, payload)
+                elif msg_type == "client.ack":
+                    self._handle_client_ack(session, payload)
                 elif msg_type == "response.create":
-                    if running is not None and not running.done():
+                    if session.response_task is not None and not session.response_task.done():
                         await self._send_error(ws, session, "response already running")
                         continue
-                    running = asyncio.create_task(self._run_response(ws, session, payload))
+                    if session.response_task is not None and session.response_task.done():
+                        await self._send_error(ws, session, "response already completed")
+                        continue
+                    session.response_task = asyncio.create_task(
+                        self._run_response(ws, session, payload)
+                    )
                 elif msg_type == "session.close":
+                    intentional_close = True
+                    session.explicit_close_requested = True
                     await ws.close()
                 else:
                     await self._send_error(ws, session, f"unsupported message type: {msg_type}")
         finally:
-            if running is not None and not running.done():
-                running.cancel()
-            self._log(session, "voice.output.session.closed")
+            if session.attached_ws is ws:
+                session.attached_ws = None
+            response_task = session.response_task
+            should_close = (
+                intentional_close
+                or session.explicit_close_requested
+                or session.closed
+                or response_task is None
+                or (ws.close_code == 1000 and response_task.done())
+            )
+            if should_close:
+                await self._close_session(session, "closed")
+            else:
+                await self._detach_session(session, "websocket_disconnected")
         return ws
 
     @property
@@ -265,6 +342,226 @@ class VoiceOutputHandler:
         if self.config.voice_output_enabled:
             return True
         return os.getenv("RELAY_VOICE_OUTPUT_ENABLED", "").strip().lower() in _TRUE_ENV_VALUES
+
+    async def _detach_session(
+        self,
+        session: VoiceOutputSession,
+        reason: str,
+    ) -> None:
+        if session.closed:
+            return
+        now = time.time()
+        session.detached_at = now
+        session.resume_deadline = now + session.resume_ttl_seconds
+        await self._send(
+            None,
+            session,
+            {
+                "type": "voice.session.detached",
+                "session_id": session.session_id,
+                "reason": reason,
+                "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
+            },
+        )
+        self._log(
+            session,
+            "voice.output.session.detached",
+            {
+                "type": "voice.output.session.detached",
+                "reason": reason,
+                "resume_deadline": session.resume_deadline,
+            },
+        )
+        if session.close_task is not None and not session.close_task.done():
+            session.close_task.cancel()
+        session.close_task = asyncio.create_task(self._close_detached_session_after_ttl(session))
+
+    async def _close_detached_session_after_ttl(self, session: VoiceOutputSession) -> None:
+        try:
+            await asyncio.sleep(session.resume_ttl_seconds)
+        except asyncio.CancelledError:
+            return
+        if session.attached_ws is not None or session.detached_at is None or session.closed:
+            return
+        await self._close_session(session, "resume_ttl_expired")
+
+    async def _close_session(self, session: VoiceOutputSession, reason: str) -> None:
+        if session.closed:
+            return
+        session.closed = True
+        session.detached_at = None
+        session.resume_deadline = None
+        if session.close_task is not None and not session.close_task.done():
+            session.close_task.cancel()
+        response_task = session.response_task
+        if response_task is not None and not response_task.done():
+            response_task.cancel()
+        self._log(
+            session,
+            "voice.output.session.closed",
+            {
+                "type": "voice.output.session.closed",
+                "reason": reason,
+            },
+        )
+
+    async def _handle_resume_message(
+        self,
+        ws: web.WebSocketResponse,
+        session: VoiceOutputSession,
+        payload: dict[str, Any],
+    ) -> None:
+        if not self._resume_token_matches(session, _str_option(payload, "resume_token")):
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "voice.session.resume_failed",
+                    "session_id": session.session_id,
+                    "reason": "invalid_resume_token",
+                },
+                record=False,
+            )
+            await ws.close(code=4003, message=b"invalid resume token")
+            return
+        if session.resume_deadline is not None and time.time() > session.resume_deadline:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "voice.session.resume_failed",
+                    "session_id": session.session_id,
+                    "reason": "resume_expired",
+                },
+                record=False,
+            )
+            await ws.close(code=4008, message=b"resume expired")
+            await self._close_session(session, "resume_expired")
+            return
+
+        last_event_id = _int_option(payload, "last_event_id", 0)
+        last_audio_event_id = _int_option(payload, "last_audio_event_id", 0)
+        played_audio_event_id = _int_option(payload, "last_played_audio_event_id", 0)
+        session.acked_event_id_by_client = max(session.acked_event_id_by_client, last_event_id)
+        session.acked_audio_event_id_by_client = max(
+            session.acked_audio_event_id_by_client,
+            last_audio_event_id,
+        )
+        session.played_audio_event_id_by_client = max(
+            session.played_audio_event_id_by_client,
+            played_audio_event_id,
+        )
+        session.detached_at = None
+        session.resume_deadline = None
+        if session.close_task is not None and not session.close_task.done():
+            session.close_task.cancel()
+        await self._send(
+            ws,
+            session,
+            {
+                "type": "voice.session.resumed",
+                "session_id": session.session_id,
+                "last_event_id": last_event_id,
+                "last_audio_event_id": last_audio_event_id,
+                "last_played_audio_event_id": played_audio_event_id,
+            },
+            record=False,
+        )
+        await self._replay_session_events(
+            ws,
+            session,
+            last_event_id=last_event_id,
+            last_audio_event_id=last_audio_event_id,
+            played_audio_event_id=played_audio_event_id,
+        )
+
+    async def _replay_session_events(
+        self,
+        ws: web.WebSocketResponse,
+        session: VoiceOutputSession,
+        *,
+        last_event_id: int,
+        last_audio_event_id: int,
+        played_audio_event_id: int,
+    ) -> None:
+        audio_floor = max(last_audio_event_id, played_audio_event_id)
+        replay_events: list[dict[str, Any]] = []
+        for event in list(session.event_ring):
+            event_id = _event_int(event, "event_id")
+            audio_event_id = _event_int(event, "audio_event_id")
+            if audio_event_id > 0:
+                if audio_event_id <= audio_floor:
+                    continue
+            elif event_id <= last_event_id:
+                continue
+            replay_events.append(dict(event))
+
+        await self._send(
+            ws,
+            session,
+            {
+                "type": "voice.replay.started",
+                "session_id": session.session_id,
+                "from_event_id": last_event_id,
+                "from_audio_event_id": last_audio_event_id,
+                "replay_event_count": len(replay_events),
+            },
+            record=False,
+        )
+        for event in replay_events:
+            replay = dict(event)
+            replay["replayed"] = True
+            await ws.send_json(replay)
+        await self._send(
+            ws,
+            session,
+            {
+                "type": "voice.replay.done",
+                "session_id": session.session_id,
+                "replay_event_count": len(replay_events),
+            },
+            record=False,
+        )
+
+    def _handle_client_ack(
+        self,
+        session: VoiceOutputSession,
+        payload: dict[str, Any],
+    ) -> None:
+        event_id = _int_option(payload, "event_id", 0)
+        audio_event_id = _int_option(payload, "audio_event_id", 0)
+        played_audio_event_id = _int_option(payload, "played_audio_event_id", 0)
+        session.acked_event_id_by_client = max(session.acked_event_id_by_client, event_id)
+        session.acked_audio_event_id_by_client = max(
+            session.acked_audio_event_id_by_client,
+            audio_event_id,
+        )
+        session.played_audio_event_id_by_client = max(
+            session.played_audio_event_id_by_client,
+            played_audio_event_id,
+        )
+
+    def _resume_token_matches(
+        self,
+        session: VoiceOutputSession,
+        token: str | None,
+    ) -> bool:
+        if not token:
+            return False
+        return hmac.compare_digest(_token_hash(token), session.resume_token_hash)
+
+    def _auth_matches_session(
+        self,
+        session: VoiceOutputSession,
+        principal: AuthPrincipal,
+        bearer_token: str,
+    ) -> bool:
+        if principal.kind != session.auth_kind:
+            return False
+        if principal.kind == "relay_session":
+            device_id = principal.session.device_id if principal.session is not None else None
+            return bool(device_id) and device_id == session.auth_session_device_id
+        return hmac.compare_digest(_token_hash(bearer_token), session.auth_token_hash or "")
 
     def config_payload(self, profile: str | None = None) -> dict[str, Any]:
         providers = [
@@ -578,6 +875,10 @@ class VoiceOutputHandler:
             "sample_rate": session.sample_rate,
             "event_log_path": str(session.event_log_path),
             "output_mode": "streaming_tts_renderer",
+            "resume_supported": True,
+            "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
+            "last_event_id": session.event_seq,
+            "last_audio_event_id": session.audio_seq,
             "profile": session.profile,
             "config_scope": session.config_scope,
             "config_path": str(session.config_path) if session.config_path else None,
@@ -585,13 +886,32 @@ class VoiceOutputHandler:
 
     async def _send(
         self,
-        ws: web.WebSocketResponse,
+        ws: web.WebSocketResponse | None,
         session: VoiceOutputSession,
         event: dict[str, Any],
+        *,
+        record: bool = True,
     ) -> None:
+        if "event_id" not in event:
+            session.event_seq += 1
+            event["event_id"] = session.event_seq
+        if event.get("type") == "voice.audio.delta" and "audio_event_id" not in event:
+            session.audio_seq += 1
+            event["audio_event_id"] = session.audio_seq
         event.setdefault("at_ms", round((time.time() - session.created_at) * 1000, 3))
+        if record:
+            snapshot = dict(event)
+            session.event_ring.append(snapshot)
+            if "audio_event_id" in snapshot:
+                session.audio_ring.append(snapshot)
         self._log(session, event["type"], event)
-        await ws.send_json(event)
+        target = session.attached_ws
+        if target is None or target.closed:
+            return
+        try:
+            await target.send_json(event)
+        except (ConnectionResetError, RuntimeError):
+            return
 
     async def _send_error(
         self,
@@ -642,6 +962,29 @@ async def _optional_json(request: web.Request) -> dict[str, Any]:
             raise web.HTTPBadRequest(text="JSON body must be an object")
         return payload
     return {}
+
+
+def _bearer_from_request(request: web.Request) -> str:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return ""
+    return auth_header[len("Bearer ") :].strip()
+
+
+def _new_resume_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    return token, _token_hash(token)
+
+
+def _configured_resume_ttl_seconds() -> float:
+    value = _int_value(os.getenv("RELAY_VOICE_RESUME_TTL_MS"))
+    if value is not None and value > 0:
+        return value / 1000.0
+    return _RESUME_TTL_SECONDS
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _run_dir(config: RelayConfig) -> Path:
@@ -763,6 +1106,20 @@ def _int_value(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _event_int(event: dict[str, Any], key: str) -> int:
+    value = event.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0
 
 
 def _int_option(payload: dict[str, Any], name: str, default: int) -> int:
