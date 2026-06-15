@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ChatSession
@@ -299,6 +300,7 @@ private fun SessionItem(
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val locale = LocalLocale.current.platformLocale
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
     } else {
@@ -330,7 +332,7 @@ private fun SessionItem(
             ) {
                 if (session.updatedAt > 0) {
                     Text(
-                        text = formatTimestamp(session.updatedAt),
+                        text = formatTimestamp(session.updatedAt, locale),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -376,13 +378,13 @@ private fun SessionItem(
     }
 }
 
-private fun formatTimestamp(millis: Long): String {
+private fun formatTimestamp(millis: Long, locale: Locale): String {
     val now = System.currentTimeMillis()
     val diff = now - millis
     return when {
         diff < 60_000 -> "Just now"
         diff < 3_600_000 -> "${diff / 60_000}m ago"
-        diff < 86_400_000 -> SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(millis))
-        else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(millis))
+        diff < 86_400_000 -> SimpleDateFormat("h:mm a", locale).format(Date(millis))
+        else -> SimpleDateFormat("MMM d", locale).format(Date(millis))
     }
 }
