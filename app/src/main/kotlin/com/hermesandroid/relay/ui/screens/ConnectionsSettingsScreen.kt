@@ -518,8 +518,10 @@ private fun ConnectionCard(
                 HorizontalDivider()
 
                 // ── Standard section ─────────────────────────────────────
-                SectionHeader(text = "Standard")
-                SectionCaption(text = "API and dashboard setup for Chat and Manage.")
+                SectionHeader(text = "API + Dashboard")
+                SectionCaption(
+                    text = "Standard Hermes setup for Chat, Manage, sessions, and dashboard voice.",
+                )
 
                 ActiveCardStandardStatusSection(
                     connectionViewModel = activeConnectionViewModel,
@@ -529,9 +531,10 @@ private fun ConnectionCard(
 
                 if (relayEnabled) {
                     HorizontalDivider()
-                    SectionHeader(text = "Relay")
+                    SectionHeader(text = "Relay pairing")
                     SectionCaption(
-                        text = "Optional power tools: Terminal, Bridge, relay sessions, and grants.",
+                        text = "Optional power tools: Terminal, Bridge, relay sessions, " +
+                            "media, notifications, and grants.",
                     )
                     ActiveCardRelayStatusSection(
                         connectionViewModel = activeConnectionViewModel,
