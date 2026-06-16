@@ -21,8 +21,8 @@ for automation.
 | Surface | Tag prefix | Version source | Bump script | Release workflow |
 |---|---|---|---|---|
 | Hermes-Relay-Android | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
-| Hermes-Relay-Plugin | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-server-version.sh` | `.github/workflows/release-server.yml` |
-| Hermes-Relay-CLI | `desktop-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-desktop.yml` |
+| Hermes-Relay-Plugin | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-server-version.sh` | `.github/workflows/release-plugin.yml` |
+| Hermes-Relay-CLI | `desktop-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-cli.yml` |
 
 This split is intentional. The plugin carries relay features for both Android
 and CLI clients, so plugin fixes can ship without forcing an Android app
@@ -493,7 +493,7 @@ git tag server-v0.6.2
 git push origin server-v0.6.2
 ```
 
-Pushing `server-v*` triggers `.github/workflows/release-server.yml`, which
+Pushing `server-v*` triggers `.github/workflows/release-plugin.yml`, which
 validates all server-owned version metadata with
 `scripts/check-server-version-sync.py`. Run
 `python scripts/check-version-tracks.py` locally before tagging when a change
@@ -610,7 +610,7 @@ On every push of a tag matching `android-v*`, `.github/workflows/release-android
    that the artifacts are debug-signed and unsuitable for Play Store.
 
 On every push of a tag matching `server-v*`,
-`.github/workflows/release-server.yml`:
+`.github/workflows/release-plugin.yml`:
 
 1. Validates the tag matches all server-owned version metadata checked by
    `scripts/check-server-version-sync.py`.
@@ -621,8 +621,8 @@ On every push of a tag matching `server-v*`,
    sdist, and checksum file attached.
 
 On every push of a tag matching `desktop-v*`,
-`.github/workflows/release-desktop.yml` builds and publishes the desktop
-CLI binaries. Dashboard-only changes are covered by
+`.github/workflows/release-cli.yml` builds and publishes the CLI binaries and
+Windows tray installer. Dashboard-only changes are covered by
 `.github/workflows/ci-dashboard.yml`, which builds the dashboard plugin,
 runs the dashboard API tests, and verifies the modal CSS markers are present
 in the built bundle.

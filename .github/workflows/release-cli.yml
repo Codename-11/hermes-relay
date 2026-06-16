@@ -89,7 +89,7 @@ jobs:
       - name: Upload CLI release assets
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-cli-release
+          name: cli-binaries
           path: |
             desktop/dist/bin/hermes-relay-win-x64.exe
             desktop/dist/bin/hermes-relay-linux-x64
@@ -160,7 +160,7 @@ jobs:
       - name: Upload Windows tray release asset
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows-tray-release
+          name: cli-windows-tray-installer
           path: desktop/dist/tray/hermes-relay-desktop-windows-x64-setup.exe
           retention-days: 7
 
@@ -233,9 +233,9 @@ jobs:
             See [Desktop docs](https://codename-11.github.io/hermes-relay/desktop/) for full usage.
 
           files: |
-            release-assets/desktop-cli-release/hermes-relay-win-x64.exe
-            release-assets/desktop-cli-release/hermes-relay-linux-x64
-            release-assets/desktop-cli-release/hermes-relay-darwin-x64
-            release-assets/desktop-cli-release/hermes-relay-darwin-arm64
-            release-assets/desktop-windows-tray-release/hermes-relay-desktop-windows-x64-setup.exe
+            release-assets/cli-binaries/hermes-relay-win-x64.exe
+            release-assets/cli-binaries/hermes-relay-linux-x64
+            release-assets/cli-binaries/hermes-relay-darwin-x64
+            release-assets/cli-binaries/hermes-relay-darwin-arm64
+            release-assets/cli-windows-tray-installer/hermes-relay-desktop-windows-x64-setup.exe
             release-assets/SHA256SUMS.txt

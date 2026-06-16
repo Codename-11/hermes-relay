@@ -313,7 +313,7 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 | **Desktop CLI — dev iteration** | |
 | `npm run smoke` (in `desktop/`) | Builds Windows binary + runs `--version` / `--help` / `doctor`, fails loud on zero-output. Local pre-flight before cutting any tag. |
 | `npm run gen:version` | Regenerates `src/version.ts` from `package.json`. Runs automatically before every `build` / `build:bin:*`. |
-| `release-desktop.yml → Smoke-test Linux binary` step | CI-side equivalent: runs compiled Linux binary through the same 3-command check before uploading assets. Catches silent-exit-0 + segfault classes. |
+| `release-cli.yml → Smoke-test Linux binary` step | CI-side equivalent: runs compiled Linux binary through the same 3-command check before uploading assets. Catches silent-exit-0 + segfault classes. |
 | **Server — Desktop tool routing (Phase B)** | |
 | `plugin/relay/channels/desktop.py` | Mirrors `bridge.py` — `desktop.command`/`desktop.response`/`desktop.status`, UUID-correlated futures, 30s timeout, single-client MVP, per-session advertised-tools set |
 | `plugin/tools/desktop_tool.py` | 24 `desktop_*` tools (fs/shell/powershell/process/jobs/transfer/health) — registers with `tools.registry` under `desktop` toolset; per-tool `check_fn` pings `/desktop/_ping?tool=<name>`; `desktop_health` is `_RELAY_ONLY` and pings `/desktop/health` so it works even when the client is wedged |

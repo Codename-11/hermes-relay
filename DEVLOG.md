@@ -442,7 +442,7 @@ One smoke-artifact: `~/.hermes/remote-sessions.json` got emptied during agent te
 
 ### Cut `desktop-v0.3.0-alpha.1`
 
-`desktop/package.json` bumped 0.1.0 → 0.3.0-alpha.1 to align the published package version with the release-track tag. Build clean; `node bin/hermes-relay.js --version` prints `0.3.0-alpha.1`. Once this lands on `main` and the tag pushes, `release-desktop.yml` cross-compiles four Bun binaries (win-x64, linux-x64, darwin-x64, darwin-arm64), uploads with `SHA256SUMS.txt`, and the `install.{sh,ps1}` one-liners start working for any user.
+`desktop/package.json` bumped 0.1.0 → 0.3.0-alpha.1 to align the published package version with the release-track tag. Build clean; `node bin/hermes-relay.js --version` prints `0.3.0-alpha.1`. Once this lands on `main` and the tag pushes, the CLI release workflow cross-compiles four Bun binaries (win-x64, linux-x64, darwin-x64, darwin-arm64), uploads with `SHA256SUMS.txt`, and the `install.{sh,ps1}` one-liners start working for any user.
 
 ---
 
