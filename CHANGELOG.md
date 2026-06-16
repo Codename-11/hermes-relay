@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, with future tags on `android-v*`, `plugin-v*`, and `cli-v*`. The CLI installer and updater still understand historical `desktop-v*` prereleases during the migration.
 - **Per-surface release notes.** Plugin and CLI GitHub Releases now use hand-written `PLUGIN_RELEASE_NOTES.md` / `CLI_RELEASE_NOTES.md` files (Summary + Added/Changed/Fixed + Install/Verify) — the same format as Android's `RELEASE_NOTES.md` — instead of static boilerplate baked into the workflow. The release workflows substitute the version into the install commands automatically.
 
+### Fixed
+
+- **Force-close on connect when the stored credential keyset was corrupt.** A corrupt encrypted token store (which can happen after an app upgrade or device restore) threw during construction and crashed the app right after a successful pair, on both standard and relay connections. The token store now heals a corrupt keyset on the spot, and credential storage degrades to a re-pair instead of crashing if the device keystore is unusable.
+- **Dashboard plugin: unreadable button labels.** Solid buttons in the relay dashboard panel inherited the container text colour, which matched their background. Solid button variants now keep their proper contrast colour.
+
 ## [1.0.0] - 2026-06-14
 
 ### Added
