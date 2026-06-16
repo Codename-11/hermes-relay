@@ -1,4 +1,4 @@
-name: Release Server
+name: Release Plugin
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate Server release
+    name: Validate Plugin release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -22,13 +22,13 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/server-v}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Server version sync
+      - name: Verify Plugin version sync
         run: python scripts/check-server-version-sync.py --expect "$TAG_VERSION"
         env:
           TAG_VERSION: ${{ steps.version.outputs.version }}
 
   test:
-    name: Test Server package
+    name: Test Plugin package
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -55,7 +55,7 @@ jobs:
           python -m py_compile plugin/tools/desktop_tool.py
           python -m py_compile relay_server/__init__.py relay_server/__main__.py
 
-      - name: Run focused Server tests
+      - name: Run focused Plugin tests
         run: |
           python -m pytest \
             plugin/tests/test_relay_security.py \
@@ -63,7 +63,7 @@ jobs:
             plugin/tests/test_session_grants.py
 
   package:
-    name: Build and publish Server package
+    name: Build and publish Plugin package
     needs: [validate, test]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -89,15 +89,15 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Server v${{ needs.validate.outputs.version }}
+          name: Hermes-Relay-Plugin v${{ needs.validate.outputs.version }}
           tag_name: server-v${{ needs.validate.outputs.version }}
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           fail_on_unmatched_files: true
           body: |
-            # Hermes-Relay-Server v${{ needs.validate.outputs.version }}
+            # Hermes-Relay-Plugin v${{ needs.validate.outputs.version }}
 
-            This release contains the server/Python plugin package.
-            Android releases use `android-v*` tags. Desktop releases use
+            This release contains the Hermes plugin and Python package.
+            Android releases use `android-v*` tags. CLI releases use
             `desktop-v*` tags. Historical server releases before this lane
             rename used `relay-v*` tags.
 

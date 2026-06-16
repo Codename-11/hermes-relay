@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, while tag prefixes remain `android-v*`, `server-v*`, and `desktop-v*` for installer/update compatibility.
+
 ## [1.0.0] - 2026-06-14
 
 ### Added
@@ -90,7 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Google Play Bridge Core split.** The Google Play Android track keeps relay pairing, chat, profiles, voice, terminal/TUI, media, notification companion, relay sessions, diagnostics, and status while removing AccessibilityService-backed Device Control declarations and permissions. Sideload remains the track for screen reading, gestures, screenshots, SMS/calls, contacts/location, overlays, wake locks, and unattended control.
 
-- **Release lanes now use explicit product tags and names.** Future Android releases use `android-v*`, server/Python releases use `server-v*`, and desktop continues on `desktop-v*`. GitHub Release names now publish as `Hermes-Relay-Android vX.Y.Z`, `Hermes-Relay-Server vX.Y.Z`, and `Hermes-Relay-Desktop vX.Y.Z`; the old relay-named server scripts remain compatibility shims.
+- **Release lanes now use explicit product tags and names.** Future Android releases use `android-v*`, plugin/Python releases use `server-v*`, and CLI releases continue on `desktop-v*`. GitHub Release names now publish as `Hermes-Relay-Android vX.Y.Z`, `Hermes-Relay-Plugin vX.Y.Z`, and `Hermes-Relay-CLI vX.Y.Z`; the old relay-named server scripts remain compatibility shims.
 
 - **Realtime voice instructions are provider-neutral.** Realtime providers receive active interface context, local date/time, provider/model/voice/profile metadata, and guidance to ask Hermes for current facts, research, device/desktop state, project context, precise/versioned data, and any requested checks instead of guessing from model knowledge.
 

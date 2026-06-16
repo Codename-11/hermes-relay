@@ -111,7 +111,7 @@ def _server_track(errors: list[str]) -> Track:
         if found != version:
             errors.append(f"server/plugin version mismatch: {source} has {found}, expected {version}")
     return Track(
-        name="server/plugin",
+        name="plugin",
         version=version,
         source="pyproject.toml",
         tag=f"server-v{version}",
@@ -130,7 +130,7 @@ def _desktop_track(errors: list[str]) -> Track:
             f"{generated}, expected {version}; run npm run gen:version in desktop/"
         )
     return Track(
-        name="desktop-cli",
+        name="cli",
         version=version,
         source="desktop/package.json",
         tag=f"desktop-v{version}",

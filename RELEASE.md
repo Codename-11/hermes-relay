@@ -13,20 +13,23 @@ with optional prerelease identifiers.
 - `PATCH` — bug fixes, backwards compatible
 - Prerelease suffixes: `-alpha`, `-beta`, `-rc.N` (e.g. `0.2.0-beta.1`)
 
-Hermes-Relay now ships three independently versioned surfaces:
+Hermes-Relay now ships three independently versioned surfaces. Public GitHub
+Release titles use product names (`Hermes-Relay-Android`,
+`Hermes-Relay-Plugin`, `Hermes-Relay-CLI`); tag prefixes stay short and stable
+for automation.
 
 | Surface | Tag prefix | Version source | Bump script | Release workflow |
 |---|---|---|---|---|
-| Android app | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
-| Server / Python package | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-server-version.sh` | `.github/workflows/release-server.yml` |
-| Desktop CLI | `desktop-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-desktop.yml` |
+| Hermes-Relay-Android | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
+| Hermes-Relay-Plugin | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-server-version.sh` | `.github/workflows/release-server.yml` |
+| Hermes-Relay-CLI | `desktop-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-desktop.yml` |
 
-This split is intentional. The server now carries features for both Android
-and desktop, so server fixes can ship without forcing an Android app
-`versionCode` bump, and desktop CLI alphas can continue on their own cadence.
-Historical Android releases before this naming split used bare `v*` tags, and
-historical server releases used `relay-v*` tags. New releases use the explicit
-surface prefixes above.
+This split is intentional. The plugin carries relay features for both Android
+and CLI clients, so plugin fixes can ship without forcing an Android app
+`versionCode` bump, and CLI alphas can continue on their own cadence. Historical
+Android releases before this naming split used bare `v*` tags, and historical
+plugin/server releases used `relay-v*` tags. New releases use the explicit tag
+prefixes above.
 
 ### Android app versioning
 
@@ -70,21 +73,21 @@ bash scripts/bump-android-version.sh 0.6.2
 `scripts/bump-version.sh` remains as a backward-compatible alias for the
 Android script.
 
-### Server / Python package versioning
+### Plugin / Python package versioning
 
-Server version metadata lives in these server-owned files and must stay in
+Plugin version metadata lives in these plugin-owned files and must stay in
 lockstep:
 
 | File | Line | Purpose |
 |---|---|---|
 | `pyproject.toml` | `version = "..."` | Python package metadata |
-| `plugin/relay/__init__.py` | `__version__ = "..."` | runtime version reported by `/health` |
+| `plugin/relay/__init__.py` | `__version__ = "..."` | runtime version reported by `/health` and `/relay/info` |
 | `plugin/plugin.yaml` | `version: ...` | Hermes plugin metadata |
 | `plugin/dashboard/manifest.json` | `"version": "..."` | Hermes dashboard plugin metadata |
 | `plugin/dashboard/package.json` | `"version": "..."` | dashboard build/package metadata |
 | `plugin/dashboard/package-lock.json` | `"version": "..."` | locked dashboard package metadata |
 
-Always bump Server releases via:
+Always bump Plugin releases via:
 
 ```bash
 bash scripts/bump-server-version.sh 0.6.2
@@ -102,14 +105,15 @@ Check all release tracks at once with:
 python scripts/check-version-tracks.py
 ```
 
-This aggregate check reports Android, server/plugin, and desktop CLI versions
+This aggregate check reports Android, plugin, and CLI versions
 side by side and validates that each track's own source files are internally
 consistent. It deliberately does not require all three tracks to share the same
 SemVer.
 
 The `server-v*` release workflow validates the tag against the same metadata,
-runs server tests, builds a wheel and sdist, generates checksums, and publishes
-a GitHub Release with the package artifacts.
+runs plugin/server tests, builds a wheel and sdist, generates checksums, and
+publishes a `Hermes-Relay-Plugin vX.Y.Z` GitHub Release with the package
+artifacts.
 
 ## Branching policy
 
@@ -463,14 +467,14 @@ Pushing a tag matching `android-v*` triggers `.github/workflows/release-android.
 which builds, signs, checksums, and creates a GitHub Release. Watch the
 run under the **Actions** tab.
 
-Server/Python version files are intentionally not part of an Android app
-release unless the server package itself is also being released.
+Plugin/Python version files are intentionally not part of an Android app
+release unless the plugin package itself is also being released.
 
-### Server / Python package release
+### Plugin / Python package release
 
-Use this when Server behavior changes independently of Android app
-delivery, for example desktop channel support, bridge routes, pairing
-server fixes, voice auth, or packaging changes.
+Use this when plugin or relay behavior changes independently of Android app
+delivery, for example CLI channel support, bridge routes, pairing server fixes,
+voice auth, dashboard plugin UI, or packaging changes.
 
 ```bash
 git checkout dev
@@ -495,7 +499,7 @@ validates all server-owned version metadata with
 `python scripts/check-version-tracks.py` locally before tagging when a change
 touches more than one release surface. The workflow also runs server tests,
 builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates a GitHub
-Release for the server package.
+Release named `Hermes-Relay-Plugin v<version>` for the plugin package.
 
 ### 5. Upload to Play Console
 
@@ -613,7 +617,7 @@ On every push of a tag matching `server-v*`,
 2. Runs server syntax checks and the focused route/auth/session test slice.
 3. Builds the Python wheel and sdist with `python -m build`.
 4. Generates `dist/SHA256SUMS.txt`.
-5. Creates a GitHub Release named `Hermes-Relay-Server v<version>` with the wheel,
+5. Creates a GitHub Release named `Hermes-Relay-Plugin v<version>` with the wheel,
    sdist, and checksum file attached.
 
 On every push of a tag matching `desktop-v*`,

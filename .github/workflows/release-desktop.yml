@@ -1,4 +1,4 @@
-name: Release Desktop
+name: Release CLI
 
 on:
   push:
@@ -191,13 +191,13 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Desktop v${{ steps.version.outputs.version }}
+          name: Hermes-Relay-CLI v${{ steps.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
           fail_on_unmatched_files: true
           body: |
-            # Hermes-Relay-Desktop v${{ steps.version.outputs.version }}
+            # Hermes-Relay-CLI v${{ steps.version.outputs.version }}
 
             **Experimental phase.** Assets are unsigned - Windows SmartScreen and macOS Gatekeeper will warn on first launch. Windows now ships a tray installer as the primary desktop surface; CLI binaries remain available for terminal/headless use and for macOS/Linux.
 
