@@ -3,13 +3,18 @@
 Registers the following top-level `hermes` sub-commands:
 
     hermes pair [--png] [--no-qr] [--host HOST] [--port PORT]
+                [--dashboard-url URL] [--register-code CODE]
+                [--mode auto|lan|tailscale|public] [--public-url URL]
+                [--prefer ROLE]
     hermes relay start [--port PORT] [--no-ssl] [--log-level LEVEL]
+    hermes relay doctor [--json]
+    hermes relay compat [status|install|remove]
     hermes relay insecure-api-key [status|on|off]
     hermes-relay insecure-api-key [status|on|off]
 
-Discovered by the hermes-agent v0.8.0+ plugin CLI registration system. The
-plugin loader calls ``register_cli(subparser)`` with a freshly-built parser
-for each sub-command; handlers are dispatched via ``args.func``.
+Discovered by the current hermes-agent plugin CLI registration system. The
+plugin loader calls ``register_cli(subparser)`` with a freshly-built parser for
+each sub-command; handlers are dispatched via ``args.func``.
 """
 
 from __future__ import annotations
@@ -59,6 +64,11 @@ def register_cli(subparser) -> None:
         help="Override API server port (default: 8642)",
     )
     subparser.add_argument(
+        "--dashboard-url",
+        metavar="URL",
+        help="Embed an explicit Hermes dashboard URL for Manage/standard voice",
+    )
+    subparser.add_argument(
         "--ttl",
         metavar="DURATION",
         default="30d",
@@ -78,6 +88,36 @@ def register_cli(subparser) -> None:
             "back to server-side defaults (terminal capped at 30d, bridge "
             "capped at 7d)."
         ),
+    )
+    subparser.add_argument(
+        "--register-code",
+        metavar="CODE",
+        help=(
+            "Pre-register a phone-supplied six-character code and exit. "
+            "Use when QR scanning is unavailable."
+        ),
+    )
+    subparser.add_argument(
+        "--transport-hint",
+        choices=("ws", "wss"),
+        default=None,
+        help="Transport hint for --register-code and QR metadata",
+    )
+    subparser.add_argument(
+        "--mode",
+        choices=("auto", "lan", "tailscale", "public"),
+        default="auto",
+        help="Endpoint set to embed in the QR (default: auto)",
+    )
+    subparser.add_argument(
+        "--public-url",
+        metavar="URL",
+        help="Public API or relay-proxy URL to include in the QR endpoint list",
+    )
+    subparser.add_argument(
+        "--prefer",
+        metavar="ROLE",
+        help="Promote a QR endpoint role such as tailscale or public to priority 0",
     )
     subparser.set_defaults(func=pair_command)
 
@@ -140,6 +180,56 @@ def register_relay_cli(subparser) -> None:
     )
     start.set_defaults(func=relay_start_command)
 
+    doctor = sub.add_parser(
+        "doctor",
+        help="Inspect plugin, standard Hermes, relay, and legacy bootstrap state",
+    )
+    doctor.add_argument("--json", action="store_true", help="Emit JSON")
+    doctor.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero when any warning or error is present",
+    )
+    doctor.add_argument("--api-url", help="Hermes API base URL")
+    doctor.add_argument("--dashboard-url", help="Hermes dashboard base URL")
+    doctor.add_argument("--relay-port", type=int, help="Relay loopback port")
+    doctor.add_argument(
+        "--timeout",
+        type=float,
+        default=2.0,
+        help="Probe timeout in seconds",
+    )
+    doctor.set_defaults(func=relay_doctor_command)
+
+    compat = sub.add_parser(
+        "compat",
+        help="Manage the optional legacy API compatibility startup hook",
+    )
+    compat_sub = compat.add_subparsers(dest="compat_cmd", required=True)
+
+    compat_status = compat_sub.add_parser("status", help="Show compat hook status")
+    compat_status.add_argument("--json", action="store_true", help="Emit JSON")
+    compat_status.add_argument(
+        "--site-packages",
+        help="Inspect a specific Python site-packages directory",
+    )
+    compat_status.set_defaults(func=relay_compat_command)
+
+    compat_install = compat_sub.add_parser("install", help="Install the compat startup hook")
+    compat_install.add_argument("--json", action="store_true", help="Emit JSON")
+    compat_install.add_argument("--site-packages", help="Target site-packages directory")
+    compat_install.add_argument("--dry-run", action="store_true", help="Show what would change")
+    compat_install.add_argument("--force", action="store_true", help="Replace an existing hook file")
+    compat_install.set_defaults(func=relay_compat_command)
+
+    compat_remove = compat_sub.add_parser("remove", help="Remove the compat startup hook")
+    compat_remove.add_argument("--json", action="store_true", help="Emit JSON")
+    compat_remove.add_argument("--site-packages", help="Target site-packages directory")
+    compat_remove.add_argument("--all", action="store_true", help="Remove all discovered hook files")
+    compat_remove.add_argument("--dry-run", action="store_true", help="Show what would change")
+    compat_remove.add_argument("--force", action="store_true", help="Remove unexpected hook content")
+    compat_remove.set_defaults(func=relay_compat_command)
+
     insecure = sub.add_parser(
         "insecure-api-key",
         aliases=["insecure-api-bearer"],
@@ -168,6 +258,24 @@ def relay_command(args):
     if handler is not None and handler is not relay_command:
         return handler(args)
     return relay_start_command(args)
+
+
+def relay_doctor_command(args) -> None:
+    """Run the read-only Relay/plugin diagnostic report."""
+    from .doctor import doctor_command
+
+    code = doctor_command(args)
+    if code:
+        raise SystemExit(code)
+
+
+def relay_compat_command(args) -> None:
+    """Manage the optional legacy compatibility startup hook."""
+    from .compat import compat_command
+
+    code = compat_command(args)
+    if code:
+        raise SystemExit(code)
 
 
 def relay_start_command(args) -> None:

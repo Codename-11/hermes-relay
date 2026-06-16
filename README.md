@@ -80,7 +80,7 @@ Open the app and pick how to connect — any of:
 
 - **Standard Hermes** → tap **Scan for Hermes on LAN** to auto-find the server, then enter your key.
 - **Standard Hermes** → type the address (`http://<host>:8642`) and key by hand.
-- **Scan setup QR** → ask your Hermes agent to generate a QR with your URL + key (e.g. `{"api_url":"http://<host>:8642","api_key":"<key>"}`) and scan it.
+- **Scan setup QR** → ask your Hermes agent to generate a QR with your URL + key (e.g. `{"api_url":"http://<host>:8642","api_key":"<key>","dashboard_url":"http://<host>:9119"}`) and scan it. `dashboard_url` is optional when the dashboard uses the conventional same-host `:9119` URL.
 
 The wizard probes everything and finishes with a capability card:
 
@@ -101,20 +101,34 @@ If your dashboard requires sign-in, do it once under the **Manage** tab — the 
 Install the Relay plugin on the server only when you want Terminal, Bridge phone control, relay sessions, media routes, or the realtime voice engine:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+hermes plugins install Codename-11/hermes-relay/plugin --enable
+hermes relay doctor
 hermes relay start --no-ssl
 hermes pair
 ```
 
-The installer clones to `~/.hermes/hermes-relay/`, registers the plugin/skill paths, and can install a systemd user service. Scan the QR from the phone's Connections screen — or use `hermes pair --register-code ABCD12` with the manual code from Android **Settings → Connections → Advanced**.
+Use the legacy installer instead if you also want the systemd user service,
+shell shims, and the full clone/update workflow:
 
-- **Update:** `hermes-relay-update` (idempotent) — or re-run the install one-liner.
-- **Uninstall:** `bash ~/.hermes/hermes-relay/uninstall.sh` — reverses every step, never touches shared Hermes state. Flags: `--dry-run`, `--keep-clone`, `--remove-secret`.
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+```
+
+The plugin-manager install owns the plugin code, dashboard tab, CLI commands,
+and agent tools. `hermes relay compat status/install/remove` manages only the
+optional legacy API compatibility hook when an older Hermes build needs it. Scan
+the QR from the phone's Connections screen — or use
+`hermes pair --register-code ABCD12` with the manual code from Android
+**Settings → Connections → Advanced**.
+
+- **Plugin-manager uninstall:** `hermes relay compat remove --all` if you installed the optional hook, then `hermes plugins remove hermes-relay`.
+- **Legacy installer update:** `hermes-relay-update` (idempotent) — or re-run the install one-liner.
+- **Legacy installer uninstall:** `bash ~/.hermes/hermes-relay/uninstall.sh` — removes the service, shims, clone, external skill path, editable package, and compat hook. It never touches shared Hermes state. Flags: `--dry-run`, `--keep-clone`, `--remove-secret`.
 - **Dashboard plugin:** installs with the same symlink — restart the gateway and a **Relay** tab (paired devices, bridge activity, media tokens) appears in the web UI.
 
 Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-server.md).
 
-**Requirements:** Android 8.0+ (SDK 26) · [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.8.0+ with Python 3.11+ on the server.
+**Requirements:** Android 8.0+ (SDK 26) · current upstream [hermes-agent](https://github.com/NousResearch/hermes-agent) with the API server and dashboard enabled · Python 3.11+ on the server.
 
 ## Screenshots
 
@@ -175,13 +189,19 @@ It pairs against the **same relay and credential store** as the Android app — 
 ## How It Works
 
 ```
-Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [chat — direct]
-Phone        (HTTP)     --> Hermes Dashboard  (:9119)   [manage + standard voice — cookie sign-in]
+Phone        (HTTP/WSS) --> Hermes Dashboard  (:9119)   [chat gateway, manage, standard voice]
+Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [chat fallback, sessions, runs]
 Phone        (WSS/HTTP) --> Relay             (:8767)   [terminal, bridge, media, relay voice, sessions]
 CLI          (WSS)      --> Relay             (:8767)   [machine tools, tui, terminal]
 ```
 
-Chat connects **directly** to the Hermes API server with the API key — the same pattern Open WebUI and other Hermes frontends use. Manage and standard voice ride the Hermes dashboard with its own one-time sign-in, so a vanilla install needs no plugin for either. The optional relay on `:8767` adds the power surfaces — terminal, bridge phone control, media handoff, machine tools, and relay-side voice (preferred automatically when paired). One QR can configure API, dashboard, and relay routes without merging their auth models.
+Chat prefers the Hermes dashboard gateway when Manage auth is ready, then falls
+back to the upstream API server SSE path with the API key. Manage and standard
+voice ride the Hermes dashboard with its own one-time sign-in, so a vanilla
+install needs no plugin for either. The optional relay on `:8767` adds the power
+surfaces: terminal, bridge phone control, media handoff, machine tools, and
+relay-side voice, which is preferred automatically when paired. One QR can
+configure API, dashboard, and relay routes without merging their auth models.
 
 ## Documentation
 

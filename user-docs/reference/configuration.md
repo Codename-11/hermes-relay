@@ -9,7 +9,7 @@ These are configured during onboarding or from the **Settings → Connections** 
 Hermes-Relay now treats connection auth as three related but separate contexts:
 
 - **Dashboard sign-in** (`:9119`) — upstream-preferred remote identity for the standard dashboard/desktop path. Manage uses dashboard cookies; dashboard-gateway chat uses short-lived `/api/ws` tickets minted from those cookies. Android supports username/password and redirect providers such as Nous/OIDC for this surface.
-- **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for Chat while dashboard-gateway JSON-RPC chat is being wired in.
+- **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for API-server SSE fallback paths.
 - **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for standard dashboard/API use, but it is required for relay power tools.
 
 The default bottom navigation is **Chat**, **Manage**, and **Settings**. Terminal and Bridge are still available from **Settings → Power tools** and deep links, but unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
@@ -35,7 +35,7 @@ The **Manage** tab uses the dashboard session, not relay pairing. It covers Skil
 |---------|---------|-------------|
 | API Server URL | EncryptedSharedPreferences | Base URL of the Hermes API Server (e.g., `http://192.168.1.100:8642`) |
 | API Key | EncryptedSharedPreferences | Bearer token for API-server authentication. Used by Android Chat fallback, not by dashboard login. |
-| Dashboard URL | DataStore | Hermes dashboard/admin URL, conventionally the same host as the API server on port `9119`. Derived automatically from the API URL unless explicitly overridden. |
+| Dashboard URL | DataStore | Hermes dashboard/admin URL, conventionally the same host as the API server on port `9119`. Derived automatically from the API URL unless explicitly overridden or supplied as `dashboard_url` in a setup QR. |
 | Dashboard session cookies | EncryptedSharedPreferences | Auth cookies for the dashboard/admin server. Stored separately from API keys and relay session tokens. OAuth/NouS WebView sign-in imports these cookies into the native dashboard client. |
 | Relay URL | EncryptedSharedPreferences | WebSocket URL for the Relay Server (optional, for bridge/terminal) |
 | Relay Session Token | **Keystore** (StrongBox when available), with fallback to EncryptedSharedPreferences | Persistent token from relay pairing flow. Migrated automatically from the legacy EncryptedSharedPreferences file on first launch post-upgrade. |
@@ -196,6 +196,32 @@ python -m plugin.relay --no-ssl
 **Pairing alphabet:** As of 2026-04-11, the relay accepts any 6-character code from `A-Z / 0-9` (36 chars). The earlier "no ambiguous 0/O/1/I" 32-char restriction was dropped once the pairing flow became QR + HTTP — the phone-side generator in `AuthManager.kt` uses the full alphabet, and the restriction silently rejected roughly one in eight valid codes.
 
 For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md).
+
+### Compatibility Hook
+
+The legacy `hermes_relay_bootstrap.pth` hook is optional. It fills route gaps for
+older Hermes builds and installs slash-command middleware, but modern standard
+chat, Manage, and dashboard voice do not depend on it.
+
+```bash
+hermes relay compat status
+hermes relay compat install   # only when an older server needs it
+hermes relay compat remove
+```
+
+The compat command manages only the `.pth` startup hook in the target Python
+environment. New hooks load the plugin-owned bootstrap implementation from the
+installed Relay plugin; older hooks that import the top-level bootstrap shim are
+still removable. Legacy service units, shell shims, root package installs, and
+external skill-path entries are still cleaned up by `uninstall.sh` when they
+were created by the legacy installer.
+
+Cleanup is intentionally split: `hermes plugins remove hermes-relay` removes a
+plugin-manager install, `hermes relay compat remove --all` removes optional
+compat hooks, and `bash ~/.hermes/hermes-relay/uninstall.sh` removes legacy
+installer artifacts such as the systemd user service, shell shims, editable
+Python package, external skill path, and clone. For a copy/paste cleanup handoff,
+see the [Agent Cleanup Prompt](/reference/agent-cleanup-prompt).
 
 ### Skills (`external_dirs`)
 

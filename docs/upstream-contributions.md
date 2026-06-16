@@ -60,7 +60,7 @@ Improvements that would benefit hermes-relay (and other frontends) if added to [
 
 ## 3. Third-Party Plugin CLI Commands (Resolved Upstream)
 
-**Current state (2026-06-07 source check):** current upstream discovers plugins before top-level CLI parser finalization and iterates `get_plugin_manager()._cli_commands.values()` in `hermes_cli/main.py`. Third-party plugins that call `ctx.register_cli_command(...)` now reach plugin-provided commands such as `hermes pair` and `hermes relay` through the plugin-native path.
+**Current state (2026-06-16 source check against `55cb4103`):** current upstream discovers plugins before top-level CLI parser finalization and iterates `get_plugin_manager()._cli_commands.values()` in `hermes_cli/main.py`. Third-party plugins that call `ctx.register_cli_command(...)` now reach plugin-provided commands such as `hermes pair` and `hermes relay` through the plugin-native path.
 
 **Impact:** no new upstream patch is needed for generic plugin CLI command dispatch. Hermes-Relay should prefer plugin-registered `hermes pair` / `hermes relay` on current upstream installs once the Hermes-Relay plugin is installed and enabled. These are not built-in Hermes core commands.
 

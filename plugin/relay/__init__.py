@@ -19,7 +19,7 @@ See ``plugin/relay/server.py`` for the aiohttp server,
 # desktop CLI releases use desktop/package.json and desktop-v* tags. The
 # /health endpoint reports this server version, and stale values make live
 # server diagnosis harder than it should be.
-__version__ = "0.7.0"
+__version__ = "1.1.0"
 
 from .server import create_app, main  # noqa: E402 — must come after __version__
 

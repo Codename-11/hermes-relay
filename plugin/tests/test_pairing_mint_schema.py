@@ -144,6 +144,24 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(qr["port"], 443)
         self.assertTrue(qr["tls"])
 
+    async def test_dashboard_url_flows_into_response_and_qr_payload(self) -> None:
+        result = await self._mint({
+            "dashboard_url": "https://dash.example.com/hermes/",
+        })
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual(result["dashboard_url"], "https://dash.example.com/hermes")
+        self.assertEqual(qr["dashboard_url"], "https://dash.example.com/hermes")
+
+    async def test_dashboard_url_camel_alias_is_accepted(self) -> None:
+        result = await self._mint({
+            "dashboardUrl": "https://dash.example.com",
+        })
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual(result["dashboard_url"], "https://dash.example.com")
+        self.assertEqual(qr["dashboard_url"], "https://dash.example.com")
+
     async def test_ttl_and_transport_hint_flow_through_to_relay_block(self) -> None:
         result = await self._mint({
             "ttl_seconds": 3600,

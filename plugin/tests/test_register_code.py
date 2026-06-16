@@ -19,6 +19,7 @@ Coverage:
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import base64
@@ -28,7 +29,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
-from plugin import pair
+from plugin import cli, pair
 
 
 # ── normalize_pairing_code ───────────────────────────────────────────────────
@@ -125,6 +126,34 @@ def _pair_args(**overrides: object) -> types.SimpleNamespace:
 
 
 class PairCommandTests(unittest.TestCase):
+    def test_plugin_cli_registers_full_pair_surface(self) -> None:
+        parser = argparse.ArgumentParser()
+        cli.register_cli(parser)
+
+        args = parser.parse_args(
+            [
+                "--register-code",
+                "ABC123",
+                "--transport-hint",
+                "wss",
+                "--dashboard-url",
+                "https://dash.example.com",
+                "--mode",
+                "auto",
+                "--public-url",
+                "https://hermes.example.com",
+                "--prefer",
+                "tailscale",
+            ]
+        )
+
+        self.assertEqual(args.register_code, "ABC123")
+        self.assertEqual(args.transport_hint, "wss")
+        self.assertEqual(args.dashboard_url, "https://dash.example.com")
+        self.assertEqual(args.mode, "auto")
+        self.assertEqual(args.public_url, "https://hermes.example.com")
+        self.assertEqual(args.prefer, "tailscale")
+
     def test_pairing_invite_url_round_trips_payload(self) -> None:
         payload = json.dumps({
             "hermes": 2,
@@ -154,6 +183,7 @@ class PairCommandTests(unittest.TestCase):
             relay=None,
             sign=True,
             endpoints=None,
+            dashboard_url=None,
         ):
             payload = {
                 "hermes": 2 if relay else 1,
@@ -166,6 +196,8 @@ class PairCommandTests(unittest.TestCase):
                 payload["relay"] = relay
             if endpoints:
                 payload["endpoints"] = endpoints
+            if dashboard_url:
+                payload["dashboard_url"] = dashboard_url
             captured["payload"] = payload
             return json.dumps(payload)
 
@@ -197,18 +229,22 @@ class PairCommandTests(unittest.TestCase):
         ):
             out = io.StringIO()
             with redirect_stdout(out):
-                pair.pair_command(_pair_args())
+                pair.pair_command(
+                    _pair_args(dashboard_url="https://dash.example.com")
+                )
 
         payload = captured["payload"]
         self.assertEqual(payload["host"], "10.0.0.42")
         self.assertEqual(payload["port"], 8642)
         self.assertEqual(payload["key"], "sk-cli-config")
+        self.assertEqual(payload["dashboard_url"], "https://dash.example.com")
         self.assertNotEqual(payload["key"], "ABCD12")
         relay = payload["relay"]
         self.assertEqual(relay["url"], "ws://10.0.0.42:8767")
         self.assertEqual(relay["code"], "ABCD12")
         self.assertIn("Copy/paste pairing invite", out.getvalue())
         self.assertIn("hermes-relay://pair?payload=", out.getvalue())
+        self.assertIn("Dashboard: https://dash.example.com", out.getvalue())
 
 
 class RegisterCodeCommandTests(unittest.TestCase):

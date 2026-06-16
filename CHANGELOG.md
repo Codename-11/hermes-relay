@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Relay plugin diagnostics and install guidance.** `hermes relay doctor` now reports standard upstream API/dashboard reachability, Relay loopback state, dashboard plugin presence, plugin-manager layout, and whether the legacy bootstrap monkeypatch is installed. The plugin manifest now advertises its Android and desktop tools, and `after-install.md` gives the upstream plugin manager a first-run handoff.
+
+- **Plugin-owned compatibility hook lifecycle.** `hermes relay compat status/install/remove` now owns the optional `hermes_relay_bootstrap.pth` startup hook, so the monkeypatch can be inspected, added, or removed without rerunning the legacy installer. The standard v1.0.0 path does not require this hook.
+
+- **Legacy cleanup alignment.** The legacy installer now installs the optional `.pth` hook through the plugin compat lifecycle, and the uninstaller removes every shell shim it creates (`hermes-pair`, `hermes-status`, `hermes-relay`, `hermes-relay-update`, `hermes-relay-tailscale`) while delegating hook cleanup to `hermes relay compat remove` when available.
+
 - **Gateway chat transport with live thinking.** Chat can ride the upstream dashboard `/api/ws` (the `tui_gateway` surface the official hermes-desktop client speaks) — the only vanilla-upstream path that streams reasoning *live*, so the Thinking block and sphere light up during generation. "Auto" prefers it when the dashboard is reachable and Manage is signed in, and falls back to the SSE endpoints per turn.
 
 - **Gateway desktop parity.** Native image/PDF/file attachments (with an in-chat notice when a turn falls back to a transport that can't carry files), mid-turn **steering**, **edit & resend**, interactive **approval / clarify / sudo / secret** cards, live **subagent lanes**, a **context-window meter**, server **slash commands** in autocomplete, and **turn-complete notifications** when the app is backgrounded.
@@ -29,6 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Routes card reachability verdicts** ("Reachable", or the specific failure reason) and per-turn **latency tracing** (`TurnLatency`, durations only) for diagnosing transport speed.
 
 ### Changed
+
+- **Relay plugin/server version aligned to v1.0.0.** The Python package, plugin manifest, dashboard manifest, and relay runtime now use the same `1.0.0` line as the stable Android release so a retagged source checkout describes one product version.
 
 - **The standard (no-plugin) path is first-class.** Chat, Manage, and voice all work against an unmodified upstream Hermes agent; standard voice rides the dashboard audio surface (`/api/audio/*`) with the Manage sign-in, and relay-paired voice is the profile-aware fallback. The relay plugin is now purely additive.
 
@@ -1225,7 +1233,9 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.0.0...HEAD
+[1.0.0]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...android-v1.0.0
+[0.8.1]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...android-v0.8.1
 [0.8.0]: https://github.com/Codename-11/hermes-relay/compare/v0.7.0...android-v0.8.0
 [0.7.0]: https://github.com/Codename-11/hermes-relay/compare/v0.6.1...v0.7.0
 [0.1.0]: https://github.com/Codename-11/hermes-relay/compare/v0.1.0-beta...v0.1.0

@@ -145,6 +145,9 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 - Old API-only QRs (`{hermes, host, port, key, tls}`) still parse cleanly — the `relay` field is nullable and `kotlinx.serialization` runs with `ignoreUnknownKeys = true`.
 - When `--no-relay` is passed to the pair command, or the relay isn't running, the QR omits the `relay` block and the command prints an `[info]` pointing at `hermes relay start`.
 - Top-level `key` is always the Hermes API bearer token for direct chat/session HTTP. The relay pairing code lives only at `relay.code`; putting an empty API key in a dashboard-minted QR will pair voice/relay successfully but leaves direct chat unauthenticated when the gateway requires `API_SERVER_KEY`.
+- Top-level `dashboard_url` is optional. When present, Android stores it for
+  Manage and standard dashboard voice instead of deriving the conventional
+  same-host `:9119` URL from the API server.
 
 **Pairing alphabet change:** `PAIRING_ALPHABET` in `plugin/relay/config.py` was widened from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no ambiguous 0/O/1/I) to the full `A-Z / 0-9` (36 chars) to match the phone-side `AuthManager.PAIRING_CODE_CHARS`. The old restriction only mattered when a human had to retype a code from a display; now that the code flows phone ↔ server through a QR + HTTP, the restriction silently rejected ~12% of valid codes and had to go.
 
@@ -443,7 +446,7 @@ The bare-path fetch is therefore safe as long as operators treat the allowed-roo
 **Supporting infrastructure:**
 
 - **Device revocation UI** — new Paired Devices screen on the phone, backed by `GET /sessions` (list all paired devices, tokens masked to first 8 chars) and `DELETE /sessions/{token_prefix}` (revoke). Self-revoke is allowed and flagged via `revoked_self: true` so the phone can wipe local state and redirect to pairing.
-- **QR payload v2 + HMAC signing** — payload version bumped from 1 to 2 when any new field is present (`ttl_seconds`, `grants`, `transport_hint`). Signed with HMAC-SHA256 using a host-local secret at `~/.hermes/hermes-relay-qr-secret` (32 bytes, `0o600`, auto-created). Phone parses and stores the `sig` field but does NOT verify it yet — full verification requires a secret-distribution mechanism we don't have defined. The server-side infrastructure is in place so phone-side verification can land in a follow-up.
+- **QR payload v2 + HMAC signing** — payload version bumped from 1 to 2 when Relay metadata fields are present (`ttl_seconds`, `grants`, `transport_hint`). Signed with HMAC-SHA256 using a host-local secret at `~/.hermes/hermes-relay-qr-secret` (32 bytes, `0o600`, auto-created). Phone parses and stores the `sig` field but does NOT verify it yet — full verification requires a secret-distribution mechanism we don't have defined. The server-side infrastructure is in place so phone-side verification can land in a follow-up.
 - **Rate-limit clear on pair** — `/pairing/register` now calls `RateLimiter.clear_all_blocks()` on success. An operator explicitly re-pairing wants a clean slate; the stale rate-limit state otherwise blocks the legitimate re-pair attempt for 5 minutes. This was an actual bug biting the operator at the start of this session.
 - **Transport security UI** — badge component with three states (secure green 🔒 / insecure amber with reason / insecure unknown red), three sizes (chip / row / large). Rendered in Settings Connection section, Session info sheet, and on each Paired Device card.
 - **Insecure ack dialog** — first-time toggle-on shows a plain-language threat-model dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason persists for display purposes; does NOT gate anything per the operator's trust-model direction.
@@ -1715,3 +1718,66 @@ default-on is unblocked.
 - `docs/relay-protocol.md`
 - `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/VoiceSettingsScreen.kt`
+
+### 34. v1.0.0 Standard-First Relay Plugin Boundary (2026-06-16)
+
+**Status:** Accepted.
+
+**Context:** v1.0.0 made a plain upstream Hermes install sufficient for Android
+chat, Manage, and voice. The remaining Relay code should be treated as a
+third-party plugin surface: useful and powerful, but additive and cleanly
+manageable. The legacy installer still creates side effects outside the upstream
+plugin manager, including an editable/root package install, `.pth` bootstrap,
+systemd user unit, shell shims, and external skill-path entries.
+
+**Decision:** Treat `plugin/` as the plugin-manager-owned root for the current
+repo layout and document the canonical install identifier as
+`Codename-11/hermes-relay/plugin`. The plugin manifest carries the tool list,
+dashboard plugin metadata stays under `plugin/dashboard/`, and the plugin CLI now
+includes `hermes relay doctor` as the single read-only diagnostics surface for
+agents and operators. The optional legacy compatibility startup hook is managed
+by `hermes relay compat status/install/remove` rather than an undocumented
+installer side effect. New compat hooks load the bootstrap implementation from
+`plugin/hermes_relay_bootstrap/`; the repo-root `hermes_relay_bootstrap/`
+package remains only as a backward-compatible import shim for old `.pth` files.
+The Python package, plugin manifest, dashboard manifest, and relay runtime all
+use version `1.0.0` for this stable line.
+
+**Runtime boundary:**
+
+- Standard upstream owns chat, Manage, dashboard auth, dashboard voice, sessions,
+  runs, responses, capabilities, skills, and toolset discovery.
+- Relay owns pairing, terminal, bridge/device control, relay voice extensions,
+  remote access, media relay, notification companion, desktop tools, and the
+  dashboard Relay tab.
+- `plugin/hermes_relay_bootstrap` is legacy compatibility only. It must not be a
+  hidden prerequisite for the standard path.
+
+**Why not add a repo-root `plugin.yaml` now:** Current upstream imports directory
+plugins from the directory that contains both `plugin.yaml` and `__init__.py`.
+Adding a root manifest while the actual `register(ctx)` entry point remains in
+`plugin/__init__.py` would make the repository look installable as a root plugin
+but fail or mislead at load time. A future repo restructure can move the plugin
+entry point to root or split a dedicated plugin repository; until then the
+subdirectory install is explicit and correct.
+
+**Operational rule:** `hermes plugins remove hermes-relay` removes only the
+plugin tree. It cannot clean every legacy external artifact today.
+`hermes relay compat remove` owns the bootstrap `.pth` hook, while
+`uninstall.sh` remains the cleanup surface for legacy service/shim/root-package
+installs until plugin lifecycle hooks or plugin-owned service commands replace
+those pieces.
+The legacy installer now calls `hermes relay compat install` for the hook, and
+the uninstaller delegates hook removal to `hermes relay compat remove` when that
+command is available, falling back to deleting only the Relay `.pth` file.
+
+**Key files:**
+
+- `plugin/plugin.yaml`
+- `plugin/__init__.py`
+- `plugin/cli.py`
+- `plugin/compat.py`
+- `plugin/doctor.py`
+- `plugin/hermes_relay_bootstrap/`
+- `plugin/after-install.md`
+- `docs/upstream-surface-matrix.md`

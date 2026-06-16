@@ -96,6 +96,17 @@ Check the current metadata with:
 python scripts/check-server-version-sync.py
 ```
 
+Check all release tracks at once with:
+
+```bash
+python scripts/check-version-tracks.py
+```
+
+This aggregate check reports Android, server/plugin, and desktop CLI versions
+side by side and validates that each track's own source files are internally
+consistent. It deliberately does not require all three tracks to share the same
+SemVer.
+
 The `server-v*` release workflow validates the tag against the same metadata,
 runs server tests, builds a wheel and sdist, generates checksums, and publishes
 a GitHub Release with the package artifacts.
@@ -480,9 +491,11 @@ git push origin server-v0.6.2
 
 Pushing `server-v*` triggers `.github/workflows/release-server.yml`, which
 validates all server-owned version metadata with
-`scripts/check-server-version-sync.py`, runs server tests, builds a wheel and
-sdist, generates `SHA256SUMS.txt`, and creates a GitHub Release for the server
-package.
+`scripts/check-server-version-sync.py`. Run
+`python scripts/check-version-tracks.py` locally before tagging when a change
+touches more than one release surface. The workflow also runs server tests,
+builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates a GitHub
+Release for the server package.
 
 ### 5. Upload to Play Console
 

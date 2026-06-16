@@ -15,9 +15,11 @@
 # What it removes (in reverse install order):
 #   [6] systemd user service             — `systemctl --user disable --now`,
 #                                            unit file deletion, daemon-reload
-#   [5] hermes-pair + hermes-status     — ~/.local/bin/hermes-pair,
-#       + hermes-relay-update shims         ~/.local/bin/hermes-status,
-#                                           ~/.local/bin/hermes-relay-update
+#   [5] shell shims                     — ~/.local/bin/hermes-pair,
+#                                            ~/.local/bin/hermes-status,
+#                                            ~/.local/bin/hermes-relay,
+#                                            ~/.local/bin/hermes-relay-update,
+#                                            ~/.local/bin/hermes-relay-tailscale
 #   [4] skills external_dirs entry       — removes the relay's path from
 #                                            ~/.hermes/config.yaml (other
 #                                            entries preserved)
@@ -72,7 +74,9 @@ HERMES_CONFIG="$HERMES_HOME/config.yaml"
 QR_SECRET="$HERMES_HOME/hermes-relay-qr-secret"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
 STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
+RELAY_SHIM_PATH="$HOME/.local/bin/hermes-relay"
 UPDATE_SHIM_PATH="$HOME/.local/bin/hermes-relay-update"
+TS_SHIM_PATH="$HOME/.local/bin/hermes-relay-tailscale"
 DOCTOR_SHIM_PATH="$HOME/.local/bin/hermes-relay-doctor"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
@@ -131,8 +135,8 @@ else
     fi
 fi
 
-# ── 5/6  Remove hermes-pair + hermes-status + hermes-relay-update shims ───
-info "[5/6] Removing hermes-pair + hermes-status + hermes-relay-update + hermes-relay-doctor shims..."
+# ── 5/6  Remove shell shims ───────────────────────────────────────────────
+info "[5/6] Removing shell shims..."
 if [ -f "$SHIM_PATH" ] || [ -L "$SHIM_PATH" ]; then
     run "rm -f \"$SHIM_PATH\""
     ok "Removed $SHIM_PATH"
@@ -145,11 +149,23 @@ if [ -f "$STATUS_SHIM_PATH" ] || [ -L "$STATUS_SHIM_PATH" ]; then
 else
     warn "$STATUS_SHIM_PATH does not exist"
 fi
+if [ -f "$RELAY_SHIM_PATH" ] || [ -L "$RELAY_SHIM_PATH" ]; then
+    run "rm -f \"$RELAY_SHIM_PATH\""
+    ok "Removed $RELAY_SHIM_PATH"
+else
+    warn "$RELAY_SHIM_PATH does not exist"
+fi
 if [ -f "$UPDATE_SHIM_PATH" ] || [ -L "$UPDATE_SHIM_PATH" ]; then
     run "rm -f \"$UPDATE_SHIM_PATH\""
     ok "Removed $UPDATE_SHIM_PATH"
 else
     warn "$UPDATE_SHIM_PATH does not exist"
+fi
+if [ -f "$TS_SHIM_PATH" ] || [ -L "$TS_SHIM_PATH" ]; then
+    run "rm -f \"$TS_SHIM_PATH\""
+    ok "Removed $TS_SHIM_PATH"
+else
+    warn "$TS_SHIM_PATH does not exist"
 fi
 if [ -f "$DOCTOR_SHIM_PATH" ] || [ -L "$DOCTOR_SHIM_PATH" ]; then
     run "rm -f \"$DOCTOR_SHIM_PATH\""
@@ -287,8 +303,14 @@ info "[2/6] Removing bootstrap .pth + pip package..."
 if [ -x "$VENV_PY" ]; then
     SITE_PKGS="$("$VENV_PY" -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null || true)"
     if [ -n "$SITE_PKGS" ] && [ -f "$SITE_PKGS/$PTH_NAME" ]; then
-        run "rm -f \"$SITE_PKGS/$PTH_NAME\""
-        ok "Removed $SITE_PKGS/$PTH_NAME"
+        if [ -n "$DRY_RUN" ]; then
+            echo "  [dry-run] \"$VENV_PY\" -m plugin.cli relay compat remove --site-packages \"$SITE_PKGS\""
+        elif "$VENV_PY" -m plugin.cli relay compat remove --site-packages "$SITE_PKGS" >/dev/null 2>&1; then
+            ok "Removed compat hook via hermes relay compat"
+        else
+            run "rm -f \"$SITE_PKGS/$PTH_NAME\""
+            ok "Removed $SITE_PKGS/$PTH_NAME (compat command unavailable)"
+        fi
     else
         warn "$PTH_NAME not present in venv site-packages"
     fi

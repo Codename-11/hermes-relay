@@ -15,6 +15,7 @@ version bit when it's actually emitting endpoints::
     {
       "hermes": 3,
       "host": "<ip>", "port": <port>, "key": "<token>", "tls": <bool>,
+      "dashboard_url": "https://dashboard.example.com",
       "relay": { ... same as v2 ... },
       "endpoints": [
         { "role": "lan", "priority": 0,
@@ -190,6 +191,7 @@ def build_payload(
     relay: Optional[dict] = None,
     sign: bool = True,
     endpoints: Optional[list[dict]] = None,
+    dashboard_url: Optional[str] = None,
 ) -> str:
     """Build compact JSON payload matching HermesPairingPayload.kt format.
 
@@ -211,6 +213,10 @@ def build_payload(
     for backward compat — phones on v1 / v2 parsers synthesize a single
     candidate from those fields and ignore ``endpoints``.
 
+    ``dashboard_url`` is optional. When present, Android stores it as the
+    Manage/dashboard URL instead of deriving the conventional same-host
+    ``:9119`` URL from the API server.
+
     If ``sign`` is true the payload is signed with the host-local QR
     secret and the base64 HMAC is added as a top-level ``sig`` field.
     """
@@ -231,6 +237,8 @@ def build_payload(
         payload["relay"] = relay
     if endpoints:
         payload["endpoints"] = endpoints
+    if dashboard_url:
+        payload["dashboard_url"] = dashboard_url
 
     if sign:
         try:
@@ -279,6 +287,7 @@ def build_pairing_qr_payload(
     tls: bool,
     relay: Optional[dict] = None,
     endpoints: Optional[list[dict]] = None,
+    dashboard_url: Optional[str] = None,
     sign: bool = True,
 ) -> str:
     """Build the Android pairing QR payload shared by CLI and dashboard mint."""
@@ -289,6 +298,7 @@ def build_pairing_qr_payload(
         tls=tls,
         relay=relay,
         endpoints=endpoints,
+        dashboard_url=dashboard_url,
         sign=sign,
     )
 
@@ -983,6 +993,7 @@ def render_text_block(
     tls: bool,
     relay: Optional[dict] = None,
     invite_url: Optional[str] = None,
+    dashboard_url: Optional[str] = None,
 ) -> str:
     """Return formatted connection details — always shown (works in any terminal).
 
@@ -1000,12 +1011,14 @@ def render_text_block(
         "  " + "-" * 40,
         "",
         f"  Server : {url}",
+        f"  Dashboard: {dashboard_url}" if dashboard_url else None,
         f"  API Key: {_mask_key(key)}",
         f"  Auth   : {auth_status}",
         "",
         "  Enter manually in the app if QR won't scan:",
         f"    URL: {url}",
     ]
+    lines = [line for line in lines if line is not None]
     if key:
         lines.append(f"    Key: {key}")
 
@@ -1222,6 +1235,9 @@ def pair_command(args) -> None:
     port = config["port"]
     key = config["key"]
     tls = config["tls"]
+    dashboard_url = (
+        str(getattr(args, "dashboard_url", "") or "").strip().rstrip("/") or None
+    )
 
     # ── Relay pre-pairing ────────────────────────────────────────────────
     #
@@ -1329,11 +1345,22 @@ def pair_command(args) -> None:
         tls=tls,
         relay=relay_block,
         endpoints=endpoints or None,
+        dashboard_url=dashboard_url,
     )
     invite_url = build_pairing_invite_url(payload)
 
     # Always show text block — works in any terminal including Hermes TUI
-    print(render_text_block(host, port, key, tls, relay=relay_block, invite_url=invite_url))
+    print(
+        render_text_block(
+            host,
+            port,
+            key,
+            tls,
+            relay=relay_block,
+            invite_url=invite_url,
+            dashboard_url=dashboard_url,
+        )
+    )
 
     png_only = getattr(args, "png", False)
     no_qr = getattr(args, "no_qr", False)
@@ -1375,6 +1402,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--host", help="Override API server host")
     parser.add_argument("--port", type=int, help="Override API server port")
+    parser.add_argument(
+        "--dashboard-url",
+        help="Embed an explicit Hermes dashboard URL for Manage/standard voice",
+    )
     parser.add_argument(
         "--ttl",
         default="30d",

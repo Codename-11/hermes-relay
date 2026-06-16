@@ -18,7 +18,7 @@ Hermes-Relay voice endpoints can reuse this same Bearer token. Relay validates i
 
 ## How endpoints get served
 
-Current upstream Hermes serves the session API natively on `/api/sessions/*`, advertises it through `/v1/capabilities`, and exposes read-only skill/toolset discovery through `/v1/skills` and `/v1/toolsets`. Installing Hermes-Relay via `install.sh` still adds a bootstrap compatibility hook for older hermes-agent builds and for remaining management surfaces that are not current API-server routes (`/api/memory`, legacy `/api/skills`, `/api/config`, `/api/available-models`).
+Current upstream Hermes serves the session API natively on `/api/sessions/*`, advertises it through `/v1/capabilities`, and exposes read-only skill/toolset discovery through `/v1/skills` and `/v1/toolsets`. Standard chat, Manage, and dashboard voice do not need the Hermes-Relay compatibility hook. If an older hermes-agent build still needs compatibility-only routes (`/api/memory`, legacy `/api/skills`, `/api/config`, `/api/available-models`) or slash-command middleware, manage the optional plugin-owned startup hook with `hermes relay compat status/install/remove`. Legacy `install.sh` installs a backward-compatible hook as part of its full-service setup.
 
 **Chat streaming uses `Auto` by default.** The app probes `/v1/capabilities` first, then legacy route probes, and prefers native `/api/sessions/{id}/chat/stream` when available. Older builds fall back to `/v1/chat/completions` or `/v1/runs`; you can manually force `Sessions`, `Completions`, or `Runs` mode for debugging.
 
