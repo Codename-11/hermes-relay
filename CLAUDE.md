@@ -95,6 +95,10 @@ hermes-android/
 │   ├── accessibility/       # HermesAccessibilityService, ScreenReader, ActionExecutor
 │   ├── bridge/              # BridgeSafetyManager, BridgeForegroundService, BridgeStatusOverlay
 │   └── notifications/       # HermesNotificationCompanion
+├── relay-core/              ← [EXPERIMENTAL] Quest/XR shared core lib (com.axiomlabs.hermesrelay.core) — pairing, transport, terminal, voice, wire
+├── relay-ui/                ← [EXPERIMENTAL] Quest/XR shared Compose UI lib — sphere, terminal WebView, QR scanner
+├── quest/                   ← [EXPERIMENTAL] Meta Spatial SDK Quest/XR app (gradle includeBuild; in development, not shipped)
+├── ui-preview/              ← Desktop Compose Hot Reload harness for PC UI iteration (NOT shipped; shares MorphingSphereCore)
 ├── desktop/                 ← Node thin-client CLI (`@hermes-relay/cli`)
 │   ├── bin/hermes-relay.js  # #!/usr/bin/env node shim → dist/cli.js
 │   ├── src/
@@ -317,6 +321,12 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 | **Server — Desktop tool routing (Phase B)** | |
 | `plugin/relay/channels/desktop.py` | Mirrors `bridge.py` — `desktop.command`/`desktop.response`/`desktop.status`, UUID-correlated futures, 30s timeout, single-client MVP, per-session advertised-tools set |
 | `plugin/tools/desktop_tool.py` | 24 `desktop_*` tools (fs/shell/powershell/process/jobs/transfer/health) — registers with `tools.registry` under `desktop` toolset; per-tool `check_fn` pings `/desktop/_ping?tool=<name>`; `desktop_health` is `_RELAY_ONLY` and pings `/desktop/health` so it works even when the client is wedged |
+| **Gradle modules — experimental Quest/XR (in development)** | |
+| `relay-core/` | [EXPERIMENTAL] Android library (`com.axiomlabs.hermesrelay.core`) — shared pairing/transport/terminal/voice/wire for the Quest port; not yet wired into the shipped `:app` |
+| `relay-ui/` | [EXPERIMENTAL] Android library (`com.axiomlabs.hermesrelay.ui`) — shared Compose UI (sphere, terminal WebView, QR scanner) for the Quest port; carries its own sphere copy |
+| `quest/` | [EXPERIMENTAL] Meta Spatial SDK Quest/XR app — gradle `includeBuild("quest")`; needs further development, not shipped |
+| **Tooling — dev iteration (not shipped)** | |
+| `ui-preview/` | Desktop Compose Hot Reload harness — JVM Compose for Desktop; source-shares `MorphingSphereCore` from `:relay-ui`; `Main.kt` gallery; see `ui-preview/README.md` |
 
 ## What NOT to Do
 
