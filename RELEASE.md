@@ -21,15 +21,15 @@ for automation.
 | Surface | Tag prefix | Version source | Bump script | Release workflow |
 |---|---|---|---|---|
 | Hermes-Relay-Android | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
-| Hermes-Relay-Plugin | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-server-version.sh` | `.github/workflows/release-plugin.yml` |
-| Hermes-Relay-CLI | `desktop-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-cli.yml` |
+| Hermes-Relay-Plugin | `plugin-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-plugin-version.sh` | `.github/workflows/release-plugin.yml` |
+| Hermes-Relay-CLI | `cli-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-cli.yml` |
 
 This split is intentional. The plugin carries relay features for both Android
 and CLI clients, so plugin fixes can ship without forcing an Android app
 `versionCode` bump, and CLI alphas can continue on their own cadence. Historical
-Android releases before this naming split used bare `v*` tags, and historical
-plugin/server releases used `relay-v*` tags. New releases use the explicit tag
-prefixes above.
+Android releases before this naming split used bare `v*` tags. Historical
+plugin/server releases used `relay-v*` tags, and historical CLI prereleases used
+`desktop-v*` tags. New releases use the explicit tag prefixes above.
 
 ### Android app versioning
 
@@ -90,13 +90,13 @@ lockstep:
 Always bump Plugin releases via:
 
 ```bash
-bash scripts/bump-server-version.sh 0.6.2
+bash scripts/bump-plugin-version.sh 0.6.2
 ```
 
 Check the current metadata with:
 
 ```bash
-python scripts/check-server-version-sync.py
+python scripts/check-plugin-version-sync.py
 ```
 
 Check all release tracks at once with:
@@ -110,8 +110,8 @@ side by side and validates that each track's own source files are internally
 consistent. It deliberately does not require all three tracks to share the same
 SemVer.
 
-The `server-v*` release workflow validates the tag against the same metadata,
-runs plugin/server tests, builds a wheel and sdist, generates checksums, and
+The `plugin-v*` release workflow validates the tag against the same metadata,
+runs plugin tests, builds a wheel and sdist, generates checksums, and
 publishes a `Hermes-Relay-Plugin vX.Y.Z` GitHub Release with the package
 artifacts.
 
@@ -171,15 +171,15 @@ Squash merges lose that detail and are **not** the house style.
 ### Version bumps happen at release-prep on `dev`, NOT on feature branches
 
 Feature branches **never** touch `gradle/libs.versions.toml`,
-server-owned version metadata, or `desktop/package.json`.
+plugin-owned version metadata, or `desktop/package.json`.
 If two feature branches both bumped a release version, they'd collide on
 version files and, for Android, on `appVersionCode` (which must be
 monotonic).
 
 Version-bump commits live on `dev` as the last commit of release-prep
-work. Android commits use `release(android): android-vX.Y.Z`; server commits
-use `release(server): server-vX.Y.Z`; desktop commits use the existing
-`release: desktop-vX.Y.Z` convention. A release PR then merges `dev` →
+work. Android commits use `release(android): android-vX.Y.Z`; plugin commits
+use `release(plugin): plugin-vX.Y.Z`; CLI commits use
+`release(cli): cli-vX.Y.Z`. A release PR then merges `dev` →
 `main` with `--no-ff`, and the matching tag is cut from the resulting
 `main` tip.
 
@@ -188,7 +188,7 @@ use `release(server): server-vX.Y.Z`; desktop commits use the existing
 Light branch protection is enabled:
 
 - **`main`** — direct pushes blocked; only release PRs from `dev` merge
-  here. PR must pass CI (Android + Server) before merge. Force push and
+  here. PR must pass CI (Android + Plugin) before merge. Force push and
   branch deletion blocked.
 - **`dev`** — direct pushes blocked for non-trivial work; feature
   branches PR in. PR must pass CI. Force push and branch deletion
@@ -480,24 +480,24 @@ voice auth, dashboard plugin UI, or packaging changes.
 git checkout dev
 git pull --ff-only origin dev
 
-bash scripts/bump-server-version.sh 0.6.2
+bash scripts/bump-plugin-version.sh 0.6.2
 git add pyproject.toml plugin/relay/__init__.py plugin/plugin.yaml plugin/dashboard/manifest.json plugin/dashboard/package.json plugin/dashboard/package-lock.json CHANGELOG.md
-git commit -m "release(server): server-v0.6.2"
+git commit -m "release(plugin): plugin-v0.6.2"
 git push origin dev
 
 # Open the release PR (dev -> main) and merge with --no-ff.
 # After merge, tag from the new main tip:
 git checkout main
 git pull --ff-only origin main
-git tag server-v0.6.2
-git push origin server-v0.6.2
+git tag plugin-v0.6.2
+git push origin plugin-v0.6.2
 ```
 
-Pushing `server-v*` triggers `.github/workflows/release-plugin.yml`, which
-validates all server-owned version metadata with
-`scripts/check-server-version-sync.py`. Run
+Pushing `plugin-v*` triggers `.github/workflows/release-plugin.yml`, which
+validates all plugin-owned version metadata with
+`scripts/check-plugin-version-sync.py`. Run
 `python scripts/check-version-tracks.py` locally before tagging when a change
-touches more than one release surface. The workflow also runs server tests,
+touches more than one release surface. The workflow also runs plugin tests,
 builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates a GitHub
 Release named `Hermes-Relay-Plugin v<version>` for the plugin package.
 
@@ -587,9 +587,9 @@ gradlew promoteReleaseArtifact --from-track=internal --promote-track=production
 
 ## CI Behavior
 
-Android, Server, dashboard, and desktop now have separate CI/release lanes.
+Android, Plugin, dashboard, and desktop now have separate CI/release lanes.
 This keeps a dashboard CSS fix from running the full server suite, and keeps
-server changes from forcing an Android app `versionCode` bump.
+plugin changes from forcing an Android app `versionCode` bump.
 
 On every push of a tag matching `android-v*`, `.github/workflows/release-android.yml`:
 
@@ -609,18 +609,18 @@ On every push of a tag matching `android-v*`, `.github/workflows/release-android
    succeeded. If `HERMES_KEYSTORE_BASE64` is missing, the summary warns
    that the artifacts are debug-signed and unsuitable for Play Store.
 
-On every push of a tag matching `server-v*`,
+On every push of a tag matching `plugin-v*`,
 `.github/workflows/release-plugin.yml`:
 
-1. Validates the tag matches all server-owned version metadata checked by
-   `scripts/check-server-version-sync.py`.
-2. Runs server syntax checks and the focused route/auth/session test slice.
+1. Validates the tag matches all plugin-owned version metadata checked by
+   `scripts/check-plugin-version-sync.py`.
+2. Runs plugin syntax checks and the focused route/auth/session test slice.
 3. Builds the Python wheel and sdist with `python -m build`.
 4. Generates `dist/SHA256SUMS.txt`.
 5. Creates a GitHub Release named `Hermes-Relay-Plugin v<version>` with the wheel,
    sdist, and checksum file attached.
 
-On every push of a tag matching `desktop-v*`,
+On every push of a tag matching `cli-v*`,
 `.github/workflows/release-cli.yml` builds and publishes the CLI binaries and
 Windows tray installer. Dashboard-only changes are covered by
 `.github/workflows/ci-dashboard.yml`, which builds the dashboard plugin,
@@ -660,9 +660,9 @@ For an Android app hotfix:
    `dev`'s `appVersionCode` lags behind `main` and the next app release
    bump collides.
 
-For a Server hotfix, branch from the affected `server-v*` tag, apply
-the fix, run `bash scripts/bump-server-version.sh <next-version>`, merge to
-`main`, and tag `server-v<next-version>`. Do not touch
+For a Plugin hotfix, branch from the affected `plugin-v*` tag, apply
+the fix, run `bash scripts/bump-plugin-version.sh <next-version>`, merge to
+`main`, and tag `plugin-v<next-version>`. Do not touch
 `gradle/libs.versions.toml` unless an Android app release is also shipping.
 
 ## Troubleshooting

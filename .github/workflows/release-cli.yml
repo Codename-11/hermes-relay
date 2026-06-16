@@ -2,7 +2,7 @@ name: Release CLI
 
 on:
   push:
-    tags: ['desktop-v*']
+    tags: ['cli-v*']
 
 permissions:
   contents: write
@@ -171,9 +171,9 @@ jobs:
       - build-cli-binaries
       - build-windows-tray-installer
     steps:
-      - name: Extract desktop version
+      - name: Extract CLI version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
+        run: echo "version=${GITHUB_REF_NAME#cli-v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:

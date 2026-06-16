@@ -5,8 +5,8 @@
 #   gradle/libs.versions.toml::appVersionName
 #   gradle/libs.versions.toml::appVersionCode
 #
-# Server/Python releases are intentionally split; use
-# scripts/bump-server-version.sh for server-owned plugin/package metadata.
+# Plugin/Python releases are intentionally split; use
+# scripts/bump-plugin-version.sh for plugin/package metadata.
 
 set -euo pipefail
 

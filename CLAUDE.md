@@ -169,14 +169,14 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 - **Branching model (as of 2026-04-19):** `main` + `dev`. Feature branches target `dev`, not `main`. `main` receives only release merges (and tags). No straight-to-main exemption — even single-file typos go through `dev`.
 - **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches on every merge in the chain (feature → dev → main).
 - **Merging ≠ releasing.** Feature branches land on `dev` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md` on `dev`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
-- **Version bumps happen on `dev`, then release-merge to `main`.** Bump only the surface being released: `scripts/bump-android-version.sh` for `android-vX.Y.Z`, `scripts/bump-server-version.sh` for `server-vX.Y.Z`, and `desktop/package.json` for `desktop-vX.Y.Z`. The release commit lives on `dev`, then a release PR merges `dev` → `main` with `--no-ff`, then the surface tag is cut from `main`.
+- **Version bumps happen on `dev`, then release-merge to `main`.** Bump only the surface being released: `scripts/bump-android-version.sh` for `android-vX.Y.Z`, `scripts/bump-plugin-version.sh` for `plugin-vX.Y.Z`, and `desktop/package.json` for `cli-vX.Y.Z`. The release commit lives on `dev`, then a release PR merges `dev` → `main` with `--no-ff`, then the surface tag is cut from `main`.
 - **Server tracks `dev` for staging.** The hermes-host deployment pulls `dev` so merged features are exercised before they reach a tag. Released state lives on tags cut from `main`.
 - **Branch protection** on `main` — direct push blocked; only release-merge PRs from `dev` land here. `dev` also requires CI to pass on PRs but accepts feature-branch merges freely.
 
 ### Testing
 - **Android:** JUnit + Compose testing for UI, MockK for mocks
 - **Python:** `python -m unittest plugin.tests.test_<name>` — avoid bare `pytest` (conftest imports `responses` which may not be installed in the venv)
-- **CI is split by path:** `.github/workflows/ci-android.yml` runs on app/Gradle changes; `.github/workflows/ci-server.yml` runs on plugin/Python changes. Both trigger on pushes to `main` and `dev` and on PRs targeting either. Build + tests must pass before merge to `dev`; release-merge to `main` requires the same.
+- **CI is split by path:** `.github/workflows/ci-android.yml` runs on app/Gradle changes; `.github/workflows/ci-plugin.yml` runs on plugin/Python changes. Both trigger on pushes to `main` and `dev` and on PRs targeting either. Build + tests must pass before merge to `dev`; release-merge to `main` requires the same.
 
 ## Key Files
 
@@ -408,11 +408,11 @@ must not depend on this hook.
 See [RELEASE.md](RELEASE.md) for the full recipe.
 
 - **Android version source:** `gradle/libs.versions.toml` (`appVersionName`, `appVersionCode`); bump with `scripts/bump-android-version.sh`
-- **Relay plugin/server version source:** `pyproject.toml`; keep plugin/dashboard metadata synced with `scripts/check-server-version-sync.py`; bump with `scripts/bump-server-version.sh`
+- **Relay plugin version source:** `pyproject.toml`; keep plugin/dashboard metadata synced with `scripts/check-plugin-version-sync.py`; bump with `scripts/bump-plugin-version.sh`
 - **Desktop CLI version source:** `desktop/package.json`; regenerate `desktop/src/version.ts` with `npm run gen:version`
-- **Track audit:** `python scripts/check-version-tracks.py` reports Android, server/plugin, and desktop CLI versions without forcing them to match
+- **Track audit:** `python scripts/check-version-tracks.py` reports Android, plugin, and CLI versions without forcing them to match
 - **`appVersionCode` is monotonic** — always increment across Android prereleases
-- **Cut a release:** bump the target surface → commit → merge `dev` to `main` → tag with `android-v*`, `server-v*`, or `desktop-v*` → push tag → CI builds + GitHub Release
+- **Cut a release:** bump the target surface → commit → merge `dev` to `main` → tag with `android-v*`, `plugin-v*`, or `cli-v*` → push tag → CI builds + GitHub Release
 - **Required secrets:** `HERMES_KEYSTORE_BASE64`, `HERMES_KEYSTORE_PASSWORD`, `HERMES_KEY_ALIAS`, `HERMES_KEY_PASSWORD`
 
 ## Integration Points

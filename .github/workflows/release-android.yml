@@ -3,7 +3,7 @@
 # Triggered when an Android release tag (android-v*) is pushed.
 # Validates the tag matches the app version in libs.versions.toml,
 # runs focused Android checks, builds release APK/AAB artifacts, and creates a
-# GitHub Release. Server/Python package releases use server-v* tags.
+# GitHub Release. Plugin/Python package releases use plugin-v* tags.
 
 name: Release Android
 

@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
-- **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, with lower-case workflow files (`release-plugin.yml`, `release-cli.yml`) while tag prefixes remain `android-v*`, `server-v*`, and `desktop-v*` for installer/update compatibility.
+- **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, with future tags on `android-v*`, `plugin-v*`, and `cli-v*`. The CLI installer and updater still understand historical `desktop-v*` prereleases during the migration.
 
 ## [1.0.0] - 2026-06-14
 

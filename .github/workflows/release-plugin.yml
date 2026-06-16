@@ -3,7 +3,7 @@ name: Release Plugin
 on:
   push:
     tags:
-      - "server-v*"
+      - "plugin-v*"
 
 permissions:
   contents: write
@@ -20,10 +20,10 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/server-v}" >> "$GITHUB_OUTPUT"
+        run: echo "version=${GITHUB_REF#refs/tags/plugin-v}" >> "$GITHUB_OUTPUT"
 
       - name: Verify Plugin version sync
-        run: python scripts/check-server-version-sync.py --expect "$TAG_VERSION"
+        run: python scripts/check-plugin-version-sync.py --expect "$TAG_VERSION"
         env:
           TAG_VERSION: ${{ steps.version.outputs.version }}
 
@@ -90,16 +90,16 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: Hermes-Relay-Plugin v${{ needs.validate.outputs.version }}
-          tag_name: server-v${{ needs.validate.outputs.version }}
+          tag_name: plugin-v${{ needs.validate.outputs.version }}
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           fail_on_unmatched_files: true
           body: |
             # Hermes-Relay-Plugin v${{ needs.validate.outputs.version }}
 
             This release contains the Hermes plugin and Python package.
-            Android releases use `android-v*` tags. CLI releases use
-            `desktop-v*` tags. Historical server releases before this lane
-            rename used `relay-v*` tags.
+            Android releases use `android-v*` tags. CLI releases use `cli-v*`
+            tags. Historical CLI prereleases used `desktop-v*` tags, and
+            historical relay/plugin releases used `relay-v*` tags.
 
             ## Install
 

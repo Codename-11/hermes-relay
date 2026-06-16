@@ -4,8 +4,8 @@
 The repo ships three independently versioned artifacts:
 
 - Android app: ``android-v*`` tags, source in ``gradle/libs.versions.toml``.
-- Server/plugin: ``server-v*`` tags, source in ``pyproject.toml``.
-- Desktop CLI: ``desktop-v*`` tags, source in ``desktop/package.json``.
+- Plugin: ``plugin-v*`` tags, source in ``pyproject.toml``.
+- CLI: ``cli-v*`` tags, source in ``desktop/package.json``.
 
 This script gives release prep one command that checks the sources without
 forcing unrelated artifacts to share the same SemVer.
@@ -87,7 +87,7 @@ def _android_track(errors: list[str]) -> Track:
     )
 
 
-def _server_track(errors: list[str]) -> Track:
+def _plugin_track(errors: list[str]) -> Track:
     pyproject = tomllib.loads(_read_text("pyproject.toml"))
     project = pyproject.get("project")
     if not isinstance(project, dict):
@@ -106,20 +106,20 @@ def _server_track(errors: list[str]) -> Track:
         ('plugin/dashboard/package-lock.json packages[""]', _package_lock_root_version()),
     ]
     if not SEMVER_RE.match(version):
-        errors.append(f"server/plugin version is not SemVer: {version!r}")
+        errors.append(f"plugin version is not SemVer: {version!r}")
     for source, found in versions:
         if found != version:
-            errors.append(f"server/plugin version mismatch: {source} has {found}, expected {version}")
+            errors.append(f"plugin version mismatch: {source} has {found}, expected {version}")
     return Track(
         name="plugin",
         version=version,
         source="pyproject.toml",
-        tag=f"server-v{version}",
+        tag=f"plugin-v{version}",
         details="plugin + dashboard metadata",
     )
 
 
-def _desktop_track(errors: list[str]) -> Track:
+def _cli_track(errors: list[str]) -> Track:
     version = _json_version("desktop/package.json")
     generated = _regex_version("desktop/src/version.ts", r'^export const VERSION = "([^"]+)" as const')
     if not SEMVER_RE.match(version):
@@ -133,7 +133,7 @@ def _desktop_track(errors: list[str]) -> Track:
         name="cli",
         version=version,
         source="desktop/package.json",
-        tag=f"desktop-v{version}",
+        tag=f"cli-v{version}",
         details="src/version.ts generated",
     )
 
@@ -142,8 +142,8 @@ def collect_tracks() -> tuple[list[Track], list[str]]:
     errors: list[str] = []
     tracks = [
         _android_track(errors),
-        _server_track(errors),
-        _desktop_track(errors),
+        _plugin_track(errors),
+        _cli_track(errors),
     ]
     return tracks, errors
 
