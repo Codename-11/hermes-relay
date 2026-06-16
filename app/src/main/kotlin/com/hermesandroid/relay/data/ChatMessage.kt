@@ -272,5 +272,16 @@ data class ChatSession(
     val title: String?,
     val model: String?,
     val messageCount: Int = 0,
-    val updatedAt: Long = 0L
-)
+    val updatedAt: Long = 0L,
+    val startedAt: Long = 0L,
+    val lastActivityAt: Long = 0L
+) {
+    val activityTimestamp: Long
+        get() = firstPositive(lastActivityAt, updatedAt, startedAt)
+
+    val startTimestamp: Long
+        get() = firstPositive(startedAt, updatedAt, lastActivityAt)
+
+    private fun firstPositive(vararg values: Long): Long =
+        values.firstOrNull { it > 0L } ?: 0L
+}

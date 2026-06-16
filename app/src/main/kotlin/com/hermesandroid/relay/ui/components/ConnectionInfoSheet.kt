@@ -34,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -637,6 +638,7 @@ fun AgentInfoSheet(
     // Profile + personality state — same flows the old pickers consumed.
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -689,6 +691,16 @@ fun AgentInfoSheet(
     val profileOverridesPersonality =
         selectedProfile?.systemMessage?.isNotBlank() == true
     var endpointsExpanded by remember { mutableStateOf(false) }
+    val effectiveDisplayProfile = AgentDisplay.effectiveDisplayProfile(
+        selectedProfile = selectedProfile,
+        profiles = agentProfiles,
+    )
+    val serverResolvedAgentName = AgentDisplay.agentName(
+        profile = effectiveDisplayProfile,
+        selectedPersonality = selectedPersonality,
+        defaultPersonality = defaultPersonality,
+        connectionLabel = null,
+    )
 
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -720,16 +732,22 @@ fun AgentInfoSheet(
         ) {
             // ---- Header: avatar + agent name + live status ----
             AgentSheetHeader(
-                profile = AgentDisplay.effectiveProfile(
-                    selectedProfile = selectedProfile,
-                    profiles = agentProfiles,
-                ),
+                profile = effectiveDisplayProfile,
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
+                localDisplayAlias = profileDisplayAlias,
                 serverModelName = serverModelName,
                 apiServerReachable = apiServerReachable,
                 chatMode = chatMode,
-                isCustomized = selectedProfile != null || selectedPersonality != "default",
+                isCustomized = selectedProfile != null ||
+                    selectedPersonality != "default" ||
+                    profileDisplayAlias != null,
+            )
+
+            DisplayAliasSection(
+                currentAlias = profileDisplayAlias,
+                fallbackName = serverResolvedAgentName,
+                onSave = connectionViewModel::setProfileDisplayAlias,
             )
 
             HorizontalDivider()
@@ -755,7 +773,9 @@ fun AgentInfoSheet(
                 CollapsiblePickerSection(
                     title = "Profile",
                     hint = "Host-side Hermes contexts",
-                    currentValue = AgentDisplay.profileDisplayName(selectedProfile) ?: "Server default",
+                    currentValue = profileDisplayAlias
+                        ?: AgentDisplay.profileDisplayName(selectedProfile)
+                        ?: "Server default",
                 ) {
 
                     val defaultDotColor = serverDefaultProfile?.let { profile ->
@@ -771,9 +791,13 @@ fun AgentInfoSheet(
                     val defaultRunning = serverDefaultProfile?.let { profile ->
                         if (profile.gatewayRunning) " \u2022 Running" else " \u2022 Idle"
                     }.orEmpty()
-                    val defaultDisplay = serverDefaultProfile?.let { profile ->
-                        AgentDisplay.profileDisplayName(profile)
+                    val defaultDisplay = if (selectedProfile == null && profileDisplayAlias != null) {
+                        profileDisplayAlias
+                    } else {
+                        serverDefaultProfile?.let { profile ->
+                            AgentDisplay.profileDisplayName(profile)
                             ?: profile.name.replaceFirstChar { it.uppercase() }
+                        }
                     }
                     val defaultSecondary = serverDefaultProfile?.let { profile ->
                         listOfNotNull(
@@ -867,7 +891,14 @@ fun AgentInfoSheet(
                         val hasDescription = profile.description.isNotBlank()
                         // Headline is the profile NAME (easy to scan); the
                         // description + model ride one subtitle line.
-                        val primaryLabel = profile.name.replaceFirstChar { it.uppercase() }
+                        val primaryLabel = if (
+                            selectedProfile?.name == profile.name &&
+                            profileDisplayAlias != null
+                        ) {
+                            profileDisplayAlias.orEmpty()
+                        } else {
+                            profile.name.replaceFirstChar { it.uppercase() }
+                        }
                         // Secondary line: `modelname • Running` / `• Idle`.
                         // The dot itself carries the same information via
                         // colour; the text label is the a11y-visible
@@ -1403,6 +1434,56 @@ private fun CollapsiblePickerSection(
     }
 }
 
+@Composable
+private fun DisplayAliasSection(
+    currentAlias: String?,
+    fallbackName: String,
+    onSave: (String?) -> Unit,
+) {
+    var draft by remember { mutableStateOf(currentAlias.orEmpty()) }
+    LaunchedEffect(currentAlias) {
+        draft = currentAlias.orEmpty()
+    }
+    val normalizedDraft = AgentDisplay.localDisplayAlias(draft)
+    val hasChange = normalizedDraft != currentAlias
+
+    CollapsiblePickerSection(
+        title = "Local display name",
+        hint = "Phone label",
+        currentValue = currentAlias ?: "Not set",
+    ) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            label = { Text("Name") },
+            placeholder = { Text(fallbackName) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = {
+                    draft = ""
+                    onSave(null)
+                },
+                enabled = currentAlias != null,
+            ) {
+                Text("Clear")
+            }
+            OutlinedButton(
+                onClick = { onSave(normalizedDraft) },
+                enabled = hasChange,
+            ) {
+                Text("Save")
+            }
+        }
+    }
+}
+
 /**
  * Radio-style row used by both Profile and Personality sections. Whole row
  * is a tap target (and selectable() for a11y). Disabled when [enabled] is
@@ -1549,6 +1630,7 @@ private fun AgentSheetHeader(
     profile: Profile?,
     selectedPersonality: String,
     defaultPersonality: String,
+    localDisplayAlias: String?,
     serverModelName: String,
     apiServerReachable: Boolean,
     chatMode: ChatMode,
@@ -1559,6 +1641,7 @@ private fun AgentSheetHeader(
         selectedPersonality = selectedPersonality,
         defaultPersonality = defaultPersonality,
         connectionLabel = null,
+        localDisplayAlias = localDisplayAlias,
     )
     val modelLabel = profile?.model ?: serverModelName
     val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED

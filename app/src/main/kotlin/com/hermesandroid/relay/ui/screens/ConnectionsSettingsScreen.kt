@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -454,6 +455,7 @@ private fun ConnectionCard(
                 liveState = liveState,
                 activeConnectionViewModel = activeConnectionViewModel,
                 relayConfigured = relayConfigured,
+                onOpenDashboard = onOpenDashboard,
             )
 
             // ── Single-endpoint nudge (active only) ──────────────────────
@@ -953,6 +955,7 @@ private fun ConnectionSurfaceSummary(
     liveState: RelayUiState?,
     activeConnectionViewModel: ConnectionViewModel?,
     relayConfigured: Boolean,
+    onOpenDashboard: () -> Unit,
 ) {
     val activeApiReachable: Boolean? = if (activeConnectionViewModel != null) {
         val reachable by activeConnectionViewModel.apiServerReachable.collectAsState()
@@ -1033,6 +1036,7 @@ private fun ConnectionSurfaceSummary(
             value = dashboardText,
             tone = dashboardTone,
             modifier = Modifier.weight(1f),
+            onClick = if (dashboardSignInRequired) onOpenDashboard else null,
         )
         ConnectionSurfacePill(
             label = "Relay",
@@ -1051,6 +1055,7 @@ private fun ConnectionSurfacePill(
     value: String,
     tone: SummaryTone,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     val container = when (tone) {
         SummaryTone.Good -> MaterialTheme.colorScheme.primaryContainer
@@ -1065,7 +1070,13 @@ private fun ConnectionSurfacePill(
         SummaryTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Surface(
-        modifier = modifier,
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clickable(onClick = onClick)
+            } else {
+                Modifier
+            },
+        ),
         color = container,
         shape = RoundedCornerShape(8.dp),
     ) {

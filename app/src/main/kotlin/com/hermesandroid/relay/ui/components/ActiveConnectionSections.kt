@@ -138,6 +138,24 @@ fun ActiveCardStandardStatusSection(
         onClick = onOpenDashboard,
         modifier = Modifier.fillMaxWidth(),
     )
+
+    if (dashboardSignInRequired) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Dashboard controls need a sign-in for this route.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onOpenDashboard) {
+                Text("Sign in")
+            }
+        }
+    }
 }
 
 /**

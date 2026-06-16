@@ -363,6 +363,33 @@ class ChatHandlerTest {
         assertEquals(0, handler.sessions.value[0].messageCount)
     }
 
+    @Test
+    fun updateSessions_sortsByLastActivityAndKeepsStartedAt() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "started-later",
+                    title = "Started later",
+                    startedAt = 2_000.0,
+                    lastActive = 2_000.0,
+                ),
+                SessionItem(
+                    id = "active-later",
+                    title = "Active later",
+                    startedAt = 1_000.0,
+                    lastActive = 3_000.0,
+                ),
+            ),
+        )
+
+        val sessions = handler.sessions.value
+        assertEquals("active-later", sessions[0].sessionId)
+        assertEquals(1_000_000L, sessions[0].startedAt)
+        assertEquals(3_000_000L, sessions[0].lastActivityAt)
+        assertEquals(3_000_000L, sessions[0].updatedAt)
+        assertEquals("started-later", sessions[1].sessionId)
+    }
+
     // --- removeSession ---
 
     @Test

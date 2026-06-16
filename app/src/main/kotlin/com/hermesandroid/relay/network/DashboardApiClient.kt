@@ -76,6 +76,11 @@ data class DashboardWsTicket(
     val ttlSeconds: Int? = null,
 )
 
+data class DashboardChatDisplaySettings(
+    val showReasoning: Boolean? = null,
+    val toolDisplay: String? = null,
+)
+
 /**
  * Native client for the Hermes dashboard/admin server (:9119).
  *
@@ -166,6 +171,9 @@ class DashboardApiClient(
     }
 
     // --- Models (dashboard parity with hermes-desktop Settings → Model) ---
+
+    suspend fun getChatDisplaySettings(): Result<DashboardChatDisplaySettings> =
+        getJsonObject("/api/config").mapCatching { root -> parseChatDisplaySettings(root) }
 
     /** Full provider/model universe — REST twin of the TUI's `model.options` RPC. */
     suspend fun getModelOptions(): Result<JsonObject> = getJsonObject("/api/model/options")
@@ -401,9 +409,11 @@ class DashboardApiClient(
      * [profile] null/blank → the launch (default) profile's DB (param omitted). The
      * returned ids are the same stored-session ids the gateway `session.resume`
      * reads, so list-here / resume-on-gateway stays consistent. `min_messages=1`
-     * drops empty draft rows; `order=recent` keeps live conversations on top.
+     * drops empty draft rows where supported; `order=recent` requests activity
+     * ordering where the host honors it. Android still sorts by decoded
+     * `last_active` locally because older hosts return started-time order.
      */
-    suspend fun listSessions(profile: String? = null, limit: Int = 50): Result<List<SessionItem>> =
+    suspend fun listSessions(profile: String? = null, limit: Int = 200): Result<List<SessionItem>> =
         withContext(Dispatchers.IO) {
             val query = buildList {
                 add("limit=${limit.coerceIn(1, 200)}")
@@ -745,6 +755,28 @@ class DashboardApiClient(
         private fun isPasswordProvider(name: String): Boolean =
             name.equals("basic", ignoreCase = true) ||
                 name.equals("password", ignoreCase = true)
+
+        fun parseChatDisplaySettings(root: JsonObject): DashboardChatDisplaySettings {
+            val config = root["config"] as? JsonObject
+            val display = (config?.get("display") as? JsonObject)
+                ?: (root["display"] as? JsonObject)
+            return DashboardChatDisplaySettings(
+                showReasoning = display.booleanField("show_reasoning"),
+                toolDisplay = normalizeToolDisplay(
+                    display.stringField("tool_progress")
+                        ?: display.stringField("tool_display")
+                        ?: display.stringField("toolProgress"),
+                ),
+            )
+        }
+
+        private fun normalizeToolDisplay(value: String?): String? =
+            when (value?.trim()?.lowercase()) {
+                "off", "none", "false", "0", "hidden", "hide" -> "off"
+                "compact", "minimal", "summary", "brief" -> "compact"
+                "all", "detailed", "detail", "full", "true", "1", "on", "show" -> "detailed"
+                else -> null
+            }
     }
 }
 

@@ -288,7 +288,7 @@ class HermesApiClient(
 
     // --- Session CRUD ---
 
-    suspend fun listSessionsResult(limit: Int = 50): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
+    suspend fun listSessionsResult(limit: Int = 200): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
         try {
             val request = authRequest("$baseUrl/api/sessions?limit=$limit").get().build()
             client.newCall(request).execute().use { response ->
@@ -308,7 +308,7 @@ class HermesApiClient(
         }
     }
 
-    suspend fun listSessions(limit: Int = 50): List<SessionItem> =
+    suspend fun listSessions(limit: Int = 200): List<SessionItem> =
         listSessionsResult(limit).getOrElse { emptyList() }
 
     suspend fun createSessionResult(
