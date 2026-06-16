@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Force-close on connect when the stored credential keyset was corrupt.** A corrupt encrypted token store (which can happen after an app upgrade or device restore) threw during construction and crashed the app right after a successful pair, on both standard and relay connections. The token store now heals a corrupt keyset on the spot, and credential storage degrades to a re-pair instead of crashing if the device keystore is unusable.
 - **Dashboard plugin: unreadable button labels.** Solid buttons in the relay dashboard panel inherited the container text colour, which matched their background. Solid button variants now keep their proper contrast colour.
+- **Installer failed on uv-managed Hermes hosts.** `install.sh` assumed `pip` lived in the hermes-agent virtualenv, but environments created by `uv` (the upstream default) ship no `pip` module, so the editable install aborted at step 2. The installer now bootstraps `pip` via `ensurepip`, or falls back to `uv pip`, so the plugin installs cleanly on uv-managed cores.
 
 ## [1.0.0] - 2026-06-14
 

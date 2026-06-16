@@ -306,16 +306,43 @@ fi
 
 # ── 2/6  Install Python package editable into the hermes venv ──────────────
 step 2 6 "Installing plugin into hermes venv (editable)"
-"$VENV_PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
-# Run the long pip install in the background and spin while we wait — keeps
-# the user oriented during the 5-30s install. spin() falls back to a silent
-# wait when stdout isn't a TTY (curl | bash) so log capture stays clean.
-(
-    "$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" >/dev/null 2>&1
-) &
-spin $! "pip install -e $(basename "$RELAY_HOME")" \
-    || die "pip install -e $RELAY_HOME failed"
-ok "Installed $("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
+# Pick an installer. hermes-agent venvs created by `uv venv` (the upstream
+# default) ship NO pip module — `python -m pip` fails with "No module named
+# pip". Detect that and bootstrap pip via ensurepip, or fall back to `uv pip`,
+# so the editable install works on uv-managed cores instead of dying here.
+_relay_pip_ready=""
+if "$VENV_PY" -m pip --version >/dev/null 2>&1; then
+    _relay_pip_ready="1"
+elif "$VENV_PY" -m ensurepip --upgrade >/dev/null 2>&1 \
+        && "$VENV_PY" -m pip --version >/dev/null 2>&1; then
+    _relay_pip_ready="1"
+    info "venv had no pip — bootstrapped it with ensurepip"
+fi
+
+if [ -n "$_relay_pip_ready" ]; then
+    "$VENV_PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+    # Run the long install in the background and spin while we wait — keeps the
+    # user oriented during the 5-30s install. spin() falls back to a silent
+    # wait when stdout isn't a TTY (curl | bash) so log capture stays clean.
+    ( "$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" >/dev/null 2>&1 ) &
+    spin $! "pip install -e $(basename "$RELAY_HOME")" \
+        || die "pip install -e $RELAY_HOME failed"
+elif command -v uv >/dev/null 2>&1; then
+    # Pip-less venv and ensurepip unavailable — use uv directly against the
+    # venv interpreter (uv is what created these venvs in the first place).
+    ( uv pip install --quiet --python "$VENV_PY" -e "$RELAY_HOME" >/dev/null 2>&1 ) &
+    spin $! "uv pip install -e $(basename "$RELAY_HOME")" \
+        || die "uv pip install -e $RELAY_HOME failed"
+else
+    die "venv at $VENV_PY has no pip (uv-managed?) and 'uv' is not on PATH — install uv or add pip to the venv, then re-run"
+fi
+
+# Version readback, tolerant of the uv-only path (no pip module to query).
+_relay_ver="$("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
+if [ -z "$_relay_ver" ] && command -v uv >/dev/null 2>&1; then
+    _relay_ver="$(uv pip show --python "$VENV_PY" hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
+fi
+ok "Installed ${_relay_ver:-hermes-relay}"
 
 # Drop the legacy bootstrap .pth into the venv's site-packages so Python loads
 # the plugin-owned compatibility bootstrap at interpreter startup. This is what
