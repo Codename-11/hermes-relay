@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Automated Play Console upload on release.** When a `PLAY_SERVICE_ACCOUNT_JSON` secret is configured, pushing a stable `android-v*` tag uploads the `googlePlay` App Bundle to the Production track as a draft (a human still starts the rollout). Prereleases are skipped, and the `sideload` flavor is structurally blocked from ever publishing to Play. Without the secret, the release builds publish to GitHub Releases exactly as before.
+- **Desktop UI preview harness (`:ui-preview`).** A non-shipped Compose for Desktop module renders presentational composables in a window on the PC with Compose Hot Reload, for fast UI iteration without a device build/install loop. It reuses the shared sphere algorithm as its single source of truth.
+
 ### Changed
 
 - **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, with future tags on `android-v*`, `plugin-v*`, and `cli-v*`. The CLI installer and updater still understand historical `desktop-v*` prereleases during the migration.

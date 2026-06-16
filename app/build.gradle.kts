@@ -106,6 +106,19 @@ android {
         }
     }
 
+    // Structural guard: the sideload flavor is distributed via GitHub Releases /
+    // F-Droid / ADB and must NEVER be uploaded to Play Console (it declares the
+    // unattended Device Control surface Play forbids). gradle-play-publisher
+    // generates a publish task per variant, so the aggregate `publishReleaseBundle`
+    // would otherwise try BOTH flavors. Disabling sideload here means only
+    // `publishGooglePlayReleaseBundle` can ever reach Play — see the `play { }`
+    // block below and .github/workflows/release-android.yml.
+    playConfigs {
+        register("sideload") {
+            enabled.set(false)
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("boolean", "DEV_MODE", "true")

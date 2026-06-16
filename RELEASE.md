@@ -503,6 +503,13 @@ Release named `Hermes-Relay-Plugin v<version>` for the plugin package.
 
 ### 5. Upload to Play Console
 
+> **If `PLAY_SERVICE_ACCOUNT_JSON` is configured as a repo secret, this step is
+> automated for stable tags.** The release workflow runs
+> `publishGooglePlayReleaseBundle --track=production` and the build appears as a
+> Production **draft** — skip to the Play Console, confirm the draft, and click
+> **Start rollout**. The manual path below is the fallback when the secret is
+> unset (or for staging on a non-production track).
+
 **Pick the track first.** The AAB is track-agnostic — the same
 `-googlePlay-release.aab` goes to whichever track you publish on. Choose by intent,
 not habit:
@@ -635,6 +642,13 @@ in the built bundle.
 | `HERMES_KEYSTORE_PASSWORD`  | Store password                      | Password set during `keytool -genkey`            |
 | `HERMES_KEY_ALIAS`          | Key alias                           | Alias set during `keytool -genkey`               |
 | `HERMES_KEY_PASSWORD`       | Key password                        | Usually the same as the store password          |
+| `PLAY_SERVICE_ACCOUNT_JSON` | **Optional** — Play auto-upload     | Paste the full Play Developer API service-account JSON (step 3) |
+
+If `PLAY_SERVICE_ACCOUNT_JSON` is set, the `android-v*` release workflow uploads
+the `googlePlay` AAB to the **Production track as a DRAFT** automatically (stable
+tags only — prereleases are skipped). CI does the upload; you still click **Start
+rollout** in Play Console. If the secret is unset, the workflow skips the upload
+and you upload manually (§5) — nothing else changes.
 
 ## Hotfix Recipe
 

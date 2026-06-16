@@ -26,6 +26,7 @@ local.properties
 /app/build/
 /relay-core/build/
 /relay-ui/build/
+/ui-preview/build/
 /quest/build/
 /app/release/
 *.apk

@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-16 — Dev-velocity tooling: Play auto-publish, worktree workflow, desktop UI preview
+
+**Why.** Three workflow improvements to expedite shipping: automate the manual Play Console upload step, write down the worktree mental model, and cut the Compose UI edit→build→install loop.
+
+- **Play Console auto-upload (CI).** `gradle-play-publisher` 4.0.0 was already configured in `app/build.gradle.kts` (`play { }`, DRAFT status) but `release-android.yml` never invoked it — Play upload was fully manual. Added a publish step to the `release` job, gated on a new optional `PLAY_SERVICE_ACCOUNT_JSON` secret and skipped for prerelease tags (dash in version). It runs `publishGooglePlayReleaseBundle --track=production`, landing the build as a Production **draft** so a human still clicks Start rollout. Closed the multi-flavor footgun structurally: a `playConfigs { register("sideload") { enabled.set(false) } }` block means only the `googlePlay` flavor can ever reach Play, even via the aggregate task. RELEASE.md updated (secrets table + §5 note). When the secret is unset CI prints a "skipped" summary line and behaves exactly as before.
+
+- **Worktree workflow doc.** Added `docs/worktree-workflow.md` — a one-paragraph mental model (worktree = second folder on the same `.git`, warm caches per branch), four rules, the Orca-manages-worktrees note (use `orca-cli` worktree commands, not raw `git worktree`, here), raw-`git worktree` fallback + gotchas, and how it maps onto the existing `main`/`dev` no-ff release contract. Complements RELEASE.md "Branching policy" / decisions.md §23 without duplicating them.
+
+- **Desktop UI preview module (`:ui-preview`).** New JVM-only Compose for Desktop module for hot-reload UI iteration on the PC. Compose Multiplatform 1.10.3 (bundles stable Compose Hot Reload, enabled by default for desktop targets) against the repo's Kotlin 2.3.21 / JVM 17. Follows the existing sphere pattern: shares the platform-agnostic `MorphingSphereCore.kt` algorithm from `:relay-ui` via a Gradle `srcDir` include (excluding the Android `MorphingSphere.kt` renderer, whose `@Preview`/`androidx.*.tooling` imports don't exist on desktop), and provides a thin `DesktopSphere.kt` renderer + a `Main.kt` gallery with a state selector and live sliders. Additive — `include(":ui-preview")` in `settings.gradle.kts` and a `.gitignore` build entry; no shipped artifact depends on it. **First-sync verification pending:** the module pins the one CMP version in the repo, to be confirmed on the next Studio sync (realign per the Compose compatibility matrix if Kotlin/CMP drift). Run via the IDE "Run with Compose Hot Reload" gutter or `./gradlew :ui-preview:run`.
+
+- **Verification.** Kotlin/Gradle changes not built locally (per workflow: builds happen in Studio; `./gradlew lint` is the pre-push gate). YAML and Gradle edits are additive and reviewed by inspection; the `:ui-preview` module is isolated behind one settings include and verified-on-first-sync.
+
 ## 2026-06-15 — Claude review required check and Dependabot PR cleanup
 
 **Why.** Open Dependabot PRs targeting `main` were blocked by the required `claude-review` check. Re-running a current Dependabot PR showed the Claude GitHub App token exchange succeeds, but `anthropics/claude-code-action` stops before review because the actor is `dependabot[bot]` and bot actors are not allow-listed. Dependabot-triggered runs also do not expose the same secret surface as human-authored PRs, so forcing Claude review on those PRs is the wrong gate.

@@ -151,6 +151,38 @@ jobs:
             app/build/outputs/bundle/*Release/*.aab
             app/build/outputs/SHA256SUMS.txt
 
+      - name: Upload to Play Console (production draft)
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
+          HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
+          HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
+        # Runs only when the Play service-account secret is configured AND this is
+        # a stable tag (prereleases — versions containing a dash — are skipped so
+        # an `-rc.N` build never lands on the production listing). HERMES_KEYSTORE_PATH
+        # was exported into $GITHUB_ENV by the "Decode release keystore" step above
+        # and persists across steps in this job, so the AAB is release-signed.
+        #
+        # `publishGooglePlayReleaseBundle` is the flavor-scoped task — only the
+        # googlePlay AAB is uploaded (sideload is disabled via playConfigs in
+        # app/build.gradle.kts). The play{} block pins releaseStatus = DRAFT, so the
+        # build lands on the Production track as a DRAFT: CI does the upload, a human
+        # clicks "Start rollout" in Play Console. A bad tag can never auto-go-live.
+        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON != '' && !contains(needs.validate.outputs.version, '-') }}
+        run: |
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > play-service-account.json
+          ./gradlew publishGooglePlayReleaseBundle --track=production
+          rm -f play-service-account.json
+
+      - name: Play upload skipped (no secret)
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON == '' }}
+        run: |
+          echo "ℹ️  PLAY_SERVICE_ACCOUNT_JSON not set — skipped Play Console upload." \
+            "GitHub Release artifacts are still published; upload to Play manually" \
+            "(see RELEASE.md §5)." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Release summary
         env:
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}

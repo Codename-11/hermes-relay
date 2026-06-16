@@ -29,4 +29,7 @@ rootProject.name = "hermes-relay"
 include(":app")
 include(":relay-core")
 include(":relay-ui")
+// Desktop Compose Hot Reload harness for fast UI iteration. Not shipped — no
+// release artifact depends on it. See docs/ui-preview / ui-preview/README.md.
+include(":ui-preview")
 includeBuild("quest")
