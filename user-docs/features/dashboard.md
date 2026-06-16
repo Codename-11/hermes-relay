@@ -142,6 +142,8 @@ For the full wire-shape of each route (query params, response schemas, redaction
 
 **No "Relay" tab appears after gateway restart.** Confirm the symlink resolves: `ls -lL ~/.hermes/plugins/hermes-relay/dashboard/manifest.json` should show the file. If it doesn't, the installer symlink was broken — re-run `hermes-relay-update` or the `install.sh` one-liner. Check the gateway log (`journalctl --user -u hermes-gateway -f`) for plugin-load errors during startup.
 
+**The Relay tab appears but text, colors, or cards are hard to read.** Update the Hermes-Relay plugin and restart or rescan the dashboard plugin list. The plugin stylesheet is loaded by the upstream dashboard and follows its active theme tokens; stale `dist/style.css` files from older installs can render poorly after Hermes dashboard theme changes.
+
 **Bridge Activity tab is empty but the phone is issuing commands.** The ring buffer is in-memory and wipes on relay restart. If you just restarted the relay, you need the phone to issue at least one command before the tab has anything to show. If commands are going through but not appearing, confirm they're reaching the relay (`journalctl --user -u hermes-relay -f` should show the command round-trips).
 
 **Media Inspector shows tokens but files won't download.** That's a separate path — the inspector lists registered tokens but the actual download goes through `/media/{token}` (bearer-gated, via the phone). If the phone can't fetch a token, check the bearer's `media` grant and `RELAY_MEDIA_TTL_SECONDS` hasn't elapsed since registration.

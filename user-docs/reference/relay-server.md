@@ -7,7 +7,8 @@ The relay server is a lightweight Python WSS/HTTP service that enables **termina
 | Feature | Relay required? | Auth path |
 |---------|-----------------|-----------|
 | Chat | No | Hermes API key direct to API server |
-| Voice Mode | Yes for TTS/STT endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
+| Standard Voice Mode | No | Dashboard session from Manage |
+| Relay voice extras | Yes for relay TTS/STT/realtime endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
 | Realtime Agent voice engine | Yes; experimental `/voice/realtime-agent/*` broker | Hermes API bearer or relay session with `voice:realtime` |
 | Inbound media (screenshots from tools) | Yes | Relay session |
 | Terminal | Yes | Relay session |
@@ -48,6 +49,56 @@ python -m relay_server --no-ssl
 ```
 
 Both entry points load `~/.hermes/.env` into the process environment **on import**, so API keys (`VOICE_TOOLS_OPENAI_KEY`, `ELEVENLABS_API_KEY`, etc.) are always present on start regardless of how the process was launched — no need to `source` anything first. This is the same pattern `hermes-gateway` uses, which is why neither unit needs an `EnvironmentFile=` directive. See [`docs/relay-server.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md#env-auto-loading) for the precedence rules.
+
+### Plugin manager install
+
+Current upstream Hermes can install the plugin tree directly:
+
+```bash
+hermes plugins install Codename-11/hermes-relay/plugin --enable
+hermes relay doctor
+```
+
+That path manages plugin code, CLI command registration, dashboard metadata, and
+agent tools. It does not install the systemd user service or shell shims. Use the
+legacy `install.sh` only when you want those host-level artifacts.
+
+The optional compatibility startup hook is managed by the plugin:
+
+```bash
+hermes relay compat status
+hermes relay compat install   # older Hermes builds only
+hermes relay compat remove
+```
+
+Standard chat, Manage, and dashboard voice do not require the compat hook.
+New compat installs load the bootstrap implementation from the installed plugin
+tree. Existing legacy hooks remain visible in `hermes relay compat status` and
+can be removed with `hermes relay compat remove`.
+
+Pairing/setup QRs can include top-level `dashboard_url`; Android uses it for
+Manage and standard dashboard voice instead of deriving same-host `:9119`.
+
+### Legacy cleanup ownership
+
+| Artifact | Remove with |
+|----------|-------------|
+| Plugin-manager install | `hermes plugins remove hermes-relay` |
+| Optional compat hook | `hermes relay compat remove --all` |
+| Legacy systemd service | `bash ~/.hermes/hermes-relay/uninstall.sh` |
+| Legacy shell shims | `bash ~/.hermes/hermes-relay/uninstall.sh` |
+| Legacy editable Python package | `bash ~/.hermes/hermes-relay/uninstall.sh` |
+| Legacy `skills.external_dirs` entry | `bash ~/.hermes/hermes-relay/uninstall.sh` |
+| Legacy clone | `bash ~/.hermes/hermes-relay/uninstall.sh` unless `--keep-clone` is used |
+
+The legacy uninstaller delegates compat hook removal to
+`hermes relay compat remove` when that command is available, then falls back to
+removing only the Relay `.pth` file. It preserves `~/.hermes/.env`,
+`~/.hermes/state.db`, the Hermes agent install, and the QR signing secret unless
+`--remove-secret` is passed.
+
+For agent-assisted cleanup, use the bounded
+[Agent Cleanup Prompt](/reference/agent-cleanup-prompt).
 
 ## Deployment Options
 
@@ -125,6 +176,9 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 hermes relay insecure-api-key [status|on|off]
 hermes-relay insecure-api-key [status|on|off]
                      Toggle plain-LAN API-key voice auth on the running relay
+
+hermes relay compat [status|install|remove]
+                     Manage the optional legacy API compatibility startup hook
 ```
 
 ## HTTP Routes
@@ -135,7 +189,7 @@ hermes-relay insecure-api-key [status|on|off]
 | `/health` | GET | `{status, version, clients, sessions}` JSON |
 | `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Optional body fields `ttl_seconds` / `grants` / `transport_hint` attach pairing metadata that applies to the session when the phone consumes the code — operator policy wins over phone-sent values. Also **clears all rate-limit blocks on success** so legitimate re-pair after a relay restart works immediately. Used by `hermes pair` / `/hermes-relay-pair` on the same host; `hermes-pair` remains a compatibility shim. Rejects non-loopback peers with HTTP 403. |
-| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and return the signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) used by dashboard, desktop GUI, and CLI pair/repair flows. Reads the API key from the same host-local config chain as `hermes pair` when not supplied explicitly. |
+| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and return the signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) used by dashboard, desktop GUI, and CLI pair/repair flows. Reads the API key from the same host-local config chain as `hermes pair` when not supplied explicitly. Optional request field `dashboard_url` is mirrored into the QR payload and response. |
 | `/pairing/approve` | POST | **Loopback only, reserved for future use.** Same wire shape as `/pairing/register`. Placeholder for a future phone-generates-code / host-approves flow that would complement the existing QR pairing direction. |
 | `/sessions` | GET | Bearer-auth'd (same token the WSS channel uses). Returns all active paired devices with metadata — device name, token prefix (first 8 chars, full token never exposed), created/last-seen timestamps, session expiry, per-channel grants, transport hint, and `is_current` for the device matching the bearer. `math.inf` expiries serialize as `null` (never expire). |
 | `/sessions/{token_prefix}` | DELETE | Bearer-auth'd. Revoke a paired device by token-prefix (≥ 4 chars). 200 on exact match, 404 on zero, 409 on ambiguous matches. Self-revoke is allowed and flagged via `revoked_self: true`. |
@@ -233,6 +287,7 @@ curl http://localhost:8767/health
 ## Troubleshooting
 
 - **Connection refused** — Is the relay running? `systemctl --user status hermes-relay` (installed via `install.sh`) or `docker logs hermes-relay` (container) or `pgrep -af "python -m plugin.relay"` (manual launch).
+- **Unsure what is installed** — Run `hermes relay doctor --json` for a full route/plugin/compat report, or `hermes relay compat status` for only the legacy hook.
 - **Voice endpoints 500 with "no API key available"** — The relay process doesn't have the right keys. The Python bootstrap loads `~/.hermes/.env` automatically, so this almost always means the key just isn't in `.env` yet. Double-check with `grep VOICE_TOOLS_OPENAI_KEY ~/.hermes/.env` (for STT) or `grep ELEVENLABS_API_KEY ~/.hermes/.env` (for TTS). If you just edited `.env`, restart the service so Python re-imports: `systemctl --user restart hermes-relay`.
 - **Service starts but port bind fails** — Check for an orphan manual launch: `pgrep -f "python -m plugin.relay"`. Kill it with `pkill -f "python -m plugin.relay"` then `systemctl --user restart hermes-relay`.
 - **Auth failure** — Pairing codes expire 10 minutes after registration and are one-shot. Re-run `hermes pair` (or `/hermes-relay-pair`) to mint a fresh code and get a new QR.

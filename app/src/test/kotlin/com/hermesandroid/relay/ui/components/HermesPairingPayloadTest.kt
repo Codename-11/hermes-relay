@@ -58,6 +58,32 @@ class HermesPairingPayloadTest {
     }
 
     @Test
+    fun relayPayload_preservesDashboardUrlWhenPresent() {
+        val raw = """
+            {
+              "hermes": 3,
+              "host": "192.168.1.100",
+              "port": 8642,
+              "key": "bearer-token",
+              "tls": false,
+              "dashboard_url": "https://dashboard.example.com/hermes",
+              "relay": { "url": "ws://192.168.1.100:8767", "code": "ABCD12" },
+              "endpoints": [
+                { "role": "lan", "priority": 0,
+                  "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+                  "relay": { "url": "ws://192.168.1.100:8767",
+                             "transport_hint": "ws" } }
+              ]
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        assertEquals("https://dashboard.example.com/hermes", payload!!.dashboardUrl)
+    }
+
+    @Test
     fun v1LegacyPayload_withTailscaleHost_synthesizesTailscaleEndpoint() {
         // v1 QR pointing at a Tailscale MagicDNS host. Parser heuristic
         // (host.endsWith(".ts.net") || host.startsWith("100.")) must flag
@@ -292,7 +318,8 @@ class HermesPairingPayloadTest {
         val raw = """
             {
               "api_url": "http://192.168.1.50:8642",
-              "api_key": "dev-key"
+              "api_key": "dev-key",
+              "dashboardUrl": "https://dash.example.com"
             }
         """.trimIndent()
 
@@ -304,6 +331,7 @@ class HermesPairingPayloadTest {
         assertEquals(8642, parsed.port)
         assertFalse(parsed.tls)
         assertEquals("dev-key", parsed.key)
+        assertEquals("https://dash.example.com", parsed.dashboardUrl)
         assertNull(parsed.relay)
         assertEquals("lan", parsed.endpoints.orEmpty()[0].role)
     }

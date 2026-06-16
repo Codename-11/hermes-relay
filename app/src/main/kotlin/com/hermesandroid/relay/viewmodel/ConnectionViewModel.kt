@@ -3642,13 +3642,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     .firstOrNull { it.id == activeId }
                 if (current != null) {
                     val newRelayUrl = payload.relay?.url ?: current.relayUrl
-                    val newDashboardUrl = if (
-                        Connection.isAutoManagedDashboardUrl(current.dashboardUrl, current.apiServerUrl)
-                    ) {
-                        Connection.deriveDefaultDashboardUrl(payload.serverUrl)
-                    } else {
-                        current.dashboardUrl
-                    }
+                    val payloadDashboardUrl = payload.dashboardUrl
+                        ?.trim()
+                        ?.trimEnd('/')
+                        ?.takeIf { it.isNotBlank() }
+                    val newDashboardUrl = payloadDashboardUrl
+                        ?: if (
+                            Connection.isAutoManagedDashboardUrl(current.dashboardUrl, current.apiServerUrl)
+                        ) {
+                            Connection.deriveDefaultDashboardUrl(payload.serverUrl)
+                        } else {
+                            current.dashboardUrl
+                        }
                     val needsUpdate = current.apiServerUrl != payload.serverUrl ||
                         current.relayUrl != newRelayUrl ||
                         current.dashboardUrl != newDashboardUrl ||

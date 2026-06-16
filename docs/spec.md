@@ -1,10 +1,10 @@
 # Hermes-Relay — Android App
 
-## Specification v1.3
+## Specification v1.4
 
-**Status:** v0.3.0 shipped to Play Store internal testing + sideload track. Phase 0, Phase 1, Phase 2 (terminal preview), Phase 3 (bridge channel), Phase 4 (security hardening per ADR 15), and Phase 5 (polish + CI/CD) are partially-or-fully shipped. Phase V (voice mode) shipped 2026-04-12. v0.4 bridge feature expansion in progress on `feature/bridge-feature-expansion` — see `docs/plans/2026-04-13-bridge-feature-expansion.md`.  
+**Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-04-18
+**Updated:** 2026-06-16
 
 ---
 
@@ -12,15 +12,18 @@
 
 A **native Android app** for the Hermes agent platform. Not just remote phone control — a full bidirectional interface between you and your Hermes server from anywhere.
 
-Three capabilities in one app:
+Current capabilities are split between standard upstream Hermes and optional Relay surfaces:
 
-| Channel | Direction | What |
-|---------|-----------|------|
-| **Chat** | Phone ↔ Agent | Talk to any Hermes agent profile (Victor, Mizu, etc.) with full streaming |
-| **Terminal** | Phone ↔ Server | Secure remote shell access to the Hermes server via tmux |
-| **Bridge** | Agent → Phone | Agent controls the phone (taps, types, screenshots — upstream functionality) |
+| Surface | Requires Relay | What |
+|---------|----------------|------|
+| **Chat** | No | Talk to any Hermes agent profile with dashboard `/api/ws` live thinking when signed in, or API-server SSE fallback |
+| **Manage** | No | Dashboard-backed config, profiles, model/provider keys, skills, MCP, and diagnostics |
+| **Standard voice** | No | Dashboard `/api/audio/transcribe` + `/api/audio/speak` with the Manage session |
+| **Terminal** | Yes | Secure remote shell access to the Hermes server via tmux |
+| **Bridge / Device Control** | Yes | Agent controls the sideload phone with explicit safety gates |
+| **Relay power features** | Yes | Remote access, notification companion, provider-native voice, desktop tooling, media relay |
 
-One persistent WSS connection. One pairing flow. Three multiplexed channels.
+Standard mode may work with only API/dashboard routes. Pairing adds the Relay URL, session token, terminal/bridge grants, and optional network candidates.
 
 **What it is not:**
 - Not a web wrapper — native Kotlin + Jetpack Compose
@@ -31,12 +34,12 @@ One persistent WSS connection. One pairing flow. Three multiplexed channels.
 
 ## 2. Design Principles
 
-1. **Secure by default** — WSS only (no plaintext WebSocket option). TLS certificate pinning for production.
-2. **Realtime everything** — streaming chat responses, live terminal output, instant bridge feedback. No polling.
-3. **Clean UX** — Material 3, minimal setup, one pairing flow for all channels.
-4. **Offline-aware** — graceful degradation when connection drops. Auto-reconnect with exponential backoff.
-5. **Single connection** — one WSS pipe multiplexes all three channels. Efficient, simple to reason about.
-6. **Server-side state** — the app is a thin client. Sessions, history, memory all live on the Hermes server.
+1. **Standard first** — chat, Manage, and voice must work against unmodified upstream Hermes before any Relay power path is considered.
+2. **Secure by default** — WSS/HTTPS for remote Relay paths; dashboard and API auth stay on their native upstream surfaces.
+3. **Realtime where the surface supports it** — gateway chat can stream live thinking; API-server SSE remains the fallback; terminal and bridge stay realtime through Relay.
+4. **Clean UX** — Material 3, minimal setup, and clear route identity for Standard vs Relay.
+5. **Offline-aware** — graceful degradation when connection drops. Auto-reconnect with exponential backoff.
+6. **Server-side state** — the app is a thin client. Sessions, history, memory, profiles, and dashboard state live on the Hermes server.
 
 ---
 
@@ -45,46 +48,31 @@ One persistent WSS connection. One pairing flow. Three multiplexed channels.
 ### 3.1 High-Level
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                 Android App (Compose)                 │
-│                                                       │
-│  ┌─────────┐  ┌──────────┐  ┌────────┐  ┌────────┐ │
-│  │  Chat   │  │ Terminal  │  │ Bridge │  │Settings│ │
-│  │  Tab    │  │  Tab      │  │  Tab   │  │  Tab   │ │
-│  └────┬────┘  └────┬─────┘  └───┬────┘  └────────┘ │
-│       │            │             │                    │
-│  ┌────┴────────────┴─────────────┴────┐              │
-│  │     Connection Manager (WSS)        │              │
-│  │     Channel Multiplexer             │              │
-│  │     Auth + Session Management       │              │
-│  └────────────────┬───────────────────┘              │
-└───────────────────┼──────────────────────────────────┘
-                    │ WSS (TLS 1.3)
-                    │
-┌───────────────────┼──────────────────────────────────┐
-│            Hermes Server (Docker-Server)               │
-│                   │                                    │
-│  ┌────────────────┴───────────────────┐               │
-│  │      Relay Server (Python)          │               │
-│  │      Port 8767 (WSS)               │               │
-│  │                                     │               │
-│  │  ┌─────────┐ ┌────────┐ ┌───────┐ │               │
-│  │  │  Chat   │ │Terminal│ │Bridge │ │               │
-│  │  │ Router  │ │ PTY    │ │Router │ │               │
-│  │  └────┬────┘ └───┬───┘ └───┬───┘ │               │
-│  └───────┼──────────┼─────────┼─────┘               │
-│          │          │         │                       │
-│  ┌───────┴───┐  ┌───┴──┐  ┌──┴──────────────┐      │
-│  │ WebAPI    │  │ tmux │  │AccessibilityServ.│      │
-│  │ /api/...  │  │ PTY  │  │(on phone)        │      │
-│  │ (aiohttp) │  │      │  │                  │      │
-│  └───────────┘  └──────┘  └──────────────────┘      │
-└──────────────────────────────────────────────────────┘
+Android app
+  |-- Standard chat       -> dashboard /api/ws, then API-server SSE fallback
+  |-- Standard Manage     -> dashboard /api/*
+  |-- Standard voice      -> dashboard /api/audio/*
+  |-- Relay terminal      -> relay WSS :8767
+  |-- Relay bridge/tools  -> relay WSS/HTTP :8767
+  `-- Relay voice extras  -> relay /voice/*
+
+Hermes upstream
+  |-- API server          -> /v1/* and /api/sessions/*
+  |-- Dashboard web       -> Manage, audio, auth, /api/ws tickets
+  `-- tui_gateway         -> /api/ws live chat/reasoning transport
+
+Hermes-Relay plugin
+  |-- plugin manager root -> plugin/
+  |-- relay server        -> plugin/relay/server.py
+  |-- dashboard tab       -> plugin/dashboard/
+  `-- diagnostics         -> hermes relay doctor
 ```
 
 ### 3.2 Protocol
 
-All communication flows over a single WebSocket connection. Messages use a typed envelope:
+Relay realtime communication flows over a single WebSocket connection. Standard
+chat, Manage, and standard voice use upstream dashboard/API HTTP and WebSocket
+surfaces directly. Relay messages use a typed envelope:
 
 ```json
 {
@@ -117,7 +105,17 @@ Connection lifecycle, auth, keepalive.
 | `profiles` | `[{name, model, description, system_message, api_server_*}]` | **Added v0.6.0; expanded 2026-05-18.** Relay-advertised list of upstream Hermes profiles discovered at `~/.hermes/profiles/*/`, plus a synthetic `"default"` entry for the root config. `system_message` carries the profile's `SOUL.md` content and may be `null`. `api_server_enabled`, `api_server_url`, `api_server_host`, `api_server_port`, and `api_server_key_present` let Android route chat/session calls through a profile's own Hermes API server when it is running, without exposing the key. Empty list when `RELAY_PROFILE_DISCOVERY_ENABLED=0`. See `docs/decisions.md` §21. |
 
 #### Channel: `chat`
-**Note:** Chat connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2) — it does not traverse the relay. Voice, bridge, terminal, notifications, and inbound media DO go through the relay. Voice HTTP/WSS routes accept either a Relay session token with an active `voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime` grant, depending on the route, or the Hermes API bearer token; that API bearer exception does not apply to bridge, terminal, TUI, sessions, media, clipboard, profile writes, or Android control routes. Non-loopback API-bearer voice calls require HTTPS unless the local operator enables the runtime dev toggle with `hermes relay insecure-api-key on`. The chat SSE event types are:
+**Note:** Standard chat prefers the upstream dashboard `/api/ws` gateway when
+Manage auth is ready, then falls back to Hermes API Server HTTP/SSE paths (see
+Section 6.2). It does not traverse the Relay server. Relay voice, bridge,
+terminal, notifications, and inbound media do go through Relay. Relay voice
+HTTP/WSS routes accept either a Relay session token with an active
+`voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime` grant, depending
+on the route, or the Hermes API bearer token; that API bearer exception does not
+apply to bridge, terminal, TUI, sessions, media, clipboard, profile writes, or
+Android control routes. Non-loopback API-bearer voice calls require HTTPS unless
+the local operator enables the runtime dev toggle with
+`hermes relay insecure-api-key on`. The chat SSE event types are:
 
 | Event | Direction | Payload |
 |-------|-----------|---------|
@@ -161,14 +159,15 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (and the API server credentials) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
+Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
 As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.
 
 ```
 1. Operator runs `hermes pair` (or `/hermes-relay-pair`) on the Hermes host,
    optionally with --ttl <duration>, --grants terminal=7d,bridge=1d,
-   --mode {auto,lan,tailscale,public} (default auto), --public-url <url>.
+   --mode {auto,lan,tailscale,public} (default auto), --public-url <url>,
+   and optionally --dashboard-url <url>.
 2. The pair command reads the API server config (host/port/key) from
    ~/.hermes/config.yaml or ~/.hermes/.env, and auto-detects candidate
    endpoints: LAN IP via routing lookup; Tailscale hostname via
@@ -270,7 +269,7 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 - The Android parser uses `kotlinx.serialization` with `ignoreUnknownKeys = true`, so future fields can be added without breaking older app builds. `RelayPairing.ttlSeconds` / `grants` / `transportHint` are all nullable with defaults.
 
 Implementation references:
-- Server-side payload builder + CLI flags: `plugin/pair.py` → `build_payload(sign=True, endpoints=...)` / `pair_command()` / `parse_duration()` / `parse_grants()`; `--mode {auto,lan,tailscale,public}` + `--public-url <url>`
+- Server-side payload builder + CLI flags: `plugin/pair.py` → `build_payload(sign=True, endpoints=..., dashboard_url=...)` / `pair_command()` / `parse_duration()` / `parse_grants()`; `--mode {auto,lan,tailscale,public}` + `--public-url <url>` + `--dashboard-url <url>`
 - Server-side HMAC: `plugin/relay/qr_sign.py` → `canonicalize` / `sign_payload` / `verify_payload` / `load_or_create_secret` — canonical form preserves `endpoints` array order and role strings verbatim
 - Phone-side endpoint model: `app/src/main/kotlin/.../data/Endpoint.kt` → `EndpointCandidate` / `ApiEndpoint` / `RelayEndpoint` / `displayLabel()`
 - Phone-side parser: `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` → `HermesPairingPayload.endpoints` + v1/v2 synthesizer
@@ -394,7 +393,7 @@ The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafety
 - **Connections** (v0.6.0+) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings briefly treats a paired + disconnected relay as **Connecting** during the reconnect grace window, then promotes it to **Relay unreachable - tap to reconnect** if the live socket does not recover. API / Relay / Session detail sheets include compact sanitized recent-activity tails, and **Settings -> Diagnostics** shows the consolidated app-level API, relay, session, endpoint, and voice activity buffer. See `docs/decisions.md` §19.
 - **Connection (single-server settings)** — unified "Pair with your server" card (primary action: Scan QR) with a single status summary covering API server, relay, and the active paired session. Collapsible "Manual configuration" card exposes API URL / API key / Relay URL / insecure-transport toggle + "Save & Test" (calls `RelayHttpClient.probeHealth`). **Pair wizard cross-validates URL schemes** in v0.6.0 (e.g. an API field with `wss://` surfaces an inline hint), and **stamps the active Connection's pairing metadata** on successful auth. Collapsible "Manual pairing code (fallback)" card for camera-less / SSH-only setups. Transport security badge (🔒 secure / 🔓 insecure-with-reason / 🔓 insecure-unknown) rendered inline. Paired Devices screen linked from here for the full device list + per-channel grant revoke.
 - **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
-- **Voice** — voice engine selector (`Hermes Chat + Voice Output` stable, `Realtime Agent` experimental), global interaction mode (tap / hold / continuous), silence threshold slider, Auto-TTS toggle, selected-engine cards for default voice-output renderer settings from `/voice/output/config` or Realtime Agent broker settings from `/voice/realtime-agent/config`, global fallback TTS and STT provider info from `/voice/config`, language picker, and a Test Current Engine card that plays stable Voice Output or opens a provider-native Realtime Agent test session. Voice turns run a fast relay health preflight before uploading audio or opening a realtime provider session so a hung relay surfaces as a connection error instead of an indefinite Thinking state.
+- **Voice** — route-aware voice engine selector (`Standard Hermes` via dashboard audio, `Relay Voice Output`, and experimental `Realtime Agent`), global interaction mode (tap / hold / continuous), silence threshold slider, Auto-TTS toggle, selected-engine cards for dashboard or relay-backed settings, language picker, and a Test Current Engine card. Standard voice depends on Manage/dashboard auth; Relay-backed engines run a fast relay health preflight before uploading audio or opening a realtime provider session so a hung relay surfaces as a connection error instead of an indefinite Thinking state.
 - **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
 - **Appearance** — theme (auto/light/dark), dynamic colors toggle
 - **Data** — Backup, restore, reset with confirmation dialogs
@@ -432,15 +431,19 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
 | `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
-| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard, desktop GUI, and CLI pair/repair flows. |
+| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard, desktop GUI, and CLI pair/repair flows. Optional request field `dashboard_url` is copied into the QR payload for custom dashboard routes. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
 | `/api/profiles/{name}/memory` | GET | Profile-scoped memory listing. Returns `{profile, memories_dir, entries: [{name, filename, path, content, size_bytes, truncated}], total}` for `*.md` files directly under `<profile>/memories/` (non-recursive). Ordering: `MEMORY.md` first, `USER.md` second, remainder alphabetical. Each entry capped at 50KB inline with `truncated: true` when larger. Absent memories dir → 200 with empty `entries` array. Same auth model as `/config`. 404 on unknown profile. See §22 in decisions.md. |
 
-### 6.2 Chat — Direct API Connection
+### 6.2 Chat — Standard Gateway with API Fallback
 
-Chat connects directly from the Android app to the Hermes API Server, bypassing the relay server entirely. This uses the Hermes Sessions API:
+Chat bypasses the Relay server entirely. In `Auto`, Android uses the upstream
+dashboard `/api/ws` gateway when dashboard auth is ready because that is the
+vanilla upstream path with live thinking/reasoning events. When that gateway is
+unavailable, Android falls back to API-server SSE routes. The native Sessions
+API fallback looks like:
 
 ```
 1. POST /api/sessions → create session → get session_id
@@ -746,7 +749,7 @@ The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"par
 - [x] App: Terminal resize on orientation change
 
 ### Phase 3 — Bridge Channel
-**Status: shipped in v0.3.0 (2026-04-13). v0.4 bridge feature expansion is in progress on `feature/bridge-feature-expansion` — adds long-press / drag / macro / clipboard / intent-send / location / contacts / call / SMS and multi-window screen reading.**
+**Status: shipped and expanded.** The original bridge channel shipped in v0.3.0 (2026-04-13); the later bridge expansion added long-press / drag / macro / clipboard / intent-send / location / contacts / call / SMS and multi-window screen reading. Bridge remains a Relay-required sideload power surface, not part of the standard no-plugin path.
 
 - [x] Migrate upstream bridge protocol into multiplexed WSS — Phase 3 Wave 1, 2026-04-12 (routes registered in `plugin/relay/server.py` delegating to `plugin/relay/channels/bridge.py`)
 - [x] Update `plugin/tools/android_tool.py` to route through the unified relay on port 8767 (was the standalone `android_relay.py` on 8766)
@@ -840,7 +843,7 @@ See `docs/decisions.md` → **Voice Mode — Architecture** for the historical b
 
 ## 8. Current Scope
 
-As of v0.3.0, Phases 0–5 plus Phase V (voice) have shipped in some form. The current release cadence focuses on **v0.4 bridge feature expansion** — see `docs/plans/2026-04-13-bridge-feature-expansion.md`.
+As of v1.0.0, the current scope is maintaining the standard-first contract while keeping Relay power features additive and cleanly manageable. Standard chat, Manage, and dashboard voice must continue to work against unmodified upstream Hermes. Relay work should be plugin-owned, diagnosable through `hermes relay doctor`, and removable without becoming a hidden requirement for the standard app path.
 
 **Still non-goals for the current cadence:**
 - Biometric session lock (fingerprint/face gate on terminal and/or chat resume). Tracked under Phase 4.
@@ -855,7 +858,7 @@ See `Appendix A — Original Phase 0 Scope` at the end of this document for the 
 
 ## 9. Key Dependencies
 
-Current versions as of v0.3.0. Source of truth is `gradle/libs.versions.toml` — this table is a human-readable snapshot, not authoritative.
+Current Android dependency versions. Source of truth is `gradle/libs.versions.toml` — this table is a human-readable snapshot, not authoritative.
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
@@ -885,18 +888,18 @@ Current versions as of v0.3.0. Source of truth is `gradle/libs.versions.toml` �
 
 | Surface | How We Connect |
 |---------|---------------|
-| **WebAPI chat** | HTTP to `localhost:8642/api/sessions/*/chat/stream` (SSE) |
-| **WebAPI sessions** | `GET/POST/PATCH/DELETE /api/sessions` for CRUD |
-| **Personalities** | `GET /api/config` → `config.agent.personalities` for picker + command palette |
-| **Server skills** | `GET /api/skills` — dynamic skill discovery for command palette + autocomplete |
-| **Plugin system** | `register_tool()` via `ctx` for `android_*` tools |
-| **Gateway** | Chat channel goes through WebAPI, not directly to gateway |
-| **Memory/Skills** | Accessible through agent chat (no direct API needed for MVP) |
+| **Gateway chat** | Dashboard `/api/auth/ws-ticket` + `/api/ws` for live thinking/reasoning when Manage auth is ready |
+| **API-server chat fallback** | `/api/sessions/*/chat/stream`, `/v1/chat/completions`, or `/v1/runs` based on capability probes |
+| **API-server sessions** | `GET/POST/PATCH/DELETE /api/sessions` for CRUD |
+| **Manage** | Dashboard `/api/status`, `/api/auth/me`, `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` |
+| **Standard voice** | Dashboard `POST /api/audio/transcribe` and `POST /api/audio/speak` |
+| **Plugin system** | `register_tool()` via `ctx` for `android_*` and `desktop_*` tools |
+| **Relay plugin** | `hermes pair`, `hermes relay start`, `hermes relay doctor`, `hermes relay compat`, dashboard `/relay` plugin tab |
 | **Dashboard plugin** | Lives at `plugin/dashboard/`; see §10.1 below |
 
 ### 10.1 Dashboard plugin
 
-Hermes-Relay ships a hermes-agent Dashboard Plugin (upstream `axiom` branch, commit `01214a7f`) that surfaces relay-specific state in the gateway's web UI. The plugin subtree at `plugin/dashboard/` is discovered automatically: the canonical `install.sh` symlinks `~/.hermes/plugins/hermes-relay` → `<repo>/plugin`, and the gateway scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup. Manifest fields (`name: "hermes-relay"`, `label: "Relay"`, `icon: "Activity"` from the 20-name Lucide whitelist, `tab.path: "/relay"`, `tab.position: "after:skills"`) place the tab after Skills in the dashboard nav.
+Hermes-Relay ships a hermes-agent Dashboard Plugin that surfaces relay-specific state in the gateway's web UI. The plugin subtree at `plugin/dashboard/` is discovered when `~/.hermes/plugins/hermes-relay` points at `<repo>/plugin` or when the upstream plugin manager installs `Codename-11/hermes-relay/plugin`. The gateway scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup. Manifest fields (`name: "hermes-relay"`, `label: "Relay"`, `icon: "Activity"`, `tab.path: "/relay"`, `tab.position: "after:skills"`) place the tab after Skills in the dashboard nav.
 
 **Four internal tabs** render inside the single `/relay` route via a shadcn `Tabs` component:
 

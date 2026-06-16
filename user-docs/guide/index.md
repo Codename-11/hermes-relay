@@ -20,6 +20,13 @@ See [Installation & Setup](/guide/getting-started) for copy/paste host commands 
 If you installed the optional Relay plugin and want to uninstall it later:
 
 ```bash
+hermes relay compat remove --all   # optional legacy compatibility hook cleanup
+hermes plugins remove hermes-relay
+```
+
+If you used the legacy installer instead:
+
+```bash
 bash ~/.hermes/hermes-relay/uninstall.sh
 ```
 
@@ -34,11 +41,16 @@ The uninstaller is idempotent and never touches state shared with other Hermes t
 ## Connection Model
 
 ```
-Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
-Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, media, voice]
+Phone (WS)       → Hermes dashboard (:9119)    [gateway chat with live thinking]
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat fallback, sessions, runs]
+Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + standard voice]
+Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, media, relay voice]
 ```
 
-Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles Bridge Core, terminal, TUI, media, notification companion, sessions, and `/voice/*` routes. Sideload builds additionally expose Android Device Control routes.
+Chat prefers the dashboard gateway when Manage auth is ready and falls back to
+the Hermes API Server's SSE routes. The relay server handles Bridge Core,
+terminal, TUI, media, notification companion, relay sessions, and relay-backed
+voice routes. Sideload builds additionally expose Android Device Control routes.
 
 ## Current Status — v1.0.0
 

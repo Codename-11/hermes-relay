@@ -146,6 +146,7 @@ export default defineConfig({
             { text: 'Hermes API', link: '/reference/api' },
             { text: 'Configuration', link: '/reference/configuration' },
             { text: 'Relay Server', link: '/reference/relay-server' },
+            { text: 'Agent Cleanup Prompt', link: '/reference/agent-cleanup-prompt' },
           ],
         },
       ],

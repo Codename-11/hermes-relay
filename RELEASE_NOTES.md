@@ -26,7 +26,7 @@ Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload 
 
 ### Standard path is first-class — no plugin required
 
-Chat, Manage, and voice now work against an unmodified upstream Hermes agent. Chat streams over the API server; Manage and voice use the Hermes dashboard with a single sign-in. The relay plugin stays optional and only adds power tools.
+Chat, Manage, and voice now work against an unmodified upstream Hermes agent. Chat prefers the dashboard `/api/ws` gateway when Manage auth is ready and falls back to API-server SSE; Manage and standard voice use the Hermes dashboard with a single sign-in. The relay plugin stays optional and only adds power tools.
 
 ### Gateway chat transport with live thinking
 

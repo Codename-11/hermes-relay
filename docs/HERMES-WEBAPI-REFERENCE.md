@@ -323,4 +323,4 @@ Chat modes:
 | Streaming format | OpenAI delta format | Custom SSE events (see above) |
 | Tool visibility | Hidden | Exposed via events (pending/started/completed/failed) |
 | Thinking/Reasoning | Not exposed | Exposed via `tool.progress` events |
-| Memory/Skills | Not applicable | Native read-only skills/toolsets; memory and skill detail/toggle remain compatibility surfaces |
+| Memory/Skills | Not applicable | Native read-only skills/toolsets; memory and skill detail/toggle remain compatibility surfaces. The optional bootstrap hook is managed by `hermes relay compat status/install/remove` and is not required for the v1.0.0 standard path. |

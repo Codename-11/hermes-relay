@@ -72,6 +72,18 @@ const { useState, useEffect, ... } = SDK.hooks;
 so that esbuild's classic JSX transform (`--jsx=transform
 --jsx-factory=React.createElement`) resolves against the runtime React.
 
+## Styling contract
+
+The dashboard host injects this plugin's `dist/style.css` as a plain `<link>`.
+Keep every rule scoped under `.hermes-relay-plugin` and use the host's current
+theme tokens: `--color-card`, `--color-card-foreground`, `--color-foreground`,
+`--color-muted-foreground`, `--color-border`, `--color-ring`,
+`--color-destructive`, `--color-success`, `--color-warning`, `--radius-*`, and
+`--theme-font-*`. Avoid old unprefixed shadcn aliases such as `--card` or
+`--muted`; they are not part of the current dashboard plugin contract. Fixed
+white/black colors are acceptable only for QR canvases and image export surfaces
+where scan/read correctness requires them.
+
 ## Backend routes consumed
 
 All proxied by `plugin_api.py` under `/api/plugins/hermes-relay/`:
