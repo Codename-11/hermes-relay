@@ -6,6 +6,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,7 +41,6 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +64,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
@@ -72,13 +74,14 @@ import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.RelayUiState
 
 /**
  * Root Settings destination. After the 2026-04-11 split, Settings is a
  * lightweight category list — the heavy lifting for each category lives in
  * a dedicated sub-screen reached by navigation. The top card shows live
- * API / Relay / Session status and taps through to the Connection
- * sub-screen for pairing and manual configuration.
+ * API / Dashboard / Relay status and opens the agent info sheet for the
+ * active connection, profile, and personality.
  *
  * The old mega-file version of this screen (≈2609 lines) carried every
  * setting inline in a single scrolling Column. That was painful to navigate
@@ -87,7 +90,7 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
  * the content went. The split follows the `VoiceSettingsScreen` pattern
  * that was already in the repo.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     connectionViewModel: ConnectionViewModel,
@@ -147,8 +150,82 @@ fun SettingsScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+    val authState by connectionViewModel.authState.collectAsState()
+    val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val apiServerHealth by connectionViewModel.apiServerHealth.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
+    val relayPaired = authState is AuthState.Paired
+    val dashboardStatus = activeConnection?.dashboardLastStatus
+    val dashboardSignInRequired =
+        dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+    val apiPill = when {
+        activeConnection?.apiServerUrl.isNullOrBlank() -> SettingsStatusPillModel(
+            label = "API missing",
+            tone = SettingsStatusTone.Warning,
+        )
+        apiServerHealth == ConnectionViewModel.HealthStatus.Probing -> SettingsStatusPillModel(
+            label = "API checking",
+            tone = SettingsStatusTone.Info,
+        )
+        apiServerReachable -> SettingsStatusPillModel(
+            label = "API ready",
+            tone = SettingsStatusTone.Good,
+        )
+        apiServerHealth == ConnectionViewModel.HealthStatus.Unreachable -> SettingsStatusPillModel(
+            label = "API offline",
+            tone = SettingsStatusTone.Warning,
+        )
+        else -> SettingsStatusPillModel(label = "API configured")
+    }
+    val dashboardPill = when {
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> SettingsStatusPillModel(
+            label = "Dashboard missing",
+            tone = SettingsStatusTone.Warning,
+        )
+        dashboardStatus == null -> SettingsStatusPillModel(label = "Dashboard unchecked")
+        !dashboardStatus.reachable -> SettingsStatusPillModel(
+            label = "Dashboard offline",
+            tone = SettingsStatusTone.Warning,
+        )
+        dashboardSignInRequired -> SettingsStatusPillModel(
+            label = "Dashboard sign in",
+            tone = SettingsStatusTone.Info,
+        )
+        dashboardStatus.authenticated == true -> SettingsStatusPillModel(
+            label = "Dashboard signed in",
+            tone = SettingsStatusTone.Good,
+        )
+        else -> SettingsStatusPillModel(
+            label = "Dashboard available",
+            tone = SettingsStatusTone.Good,
+        )
+    }
+    val relayPill = when (relayUiState) {
+        RelayUiState.Connected -> SettingsStatusPillModel(
+            label = "Relay ready",
+            tone = SettingsStatusTone.Good,
+        )
+        RelayUiState.Connecting -> SettingsStatusPillModel(
+            label = "Relay reconnecting",
+            tone = SettingsStatusTone.Info,
+        )
+        RelayUiState.Stale -> SettingsStatusPillModel(
+            label = "Relay stale",
+            tone = SettingsStatusTone.Warning,
+        )
+        RelayUiState.Disconnected -> SettingsStatusPillModel(
+            label = if (relayPaired) "Relay offline" else "Requires pairing",
+            tone = SettingsStatusTone.Warning,
+        )
+        RelayUiState.NotConfigured -> SettingsStatusPillModel(label = "Relay optional")
+    }
+    val relayRequiredPill = if (relayPaired) {
+        SettingsStatusPillModel(label = "Relay paired", tone = SettingsStatusTone.Good)
+    } else {
+        SettingsStatusPillModel(label = "Requires pairing", tone = SettingsStatusTone.Info)
+    }
 
     // Kick a WSS reconnect when Settings first composes so the Connections
     // subpage's active-card relay row doesn't flash Disconnected on cold
@@ -202,10 +279,8 @@ fun SettingsScreen(
             // ── Active Agent summary ───────────────────────────────────
             // Mirrors the ChatScreen TopAppBar title block (avatar + name
             // + one-line `connection · model · personality` subtitle).
-            // Tapping jumps to Chat AND auto-opens AgentInfoSheet so
-            // users can change Connection / Profile / Personality without
-            // having to navigate to Chat first and then hunt for the
-            // agent-name header.
+            // Tapping opens AgentInfoSheet inline so users can change
+            // Connection / Profile / Personality without leaving Settings.
             val effectiveProfile = AgentDisplay.effectiveProfile(
                 selectedProfile = selectedProfile,
                 profiles = agentProfiles,
@@ -224,6 +299,7 @@ fun SettingsScreen(
                     defaultPersonality = defaultPersonality,
                 ),
                 isCustomized = selectedProfile != null || selectedPersonality != "default",
+                statusPills = listOf(apiPill, dashboardPill, relayPill),
                 onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
             )
@@ -259,16 +335,12 @@ fun SettingsScreen(
             // connection-settings unification.)
 
             // ── Category list ──────────────────────────────────────────
-            // Multi-connection: Connections sits at the very top of the
-            // list so users who just want to switch server connections
-            // don't have to hunt for it. `Icons.Filled.Devices` is already
-            // imported for the "Paired devices" row below — reusing it
-            // here is visually fine since both rows cover server / device
-            // relationships.
+            SettingsSectionHeader("Hermes")
+
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
                 title = "Connections",
-                subtitle = "Switch or manage server connections",
+                subtitle = "API, dashboard, relay pairing, and routes",
                 onClick = onNavigateToConnections,
                 isDarkTheme = isDarkTheme,
             )
@@ -276,7 +348,8 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,
                 title = "Hermes management",
-                subtitle = "Skills, cron, MCP, profiles, models, config",
+                subtitle = "Dashboard features: skills, cron, MCP, profiles, models",
+                badge = dashboardPill,
                 onClick = onNavigateToManage,
                 isDarkTheme = isDarkTheme,
             )
@@ -284,7 +357,8 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Chat,
                 title = "Chat",
-                subtitle = "Reasoning, tool display, endpoints, message length",
+                subtitle = "API chat behavior, endpoints, tool display, message length",
+                badge = apiPill,
                 onClick = onNavigateToChatSettings,
                 isDarkTheme = isDarkTheme,
             )
@@ -292,34 +366,8 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.GraphicEq,
                 title = "Voice mode",
-                subtitle = "Interaction mode, silence threshold, providers",
+                subtitle = "Dashboard voice, realtime relay options, providers",
                 onClick = onNavigateToVoiceSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            // === PHASE3-notif-listener-followup: notification companion entry-point ===
-            SettingsCategoryRow(
-                icon = Icons.Filled.Notifications,
-                title = "Notification companion",
-                subtitle = "Let your assistant triage notifications you've shared",
-                onClick = onNavigateToNotificationCompanion,
-                isDarkTheme = isDarkTheme,
-            )
-            // === END PHASE3-notif-listener-followup ===
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Image,
-                title = "Media",
-                subtitle = "Inbound attachment size, auto-fetch, cache cap",
-                onClick = onNavigateToMediaSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Palette,
-                title = "Appearance",
-                subtitle = "Theme, font size, animations",
-                onClick = onNavigateToAppearanceSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -329,14 +377,20 @@ fun SettingsScreen(
                 icon = Icons.Filled.Code,
                 title = "Terminal",
                 subtitle = "Server shell access through a paired relay session",
+                badge = relayRequiredPill,
                 onClick = onNavigateToTerminal,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.PhoneAndroid,
-                title = "Bridge",
-                subtitle = "Relay-granted phone bridge controls",
+                title = if (BuildFlavor.isSideload) "Bridge" else "Bridge Core",
+                subtitle = if (BuildFlavor.isSideload) {
+                    "Relay-granted phone bridge controls"
+                } else {
+                    "Relay features without sideload device control"
+                },
+                badge = relayRequiredPill,
                 onClick = onNavigateToBridge,
                 isDarkTheme = isDarkTheme,
             )
@@ -344,8 +398,29 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
                 title = "Relay sessions",
-                subtitle = "Phones paired with this server — revoke, extend",
+                subtitle = "Phones paired with this server, revoke, extend",
+                badge = relayRequiredPill,
                 onClick = onNavigateToPairedDevices,
+                isDarkTheme = isDarkTheme,
+            )
+
+            // === PHASE3-notif-listener-followup: notification companion entry-point ===
+            SettingsCategoryRow(
+                icon = Icons.Filled.Notifications,
+                title = "Notification companion",
+                subtitle = "Shared phone notifications for paired relay tools",
+                badge = relayRequiredPill,
+                onClick = onNavigateToNotificationCompanion,
+                isDarkTheme = isDarkTheme,
+            )
+            // === END PHASE3-notif-listener-followup ===
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Image,
+                title = "Media",
+                subtitle = "Relay inbound attachments, auto-fetch, cache cap",
+                badge = relayRequiredPill,
+                onClick = onNavigateToMediaSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -355,6 +430,10 @@ fun SettingsScreen(
                     icon = Icons.Filled.Security,
                     title = "Bridge safety",
                     subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                    badge = SettingsStatusPillModel(
+                        label = "Sideload",
+                        tone = SettingsStatusTone.Info,
+                    ),
                     onClick = onNavigateToBridgeSafety,
                     isDarkTheme = isDarkTheme,
                 )
@@ -362,17 +441,10 @@ fun SettingsScreen(
             }
 
             SettingsCategoryRow(
-                icon = Icons.Filled.Analytics,
-                title = "Analytics",
-                subtitle = "Stats for nerds — TTFT, tokens, health",
-                onClick = onNavigateToAnalytics,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
                 icon = Icons.Filled.Info,
                 title = "Diagnostics",
                 subtitle = "Recent API, relay, session, and voice activity",
+                badge = relayPill,
                 onClick = { showDiagnosticsSheet = true },
                 isDarkTheme = isDarkTheme,
             )
@@ -386,6 +458,24 @@ fun SettingsScreen(
                     isDarkTheme = isDarkTheme,
                 )
             }
+
+            SettingsSectionHeader("App")
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Palette,
+                title = "Appearance",
+                subtitle = "Theme, font size, animations",
+                onClick = onNavigateToAppearanceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Analytics,
+                title = "Analytics",
+                subtitle = "Usage stats, TTFT, tokens, health",
+                onClick = onNavigateToAnalytics,
+                isDarkTheme = isDarkTheme,
+            )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Info,
@@ -447,15 +537,16 @@ fun SettingsScreen(
 
 /**
  * Compact summary card of the currently active agent (Connection + Profile
- * + Personality) rendered at the very top of SettingsScreen. Tapping
- * navigates to the Chat tab with the AgentInfoSheet pre-opened — that sheet
- * is the canonical place to actually change any of these three dimensions.
+ * + Personality) rendered at the very top of SettingsScreen. Tapping opens
+ * AgentInfoSheet inline — that sheet is the canonical place to actually
+ * change any of these three dimensions.
  *
  * Visual parity with the ChatScreen TopAppBar title block: 32dp avatar with
  * an optional 1.5dp primary-color accent ring when the user has overridden
  * either the profile or the personality; single-line subtitle joining the
  * three tokens with a middle-dot separator.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ActiveAgentCard(
     agentName: String,
@@ -465,6 +556,7 @@ private fun ActiveAgentCard(
     isCustomized: Boolean,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
+    statusPills: List<SettingsStatusPillModel>,
 ) {
     val subtitle = "$connectionLabel \u00B7 $model \u00B7 $personalityLabel"
     Card(
@@ -524,7 +616,10 @@ private fun ActiveAgentCard(
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Text(
                     text = agentName.ifBlank { "Hermes" },
                     style = MaterialTheme.typography.bodyLarge,
@@ -538,6 +633,14 @@ private fun ActiveAgentCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    statusPills.forEach { pill ->
+                        SettingsStatusPill(pill)
+                    }
+                }
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -545,6 +648,47 @@ private fun ActiveAgentCard(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+private data class SettingsStatusPillModel(
+    val label: String,
+    val tone: SettingsStatusTone = SettingsStatusTone.Neutral,
+)
+
+private enum class SettingsStatusTone {
+    Neutral,
+    Good,
+    Info,
+    Warning,
+}
+
+@Composable
+private fun SettingsStatusPill(pill: SettingsStatusPillModel) {
+    val containerColor = when (pill.tone) {
+        SettingsStatusTone.Good -> MaterialTheme.colorScheme.primaryContainer
+        SettingsStatusTone.Info -> MaterialTheme.colorScheme.tertiaryContainer
+        SettingsStatusTone.Warning -> MaterialTheme.colorScheme.errorContainer
+        SettingsStatusTone.Neutral -> MaterialTheme.colorScheme.surface
+    }
+    val contentColor = when (pill.tone) {
+        SettingsStatusTone.Good -> MaterialTheme.colorScheme.onPrimaryContainer
+        SettingsStatusTone.Info -> MaterialTheme.colorScheme.onTertiaryContainer
+        SettingsStatusTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
+        SettingsStatusTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        color = containerColor,
+        contentColor = contentColor,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Text(
+            text = pill.label,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }
 
@@ -572,6 +716,7 @@ private fun SettingsCategoryRow(
     subtitle: String,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
+    badge: SettingsStatusPillModel? = null,
 ) {
     Card(
         modifier = Modifier
@@ -598,16 +743,26 @@ private fun SettingsCategoryRow(
                 modifier = Modifier.size(22.dp),
             )
             Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                if (badge != null) {
+                    SettingsStatusPill(badge)
+                }
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
