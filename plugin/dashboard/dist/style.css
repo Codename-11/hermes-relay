@@ -445,6 +445,24 @@
   color: #111827;
 }
 
+/*
+ * Solid button variants must re-assert their contrast text colour.
+ * The scoped reset `.hermes-relay-plugin button { color: inherit }` (specificity
+ * 0,1,1) outranks the host's shadcn `text-*-foreground` utilities (0,1,0), so
+ * solid buttons would otherwise paint their text in the inherited container
+ * foreground — which on the dashboard theme nearly matches the button
+ * background, making the label invisible (issue #71). These class selectors
+ * sit at 0,2,0 and win back over the reset without `!important`. Ghost/outline
+ * buttons and inputs keep inheriting, which is what they want.
+ */
+.hermes-relay-plugin .bg-primary {
+  color: var(--primary-foreground, #0b0b0c);
+}
+
+.hermes-relay-plugin .bg-secondary {
+  color: var(--secondary-foreground, var(--hr-text));
+}
+
 .hermes-relay-plugin .bg-muted\/20,
 .hermes-relay-plugin .bg-muted\/30,
 .hermes-relay-plugin .bg-muted\/50 {
@@ -483,6 +501,7 @@
 
 .hermes-relay-plugin .bg-destructive {
   background: var(--hr-danger);
+  color: var(--destructive-foreground, #fff);
 }
 
 .hermes-relay-plugin .bg-muted-foreground\/40 {

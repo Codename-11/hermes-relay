@@ -335,9 +335,21 @@ class AuthManager(
                 // connection. The legacy sentinel keeps the pre-multi-
                 // connection install on its original file so the existing
                 // paired device keeps working with no migration.
+                // Both encrypted backends decrypt their Tink keyset eagerly on
+                // construction, so a corrupt file can throw AEADBadTagException
+                // here. KeystoreTokenStore.tryCreate already degrades to null;
+                // the legacy store self-heals its file in its constructor. If
+                // even that rebuild fails (a fundamentally broken keystore),
+                // fall back to a non-persistent store rather than force-close —
+                // the user re-pairs, but the app stays up.
                 val picked: SessionTokenStore =
                     KeystoreTokenStore.tryCreate(context, tokenPrefsName)
-                        ?: LegacyEncryptedPrefsTokenStore(context, tokenPrefsName)
+                        ?: runCatching {
+                            LegacyEncryptedPrefsTokenStore(context, tokenPrefsName)
+                        }.getOrElse { e ->
+                            Log.w(TAG, "Legacy token store unavailable (${e.message}) — using in-memory fallback; re-pair required")
+                            InMemoryTokenStore()
+                        }
                 migrateFromLegacyIfNeeded(picked)
                 _store = picked
                 picked
