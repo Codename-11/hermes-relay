@@ -831,6 +831,7 @@ fun RelayApp() {
         val activeConnection by connectionViewModel.activeConnection.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
+        val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
         // The SAME readiness signal ChatScreen renders its "Connect Standard
@@ -1245,7 +1246,14 @@ fun RelayApp() {
                         ?: activeConnection?.label
                         ?: "no route"
                     val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() } ?: "default"
-                    val modelLabel = serverModelName.takeIf { it.isNotBlank() } ?: "model pending"
+                    val displayProfile = AgentDisplay.effectiveDisplayProfile(
+                        selectedProfile = selectedProfile,
+                        profiles = agentProfiles,
+                    )
+                    val modelLabel = AgentDisplay.displayModelName(gatewayCurrentModel)
+                        ?: AgentDisplay.displayModelName(displayProfile?.model)
+                        ?: AgentDisplay.displayModelName(serverModelName)
+                        ?: "model pending"
                     val safetyLabel = if (BuildFlavor.isSideload && masterEnabled) {
                         "safety: ${if (unattendedEnabled) "unattended" else "on"}"
                     } else {

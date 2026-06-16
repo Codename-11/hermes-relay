@@ -1085,9 +1085,9 @@ fun AgentInfoSheet(
             // models (used only when the gateway model.options groups aren't
             // available, e.g. on an SSE transport).
             val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
-                (availableModels +
-                    agentProfiles.mapNotNull { it.model?.takeIf { m -> m.isNotBlank() } } +
-                    listOfNotNull(selectedModelOverride))
+                (availableModels.mapNotNull(AgentDisplay::displayModelName) +
+                    agentProfiles.mapNotNull { AgentDisplay.displayModelName(it.model) } +
+                    listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
                     .distinct()
             }
             if (modelProviders.isNotEmpty() || sseModelOptions.isNotEmpty()) {
@@ -1099,7 +1099,7 @@ fun AgentInfoSheet(
                 ) {
                     ProfileRadioRow(
                         primary = "Server default",
-                        secondary = serverModelName.takeIf { it.isNotBlank() },
+                        secondary = AgentDisplay.displayModelName(serverModelName),
                         selected = selectedModelOverride == null,
                         enabled = !isStreaming,
                         onSelect = {
@@ -1643,7 +1643,8 @@ private fun AgentSheetHeader(
         connectionLabel = null,
         localDisplayAlias = localDisplayAlias,
     )
-    val modelLabel = profile?.model ?: serverModelName
+    val modelLabel = AgentDisplay.displayModelName(profile?.model)
+        ?: AgentDisplay.displayModelName(serverModelName)
     val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
     val statusText = when {
         apiServerReachable -> "Connected"
@@ -1694,9 +1695,9 @@ private fun AgentSheetHeader(
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
             )
-            if (modelLabel.isNotBlank()) {
+            modelLabel?.takeIf { it.isNotBlank() }?.let { label ->
                 Text(
-                    text = modelLabel,
+                    text = label,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

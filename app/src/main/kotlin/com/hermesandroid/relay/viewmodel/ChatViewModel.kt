@@ -97,7 +97,9 @@ class ChatViewModel : ViewModel() {
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
     private var connectionSwitchJob: Job? = null
+    private var sessionRefreshJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
+    private val sessionRefreshGeneration = AtomicInteger(0)
     private val realtimeAgentUserMessages = mutableMapOf<String, String>()
     private val realtimeAgentInputTranscripts = mutableMapOf<String, StringBuilder>()
     private val realtimeAgentProviderBadges = mutableMapOf<String, String>()
@@ -914,9 +916,12 @@ class ChatViewModel : ViewModel() {
         connectionSwitchJob = viewModelScope.launch {
             events.collect { newConnectionId ->
                 historyLoadGeneration.incrementAndGet()
+                sessionRefreshGeneration.incrementAndGet()
                 intentionallyCancelled = true
                 activeStream?.cancel()
                 activeStream = null
+                sessionRefreshJob?.cancel()
+                _isLoadingSessions.value = false
                 activeProfileContextKey = null
                 _queuedMessages.value = emptyList()
                 _pendingAttachments.value = emptyList()
@@ -965,6 +970,9 @@ class ChatViewModel : ViewModel() {
         }
         activeStream = null
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        sessionRefreshGeneration.incrementAndGet()
+        sessionRefreshJob?.cancel()
+        _isLoadingSessions.value = false
         activeProfileContextKey = contextKey
         _queuedMessages.value = emptyList()
         _pendingAttachments.value = emptyList()
@@ -976,7 +984,9 @@ class ChatViewModel : ViewModel() {
         handler.clearSessions()
         handler.setSessionId(sessionId)
         handler.clearMessages()
-        onSessionChanged?.invoke(sessionId)
+        if (sessionId != null) {
+            onSessionChanged?.invoke(sessionId)
+        }
 
         if (sessionId == null || client == null) {
             _isLoadingHistory.value = false
@@ -1027,8 +1037,13 @@ class ChatViewModel : ViewModel() {
 
     fun refreshSessions() {
         val handler = chatHandler ?: return
-        viewModelScope.launch {
-            _isLoadingSessions.value = true
+        val generation = sessionRefreshGeneration.incrementAndGet()
+        sessionRefreshJob?.cancel()
+        sessionRefreshJob = viewModelScope.launch {
+            // Treat refreshes over an existing list as quiet background syncs.
+            // The drawer keeps rendering the current rows instead of flashing
+            // through a loading state whenever it opens or a turn completes.
+            _isLoadingSessions.value = handler.sessions.value.isEmpty()
             try {
                 // On the gateway, scope the drawer to the ACTIVE PROFILE via the
                 // dashboard `/api/sessions?profile=` surface (it opens that
@@ -1052,7 +1067,9 @@ class ChatViewModel : ViewModel() {
                     },
                 )
             } finally {
-                _isLoadingSessions.value = false
+                if (sessionRefreshGeneration.get() == generation) {
+                    _isLoadingSessions.value = false
+                }
             }
         }
     }

@@ -171,6 +171,13 @@ class AgentDisplayTest {
     }
 
     @Test
+    fun displayModelName_hidesGenericApiAlias() {
+        assertNull(AgentDisplay.displayModelName("hermes-agent"))
+        assertNull(AgentDisplay.displayModelName(" Hermes Agent "))
+        assertEquals("gpt-5.5", AgentDisplay.displayModelName(" gpt-5.5 "))
+    }
+
+    @Test
     fun normalizeSelection_collapsesSyntheticDefaultProfile() {
         assertNull(AgentDisplay.normalizeSelection(defaultProfile))
         assertEquals(mizu, AgentDisplay.normalizeSelection(mizu))

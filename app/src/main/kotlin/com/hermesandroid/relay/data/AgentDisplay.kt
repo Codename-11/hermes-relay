@@ -10,6 +10,11 @@ package com.hermesandroid.relay.data
  */
 object AgentDisplay {
     const val SERVER_DEFAULT_PROFILE_KEY: String = "__server_default__"
+    private val GENERIC_MODEL_ALIASES = setOf(
+        "hermes-agent",
+        "hermes_agent",
+        "hermes agent",
+    )
 
     // Only an EXPLICIT pick drives request/session identity. The advertised
     // "default" profile is an alias for server default, so falling back to it
@@ -87,6 +92,12 @@ object AgentDisplay {
         defaultPersonality.isNotBlank() -> titleCase(defaultPersonality.trim())
         else -> "Default"
     }
+
+    fun displayModelName(model: String?): String? =
+        model
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.takeUnless { it.lowercase() in GENERIC_MODEL_ALIASES }
 
     fun isServerDefaultAlias(profileName: String?): Boolean =
         profileName?.trim()?.equals("default", ignoreCase = true) == true

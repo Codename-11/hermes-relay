@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -71,6 +74,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
@@ -78,6 +82,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -156,6 +163,7 @@ import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import kotlin.math.abs
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import androidx.compose.ui.text.SpanStyle
@@ -195,6 +203,132 @@ private data class ChatScrollSnapshot(
     val lastToolCallCount: Int,
     val isStreaming: Boolean
 )
+
+private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
+    val layout = layoutInfo
+    if (layout.totalItemsCount == 0) return true
+    val last = layout.visibleItemsInfo.lastOrNull() ?: return false
+    return last.index == layout.totalItemsCount - 1 &&
+        (last.offset + last.size) - layout.viewportEndOffset <= slopPx
+}
+
+private suspend fun LazyListState.scrollToConversationBottom(
+    animated: Boolean,
+    slopPx: Int,
+) {
+    var animateNext = animated
+    var settledFrames = 0
+    repeat(10) { attempt ->
+        withFrameNanos { }
+        val lastIndex = layoutInfo.totalItemsCount - 1
+        if (lastIndex < 0) return
+        if (attempt == 0 || !isAtConversationBottom(slopPx)) {
+            if (animateNext) {
+                animateNext = false
+                animateScrollToItem(lastIndex, Int.MAX_VALUE)
+            } else {
+                scrollToItem(lastIndex, Int.MAX_VALUE)
+            }
+        }
+        withFrameNanos { }
+        if (isAtConversationBottom(slopPx)) {
+            settledFrames += 1
+            if (settledFrames >= 2) return
+        } else {
+            settledFrames = 0
+        }
+    }
+}
+
+private fun LazyListState.scrollTickerProgress(): Float {
+    val layout = layoutInfo
+    val visibleItems = layout.visibleItemsInfo
+    if (layout.totalItemsCount == 0 || visibleItems.isEmpty()) return 1f
+    if (!canScrollBackward) return 0f
+    if (!canScrollForward) return 1f
+
+    val first = visibleItems.first()
+    val visibleItemCount = visibleItems.size.coerceAtLeast(1)
+    val maxFirstIndex = (layout.totalItemsCount - visibleItemCount).coerceAtLeast(1)
+    val itemScroll =
+        (layout.viewportStartOffset - first.offset).coerceAtLeast(0).toFloat() /
+            first.size.coerceAtLeast(1)
+
+    return ((first.index + itemScroll) / maxFirstIndex).coerceIn(0f, 1f)
+}
+
+@Composable
+private fun ChatScrollTicker(
+    listState: LazyListState,
+    modifier: Modifier = Modifier,
+) {
+    val isScrollable by remember(listState) {
+        derivedStateOf { listState.canScrollBackward || listState.canScrollForward }
+    }
+    val targetProgress by remember(listState) {
+        derivedStateOf { listState.scrollTickerProgress() }
+    }
+    val progress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(
+            durationMillis = if (listState.isScrollInProgress) 90 else 180,
+            easing = LinearEasing,
+        ),
+        label = "chatScrollTickerProgress",
+    )
+    val alpha by animateFloatAsState(
+        targetValue = when {
+            !isScrollable -> 0f
+            listState.isScrollInProgress -> 0.95f
+            else -> 0.54f
+        },
+        animationSpec = tween(durationMillis = 160),
+        label = "chatScrollTickerAlpha",
+    )
+
+    if (alpha <= 0.02f) return
+
+    val baseColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val activeColor = RelayRefresh.Relay
+    Canvas(
+        modifier = modifier
+            .width(18.dp)
+            .fillMaxHeight()
+            .alpha(alpha),
+    ) {
+        if (size.height <= 0f) return@Canvas
+
+        val dashHeight = 8.dp.toPx()
+        val dashGap = 7.dp.toPx()
+        val step = dashHeight + dashGap
+        val minDashWidth = 1.4.dp.toPx()
+        val maxDashWidth = 4.4.dp.toPx()
+        val rightInset = 6.dp.toPx()
+        val activeRadius = 72.dp.toPx().coerceAtMost(size.height * 0.42f)
+        val activeCenter = (dashHeight / 2f) +
+            progress.coerceIn(0f, 1f) * (size.height - dashHeight).coerceAtLeast(1f)
+        val phase = (progress * step * 2f) % step
+        val x = size.width - rightInset
+        var y = -phase
+
+        while (y < size.height) {
+            val dashCenter = y + dashHeight / 2f
+            val influence = (1f - abs(dashCenter - activeCenter) / activeRadius)
+                .coerceIn(0f, 1f)
+            val dashWidth = minDashWidth + (maxDashWidth - minDashWidth) * influence
+            val dashAlpha = 0.18f + 0.64f * influence
+            val color = if (influence > 0.04f) activeColor else baseColor
+
+            drawRoundRect(
+                color = color.copy(alpha = dashAlpha),
+                topLeft = Offset(x - dashWidth / 2f, y),
+                size = Size(dashWidth, dashHeight),
+                cornerRadius = CornerRadius(dashWidth / 2f, dashWidth / 2f),
+            )
+            y += step
+        }
+    }
+}
 
 private data class ChatLoadingCommand(
     val state: ChatLoadingCommandState,
@@ -644,11 +778,7 @@ fun ChatScreen(
     val atBottomSlopPx = 140
     val isAtBottom by remember {
         derivedStateOf {
-            val layout = listState.layoutInfo
-            val last = layout.visibleItemsInfo.lastOrNull()
-                ?: return@derivedStateOf true
-            last.index == layout.totalItemsCount - 1 &&
-                (last.offset + last.size) - layout.viewportEndOffset <= atBottomSlopPx
+            listState.isAtConversationBottom(atBottomSlopPx)
         }
     }
 
@@ -657,6 +787,20 @@ fun ChatScreen(
     // user back to the latest token while they are reading history.
     // Reset to false the moment the user returns to the bottom.
     var userScrolledAway by remember { mutableStateOf(false) }
+    var programmaticBottomScroll by remember { mutableStateOf(false) }
+
+    suspend fun scrollConversationToBottom(animated: Boolean) {
+        programmaticBottomScroll = true
+        try {
+            listState.scrollToConversationBottom(
+                animated = animated,
+                slopPx = atBottomSlopPx,
+            )
+            userScrolledAway = false
+        } finally {
+            programmaticBottomScroll = false
+        }
+    }
 
     // Watch the user's scroll state. Any drag/fling that ends with the list
     // not at the bottom flips userScrolledAway = true. Returning to the
@@ -665,6 +809,10 @@ fun ChatScreen(
         snapshotFlow { listState.isScrollInProgress to isAtBottom }
             .distinctUntilChanged()
             .collectLatest { (scrolling, atBottom) ->
+                if (programmaticBottomScroll) {
+                    if (atBottom) userScrolledAway = false
+                    return@collectLatest
+                }
                 if (atBottom) {
                     userScrolledAway = false
                 } else if (!scrolling) {
@@ -794,6 +942,12 @@ fun ChatScreen(
         }
     }
 
+    LaunchedEffect(currentSessionId, isLoadingHistory) {
+        if (!isLoadingHistory && currentSessionId != null && messages.isNotEmpty()) {
+            scrollConversationToBottom(animated = false)
+        }
+    }
+
     // Auto-scroll to bottom while streaming.
     //
     // Bugs the previous versions had:
@@ -865,9 +1019,6 @@ fun ChatScreen(
                     && prev.isStreaming != snapshot.isStreaming
                 if (onlyStreamingFlagChanged) return@collectLatest
 
-                val lastIndex = listState.layoutInfo.totalItemsCount - 1
-                if (lastIndex < 0) return@collectLatest
-
                 // Sessions endpoint reloads the entire message list on
                 // stream complete (one streaming message → multiple final
                 // messages with proper boundaries + tool call cards).
@@ -891,17 +1042,12 @@ fun ChatScreen(
                 val isSameTurnGrowth = prev != null
                     && snapshot.messageCount == prev.messageCount
 
-                if (isListRebuild || isSameTurnGrowth) {
-                    // Instant — no animation, no conflict with animateItem,
-                    // no pile-up at delta frequency.
-                    listState.scrollToItem(lastIndex, Int.MAX_VALUE)
-                } else {
-                    // scrollOffset = Int.MAX_VALUE → Compose clamps to
-                    // (item height - viewport height), pinning the bottom
-                    // of the last item to the bottom of the viewport
-                    // regardless of how tall the streaming bubble has grown.
-                    listState.animateScrollToItem(lastIndex, Int.MAX_VALUE)
-                }
+                // scrollOffset = Int.MAX_VALUE → Compose clamps to the
+                // deepest valid offset. The helper waits for LazyColumn
+                // layout and retries across a few frames so a history load
+                // or late markdown/code-block measurement cannot leave us
+                // anchored above the real bottom.
+                scrollConversationToBottom(animated = !(isListRebuild || isSameTurnGrowth))
             }
     }
 
@@ -995,6 +1141,7 @@ fun ChatScreen(
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
                 isLoading = isLoadingSessions,
+                isOpen = drawerState.isOpen,
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }
@@ -1057,9 +1204,8 @@ fun ChatScreen(
                         selectedPersonality = selectedPersonality,
                         defaultPersonality = defaultPersonality,
                     )
-                    val modelName = effectiveProfile?.model
-                        ?.takeIf { it.isNotBlank() }
-                        ?: serverModelName
+                    val modelName = AgentDisplay.displayModelName(effectiveProfile?.model)
+                        ?: AgentDisplay.displayModelName(serverModelName)
                     // Subtext: a NON-default personality shown BEFORE the model
                     // (e.g. "Catgirl \u00B7 gpt-5.5"); the default personality is
                     // implied, so it's just the model. Falls back to the
@@ -1075,7 +1221,7 @@ fun ChatScreen(
                         !headerApiReachable -> statusText
                         else -> listOfNotNull(
                             nonDefaultPersonality,
-                            modelName.takeIf { it.isNotBlank() },
+                            modelName?.takeIf { it.isNotBlank() },
                         ).joinToString(" \u00B7 ").ifBlank { personalityLabel }
                     }
                     val subtitleColor = if (headerApiReachable) {
@@ -1745,6 +1891,14 @@ fun ChatScreen(
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
 
+                    ChatScrollTicker(
+                        listState = listState,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(top = 10.dp, end = 2.dp, bottom = 78.dp)
+                            .zIndex(6f),
+                    )
+
                     // Scroll-to-bottom FAB
                     androidx.compose.animation.AnimatedVisibility(
                         visible = showScrollToBottom,
@@ -1760,20 +1914,12 @@ fun ChatScreen(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 scope.launch {
-                                    val lastIndex = listState.layoutInfo.totalItemsCount - 1
-                                    if (lastIndex >= 0) {
-                                        // Match the auto-scroll fix: aim at the
-                                        // BOTTOM of the last item, not the top.
-                                        listState.animateScrollToItem(lastIndex, Int.MAX_VALUE)
-                                    }
+                                    // Match the auto-scroll fix: aim at the
+                                    // BOTTOM of the conversation, wait for
+                                    // LazyColumn layout, and retry through
+                                    // late markdown/code-block measurement.
+                                    scrollConversationToBottom(animated = true)
                                 }
-                                // Tapping the FAB is an explicit "take me back to
-                                // live" action — clear the user-scrolled-away gate
-                                // so streaming auto-follow resumes immediately,
-                                // even before the snapshotFlow notices isAtBottom
-                                // (which only flips after the scroll animation
-                                // settles).
-                                userScrolledAway = false
                             },
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         ) {
@@ -1972,18 +2118,18 @@ fun ChatScreen(
                 else -> "Message..."
             }
             val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
-                (availableModels +
-                    agentProfiles.mapNotNull { it.model.takeIf { model -> model.isNotBlank() } } +
-                    listOfNotNull(selectedModelOverride))
+                (availableModels.mapNotNull(AgentDisplay::displayModelName) +
+                    agentProfiles.mapNotNull { AgentDisplay.displayModelName(it.model) } +
+                    listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
                     .distinct()
             }
-            val currentModelForInput = selectedModelOverride
-                ?: gatewayCurrentModel.takeIf { it.isNotBlank() }
-                ?: effectiveProfile?.model?.takeIf { it.isNotBlank() }
-                ?: serverModelName.takeIf { it.isNotBlank() }
-            val fallbackModelDetail = gatewayCurrentModel.takeIf { it.isNotBlank() }
-                ?: effectiveProfile?.model?.takeIf { it.isNotBlank() }
-                ?: serverModelName.takeIf { it.isNotBlank() }
+            val currentModelForInput = AgentDisplay.displayModelName(selectedModelOverride)
+                ?: AgentDisplay.displayModelName(gatewayCurrentModel)
+                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
+                ?: AgentDisplay.displayModelName(serverModelName)
+            val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
+                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
+                ?: AgentDisplay.displayModelName(serverModelName)
             val hasModelChoices = modelProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
             val modelPickerOptions = remember(
                 modelProviders,

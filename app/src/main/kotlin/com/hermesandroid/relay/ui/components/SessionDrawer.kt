@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
@@ -37,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +68,7 @@ fun SessionDrawerContent(
     scopeTitle: String = "Sessions",
     scopeSubtitle: String? = null,
     isLoading: Boolean = false,
+    isOpen: Boolean = true,
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -77,6 +80,9 @@ fun SessionDrawerContent(
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
     var pinnedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var archivedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val listState = rememberLazyListState()
+    var scrollToTopPending by remember { mutableStateOf(false) }
+    val trimmedQuery = query.trim()
     val visibleSessions = sessions
         .asSequence()
         .filter { session ->
@@ -89,7 +95,7 @@ fun SessionDrawerContent(
             }
         }
         .filter { session ->
-            val needle = query.trim()
+            val needle = trimmedQuery
             needle.isBlank() ||
                 session.sessionId.contains(needle, ignoreCase = true) ||
                 session.title.orEmpty().contains(needle, ignoreCase = true) ||
@@ -102,6 +108,31 @@ fun SessionDrawerContent(
                 .thenBy { it.title.orEmpty().lowercase(locale = Locale.ROOT) }
         )
         .toList()
+    val topVisibleSessionId = visibleSessions.firstOrNull()?.sessionId
+
+    LaunchedEffect(isOpen) {
+        scrollToTopPending = isOpen
+        if (isOpen && visibleSessions.isNotEmpty()) {
+            listState.scrollToItem(0)
+            scrollToTopPending = false
+        }
+    }
+
+    LaunchedEffect(filter, trimmedQuery) {
+        if (isOpen && visibleSessions.isNotEmpty()) {
+            listState.scrollToItem(0)
+            scrollToTopPending = false
+        } else if (isOpen) {
+            scrollToTopPending = true
+        }
+    }
+
+    LaunchedEffect(isOpen, topVisibleSessionId, visibleSessions.size) {
+        if (isOpen && scrollToTopPending && visibleSessions.isNotEmpty()) {
+            listState.scrollToItem(0)
+            scrollToTopPending = false
+        }
+    }
 
     ModalDrawerSheet(
         modifier = Modifier.width(320.dp),
@@ -210,7 +241,7 @@ fun SessionDrawerContent(
                 )
             }
         } else {
-            LazyColumn {
+            LazyColumn(state = listState) {
                 items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionItem(
                         session = session,
