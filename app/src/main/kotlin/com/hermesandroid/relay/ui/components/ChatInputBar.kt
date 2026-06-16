@@ -74,6 +74,9 @@ import kotlinx.coroutines.delay
  */
 enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
+private val ChatComposerShape = RoundedCornerShape(18.dp)
+private val ChatInputChipShape = RoundedCornerShape(12.dp)
+
 data class ChatInputPickerOption(
     val label: String,
     val value: String?,
@@ -223,7 +226,7 @@ fun ChatInputBar(
         }
 
         Surface(
-            shape = RoundedCornerShape(26.dp),
+            shape = ChatComposerShape,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
@@ -430,12 +433,12 @@ private fun ChatInputPickerChip(
 
     Box(modifier = modifier) {
         Surface(
-            shape = RoundedCornerShape(999.dp),
+            shape = ChatInputChipShape,
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.32f),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
             modifier = Modifier
                 .heightIn(min = 32.dp)
-                .clip(RoundedCornerShape(999.dp))
+                .clip(ChatInputChipShape)
                 .clickable(enabled = enabled) { expanded = true },
         ) {
             Row(

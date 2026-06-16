@@ -1192,7 +1192,7 @@ class ChatViewModel : ViewModel() {
 
         // Server slash commands (gateway transport only) execute via
         // slash.exec / command.dispatch instead of becoming a prompt.
-        if (activeStream == null && maybeExecuteServerSlashCommand(text.trim())) return
+        if (activeStream == null && maybeHandleServerSlashCommand(text.trim())) return
 
         // Mid-turn: steer on the gateway transport, queue everywhere else.
         if (activeStream != null) {
@@ -1593,26 +1593,61 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * True when [text] is a slash command the server catalog knows —
-     * in that case it's executed via slash.exec / command.dispatch and
-     * never becomes a prompt. Non-gateway transports always return false
-     * (commands stay plain text, today's behavior).
+     * True when [text] looks like a gateway slash command. In that case it
+     * executes via slash.exec / command.dispatch, or returns a status bubble
+     * explaining why it cannot run. We fetch the server catalog at send time
+     * so a cold chat can still run commands before the first completed turn.
      */
-    private fun maybeExecuteServerSlashCommand(text: String): Boolean {
+    private fun maybeHandleServerSlashCommand(text: String): Boolean {
         if (!text.startsWith("/")) return false
-        if (streamingEndpoint != "gateway") return false
-        val gateway = gatewayClient ?: return false
-        val name = text.removePrefix("/").substringBefore(' ').lowercase()
-        if (name.isBlank()) return false
-        val known = _serverCommands.value.any {
-            it.command.removePrefix("/").substringBefore(' ').lowercase() == name
+        val rawName = text.removePrefix("/").substringBefore(' ').trim()
+        val normalizedName = normalizeSlashCommandName(rawName) ?: return false
+        val handler = chatHandler ?: return true
+
+        if (streamingEndpoint != "gateway") {
+            handler.addSystemNotice("Slash commands are available when chat is using the Hermes gateway route.")
+            return true
         }
-        if (!known) return false
-        val handler = chatHandler ?: return false
+
+        val gateway = gatewayClient
+        if (gateway == null) {
+            handler.addSystemNotice("Slash commands need the Hermes gateway connection. Check Manage sign-in and connection status.")
+            return true
+        }
+
+        mobileBlockedSlashNotice(normalizedName)?.let { notice ->
+            handler.addSystemNotice(notice)
+            return true
+        }
+
         viewModelScope.launch {
+            val commands = currentOrRefreshedServerCommands(gateway, handler) ?: return@launch
+            val known = commands.any {
+                normalizeSlashCommandName(it.command.removePrefix("/").substringBefore(' ')) == normalizedName
+            }
+            if (!known) {
+                handler.addSystemNotice("/$rawName is not available on this Hermes gateway. Use /commands to browse supported commands.")
+                return@launch
+            }
             runServerSlashCommand(gateway, handler, text, depth = 0)
         }
         return true
+    }
+
+    private suspend fun currentOrRefreshedServerCommands(
+        gateway: GatewayChatClient,
+        handler: ChatHandler,
+    ): List<SlashCommand>? {
+        val current = _serverCommands.value
+        if (current.isNotEmpty()) return current
+        val catalog = gateway.commandsCatalog(connectIfNeeded = true).getOrElse { e ->
+            handler.addSystemNotice("Slash commands are unavailable: ${e.message ?: "command catalog could not be loaded"}")
+            return null
+        }
+        if (gatewayClient !== gateway) return null
+        val parsed = parseCommandsCatalog(catalog)
+        _serverCommands.value = parsed
+        return parsed
     }
 
     /**
@@ -3395,13 +3430,30 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
 
 private fun isUnsupportedMobileCommand(name: String, pair: JsonArray): Boolean {
     val normalized = name.removePrefix("/").substringBefore(' ').lowercase()
-    if (normalized == "update") return true
+    if (mobileBlockedSlashNotice(normalized) != null) return true
     val metadata = pair.drop(2).filterIsInstance<JsonObject>().firstOrNull()
     val cliOnly = metadata.booleanValue("cli_only", "cliOnly", "cli-only") == true
     val gatewayGate = metadata?.stringValue("gateway_config_gate")
         ?: metadata?.stringValue("gatewayConfigGate")
     return cliOnly && gatewayGate.isNullOrBlank()
 }
+
+private fun normalizeSlashCommandName(rawName: String): String? {
+    val normalized = rawName
+        .trim()
+        .removePrefix("/")
+        .replace('_', '-')
+        .lowercase()
+    if (normalized.isBlank()) return null
+    val commandNameChars = normalized.all { it.isLetterOrDigit() || it == '-' }
+    return normalized.takeIf { commandNameChars }
+}
+
+internal fun mobileBlockedSlashNotice(normalizedName: String): String? =
+    when (normalizedName.replace('_', '-').lowercase()) {
+        "update" -> "/update is only available from messaging platforms. Run `hermes update` from the terminal."
+        else -> null
+    }
 
 private fun JsonObject?.booleanValue(vararg keys: String): Boolean? {
     if (this == null) return null

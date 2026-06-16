@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,11 +19,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -306,6 +310,7 @@ private fun SessionItem(
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     val locale = LocalLocale.current.platformLocale
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
@@ -321,7 +326,11 @@ private fun SessionItem(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp),
+        ) {
             Text(
                 text = session.title ?: "Untitled",
                 style = MaterialTheme.typography.bodyMedium,
@@ -334,52 +343,107 @@ private fun SessionItem(
                 }
             )
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 sessionTimestampText(session, locale)?.let { timestamp ->
                     Text(
                         text = timestamp,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                 }
                 if (session.messageCount > 0) {
                     Text(
                         text = "${session.messageCount} msgs",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
                     )
                 }
             }
         }
 
-        IconButton(onClick = onTogglePinned, modifier = Modifier.padding(0.dp)) {
+        IconButton(
+            onClick = onTogglePinned,
+            modifier = Modifier.size(36.dp),
+        ) {
             Icon(
                 Icons.Filled.Star,
                 contentDescription = if (pinned) "Unpin session" else "Pin session",
-                tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant
+                tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
             )
         }
-        IconButton(onClick = onToggleArchived, modifier = Modifier.padding(0.dp)) {
-            Icon(
-                Icons.Filled.Archive,
-                contentDescription = if (archived) "Restore session" else "Archive session",
-                tint = if (archived) RelayRefresh.Relay else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        IconButton(onClick = onRename, modifier = Modifier.padding(0.dp)) {
-            Icon(
-                Icons.Filled.Edit,
-                contentDescription = "Rename",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        IconButton(onClick = onDelete, modifier = Modifier.padding(0.dp)) {
-            Icon(
-                Icons.Filled.Delete,
-                contentDescription = "Delete",
-                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-            )
+
+        Box {
+            IconButton(
+                onClick = { menuOpen = true },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = "Session actions",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = {
+                        Icon(Icons.Filled.Edit, contentDescription = null)
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onRename()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(if (archived) "Restore" else "Archive") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Archive,
+                            contentDescription = null,
+                            tint = if (archived) {
+                                RelayRefresh.Relay
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onToggleArchived()
+                    },
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "Delete",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.75f),
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onDelete()
+                    },
+                )
+            }
         }
     }
 }

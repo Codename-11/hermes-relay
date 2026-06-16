@@ -14,7 +14,7 @@
 // in the root plugins block. If a future Kotlin bump breaks the pairing, align
 // this version per https://kotlinlang.org/docs/multiplatform/compose-compatibility-and-versioning.html
 plugins {
-    kotlin("jvm") version "2.3.21"
+    kotlin("jvm")
     // Compose compiler — version inherited from the root plugins {} block.
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.compose") version "1.10.3"

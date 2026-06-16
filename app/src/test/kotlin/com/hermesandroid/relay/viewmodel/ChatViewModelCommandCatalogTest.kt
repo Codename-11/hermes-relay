@@ -20,6 +20,7 @@ class ChatViewModelCommandCatalogTest {
                 JsonArray(
                     listOf(
                         commandPair("status", "Show status"),
+                        commandPair("fast", "Toggle fast mode"),
                         commandPair("update", "Update Hermes Agent"),
                         commandPair(
                             "clear",
@@ -41,9 +42,20 @@ class ChatViewModelCommandCatalogTest {
 
         val commands = parseCommandsCatalog(catalog).map { it.command }
 
-        assertEquals(listOf("/status", "/verbose"), commands)
+        assertEquals(listOf("/status", "/fast", "/verbose"), commands)
+        assertTrue(commands.contains("/fast"))
         assertFalse(commands.contains("/update"))
         assertTrue(commands.contains("/verbose"))
+    }
+
+    @Test
+    fun mobileBlockedSlashNotice_explainsUpdate() {
+        val notice = mobileBlockedSlashNotice("update")
+
+        assertEquals(
+            "/update is only available from messaging platforms. Run `hermes update` from the terminal.",
+            notice,
+        )
     }
 
     private fun commandPair(

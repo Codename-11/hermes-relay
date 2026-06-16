@@ -88,6 +88,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
@@ -1752,8 +1753,10 @@ fun ChatScreen(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(16.dp)
+                            .zIndex(8f)
                     ) {
                         SmallFloatingActionButton(
+                            modifier = Modifier.size(48.dp),
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 scope.launch {
