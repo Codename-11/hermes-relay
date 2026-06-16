@@ -377,6 +377,12 @@ the new app version and a higher `appVersionCode`.
 
 ### 2. Update release notes and changelog
 
+> Each surface has its own GitHub-Release-body file, all in the same format
+> (Summary + Added/Changed/Fixed + Install/Verify): `RELEASE_NOTES.md` (Android),
+> `PLUGIN_RELEASE_NOTES.md` (plugin), `CLI_RELEASE_NOTES.md` (CLI). This step covers
+> the Android artifacts; the plugin/CLI files are filled in their own release
+> sections below but follow the identical scrub and Keep-a-Changelog grouping.
+
 - `CHANGELOG.md` — promote the accumulated `[Unreleased]` block to a
   versioned header. The block already exists: every feature PR has
   been appending to it. All you do here is:
@@ -488,12 +494,18 @@ Use this when plugin or relay behavior changes independently of Android app
 delivery, for example CLI channel support, bridge routes, pairing server fixes,
 voice auth, dashboard plugin UI, or packaging changes.
 
+First **rewrite `PLUGIN_RELEASE_NOTES.md`** — it is the GitHub Release body for
+`plugin-v*` tags (the same role `RELEASE_NOTES.md` plays for Android). Fill the
+Summary and the Added/Changed/Fixed groups from the plugin-relevant bullets in the
+promoted `CHANGELOG.md` block, keep the `__VERSION__` token in the Install command
+(the workflow substitutes it), and apply the same public-distribution scrub as §2.
+
 ```bash
 git checkout dev
 git pull --ff-only origin dev
 
 bash scripts/bump-plugin-version.sh 0.6.2
-git add pyproject.toml plugin/relay/__init__.py plugin/plugin.yaml plugin/dashboard/manifest.json plugin/dashboard/package.json plugin/dashboard/package-lock.json CHANGELOG.md
+git add pyproject.toml plugin/relay/__init__.py plugin/plugin.yaml plugin/dashboard/manifest.json plugin/dashboard/package.json plugin/dashboard/package-lock.json CHANGELOG.md PLUGIN_RELEASE_NOTES.md
 git commit -m "release(plugin): plugin-v0.6.2"
 git push origin dev
 
@@ -641,7 +653,12 @@ On every push of a tag matching `plugin-v*`,
 
 On every push of a tag matching `cli-v*`,
 `.github/workflows/release-cli.yml` builds and publishes the CLI binaries and
-Windows tray installer. Dashboard-only changes are covered by
+Windows tray installer. Its GitHub Release body comes from `CLI_RELEASE_NOTES.md`
+(rewritten per release — the CLI counterpart of `RELEASE_NOTES.md`); the workflow
+substitutes `__VERSION__` (bare, e.g. `0.3.0`) and `__TAG__` (full, e.g.
+`cli-v0.3.0`) so the install/pin commands stay accurate. Fill its Summary and
+Added/Changed/Fixed groups at CLI release-prep and apply the §2 public scrub.
+Dashboard-only changes are covered by
 `.github/workflows/ci-dashboard.yml`, which builds the dashboard plugin,
 runs the dashboard API tests, and verifies the modal CSS markers are present
 in the built bundle.

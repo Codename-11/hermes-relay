@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-16 — Per-surface release notes (plugin + CLI parity with Android)
+
+**Why.** Plugin and CLI GitHub Release bodies were static boilerplate baked into the workflow YAML (version-interpolated, but change-agnostic — a reader couldn't tell what a `plugin-v*`/`cli-v*` release actually changed). Only Android had real per-release notes (`RELEASE_NOTES.md` via `body_path`). Brought plugin and CLI up to the same Summary/Added/Changed/Fixed format.
+
+- **New notes files.** `PLUGIN_RELEASE_NOTES.md` and `CLI_RELEASE_NOTES.md` at repo root — hand-written per release, same structure/scrub as `RELEASE_NOTES.md`. They keep the valuable Install/Verify sections but add a per-release "What's changed" block.
+- **Version stays auto-accurate.** Rather than hardcoding the version in install commands (three spots for CLI), the files use `__VERSION__` (and `__TAG__` for CLI) placeholders; each release workflow `sed`-renders them into a temp body before `softprops/action-gh-release` consumes it via `body_path`. Human writes prose, pipeline fills the version.
+- **Workflow wiring.** `release-plugin.yml` (package job, already checks out) and `release-cli.yml` got a "Render release notes" step + `body_path:` in place of inline `body:`. The CLI `publish-release` job had **no `actions/checkout`** (it only downloaded build artifacts) — added one so the notes file is present in that job.
+- **Docs.** RELEASE.md: §2 cross-references all three per-surface files; the plugin release recipe now updates + commits `PLUGIN_RELEASE_NOTES.md`; the CLI CI-behavior section documents `CLI_RELEASE_NOTES.md` + the placeholder substitution.
+- **Verification.** All three release workflow YAMLs parse (`yaml.safe_load`); plugin/CLI confirmed on `body_path` with no leftover inline body. Placeholder `sed` substitution validated by inspection. No release cut.
+
 ## 2026-06-16 — Dev-velocity tooling: Play auto-publish, worktree workflow, desktop UI preview
 
 **Why.** Three workflow improvements to expedite shipping: automate the manual Play Console upload step, write down the worktree mental model, and cut the Compose UI edit→build→install loop.

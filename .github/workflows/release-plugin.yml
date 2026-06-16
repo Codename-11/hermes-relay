@@ -86,6 +86,17 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # Render PLUGIN_RELEASE_NOTES.md (hand-written per release) into the GitHub
+      # Release body, substituting the version token so the Install command stays
+      # accurate without a manual edit. The file is the single source of the notes;
+      # see RELEASE.md "Plugin / Python package release".
+      - name: Render release notes
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          sed "s/__VERSION__/${VERSION}/g" PLUGIN_RELEASE_NOTES.md > release_notes_rendered.md
+          echo "=== rendered release body ===" && cat release_notes_rendered.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -93,25 +104,7 @@ jobs:
           tag_name: plugin-v${{ needs.validate.outputs.version }}
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           fail_on_unmatched_files: true
-          body: |
-            # Hermes-Relay-Plugin v${{ needs.validate.outputs.version }}
-
-            This release contains the Hermes plugin and Python package.
-            Android releases use `android-v*` tags. CLI releases use `cli-v*`
-            tags. Historical CLI prereleases used `desktop-v*` tags, and
-            historical relay/plugin releases used `relay-v*` tags.
-
-            ## Install
-
-            ```bash
-            pip install hermes-relay==${{ needs.validate.outputs.version }}
-            ```
-
-            ## Verify
-
-            ```bash
-            python -m relay_server --help
-            ```
+          body_path: release_notes_rendered.md
           files: |
             dist/*.whl
             dist/*.tar.gz

@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, with future tags on `android-v*`, `plugin-v*`, and `cli-v*`. The CLI installer and updater still understand historical `desktop-v*` prereleases during the migration.
+- **Per-surface release notes.** Plugin and CLI GitHub Releases now use hand-written `PLUGIN_RELEASE_NOTES.md` / `CLI_RELEASE_NOTES.md` files (Summary + Added/Changed/Fixed + Install/Verify) — the same format as Android's `RELEASE_NOTES.md` — instead of static boilerplate baked into the workflow. The release workflows substitute the version into the install commands automatically.
 
 ## [1.0.0] - 2026-06-14
 

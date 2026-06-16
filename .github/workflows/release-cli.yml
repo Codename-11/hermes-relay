@@ -171,6 +171,10 @@ jobs:
       - build-cli-binaries
       - build-windows-tray-installer
     steps:
+      # Needed so CLI_RELEASE_NOTES.md is available to render into the release body
+      # (the other publish-release steps only consume downloaded build artifacts).
+      - uses: actions/checkout@v4
+
       - name: Extract CLI version
         id: version
         run: echo "version=${GITHUB_REF_NAME#cli-v}" >> "$GITHUB_OUTPUT"
@@ -188,6 +192,18 @@ jobs:
             | sed -E 's#release-assets/[^/]+/##' > release-assets/SHA256SUMS.txt
           cat release-assets/SHA256SUMS.txt
 
+      # Render CLI_RELEASE_NOTES.md (hand-written per release) into the GitHub
+      # Release body. __VERSION__ = bare version (0.3.0), __TAG__ = full tag
+      # (cli-v0.3.0) so the install/pin commands stay accurate without manual edits.
+      - name: Render release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sed -e "s/__VERSION__/${VERSION}/g" -e "s/__TAG__/${TAG}/g" \
+            CLI_RELEASE_NOTES.md > cli_release_notes_rendered.md
+          echo "=== rendered release body ===" && cat cli_release_notes_rendered.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -196,42 +212,7 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
           fail_on_unmatched_files: true
-          body: |
-            # Hermes-Relay-CLI v${{ steps.version.outputs.version }}
-
-            **Experimental phase.** Assets are unsigned - Windows SmartScreen and macOS Gatekeeper will warn on first launch. Windows now ships a tray installer as the primary desktop surface; CLI binaries remain available for terminal/headless use and for macOS/Linux.
-
-            ## Install
-
-            **Windows tray app (PowerShell):**
-            ```powershell
-            irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
-            ```
-
-            **Windows CLI only:**
-            ```powershell
-            $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
-            ```
-
-            **macOS / Linux CLI:**
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
-            ```
-
-            Pin this specific release with `HERMES_RELAY_VERSION=${{ github.ref_name }}`.
-
-            ## Verify
-
-            ```text
-            hermes-relay --version
-            hermes-relay pair --remote ws://<host>:8767
-            hermes-relay shell
-            ```
-
-            Open **Hermes Relay Desktop** from the Windows Start menu for tray pairing, devices, task log, settings, pause, and emergency stop.
-
-            See [Desktop docs](https://codename-11.github.io/hermes-relay/desktop/) for full usage.
-
+          body_path: cli_release_notes_rendered.md
           files: |
             release-assets/cli-binaries/hermes-relay-win-x64.exe
             release-assets/cli-binaries/hermes-relay-linux-x64
