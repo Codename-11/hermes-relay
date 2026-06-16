@@ -225,6 +225,20 @@ class ChatViewModel : ViewModel() {
     private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
     val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
 
+    /** Current gateway model from `model.options`, used when no Android override is active. */
+    private val _gatewayCurrentModel = MutableStateFlow("")
+    val gatewayCurrentModel: StateFlow<String> = _gatewayCurrentModel.asStateFlow()
+
+    /** Current gateway provider slug from `model.options`, paired with [gatewayCurrentModel]. */
+    private val _gatewayCurrentProvider = MutableStateFlow("")
+    val gatewayCurrentProvider: StateFlow<String> = _gatewayCurrentProvider.asStateFlow()
+
+    /** Gateway reasoning effort for this session/global agent config. */
+    private val _selectedReasoningEffort = MutableStateFlow(DEFAULT_REASONING_EFFORT)
+    val selectedReasoningEffort: StateFlow<String> = _selectedReasoningEffort.asStateFlow()
+
+    private val _reasoningDisplay = MutableStateFlow<String?>(null)
+
     /**
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
@@ -238,6 +252,8 @@ class ChatViewModel : ViewModel() {
             gateway.modelOptions().fold(
                 onSuccess = {
                     _modelProviders.value = it.providers
+                    _gatewayCurrentModel.value = it.currentModel
+                    _gatewayCurrentProvider.value = it.currentProvider
                     android.util.Log.i(
                         "ChatViewModel",
                         "model.options: ${it.providers.size} providers, " +
@@ -246,6 +262,25 @@ class ChatViewModel : ViewModel() {
                 },
                 onFailure = {
                     android.util.Log.w("ChatViewModel", "model.options failed: ${it.message}")
+                },
+            )
+        }
+    }
+
+    /** Refresh the gateway reasoning effort backing the compact input control. */
+    fun refreshReasoningSettings() {
+        val gateway = gatewayClient ?: run {
+            android.util.Log.i("ChatViewModel", "refreshReasoningSettings: no gateway client")
+            return
+        }
+        viewModelScope.launch {
+            gateway.getReasoningSettings().fold(
+                onSuccess = {
+                    _selectedReasoningEffort.value = normalizeReasoningEffort(it.effort)
+                    _reasoningDisplay.value = it.display
+                },
+                onFailure = {
+                    android.util.Log.w("ChatViewModel", "config.get reasoning failed: ${it.message}")
                 },
             )
         }
@@ -278,7 +313,45 @@ class ChatViewModel : ViewModel() {
         _selectedModelOverride.value = model?.takeIf { it.isNotBlank() }
         val gateway = gatewayClient
         val handler = chatHandler
-        if (model.isNullOrBlank()) return
+        if (model.isNullOrBlank()) {
+            if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
+                val defaultModel = (effectiveProfileProvider() ?: selectedProfileProvider())
+                    ?.model
+                    ?.takeIf { it.isNotBlank() }
+                    ?: _serverModelName.value.takeIf { it.isNotBlank() }
+                if (!defaultModel.isNullOrBlank()) {
+                    viewModelScope.launch {
+                        gateway.prewarm(handler.currentSessionId.value)
+                        gateway.setModel(defaultModel).fold(
+                            onSuccess = { result ->
+                                val resolved = result.stringValue("value") ?: defaultModel
+                                val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
+                                _gatewayCurrentModel.value = resolved
+                                _gatewayCurrentProvider.value = ""
+                                handler.addSystemNotice(
+                                    listOfNotNull(
+                                        "Using server default model ($resolved).",
+                                        warning,
+                                    ).joinToString("\n\n"),
+                                )
+                                gateway.modelOptions().onSuccess {
+                                    _modelProviders.value = it.providers
+                                    _gatewayCurrentModel.value = it.currentModel
+                                    _gatewayCurrentProvider.value = it.currentProvider
+                                }
+                            },
+                            onFailure = { e ->
+                                handler.addSystemNotice(
+                                    "Couldn't switch to server default model: ${e.message ?: "unknown error"}",
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            refreshActiveAgentName()
+            return
+        }
         if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
             // Upstream model-switch flag string: `<model> [--provider <slug>]`.
             val value = if (!provider.isNullOrBlank()) "$model --provider $provider" else model
@@ -293,10 +366,16 @@ class ChatViewModel : ViewModel() {
                     onSuccess = { result ->
                         val resolved = result.stringValue("value") ?: model
                         val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
+                        _gatewayCurrentModel.value = resolved
+                        _gatewayCurrentProvider.value = provider.orEmpty()
                         handler.addSystemNotice(
                             listOfNotNull("Model switched to $resolved.", warning).joinToString("\n\n"),
                         )
-                        gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
+                        gateway.modelOptions().onSuccess {
+                            _modelProviders.value = it.providers
+                            _gatewayCurrentModel.value = it.currentModel
+                            _gatewayCurrentProvider.value = it.currentProvider
+                        }
                     },
                     onFailure = { e ->
                         handler.addSystemNotice("Couldn't switch model: ${e.message ?: "unknown error"}")
@@ -305,6 +384,34 @@ class ChatViewModel : ViewModel() {
             }
         }
         refreshActiveAgentName()
+    }
+
+    /**
+     * Switch the gateway reasoning effort for this session through `config.set`.
+     * The chip owns optimistic UI; failures are surfaced in chat.
+     */
+    fun selectReasoningEffort(value: String) {
+        val normalized = normalizeReasoningEffort(value)
+        _selectedReasoningEffort.value = normalized
+        val gateway = gatewayClient ?: return
+        val handler = chatHandler
+        if (streamingEndpoint != "gateway" || handler == null) return
+        viewModelScope.launch {
+            gateway.prewarm(handler.currentSessionId.value)
+            gateway.setReasoning(normalized).fold(
+                onSuccess = { result ->
+                    _selectedReasoningEffort.value = normalizeReasoningEffort(
+                        result.stringValue("value") ?: normalized,
+                    )
+                },
+                onFailure = { e ->
+                    handler.addSystemNotice(
+                        "Couldn't switch reasoning effort: ${e.message ?: "unknown error"}",
+                    )
+                    refreshReasoningSettings()
+                },
+            )
+        }
     }
 
     /**
@@ -335,7 +442,15 @@ class ChatViewModel : ViewModel() {
         gateway.clearSession()
         // The profile brings its own model — refresh the picker's "current".
         viewModelScope.launch {
-            gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
+            gateway.modelOptions().onSuccess {
+                _modelProviders.value = it.providers
+                _gatewayCurrentModel.value = it.currentModel
+                _gatewayCurrentProvider.value = it.currentProvider
+            }
+            gateway.getReasoningSettings().onSuccess {
+                _selectedReasoningEffort.value = normalizeReasoningEffort(it.effort)
+                _reasoningDisplay.value = it.display
+            }
         }
         refreshActiveAgentName()
     }
@@ -389,7 +504,14 @@ class ChatViewModel : ViewModel() {
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
         when {
-            client == null -> _serverCommands.value = emptyList()
+            client == null -> {
+                _serverCommands.value = emptyList()
+                _modelProviders.value = emptyList()
+                _gatewayCurrentModel.value = ""
+                _gatewayCurrentProvider.value = ""
+                _selectedReasoningEffort.value = DEFAULT_REASONING_EFFORT
+                _reasoningDisplay.value = null
+            }
             // Catalog fetch must never cold-open /api/ws — only fetch over an
             // already-ready socket. Otherwise the first completed gateway
             // turn populates it (see onCompleteCb in startStream).
@@ -397,8 +519,16 @@ class ChatViewModel : ViewModel() {
                 (changed || _serverCommands.value.isEmpty()) -> {
                 fetchServerCommands(client)
                 refreshModelOptions()
+                refreshReasoningSettings()
             }
-            changed -> _serverCommands.value = emptyList()
+            changed -> {
+                _serverCommands.value = emptyList()
+                _modelProviders.value = emptyList()
+                _gatewayCurrentModel.value = ""
+                _gatewayCurrentProvider.value = ""
+                _selectedReasoningEffort.value = DEFAULT_REASONING_EFFORT
+                _reasoningDisplay.value = null
+            }
         }
     }
 
@@ -495,6 +625,10 @@ class ChatViewModel : ViewModel() {
      */
     private var selectedProfileProvider: () -> Profile? = { null }
     private var effectiveProfileProvider: () -> Profile? = { selectedProfileProvider() }
+    private var displayProfileProvider: () -> Profile? = {
+        effectiveProfileProvider() ?: selectedProfileProvider()
+    }
+    private var displayAliasProvider: () -> String? = { null }
     private var activeProfileContextKey: String? = null
 
     /**
@@ -513,6 +647,20 @@ class ChatViewModel : ViewModel() {
     fun setEffectiveProfileProvider(provider: () -> Profile?) {
         effectiveProfileProvider = provider
         refreshActiveAgentName()
+    }
+
+    fun setDisplayProfileProvider(provider: () -> Profile?) {
+        displayProfileProvider = provider
+        refreshActiveAgentName(relabelGenericMessages = true)
+    }
+
+    fun setDisplayAliasProvider(provider: () -> String?) {
+        displayAliasProvider = provider
+        refreshActiveAgentName(relabelGenericMessages = true)
+    }
+
+    fun refreshAgentDisplayName(relabelGenericMessages: Boolean = false) {
+        refreshActiveAgentName(relabelGenericMessages = relabelGenericMessages)
     }
 
     /**
@@ -931,10 +1079,14 @@ class ChatViewModel : ViewModel() {
             ).fold(
                 onSuccess = { session ->
                     if (historyLoadGeneration.get() == loadGeneration) {
+                        val nowMs = System.currentTimeMillis()
                         val chatSession = ChatSession(
                             sessionId = session.id,
                             title = session.title ?: "New Chat",
-                            model = session.model
+                            model = session.model,
+                            updatedAt = nowMs,
+                            startedAt = nowMs,
+                            lastActivityAt = nowMs,
                         )
                         handler.addSession(chatSession)
                         handler.setSessionId(session.id)
@@ -1647,10 +1799,14 @@ class ChatViewModel : ViewModel() {
                     },
                 ).fold(
                     onSuccess = { session ->
+                        val nowMs = System.currentTimeMillis()
                         val chatSession = ChatSession(
                             sessionId = session.id,
                             title = null,
-                            model = session.model
+                            model = session.model,
+                            updatedAt = nowMs,
+                            startedAt = nowMs,
+                            lastActivityAt = nowMs,
                         )
                         handler.addSession(chatSession)
                         handler.setSessionId(session.id)
@@ -2076,7 +2232,6 @@ class ChatViewModel : ViewModel() {
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
         val selectedProfile = selectedProfileProvider()
-        val effectiveProfile = effectiveProfileProvider() ?: selectedProfile
         val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
 
         // Build persona prompt following the precedence rule documented on
@@ -2104,7 +2259,7 @@ class ChatViewModel : ViewModel() {
         // Set agent name for display on chat bubbles. The selected/effective
         // Hermes profile is the active agent identity; personality is only a
         // fallback when no profile metadata is available.
-        handler.activeAgentName = currentAgentDisplayName(effectiveProfile)
+        handler.activeAgentName = currentAgentDisplayName()
 
         // A new turn is starting: clear any leftover cancellation flag so a
         // stale `true` from a PRIOR cancelled turn (the flag is sticky — a
@@ -2196,6 +2351,9 @@ class ChatViewModel : ViewModel() {
             // now-live socket too — once, on the first gateway turn.
             if (streamingEndpoint == "gateway" && _modelProviders.value.isEmpty()) {
                 refreshModelOptions()
+            }
+            if (streamingEndpoint == "gateway") {
+                refreshReasoningSettings()
             }
 
             // Sessions endpoint doesn't emit structured tool events during streaming —
@@ -2495,8 +2653,16 @@ class ChatViewModel : ViewModel() {
                     newSessionTitle = if (isNewSession) autoTitle else null,
                     callbacks = GatewayTurnCallbacks(
                         onSessionId = { sid ->
+                            val nowMs = System.currentTimeMillis()
                             handler.addSession(
-                                ChatSession(sessionId = sid, title = autoTitle, model = null),
+                                ChatSession(
+                                    sessionId = sid,
+                                    title = autoTitle,
+                                    model = null,
+                                    updatedAt = nowMs,
+                                    startedAt = nowMs,
+                                    lastActivityAt = nowMs,
+                                ),
                             )
                             handler.setSessionId(sid)
                             onSessionChanged?.invoke(sid)
@@ -2582,6 +2748,7 @@ class ChatViewModel : ViewModel() {
     ): String? {
         val selectedProfile = selectedProfileProvider()
         val effectiveProfile = effectiveProfileOverride
+            ?: displayProfileProvider()
             ?: effectiveProfileProvider()
             ?: selectedProfile
         return AgentDisplay.agentName(
@@ -2589,6 +2756,7 @@ class ChatViewModel : ViewModel() {
             selectedPersonality = _selectedPersonality.value,
             defaultPersonality = _defaultPersonality.value,
             connectionLabel = null,
+            localDisplayAlias = displayAliasProvider(),
         ).ifBlank { null }
     }
 
@@ -3212,6 +3380,7 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
         val rawName = (pair.getOrNull(0) as? JsonPrimitive)?.contentOrNull?.trim()
         if (rawName.isNullOrBlank()) return@forEach
         val name = if (rawName.startsWith("/")) rawName else "/$rawName"
+        if (isUnsupportedMobileCommand(name, pair)) return@forEach
         if (!seen.add(name.lowercase())) return@forEach
         val description = (pair.getOrNull(1) as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
         out += SlashCommand(
@@ -3222,6 +3391,28 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
         )
     }
     return out
+}
+
+private fun isUnsupportedMobileCommand(name: String, pair: JsonArray): Boolean {
+    val normalized = name.removePrefix("/").substringBefore(' ').lowercase()
+    if (normalized == "update") return true
+    val metadata = pair.drop(2).filterIsInstance<JsonObject>().firstOrNull()
+    val cliOnly = metadata.booleanValue("cli_only", "cliOnly", "cli-only") == true
+    val gatewayGate = metadata?.stringValue("gateway_config_gate")
+        ?: metadata?.stringValue("gatewayConfigGate")
+    return cliOnly && gatewayGate.isNullOrBlank()
+}
+
+private fun JsonObject?.booleanValue(vararg keys: String): Boolean? {
+    if (this == null) return null
+    keys.forEach { key ->
+        val value = (get(key) as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()
+        when (value) {
+            "true", "1", "yes" -> return true
+            "false", "0", "no" -> return false
+        }
+    }
+    return null
 }
 
 private val compactPreviewJson = Json { ignoreUnknownKeys = true }
@@ -3294,6 +3485,14 @@ private fun summarizeToolPreviewObject(obj: JsonObject): String? {
 
 private fun JsonObject.stringValue(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+
+private const val DEFAULT_REASONING_EFFORT = "medium"
+private val VALID_REASONING_EFFORTS = setOf("none", "minimal", "low", "medium", "high", "xhigh")
+
+private fun normalizeReasoningEffort(value: String?): String {
+    val normalized = value?.trim()?.lowercase().orEmpty()
+    return normalized.takeIf { it in VALID_REASONING_EFFORTS } ?: DEFAULT_REASONING_EFFORT
+}
 
 private fun String.compactWords(): String = replace(Regex("\\s+"), " ").trim()
 

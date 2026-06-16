@@ -1206,7 +1206,11 @@ fun DashboardManagementScreen(
                         session = dashboardSession,
                         authenticated = dashboardAuthenticated,
                         lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
+                        actionInFlight = actionInFlight,
+                        actionMessage = actionMessage,
                         onClearSession = { confirmClearDashboardSession = true },
+                        onSignIn = ::submitDashboardSignIn,
+                        onOAuthSignIn = { provider -> oauthProvider = provider },
                         onNavigateToConnections = onNavigateToConnections,
                         onSelectSection = { label ->
                             managementSections.indexOfFirst { it.label == label }
@@ -1288,7 +1292,11 @@ private fun ManageOverviewBody(
     session: DashboardAuthSession?,
     authenticated: Boolean?,
     lastCheckedAtMillis: Long?,
+    actionInFlight: Boolean,
+    actionMessage: String?,
     onClearSession: () -> Unit,
+    onSignIn: (String, String, String) -> Unit,
+    onOAuthSignIn: (DashboardAuthProvider) -> Unit,
     onNavigateToConnections: () -> Unit,
     onSelectSection: (String) -> Unit,
 ) {
@@ -1356,6 +1364,20 @@ private fun ManageOverviewBody(
                 lastCheckedAtMillis = lastCheckedAtMillis,
                 onClearSession = onClearSession,
             )
+        }
+        val signInStatus = status
+        if (signInStatus?.authRequired == true && authenticated != true) {
+            item {
+                DashboardSignInCard(
+                    dashboardUrl = dashboardUrl,
+                    routeHint = routeHint,
+                    providers = signInStatus.authProviderDetails,
+                    actionInFlight = actionInFlight,
+                    actionMessage = actionMessage,
+                    onSignIn = onSignIn,
+                    onOAuthSignIn = onOAuthSignIn,
+                )
+            }
         }
         item {
             RelayNavTile(

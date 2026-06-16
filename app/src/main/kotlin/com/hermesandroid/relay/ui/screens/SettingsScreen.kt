@@ -145,6 +145,7 @@ fun SettingsScreen(
     // ring-accent, and subtitle.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
@@ -206,7 +207,7 @@ fun SettingsScreen(
             // users can change Connection / Profile / Personality without
             // having to navigate to Chat first and then hunt for the
             // agent-name header.
-            val effectiveProfile = AgentDisplay.effectiveProfile(
+            val effectiveProfile = AgentDisplay.effectiveDisplayProfile(
                 selectedProfile = selectedProfile,
                 profiles = agentProfiles,
             )
@@ -216,6 +217,7 @@ fun SettingsScreen(
                     selectedPersonality = selectedPersonality,
                     defaultPersonality = defaultPersonality,
                     connectionLabel = activeConnection?.label,
+                    localDisplayAlias = profileDisplayAlias,
                 ),
                 connectionLabel = activeConnection?.label ?: "No connection",
                 model = effectiveProfile?.model ?: "default",

@@ -281,14 +281,20 @@ class ChatMessageTest {
             title = "My Session",
             model = "gpt-4",
             messageCount = 10,
-            updatedAt = 1700000000L
+            updatedAt = 1700000300L,
+            startedAt = 1700000000L,
+            lastActivityAt = 1700000300L
         )
 
         assertEquals("sess-1", session.sessionId)
         assertEquals("My Session", session.title)
         assertEquals("gpt-4", session.model)
         assertEquals(10, session.messageCount)
-        assertEquals(1700000000L, session.updatedAt)
+        assertEquals(1700000300L, session.updatedAt)
+        assertEquals(1700000000L, session.startedAt)
+        assertEquals(1700000300L, session.lastActivityAt)
+        assertEquals(1700000300L, session.activityTimestamp)
+        assertEquals(1700000000L, session.startTimestamp)
     }
 
     @Test
@@ -303,6 +309,10 @@ class ChatMessageTest {
         assertNull(session.model)
         assertEquals(0, session.messageCount)
         assertEquals(0L, session.updatedAt)
+        assertEquals(0L, session.startedAt)
+        assertEquals(0L, session.lastActivityAt)
+        assertEquals(0L, session.activityTimestamp)
+        assertEquals(0L, session.startTimestamp)
     }
 
     @Test

@@ -25,6 +25,7 @@ import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfileDisplayAliasStore
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.SessionTransport
@@ -39,6 +40,7 @@ import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.DashboardApiClient
+import com.hermesandroid.relay.network.DashboardChatDisplaySettings
 import com.hermesandroid.relay.network.models.MessageItem
 import com.hermesandroid.relay.network.models.SessionItem
 import com.hermesandroid.relay.network.DashboardAuthSession
@@ -83,6 +85,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
@@ -198,6 +201,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
+        private val KEY_CLOSE_DRAWER_ON_SEND = booleanPreferencesKey("close_drawer_on_send")
+        private val KEY_KEEP_COMPOSER_FOCUSED_ON_SEND =
+            booleanPreferencesKey("keep_composer_focused_on_send")
 
         // Turn-complete notification ("Notify when Hermes finishes")
         private val KEY_NOTIFY_TURN_COMPLETE = booleanPreferencesKey("notify_turn_complete")
@@ -372,6 +378,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val connectionHandoffStatus: StateFlow<ConnectionHandoffStatus?> =
         _connectionHandoffStatus.asStateFlow()
     private var connectionHandoffClearJob: Job? = null
+    private val _serverChatDisplaySettings =
+        MutableStateFlow<DashboardChatDisplaySettings?>(null)
 
     /**
      * ADR 24 — [relayUiState] bundled with the currently-active endpoint
@@ -1022,7 +1030,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * switch. The default/`null` selection omits the param → the launch profile's
      * DB (the server's configured default), matching [selectProfile]'s semantics.
      */
-    suspend fun listProfileScopedSessions(limit: Int = 50): Result<List<SessionItem>>? {
+    suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? {
         val connectionId = connectionStore.activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrl() ?: return null
         val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
@@ -1085,6 +1093,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         ProfileSelectionStore(application)
     private val profileSessionStore: ProfileSessionStore =
         ProfileSessionStore(application)
+    private val profileDisplayAliasStore: ProfileDisplayAliasStore =
+        ProfileDisplayAliasStore(application)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val profileDisplayAlias: StateFlow<String?> = combine(
+        activeConnectionId,
+        selectedProfile,
+    ) { connectionId, profile ->
+        connectionId to AgentDisplay.profileRequestName(profile?.name)
+    }.flatMapLatest { (connectionId, profileName) ->
+        if (connectionId == null) {
+            flowOf(null)
+        } else {
+            profileDisplayAliasStore.aliasFlow(connectionId, profileName)
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun setProfileDisplayAlias(alias: String?) {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        val normalizedAlias = AgentDisplay.localDisplayAlias(alias)
+        viewModelScope.launch {
+            profileDisplayAliasStore.setAlias(connectionId, profileName, normalizedAlias)
+        }
+    }
 
     /**
      * Set (or clear, with `null`) the active profile pick. Writes through
@@ -1261,9 +1294,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
-    // Show thinking toggle
-    val showThinking: StateFlow<Boolean> = application.relayDataStore.data
+    private val localShowThinking = application.relayDataStore.data
         .map { it[KEY_SHOW_THINKING] ?: true }
+
+    // Reasoning visibility follows the Hermes dashboard config when available.
+    // The local DataStore value remains an offline/legacy fallback.
+    val showThinking: StateFlow<Boolean> = combine(
+        localShowThinking,
+        _serverChatDisplaySettings,
+    ) { local, server ->
+        server?.showReasoning ?: local
+    }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     fun setShowThinking(enabled: Boolean) {
@@ -1274,18 +1315,32 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // Tool call display mode: "off", "compact", "detailed"
-    val toolDisplay: StateFlow<String> = application.relayDataStore.data
-        .map { it[KEY_TOOL_DISPLAY] ?: "detailed" }
+    private val localToolDisplay = application.relayDataStore.data
+        .map { normalizeToolDisplayMode(it[KEY_TOOL_DISPLAY]) ?: "detailed" }
+
+    // Tool call display mode: "off", "compact", "detailed". Prefer the
+    // server display.tool_progress config so Android matches desktop.
+    val toolDisplay: StateFlow<String> = combine(
+        localToolDisplay,
+        _serverChatDisplaySettings,
+    ) { local, server ->
+        server?.toolDisplay ?: local
+    }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "detailed")
 
     fun setToolDisplay(mode: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
-                prefs[KEY_TOOL_DISPLAY] = mode
+                prefs[KEY_TOOL_DISPLAY] = normalizeToolDisplayMode(mode) ?: "detailed"
             }
         }
     }
+
+    private fun normalizeToolDisplayMode(mode: String?): String? =
+        when (mode?.trim()?.lowercase()) {
+            "off", "compact", "detailed" -> mode.trim().lowercase()
+            else -> null
+        }
 
     // App context prompt toggle
     val appContextEnabled: StateFlow<Boolean> = application.relayDataStore.data
@@ -1486,6 +1541,36 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_SMOOTH_AUTO_SCROLL] = enabled
+            }
+        }
+    }
+
+    // Close the session drawer after a successful send. Default ON because
+    // sending should return focus to the live conversation; users who use the
+    // drawer as a pinned session navigator can keep it open.
+    val closeDrawerOnSend: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_CLOSE_DRAWER_ON_SEND] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setCloseDrawerOnSend(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_CLOSE_DRAWER_ON_SEND] = enabled
+            }
+        }
+    }
+
+    // Keep the text composer focused after send. Default ON matches mobile
+    // chat convention: quick follow-up messages should not require retapping
+    // the input. Turning it off drops the keyboard after a successful send.
+    val keepComposerFocusedOnSend: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_KEEP_COMPOSER_FOCUSED_ON_SEND] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setKeepComposerFocusedOnSend(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_KEEP_COMPOSER_FOCUSED_ON_SEND] = enabled
             }
         }
     }
@@ -2395,6 +2480,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ConnectionStore's EncryptedSharedPrefs.
         profileSelectionStore.clear(connectionId)
         profileSessionStore.clearConnection(connectionId)
+        profileDisplayAliasStore.clearConnection(connectionId)
     }
 
     private suspend fun readStoredDeviceIdForRemoval(
@@ -3355,6 +3441,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (connectionId == null || dashboardUrl.isNullOrBlank()) {
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
             _standardAudioApiReachable.value = false
+            _serverChatDisplaySettings.value = null
             updateGatewayAvailability(GatewayAvailability.Unknown)
             return
         }
@@ -3370,6 +3457,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             if (status == null) {
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
+                _serverChatDisplaySettings.value = null
                 updateGatewayAvailability(GatewayAvailability.Unreachable)
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
@@ -3377,6 +3465,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             val authed = !status.authRequired || session?.authenticated == true
             recordDashboardStatusIfChanged(connectionId, status, session)
+            refreshChatDisplaySettings(client, authed)
             // Gateway chat shares the voice probe's dashboard checks; it has
             // no audio-route requirement.
             updateGatewayAvailability(
@@ -3402,6 +3491,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         } finally {
             client.shutdown()
         }
+    }
+
+    private suspend fun refreshChatDisplaySettings(
+        client: DashboardApiClient,
+        authenticated: Boolean,
+    ) {
+        if (!authenticated) {
+            _serverChatDisplaySettings.value = null
+            return
+        }
+        client.getChatDisplaySettings().fold(
+            onSuccess = { _serverChatDisplaySettings.value = it },
+            onFailure = { _serverChatDisplaySettings.value = null },
+        )
     }
 
     /**

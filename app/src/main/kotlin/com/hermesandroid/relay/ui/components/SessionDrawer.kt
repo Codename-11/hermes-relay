@@ -91,6 +91,12 @@ fun SessionDrawerContent(
                 session.title.orEmpty().contains(needle, ignoreCase = true) ||
                 session.model.orEmpty().contains(needle, ignoreCase = true)
         }
+        .sortedWith(
+            compareByDescending<ChatSession> { it.sessionId in pinnedSessionIds }
+                .thenByDescending { it.activityTimestamp }
+                .thenByDescending { it.startTimestamp }
+                .thenBy { it.title.orEmpty().lowercase(locale = Locale.ROOT) }
+        )
         .toList()
 
     ModalDrawerSheet(
@@ -330,9 +336,9 @@ private fun SessionItem(
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (session.updatedAt > 0) {
+                sessionTimestampText(session, locale)?.let { timestamp ->
                     Text(
-                        text = formatTimestamp(session.updatedAt, locale),
+                        text = timestamp,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -376,6 +382,17 @@ private fun SessionItem(
             )
         }
     }
+}
+
+private fun sessionTimestampText(session: ChatSession, locale: Locale): String? {
+    val timestamp = session.activityTimestamp
+    if (timestamp <= 0L) return null
+    val hasDistinctActivity =
+        session.lastActivityAt > 0L &&
+            session.startTimestamp > 0L &&
+            session.lastActivityAt != session.startTimestamp
+    val prefix = if (hasDistinctActivity) "Active" else "Started"
+    return "$prefix ${formatTimestamp(timestamp, locale)}"
 }
 
 private fun formatTimestamp(millis: Long, locale: Locale): String {

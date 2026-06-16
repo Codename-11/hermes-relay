@@ -54,6 +54,12 @@ class GatewayClientHarness(
     @Volatile
     var steerStatus = "queued"
 
+    @Volatile
+    var reasoningEffort = "medium"
+
+    @Volatile
+    var reasoningDisplay = "hide"
+
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -118,6 +124,23 @@ class GatewayClientHarness(
                         "pairs",
                         json.parseToJsonElement("""[["/help","Show help"],["/model","Pick model"]]"""),
                     )
+                }
+                "config.get" -> when ((params["key"] as? JsonPrimitive)?.contentOrNull) {
+                    "reasoning" -> buildJsonObject {
+                        put("value", reasoningEffort)
+                        put("display", reasoningDisplay)
+                    }
+                    else -> JsonObject(emptyMap())
+                }
+                "config.set" -> when ((params["key"] as? JsonPrimitive)?.contentOrNull) {
+                    "reasoning" -> {
+                        reasoningEffort = (params["value"] as? JsonPrimitive)?.contentOrNull ?: reasoningEffort
+                        buildJsonObject {
+                            put("key", "reasoning")
+                            put("value", reasoningEffort)
+                        }
+                    }
+                    else -> JsonObject(emptyMap())
                 }
                 else -> JsonObject(emptyMap())
             }
@@ -791,6 +814,39 @@ class GatewayChatClientTest {
         val result = runBlocking { client.commandsCatalog(connectIfNeeded = true) }
         assertTrue(result.isSuccess)
         assertTrue(harness.ticketMints.get() >= 1)
+    }
+
+    // --- Reasoning config ---
+
+    @Test
+    fun `reasoning settings fetch uses config get`() {
+        harness.reasoningEffort = "high"
+        harness.reasoningDisplay = "show"
+
+        val result = runBlocking { client.getReasoningSettings() }
+
+        assertTrue(result.isSuccess)
+        assertEquals("high", result.getOrThrow().effort)
+        assertEquals("show", result.getOrThrow().display)
+        val rpc = harness.awaitRpc("config.get")
+        assertEquals("reasoning", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `reasoning settings update targets live session when present`() {
+        val r = Recorder()
+        client.sendTurn("stored-1", "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        val result = runBlocking { client.setReasoning("low") }
+
+        assertTrue(result.isSuccess)
+        val rpc = harness.awaitRpc("config.set")
+        assertEquals("reasoning", (rpc["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("low", (rpc["value"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("live-resumed", (rpc["session_id"] as? JsonPrimitive)?.contentOrNull)
     }
 
     // --- Edit & regenerate ---

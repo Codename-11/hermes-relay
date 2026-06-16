@@ -35,6 +35,7 @@ class SessionModelsTest {
             source = "api",
             startedAt = 1700000000.0,
             endedAt = 1700001000.0,
+            lastActive = 1700000950.0,
             messageCount = 10,
             toolCallCount = 3,
             inputTokens = 500,
@@ -50,6 +51,8 @@ class SessionModelsTest {
         assertEquals("api", restored.source)
         assertEquals(1700000000.0, restored.startedAt!!, 0.001)
         assertEquals(1700001000.0, restored.endedAt!!, 0.001)
+        assertEquals(1700000950.0, restored.lastActive!!, 0.001)
+        assertEquals(1700000950.0, restored.resolvedLastActivity!!, 0.001)
         assertEquals(10, restored.messageCount)
         assertEquals(3, restored.toolCallCount)
         assertEquals(500, restored.inputTokens)
@@ -64,6 +67,7 @@ class SessionModelsTest {
                 "title": "Test",
                 "started_at": 1700000000.0,
                 "ended_at": 1700001000.0,
+                "last_active": 1700000900.0,
                 "message_count": 5,
                 "tool_call_count": 2,
                 "input_tokens": 100,
@@ -74,8 +78,27 @@ class SessionModelsTest {
         val item = json.decodeFromString<SessionItem>(jsonStr)
         assertEquals("s1", item.id)
         assertEquals(1700000000.0, item.startedAt!!, 0.001)
+        assertEquals(1700000900.0, item.lastActive!!, 0.001)
+        assertEquals(1700000900.0, item.resolvedLastActivity!!, 0.001)
         assertEquals(5, item.messageCount)
         assertEquals(2, item.toolCallCount)
+    }
+
+    @Test
+    fun sessionItem_deserialization_acceptsIsoUpdatedAtFallback() {
+        val jsonStr = """
+            {
+                "id": "s1",
+                "started_at": 1700000000.0,
+                "updated_at": "2026-04-05T12:30:00Z"
+            }
+        """.trimIndent()
+
+        val item = json.decodeFromString<SessionItem>(jsonStr)
+
+        assertEquals("s1", item.id)
+        assertEquals(1775392200.0, item.updatedAt!!, 0.001)
+        assertEquals(1775392200.0, item.resolvedLastActivity!!, 0.001)
     }
 
     @Test
@@ -89,6 +112,11 @@ class SessionModelsTest {
         assertNull(item.source)
         assertNull(item.startedAt)
         assertNull(item.endedAt)
+        assertNull(item.lastActive)
+        assertNull(item.lastActivity)
+        assertNull(item.lastActivityAt)
+        assertNull(item.updatedAt)
+        assertNull(item.resolvedLastActivity)
         assertNull(item.messageCount)
         assertNull(item.toolCallCount)
         assertNull(item.inputTokens)

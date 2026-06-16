@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.Instant
 
 /**
  * Models for the Hermes /api/sessions REST API.
@@ -75,6 +76,43 @@ object FlexibleIdNonNullSerializer : KSerializer<String> {
     }
 }
 
+/** Timestamp serializer for Hermes session metadata.
+ *
+ * Upstream currently returns epoch seconds for `started_at` / `last_active`;
+ * some documented surfaces use ISO strings for update-style fields. Decode
+ * both into epoch seconds so callers can convert once at the UI boundary.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+object FlexibleTimestampSerializer : KSerializer<Double?> {
+    override val descriptor = PrimitiveSerialDescriptor("FlexibleTimestamp", PrimitiveKind.DOUBLE)
+
+    override fun deserialize(decoder: Decoder): Double? {
+        return try {
+            val jsonDecoder = decoder as? JsonDecoder
+                ?: return decoder.decodeDouble()
+            val element = jsonDecoder.decodeJsonElement()
+            when (element) {
+                is JsonNull -> null
+                is JsonPrimitive -> parseTimestamp(element.content)
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Double?) {
+        if (value != null) encoder.encodeDouble(value) else encoder.encodeNull()
+    }
+
+    private fun parseTimestamp(raw: String): Double? {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return null
+        trimmed.toDoubleOrNull()?.let { return it }
+        return runCatching { Instant.parse(trimmed).toEpochMilli() / 1000.0 }.getOrNull()
+    }
+}
+
 // --- Session CRUD responses ---
 
 @Serializable
@@ -102,13 +140,32 @@ data class SessionItem(
     val title: String? = null,
     val model: String? = null,
     val source: String? = null,
-    @SerialName("started_at") val startedAt: Double? = null,
-    @SerialName("ended_at") val endedAt: Double? = null,
+    @SerialName("started_at")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val startedAt: Double? = null,
+    @SerialName("ended_at")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val endedAt: Double? = null,
+    @SerialName("last_active")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val lastActive: Double? = null,
+    @SerialName("last_activity")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val lastActivity: Double? = null,
+    @SerialName("last_activity_at")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val lastActivityAt: Double? = null,
+    @SerialName("updated_at")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val updatedAt: Double? = null,
     @SerialName("message_count") val messageCount: Int? = null,
     @SerialName("tool_call_count") val toolCallCount: Int? = null,
     @SerialName("input_tokens") val inputTokens: Int? = null,
     @SerialName("output_tokens") val outputTokens: Int? = null
-)
+) {
+    val resolvedLastActivity: Double?
+        get() = lastActive ?: lastActivity ?: lastActivityAt ?: updatedAt
+}
 
 @Serializable
 data class CreateSessionRequest(

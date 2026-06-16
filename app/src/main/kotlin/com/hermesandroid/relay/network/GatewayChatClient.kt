@@ -621,6 +621,44 @@ class GatewayChatClient(
             },
         )
 
+    /** Fetch the session/global reasoning effort and display mode. */
+    suspend fun getReasoningSettings(): Result<GatewayReasoningSettings> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        return rpc(
+            "config.get",
+            buildJsonObject {
+                put("key", "reasoning")
+                liveSessionId?.let { put("session_id", it) }
+            },
+        ).map { result ->
+            GatewayReasoningSettings(
+                effort = result.stringField("value")?.takeIf { it.isNotBlank() } ?: "medium",
+                display = result.stringField("display")?.takeIf { it.isNotBlank() },
+            )
+        }
+    }
+
+    /**
+     * Switch the active reasoning effort through the same `config.set` path
+     * the desktop/TUI `/reasoning` command uses. Values are upstream-defined:
+     * none, minimal, low, medium, high, xhigh.
+     */
+    suspend fun setReasoning(value: String): Result<JsonObject> =
+        rpc(
+            "config.set",
+            buildJsonObject {
+                put("key", "reasoning")
+                put("value", value)
+                liveSessionId?.let { put("session_id", it) }
+            },
+        )
+
     fun shutdown() {
         activeTurn?.cancel()
         activeTurn = null
