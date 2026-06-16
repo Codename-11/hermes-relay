@@ -290,22 +290,34 @@ for the full text.
 
 ### 3. Play Developer API service account (optional)
 
-Required only if you want `gradlew publishReleaseBundle` to upload directly
-to Play Console. Manual UI uploads work without this.
+Required for automated upload (the `android-v*` workflow's Play step, or local
+`gradlew publishGooglePlayReleaseBundle`). Manual UI uploads work without this.
 
-1. Open <https://console.cloud.google.com/> and select the project linked
-   to your Play Console account (Play Console > Setup > API access shows
-   which one).
-2. **IAM & Admin > Service Accounts > Create Service Account** (e.g.
-   `hermes-relay-publisher`). No project roles needed.
-3. On the new service account, **Keys > Add key > Create new key > JSON**
-   and download the file.
-4. In Play Console > **Setup > API access**, find the service account,
-   click **Grant access**, and assign the **Release manager** role.
-5. Save the JSON as `play-service-account.json` in the repo root (already
-   in `.gitignore`).
-6. Verify with `gradlew bootstrapReleasePlayResources` — should succeed
-   without auth errors.
+The service account is **created in Google Cloud Console** and then **authorized
+in Play Console** — two separate consoles. (Play Console's older "Setup > API
+access" page has been reorganized; there is no longer a "Setup" group. Use the
+paths below.)
+
+1. **Create the service account (Google Cloud Console).** Open
+   <https://console.cloud.google.com/iam-admin/serviceaccounts>, pick the project
+   (any project works; if Play Console's **API access** page already names a linked
+   project, use that one). **Create service account** → name it e.g.
+   `hermes-relay-publisher` → **Done**. No project roles needed.
+2. **Create a JSON key.** On the new service account → **Keys** tab → **Add key >
+   Create new key > JSON** → download. This file's *contents* are the secret.
+3. **Authorize it in Play Console.** Open the Play Console account-level left
+   sidebar → **Users and permissions** → **Invite new users** → paste the service
+   account's email (`...@...iam.gserviceaccount.com`). Under **App permissions**
+   (for `com.axiomlabs.hermesrelay`) or **Account permissions**, grant the
+   **Release** permissions — "Release apps to testing tracks" and "Release to
+   production, exclude devices, and use Play App Signing" — plus "View app
+   information". (Granting **Admin (all permissions)** also works but is broader
+   than needed.) **Invite user**.
+4. **Use it.** For CI, paste the JSON contents into the `PLAY_SERVICE_ACCOUNT_JSON`
+   repo secret (step 4 / secrets table). For local publish, save the JSON as
+   `play-service-account.json` in the repo root (already in `.gitignore`).
+5. Verify locally with `gradlew bootstrapGooglePlayReleaseResources` — succeeds
+   without auth errors once permissions propagate (allow a few minutes).
 
 ### 4. GitHub Actions secrets
 
