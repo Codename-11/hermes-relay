@@ -2675,6 +2675,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             }
                             RelayUiState.Connecting
                         }
+                        // The relay rejected our token (revoked, or wiped by a
+                        // relay restart). Reconnecting won't help — surface a
+                        // distinct "pair again" state instead of a generic
+                        // Disconnected the user can't act on.
+                        inputs.auth is AuthState.Failed -> RelayUiState.Expired
                         else -> RelayUiState.Disconnected
                     }
                 }

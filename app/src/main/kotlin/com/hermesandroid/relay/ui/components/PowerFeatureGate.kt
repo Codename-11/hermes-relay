@@ -40,7 +40,9 @@ enum class PowerFeatureGateStatus(
     RequiresPairing(
         label = "Requires pairing",
         actionLabel = "Pair to unlock",
-        explanation = "This feature uses relay grants and requires a paired device session.",
+        explanation = "This feature runs over the Hermes Relay plugin. Make sure the Relay " +
+            "plugin is installed and running on your Hermes server, then pair this device " +
+            "to unlock it.",
     ),
     PairingExpired(
         label = "Pairing expired",
@@ -50,7 +52,8 @@ enum class PowerFeatureGateStatus(
     Unavailable(
         label = "Unavailable on this server",
         actionLabel = "View connection",
-        explanation = "This server does not currently expose the relay capability this feature needs.",
+        explanation = "This Hermes server isn't exposing the Relay plugin (or it's an older " +
+            "version). Install or update the Relay plugin on the server to use this feature.",
     ),
     DashboardSignInRequired(
         label = "Dashboard sign-in required",

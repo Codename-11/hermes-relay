@@ -317,6 +317,7 @@ fun TerminalScreen(
             }
         }
 
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
         ExtraKeysToolbar(
             ctrlActive = activeTab?.ctrlActive == true,
             altActive = activeTab?.altActive == true,
@@ -338,6 +339,12 @@ fun TerminalScreen(
             },
             onArrow = { key ->
                 activeTab?.let { terminalViewModel.sendKey(it.tabId, key) }
+            },
+            onPaste = {
+                val pasted = clipboardManager.getText()?.text
+                if (!pasted.isNullOrEmpty()) {
+                    activeTab?.let { terminalViewModel.sendInput(it.tabId, pasted) }
+                }
             },
             // Scroll callbacks bypass the ViewModel — they're pure JS calls
             // against the active WebView, not envelopes to the relay.

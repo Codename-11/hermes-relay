@@ -146,6 +146,14 @@ data class GatewayModelProvider(
     val models: List<String>,
     val isCurrent: Boolean,
     val warning: String?,
+    // Picker hints from upstream `model.options` (build_models_payload,
+    // picker_hints=True). Default to "usable" so older servers that omit them
+    // don't gray everything out.
+    val authenticated: Boolean = true,
+    /** Paid models the current account can't pick (free-tier / no credits). */
+    val unavailableModels: List<String> = emptyList(),
+    val freeTier: Boolean = false,
+    val totalModels: Int = 0,
 )
 
 /** Result of the gateway `model.options` RPC. */
@@ -196,4 +204,10 @@ class GatewayTurnCallbacks(
      * cancelled.
      */
     val onInteractionRequest: (GatewayAsk) -> Unit,
+    /**
+     * Gateway `status.update` lifecycle line — model fallback, retries, and
+     * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default
+     * no-op so non-gateway/legacy constructors don't need to provide it.
+     */
+    val onStatusUpdate: (kind: String?, text: String) -> Unit = { _, _ -> },
 )

@@ -664,6 +664,9 @@ fun VoiceSettingsScreen(
                         )
                     }
                     Switch(
+                        // Disabled while Auto-TTS is unimplemented — a live toggle
+                        // that does nothing reads as broken. Re-enable when wired.
+                        enabled = false,
                         checked = voiceSettings.autoTts,
                         onCheckedChange = { enabled ->
                             scope.launch { prefsRepo.setAutoTts(enabled) }

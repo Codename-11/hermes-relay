@@ -662,6 +662,7 @@ fun AgentInfoSheet(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
+    val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
 
     // Multi-connection switcher state — folded into this sheet in place of
     // the separate top-bar ConnectionChip (see 2026-04-20 DEVLOG). Read
@@ -731,12 +732,19 @@ fun AgentInfoSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // ---- Header: avatar + agent name + live status ----
+            // Detail view shows the provider next to the model (desktop-style);
+            // the chat composer pill stays model-only.
+            val currentProviderLabel = modelProviders
+                .firstOrNull { gatewayCurrentProvider.isNotBlank() && it.slug.equals(gatewayCurrentProvider, ignoreCase = true) }
+                ?.name
+                ?.takeIf { it.isNotBlank() }
             AgentSheetHeader(
                 profile = effectiveDisplayProfile,
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 localDisplayAlias = profileDisplayAlias,
                 serverModelName = serverModelName,
+                modelProviderLabel = currentProviderLabel,
                 apiServerReachable = apiServerReachable,
                 chatMode = chatMode,
                 isCustomized = selectedProfile != null ||
@@ -1632,6 +1640,7 @@ private fun AgentSheetHeader(
     defaultPersonality: String,
     localDisplayAlias: String?,
     serverModelName: String,
+    modelProviderLabel: String? = null,
     apiServerReachable: Boolean,
     chatMode: ChatMode,
     isCustomized: Boolean,
@@ -1697,7 +1706,8 @@ private fun AgentSheetHeader(
             )
             modelLabel?.takeIf { it.isNotBlank() }?.let { label ->
                 Text(
-                    text = label,
+                    text = modelProviderLabel?.takeIf { it.isNotBlank() }
+                        ?.let { "$label · $it" } ?: label,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

@@ -189,6 +189,18 @@ class ChatHandler {
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
+    /**
+     * Latest gateway `status.update` lifecycle line for the in-flight turn
+     * (model fallback, retries, errors). Surfaced as a transient status line
+     * above the composer; cleared when the turn completes.
+     */
+    private val _turnStatus = MutableStateFlow<String?>(null)
+    val turnStatus: StateFlow<String?> = _turnStatus.asStateFlow()
+
+    fun setTurnStatus(text: String) {
+        _turnStatus.value = text
+    }
+
     private val _isStreaming = MutableStateFlow(false)
     val isStreaming: StateFlow<Boolean> = _isStreaming.asStateFlow()
 
@@ -2084,11 +2096,46 @@ class ChatHandler {
     }
 
     /**
+     * Stamp a "Stopped" badge on a message whose turn the user cancelled, so
+     * the bubble carries a persistent status (not just a transient toast).
+     * No-op if already present. Call before [onStreamComplete] on cancel.
+     */
+    fun markStopped(messageId: String) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId && "Stopped" !in msg.badges) {
+                    msg.copy(badges = msg.badges + "Stopped")
+                } else {
+                    msg
+                }
+            }
+        }
+    }
+
+    /**
+     * Stamp an "Error" badge on a message whose turn ended in a server error
+     * (e.g. a gateway ❌ lifecycle status), so a failed turn doesn't read as a
+     * normal answer. No-op if already present.
+     */
+    fun markError(messageId: String) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId && "Error" !in msg.badges) {
+                    msg.copy(badges = msg.badges + "Error")
+                } else {
+                    msg
+                }
+            }
+        }
+    }
+
+    /**
      * The entire agent run is complete (run.completed / done).
      * Marks the stream as finished and finalizes all messages.
      */
     fun onStreamComplete(messageId: String) {
         _isStreaming.value = false
+        _turnStatus.value = null
         insideThinkingBlock = false
 
         // Flush any remaining annotation text that didn't end with a newline

@@ -592,6 +592,11 @@ class GatewayChatClient(
                         .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
                     isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
                     warning = obj.stringField("warning"),
+                    authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
+                    unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
+                        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+                    freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                    totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0,
                 )
             }
             GatewayModelOptions(

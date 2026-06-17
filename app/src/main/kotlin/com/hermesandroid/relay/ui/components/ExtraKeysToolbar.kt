@@ -51,6 +51,7 @@ fun ExtraKeysToolbar(
     onScrollUp: (() -> Unit)? = null,
     onScrollDown: (() -> Unit)? = null,
     onScrollToBottom: (() -> Unit)? = null,
+    onPaste: (() -> Unit)? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     val containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -99,6 +100,20 @@ fun ExtraKeysToolbar(
                 onAltToggle()
             }
         )
+
+        // Paste clipboard text into the PTY — selecting/pasting in
+        // xterm.js-in-WebView is hard on a phone, so this is the reliable path.
+        onPaste?.let { paste ->
+            ToolbarKey(
+                label = "PASTE",
+                active = false,
+                weight = 1.7f,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    paste()
+                }
+            )
+        }
 
         Spacer(modifier = Modifier.width(4.dp))
 

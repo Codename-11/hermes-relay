@@ -217,8 +217,15 @@ class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
                 ),
             )
 
-            // Known-but-unrendered (notification.show, status.update, …) and
-            // unknown types alike: ignore.
+            "status.update" -> {
+                val text = payload.string("text")
+                if (!text.isNullOrBlank()) {
+                    callbacks.onStatusUpdate(payload.string("kind"), text)
+                }
+            }
+
+            // Known-but-unrendered (notification.show, …) and unknown types
+            // alike: ignore.
             else -> Unit
         }
     }
