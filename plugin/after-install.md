@@ -10,6 +10,32 @@ Use `hermes pair` to create a QR pairing payload. Use `hermes relay start` to ru
 the relay foreground server, or use the legacy installer if you still need the
 systemd user service and shell shims.
 
+## Two install paths
+
+**Tools-only (this path — `hermes plugins install`):** discovers + enables the
+`android_*` / `desktop_*` tools, prompts for any optional voice-provider keys,
+and registers the plugin with the gateway. The plugin's `plugin.yaml` lives in
+the repo's `plugin/` subdir, so install with the subdir identifier:
+
+```bash
+hermes plugins install Codename-11/hermes-relay/plugin
+```
+
+This is the right path if you only want the agent-side tools and will run the
+WSS relay yourself (or don't need it). It does **not** set up the relay server,
+a systemd unit, the `pip install -e`, the shell shims, or the legacy
+compatibility bootstrap.
+
+**Full relay (`install.sh` curl one-liner):** everything above **plus** the
+relay server, systemd user unit, editable pip install, `hermes-pair` /
+`hermes-relay` / `hermes-relay-tailscale` shims, the skills dir, and the
+optional compatibility bootstrap. Use this for terminal, bridge/phone control,
+relay voice, desktop tooling, and remote access:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+```
+
 The optional legacy compatibility hook is managed separately:
 
 ```bash

@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
-# Hermes-Relay — canonical one-line installer.
+# Hermes-Relay — canonical one-line installer (full relay path).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+#
+# Two ways to install:
+#   - FULL RELAY (this script): sets up the WSS relay server, systemd user
+#     unit, editable pip install, shell shims, skills dir, and the optional
+#     compatibility bootstrap — everything needed for terminal, bridge/phone
+#     control, relay voice, desktop tooling, and remote access.
+#   - TOOLS-ONLY (native): `hermes plugins install Codename-11/hermes-relay/plugin`
+#     uses hermes-agent's built-in plugin installer to discover + enable the
+#     android_*/desktop_* tools and prompt for optional voice-provider keys
+#     (declared in plugin/plugin.yaml `requires_env`). The `/plugin` subdir is
+#     required because the manifest lives there, not at the repo root. This path
+#     does NOT install the relay server, systemd unit, pip-editable, shims, or
+#     bootstrap — use it when you only want the agent-side tools.
 #
 # Installs:
 #   1. The hermes-relay repo to ~/.hermes/hermes-relay (editable, git-backed)
@@ -135,7 +148,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         -h|--help)
-            sed -n '3,70p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,97p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
