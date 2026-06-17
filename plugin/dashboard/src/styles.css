@@ -66,12 +66,27 @@
   overflow-wrap: anywhere;
 }
 
-.hermes-relay-plugin button,
 .hermes-relay-plugin input,
 .hermes-relay-plugin select,
 .hermes-relay-plugin textarea {
   font: inherit;
   color: inherit;
+}
+
+/*
+ * Buttons inherit the font but NOT the colour. The host's Nous DS ``Button``
+ * sets its own contrast text colour via utility classes (``text-background-base``
+ * for the solid fill, ``text-midground`` for outlined, ``text-current`` /
+ * ``text-destructive`` for ghost). A blanket ``color: inherit`` here (specificity
+ * 0,1,1) would outrank those utilities (0,1,0) and repaint every label in the
+ * container foreground — invisible against the light ``bg-midground`` fill
+ * (the blank-white-box symptom, issue #71 generalised). Plain ``<button>``
+ * elements in this plugin (tab strip, the advanced toggle) already set their
+ * colour explicitly via ``text-foreground`` / ``text-muted-foreground``, so they
+ * are unaffected by dropping the inherit.
+ */
+.hermes-relay-plugin button {
+  font: inherit;
 }
 
 .hermes-relay-plugin button {
@@ -461,14 +476,11 @@
 }
 
 /*
- * Solid button variants must re-assert their contrast text colour.
- * The scoped reset `.hermes-relay-plugin button { color: inherit }` (specificity
- * 0,1,1) outranks the host's shadcn `text-*-foreground` utilities (0,1,0), so
- * solid buttons would otherwise paint their text in the inherited container
- * foreground — which on the dashboard theme nearly matches the button
- * background, making the label invisible (issue #71). These class selectors
- * sit at 0,2,0 and win back over the reset without `!important`. Ghost/outline
- * buttons and inputs keep inheriting, which is what they want.
+ * Defensive contrast for any shadcn-class solid surface that a host's Button
+ * happens to emit (``bg-primary`` / ``bg-secondary``). The primary button path
+ * now goes through the Nous DS ``Button`` via the ui-shims adapter, which
+ * carries its own ``bg-midground`` / ``text-background-base`` utilities; these
+ * rules only matter for hosts whose components differ. Kept as a belt.
  */
 .hermes-relay-plugin .bg-primary {
   color: var(--color-primary-foreground, var(--primary-foreground, #0b0b0c));
@@ -476,6 +488,72 @@
 
 .hermes-relay-plugin .bg-secondary {
   color: var(--color-secondary-foreground, var(--secondary-foreground, var(--hr-text)));
+}
+
+/*
+ * Fallback button / badge skins — used ONLY when the host does not expose a
+ * Nous DS ``Button`` / ``Badge`` (see the no-component branch in
+ * lib/ui-shims.jsx). They paint from the plugin's resolved theme tokens so a
+ * component-less host still gets readable, theme-matched controls instead of a
+ * raw white default.
+ */
+.hermes-relay-plugin .hr-btn {
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.hermes-relay-plugin .hr-btn-solid {
+  background: var(--hr-text);
+  color: var(--hr-bg);
+  border-color: var(--hr-text);
+}
+.hermes-relay-plugin .hr-btn-solid:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.hermes-relay-plugin .hr-btn-outline {
+  background: transparent;
+  color: var(--hr-text);
+  border-color: var(--hr-border);
+}
+.hermes-relay-plugin .hr-btn-outline:hover:not(:disabled) {
+  background: var(--hr-surface-muted);
+}
+.hermes-relay-plugin .hr-btn-ghost {
+  background: transparent;
+  color: var(--hr-text);
+  border-color: transparent;
+}
+.hermes-relay-plugin .hr-btn-ghost:hover:not(:disabled) {
+  background: var(--hr-surface-muted);
+}
+.hermes-relay-plugin .hr-btn-destructive {
+  background: var(--hr-danger);
+  color: #fff;
+  border-color: var(--hr-danger);
+}
+.hermes-relay-plugin .hr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.hermes-relay-plugin .hr-badge-secondary {
+  background: var(--hr-surface-muted);
+  color: var(--hr-text);
+  border-color: var(--hr-border);
+}
+.hermes-relay-plugin .hr-badge-outline {
+  background: transparent;
+  color: var(--hr-muted);
+  border-color: var(--hr-border);
+}
+.hermes-relay-plugin .hr-badge-destructive {
+  background: color-mix(in srgb, var(--hr-danger) 16%, transparent);
+  color: var(--hr-danger);
+  border-color: color-mix(in srgb, var(--hr-danger) 40%, transparent);
 }
 
 .hermes-relay-plugin .bg-muted\/20,

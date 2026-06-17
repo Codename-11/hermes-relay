@@ -8,6 +8,7 @@ import {
   AlertTitle,
   AlertDescription,
   CardDescription,
+  Button,
 } from "../lib/ui-shims.jsx";
 
 const {
@@ -15,7 +16,6 @@ const {
   CardHeader,
   CardTitle,
   CardContent,
-  Button,
 } = SDK.components;
 
 export default function PushConsole() {

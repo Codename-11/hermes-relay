@@ -10,6 +10,8 @@ import {
   AlertTitle,
   AlertDescription,
   CardDescription,
+  Button,
+  Badge,
   Table,
   TableHeader,
   TableBody,
@@ -23,8 +25,6 @@ const {
   CardHeader,
   CardTitle,
   CardContent,
-  Button,
-  Badge,
 } = SDK.components;
 
 function valueText(value) {
