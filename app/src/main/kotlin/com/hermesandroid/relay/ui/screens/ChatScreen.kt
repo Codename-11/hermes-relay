@@ -481,6 +481,10 @@ fun ChatScreen(
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
     val recentPrompts by chatViewModel.recentPrompts.collectAsState()
     val recentPromptsEnabled by connectionViewModel.chatRecentPromptsEnabled.collectAsState()
+    // Effective approval-bypass (server-computed: ORs global approvals.mode=off,
+    // the --yolo env, and the per-session flag). Drives a subtle status-strip
+    // marker so the user knows approvals are off without opening the agent drawer.
+    val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
     val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
@@ -874,9 +878,23 @@ fun ChatScreen(
             }
     }
 
-    // Scroll-to-bottom FAB visibility
+    // Scroll-to-bottom FAB visibility. The button means "you've scrolled up —
+    // tap to catch up", so it must NOT flash while we're auto-pinning to the
+    // bottom. Suppress it when:
+    //   • a programmatic scroll is in flight (we're actively settling), or
+    //   • we're streaming-and-following (smoothAutoScroll on, not scrolled
+    //     away) — a content burst can momentarily make the list scrollable-
+    //     forward for a frame before the re-pin, which would otherwise blink
+    //     the FAB on every token.
+    // Once the user genuinely scrolls up (userScrolledAway), the streaming
+    // suppression lifts and the button appears.
     val showScrollToBottom by remember {
-        derivedStateOf { messages.isNotEmpty() && !isAtBottom }
+        derivedStateOf {
+            messages.isNotEmpty() &&
+                !isAtBottom &&
+                !programmaticBottomScroll &&
+                !(isStreaming && smoothAutoScroll && !userScrolledAway)
+        }
     }
 
     // Build all commands dynamically: built-in + personalities + server
@@ -1385,10 +1403,21 @@ fun ChatScreen(
                                         )
                                         // Context % now lives in the dedicated
                                         // per-session ContextMeterBar just below
-                                        // the app bar, so the subtitle stays clean
-                                        // (no redundant "NN% ctx" suffix here).
+                                        // the app bar, so the subtitle stays clean.
+                                        // The one thing it does still carry is a
+                                        // subtle approval-bypass marker: when the
+                                        // server reports approvals effectively off
+                                        // (YOLO / --yolo / global approvals.mode=off)
+                                        // a quiet amber "⚡ approvals off" rides the
+                                        // subtitle so the risk is visible without
+                                        // opening the agent drawer.
                                         val subtitleAnnotated = buildAnnotatedString {
                                             append(subtitleText)
+                                            if (yoloEnabled == true) {
+                                                withStyle(SpanStyle(color = RelayRefresh.Amber)) {
+                                                    append(" · ⚡ approvals off")
+                                                }
+                                            }
                                         }
                                         Text(
                                             text = subtitleAnnotated,
