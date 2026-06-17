@@ -41,6 +41,22 @@ logger = logging.getLogger("hermes_relay.voice")
 MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25 MB — Whisper's upstream cap
 MAX_TEXT_CHARS = 5000
 
+# Google Gemini TTS prebuilt voice names. The API accepts the voice string
+# verbatim (upstream does not enumerate them), so this is a UI-convenience list
+# for the phone's voice picker, not an enforced allowlist.
+# Ref: https://ai.google.dev/gemini-api/docs/speech-generation
+GEMINI_PREBUILT_VOICES = (
+    "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede",
+    "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+    "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+    "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+    "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+)
+# Gemini TTS models and the subset that supports the expressive audio-tag
+# rewrite (matches upstream _gemini_model_supports_audio_tags: gemini-3.1*tts).
+GEMINI_TTS_MODELS = ("gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview")
+GEMINI_AUDIO_TAG_MODELS = ("gemini-3.1-flash-tts-preview",)
+
 
 # Rough content-type → extension table for the temp file Whisper reads.
 # Whisper is tolerant about formats but is much happier when the extension
@@ -221,12 +237,11 @@ class VoiceHandler:
 
         Reads ``{"text": "..."}`` as JSON, validates length, runs the sync
         ``text_to_speech_tool`` on a worker thread, then streams the
-        resulting file via :class:`aiohttp.web.FileResponse`.
+        resulting bytes back to the caller.
 
-        TODO(voice): the TTS tool writes files under ``~/voice-memos/`` and
-        never cleans them up. For V1 we leave that alone — clean-up is
-        upstream's concern. A future LRU pass over that directory would
-        pair nicely with the existing MediaRegistry LRU pattern.
+        The relay passes its own temp ``output_path`` into the TTS tool and
+        deletes it after streaming, so synthesis never accumulates files in
+        ``~/voice-memos`` (upstream's default location, which it never cleans).
         """
         await require_voice_auth(request, "voice:tts")
 
@@ -282,65 +297,99 @@ class VoiceHandler:
             )
         text = sanitized
 
+        # Optional per-request enhanced-voice overrides. Mapped onto the active
+        # provider (Gemini / xAI) by the adapter; ignored for providers without
+        # a per-request surface (the phone gates on /voice/config tts.enhanced).
+        voice_overrides = _extract_voice_overrides(payload)
+
+        # The relay owns the output artifact so it can be deleted after
+        # streaming. Without an explicit path, upstream writes to
+        # ~/voice-memos and never cleans up (unbounded disk growth on a
+        # long-lived relay). mkstemp yields an absolute path with no ".."
+        # traversal component, which upstream's path guard requires.
+        out_fd, out_path = tempfile.mkstemp(suffix=".mp3", prefix="hermes-tts-")
+        os.close(out_fd)
+        served_path: str | None = None
         try:
-            raw = await asyncio.to_thread(
-                upstream_voice.synthesize_text_to_speech,
-                text,
-            )
-        except Exception as exc:
-            logger.exception("Voice synthesize: TTS call failed: %s", exc)
-            return web.json_response(
-                {"success": False, "error": f"tts backend error: {exc}"},
-                status=500,
-            )
+            try:
+                raw = await asyncio.to_thread(
+                    upstream_voice.synthesize_text_to_speech,
+                    text,
+                    out_path,
+                    voice_overrides=voice_overrides or None,
+                )
+            except Exception as exc:
+                logger.exception("Voice synthesize: TTS call failed: %s", exc)
+                return web.json_response(
+                    {"success": False, "error": f"tts backend error: {exc}"},
+                    status=500,
+                )
 
-        # The upstream tool returns a JSON string, not a dict.
-        try:
-            result = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, ValueError) as exc:
-            logger.warning(
-                "text_to_speech_tool returned non-JSON: %r", raw
-            )
-            return web.json_response(
-                {
-                    "success": False,
-                    "error": f"tts backend returned non-JSON: {exc}",
+            # The upstream tool returns a JSON string, not a dict.
+            try:
+                result = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, ValueError) as exc:
+                logger.warning(
+                    "text_to_speech_tool returned non-JSON: %r", raw
+                )
+                return web.json_response(
+                    {
+                        "success": False,
+                        "error": f"tts backend returned non-JSON: {exc}",
+                    },
+                    status=500,
+                )
+
+            if not isinstance(result, dict) or not result.get("success"):
+                err = (
+                    result.get("error", "tts failed")
+                    if isinstance(result, dict)
+                    else "tts returned unexpected shape"
+                )
+                return web.json_response(
+                    {"success": False, "error": err},
+                    status=500,
+                )
+
+            file_path = result.get("file_path")
+            if not isinstance(file_path, str) or not file_path:
+                return web.json_response(
+                    {"success": False, "error": "tts result missing file_path"},
+                    status=500,
+                )
+            if not os.path.isfile(file_path):
+                return web.json_response(
+                    {
+                        "success": False,
+                        "error": f"tts file missing on disk: {file_path}",
+                    },
+                    status=500,
+                )
+            served_path = file_path
+
+            # Read the bytes and return them directly. web.FileResponse would
+            # stream the file *after* this handler returns, leaving no point to
+            # hook cleanup onto; reading into memory (audio is bounded by
+            # MAX_TEXT_CHARS) lets the finally block delete immediately.
+            audio_bytes = await asyncio.to_thread(Path(file_path).read_bytes)
+            return web.Response(
+                body=audio_bytes,
+                headers={
+                    "Content-Type": "audio/mpeg",
+                    "Cache-Control": "private, no-store",
+                    "Content-Disposition": 'inline; filename="tts.mp3"',
                 },
-                status=500,
             )
-
-        if not isinstance(result, dict) or not result.get("success"):
-            err = (
-                result.get("error", "tts failed")
-                if isinstance(result, dict)
-                else "tts returned unexpected shape"
-            )
-            return web.json_response(
-                {"success": False, "error": err},
-                status=500,
-            )
-
-        file_path = result.get("file_path")
-        if not isinstance(file_path, str) or not file_path:
-            return web.json_response(
-                {"success": False, "error": "tts result missing file_path"},
-                status=500,
-            )
-        if not os.path.isfile(file_path):
-            return web.json_response(
-                {
-                    "success": False,
-                    "error": f"tts file missing on disk: {file_path}",
-                },
-                status=500,
-            )
-
-        headers = {
-            "Content-Type": "audio/mpeg",
-            "Cache-Control": "private, no-store",
-            "Content-Disposition": 'inline; filename="tts.mp3"',
-        }
-        return web.FileResponse(file_path, headers=headers)
+        finally:
+            # Delete both the path we requested and the path upstream actually
+            # wrote (a provider may realign the extension). Best-effort.
+            for path in {out_path, served_path}:
+                if not path:
+                    continue
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
     # ── GET /voice/config ───────────────────────────────────────────────
 
@@ -431,6 +480,7 @@ class VoiceHandler:
                     "voice": tts_cfg.get("voice"),
                     "model": tts_cfg.get("model"),
                     "enabled": _provider_enabled(tts_cfg),
+                    "enhanced": _enhanced_voice_block(tts_cfg),
                 },
                 "stt": {
                     "provider": stt_cfg.get("provider"),
@@ -440,6 +490,86 @@ class VoiceHandler:
                 "requirements": requirements,
             }
         )
+
+
+def _extract_voice_overrides(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull optional per-request enhanced-voice fields from a synthesize body.
+
+    Accepts top-level keys or a nested ``enhanced`` / ``gemini`` object. The
+    relay maps this generic set onto whichever provider is active (see
+    ``upstream_voice._synthesize_with_voice_overrides``): ``voice`` → Gemini
+    ``voice`` / xAI ``voice_id``; ``audio_tags`` → Gemini ``audio_tags`` / xAI
+    ``auto_speech_tags``; ``persona_prompt`` (Gemini) and ``language`` (xAI)
+    where supported. ``style``/``persona`` alias ``persona_prompt``; ``provider``
+    may force a provider even when it is not the server default.
+    """
+    nested = payload.get("enhanced") or payload.get("gemini")
+    source = nested if isinstance(nested, dict) else payload
+    overrides: dict[str, Any] = {}
+    for key in ("provider", "voice", "model", "base_url", "language"):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            overrides[key] = value.strip()
+    if "audio_tags" in source and source.get("audio_tags") is not None:
+        overrides["audio_tags"] = bool(source.get("audio_tags"))
+    persona = (
+        source.get("persona_prompt")
+        or source.get("style")
+        or source.get("persona")
+    )
+    if isinstance(persona, str) and persona.strip():
+        overrides["persona_prompt"] = persona.strip()
+    return overrides
+
+
+def _enhanced_voice_block(tts_cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """Capability hint for the phone's enhanced-voice picker.
+
+    Surfaced only for providers the relay can drive per-request (Gemini, xAI).
+    The phone renders controls from the returned flags and POSTs the generic
+    override fields to ``/voice/synthesize``. Other providers (and the standard
+    dashboard path) remain config-only.
+    """
+    provider = _clean_string(tts_cfg.get("provider"))
+    if provider == "gemini":
+        raw = tts_cfg.get("gemini")
+        cfg = raw if isinstance(raw, dict) else {}
+        audio_tags_raw = cfg.get("audio_tags")
+        if isinstance(audio_tags_raw, dict):
+            audio_tags_raw = audio_tags_raw.get("enabled")
+        return {
+            "provider": "gemini",
+            "supported": True,
+            "voices": list(GEMINI_PREBUILT_VOICES),
+            "models": list(GEMINI_TTS_MODELS),
+            "audio_tag_models": list(GEMINI_AUDIO_TAG_MODELS),
+            "audio_tags_enabled": bool(audio_tags_raw),
+            "audio_tags_label": "Expressive tone tags",
+            "supports_persona": True,
+            "supports_language": False,
+            "persona_prompt_file": _clean_string(cfg.get("persona_prompt_file")),
+            "overrides": ["voice", "model", "audio_tags", "persona_prompt"],
+        }
+    if provider == "xai":
+        raw = tts_cfg.get("xai")
+        cfg = raw if isinstance(raw, dict) else {}
+        audio_tags_raw = cfg.get("auto_speech_tags", cfg.get("speech_tags"))
+        return {
+            "provider": "xai",
+            "supported": True,
+            # xAI's voice catalog is not enumerated upstream (default "eve"),
+            # so the phone uses a free-text voice field (empty list).
+            "voices": [],
+            "models": [],
+            "audio_tag_models": [],
+            "audio_tags_enabled": bool(audio_tags_raw),
+            "audio_tags_label": "Expressive speech tags",
+            "supports_persona": False,
+            "supports_language": True,
+            "persona_prompt_file": None,
+            "overrides": ["voice", "audio_tags", "language"],
+        }
+    return None
 
 
 def _load_hermes_voice_config(config: Any) -> dict[str, Any]:

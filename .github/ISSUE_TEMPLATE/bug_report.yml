@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a reproducible problem in Hermes-Relay.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, remove secrets, access tokens, real hostnames/IPs, private deployment names, and personal names. Public example IPs such as `192.168.1.100` are fine.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Pick the closest surface.
+      options:
+        - Android app
+        - Standard Hermes chat or voice
+        - Relay plugin or server
+        - Desktop CLI or tray
+        - Dashboard plugin
+        - Docs or installer
+        - CI, release, or packaging
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: State the behavior you saw and what you expected instead.
+      placeholder: |
+        Observed:
+
+        Expected:
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest sequence that reproduces the issue.
+      placeholder: |
+        1. Pair or configure...
+        2. Open...
+        3. Tap or run...
+        4. See...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include only the fields that apply.
+      value: |
+        - Hermes-Relay version/tag:
+        - Install surface: Google Play / sideload APK / local build / plugin / desktop CLI
+        - Android device and OS:
+        - hermes-agent version or commit:
+        - Connection mode: LAN / Tailscale / public TLS / other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs, screenshots, or traces
+      description: Paste the smallest useful log excerpt. Remove tokens, private URLs, hostnames, IPs, and user-identifying data.
+      render: shell
+
+  - type: textarea
+    id: upstream
+    attributes:
+      label: Upstream or standard-path notes
+      description: If relevant, note whether this reproduces against unmodified upstream hermes-agent or only with the relay plugin enabled.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: I removed secrets, tokens, private infrastructure, and personal names.
+          required: true
+        - label: I included the affected version or install surface where known.
+          required: true

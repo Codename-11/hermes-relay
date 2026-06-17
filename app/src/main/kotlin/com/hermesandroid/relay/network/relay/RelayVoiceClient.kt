@@ -2,6 +2,7 @@ package com.hermesandroid.relay.network.relay
 
 import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import kotlinx.coroutines.CompletableDeferred
@@ -208,7 +209,10 @@ class RelayVoiceClient(
      * when done (typical pattern: keep the last N mp3s in the cache dir and
      * let the OS reclaim on cache pressure).
      */
-    suspend fun synthesize(text: String): Result<File> = withContext(Dispatchers.IO) {
+    suspend fun synthesize(
+        text: String,
+        enhanced: EnhancedVoiceOverrides? = null,
+    ): Result<File> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
         val token = resolveBearerToken()
@@ -223,6 +227,16 @@ class RelayVoiceClient(
 
         val bodyJson = buildJsonObject {
             put("text", JsonPrimitive(text))
+            // Per-request enhanced-voice overrides. The relay maps these generic
+            // fields onto the active provider (Gemini/xAI) and ignores them for
+            // others — see voice.py:_extract_voice_overrides.
+            enhanced?.let { ov ->
+                ov.voice?.let { put("voice", JsonPrimitive(it)) }
+                ov.model?.let { put("model", JsonPrimitive(it)) }
+                ov.audioTags?.let { put("audio_tags", JsonPrimitive(it)) }
+                ov.personaPrompt?.let { put("persona_prompt", JsonPrimitive(it)) }
+                ov.language?.let { put("language", JsonPrimitive(it)) }
+            }
             putProfile()
         }.toString()
 
@@ -724,6 +738,7 @@ class RelayVoiceClient(
         codec: String? = null,
         optimizeStreamingLatency: Int? = null,
         textNormalization: Boolean? = null,
+        autoSpeechTags: Boolean? = null,
         fallbackEnabled: Boolean? = null,
     ): Result<VoiceOutputConfig> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
@@ -755,6 +770,7 @@ class RelayVoiceClient(
                 put("optimize_streaming_latency", JsonPrimitive(it))
             }
             textNormalization?.let { put("text_normalization", JsonPrimitive(it)) }
+            autoSpeechTags?.let { put("auto_speech_tags", JsonPrimitive(it)) }
             fallbackEnabled?.let { put("fallback_enabled", JsonPrimitive(it)) }
         }
 
@@ -2304,10 +2320,43 @@ data class VoiceProviderInfo(
     val voiceId: String? = null,
     val enabled: Boolean = false,
     val available: Boolean = true,
+    /**
+     * Provider-specific enhanced-voice capability hint. Present (non-null) only
+     * for the TTS block when the relay's active provider supports per-request
+     * enhanced control (today: Gemini and xAI).
+     */
+    val enhanced: EnhancedVoiceCapabilities? = null,
 ) {
     val displayVoice: String? get() = voice ?: voiceId
     val isEnabled: Boolean get() = enabled || (!provider.isNullOrBlank() && available)
 }
+
+/**
+ * Wire shape of the `tts.enhanced` block on `GET /voice/config` — the relay's
+ * provider-aware enhanced-voice capability advertisement. Mirrors
+ * `plugin/relay/voice.py:_enhanced_voice_block`. `voices`/`models` may be empty
+ * (e.g. xAI uses a free-text voice field); the UI renders from the flags.
+ */
+@Serializable
+data class EnhancedVoiceCapabilities(
+    val provider: String? = null,
+    val supported: Boolean = false,
+    val voices: List<String> = emptyList(),
+    val models: List<String> = emptyList(),
+    @SerialName("audio_tag_models")
+    val audioTagModels: List<String> = emptyList(),
+    @SerialName("audio_tags_enabled")
+    val audioTagsEnabled: Boolean = false,
+    @SerialName("audio_tags_label")
+    val audioTagsLabel: String = "Expressive tone tags",
+    @SerialName("supports_persona")
+    val supportsPersona: Boolean = false,
+    @SerialName("supports_language")
+    val supportsLanguage: Boolean = false,
+    @SerialName("persona_prompt_file")
+    val personaPromptFile: String? = null,
+    val overrides: List<String> = emptyList(),
+)
 
 @Serializable
 data class RealtimeVoiceConfig(
@@ -2481,6 +2530,8 @@ data class VoiceOutputConfig(
     val codec: String = "pcm",
     val optimize_streaming_latency: Int = 1,
     val text_normalization: Boolean = false,
+    /** xAI expressive speech tags on the streaming renderer (xai_tts only). */
+    val auto_speech_tags: Boolean = false,
     val fallback_enabled: Boolean = true,
     val fallback_provider: String? = null,
     val providers: List<RealtimeProviderInfo> = emptyList(),

@@ -93,6 +93,7 @@ class RelayConfig:
     voice_output_codec: str = "pcm"
     voice_output_optimize_streaming_latency: int = 1
     voice_output_text_normalization: bool = False
+    voice_output_auto_speech_tags: bool = False
     voice_output_fallback_enabled: bool = True
     voice_output_config_path: str | None = None
     voice_output_run_dir: str | None = None
@@ -278,6 +279,14 @@ class RelayConfig:
             config.voice_output_fallback_enabled = True
         elif voice_output_fallback in ("0", "false", "no", "off"):
             config.voice_output_fallback_enabled = False
+
+        voice_output_speech_tags = os.getenv(
+            "RELAY_VOICE_OUTPUT_AUTO_SPEECH_TAGS", ""
+        ).strip().lower()
+        if voice_output_speech_tags in ("1", "true", "yes", "on"):
+            config.voice_output_auto_speech_tags = True
+        elif voice_output_speech_tags in ("0", "false", "no", "off"):
+            config.voice_output_auto_speech_tags = False
 
         config.voice_output_run_dir = (
             os.getenv("RELAY_VOICE_OUTPUT_RUN_DIR")
@@ -467,6 +476,10 @@ def _apply_voice_output_config(
     text_normalization = _optional_bool(section.get("text_normalization"))
     if text_normalization is not None:
         config.voice_output_text_normalization = text_normalization
+
+    auto_speech_tags = _optional_bool(section.get("auto_speech_tags"))
+    if auto_speech_tags is not None:
+        config.voice_output_auto_speech_tags = auto_speech_tags
 
     fallback_enabled = _optional_bool(section.get("fallback_enabled"))
     if fallback_enabled is not None:
