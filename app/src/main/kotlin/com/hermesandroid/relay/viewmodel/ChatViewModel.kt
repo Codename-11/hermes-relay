@@ -2673,12 +2673,26 @@ class ChatViewModel : ViewModel() {
 
         val gateway = gatewayClient
         _steerableTurn.value = false
+        // Voice turns must deliver their interface + spoken-output-formatting
+        // context to the model, but the gateway prompt.submit RPC has NO
+        // system-message slot (it is bare text — see the else branch). Prepending
+        // to the user text would persist the instruction into the transcript.
+        // The SSE endpoints carry it in the non-persisted system_message field
+        // instead, so force any turn that has a per-turn interface context
+        // (set only by sendVoiceMessage) onto SSE. resolveSseFallback picks the
+        // best available SSE route.
+        val effectiveEndpoint =
+            if (interfaceContextPrompt != null && streamingEndpoint == "gateway") {
+                resolveSseFallback(handler)
+            } else {
+                streamingEndpoint
+            }
         // Remember whether this turn runs on the gateway client (vs an SSE
         // EventSource) so a mid-turn route handoff doesn't cancel it — only the
         // `else` branch below dispatches on the gateway.
-        activeStreamIsGateway = streamingEndpoint == "gateway" && gateway != null
+        activeStreamIsGateway = effectiveEndpoint == "gateway" && gateway != null
         activeStream = when {
-            streamingEndpoint != "gateway" -> dispatchSse(streamingEndpoint)
+            effectiveEndpoint != "gateway" -> dispatchSse(effectiveEndpoint)
 
             // Gateway turns upload ALL attachments via their typed upstream
             // RPC (image.attach_bytes / pdf.attach / file.attach), matching the

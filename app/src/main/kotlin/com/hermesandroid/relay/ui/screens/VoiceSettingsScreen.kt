@@ -134,6 +134,7 @@ fun VoiceSettingsScreen(
     var voiceOutputLanguage by remember { mutableStateOf("en") }
     var voiceOutputLatency by remember { mutableStateOf(1f) }
     var voiceOutputFallback by remember { mutableStateOf(true) }
+    var voiceOutputSpeechTags by remember { mutableStateOf(false) }
     var voiceOutputSaving by remember { mutableStateOf(false) }
     var voiceOutputManualOpen by remember { mutableStateOf(false) }
     var voiceOutputProviderOptions by remember {
@@ -239,6 +240,7 @@ fun VoiceSettingsScreen(
         voiceOutputConfig?.language,
         voiceOutputConfig?.optimize_streaming_latency,
         voiceOutputConfig?.fallback_enabled,
+        voiceOutputConfig?.auto_speech_tags,
     ) {
         val config = voiceOutputConfig ?: return@LaunchedEffect
         voiceOutputEnabled = config.enabled
@@ -249,6 +251,7 @@ fun VoiceSettingsScreen(
         voiceOutputLanguage = config.language
         voiceOutputLatency = config.optimize_streaming_latency.toFloat()
         voiceOutputFallback = config.fallback_enabled
+        voiceOutputSpeechTags = config.auto_speech_tags
     }
 
     fun refreshVoiceOutputProviderOptions(providerId: String, applyDefaults: Boolean) {
@@ -726,6 +729,141 @@ fun VoiceSettingsScreen(
                 }
             }
 
+            // Enhanced-voice controls. Shown only when the relay advertises a
+            // provider with a per-request surface (/voice/config tts.enhanced:
+            // Gemini or xAI today). Overrides ride the per-request
+            // /voice/synthesize body; "Server default" leaves a field to the
+            // relay's saved config. The standard (no-plugin) path stays
+            // config-only — these controls require Relay.
+            voiceConfig?.tts?.enhanced?.takeIf { it.supported && relayVoiceReady }?.let { enhanced ->
+                val providerLabel = when (enhanced.provider) {
+                    "gemini" -> "Gemini"
+                    "xai" -> "xAI"
+                    else -> enhanced.provider?.replaceFirstChar { it.uppercase() } ?: "Provider"
+                }
+                SectionCard(title = "Enhanced Voice ($providerLabel)", badge = "Enhanced") {
+                    Text(
+                        text = "Pick a voice and tone for the $providerLabel TTS provider. " +
+                            "Leave a field on \"Server default\" to use the relay's saved config.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+
+                    // Curated dropdown when the relay enumerates voices (Gemini);
+                    // free-text entry otherwise (xAI's catalog isn't enumerated).
+                    if (enhanced.voices.isNotEmpty()) {
+                        val voiceChoices = buildList {
+                            add(VoiceChoice(value = "", label = "Server default"))
+                            enhanced.voices.forEach { add(VoiceChoice(value = it, label = it)) }
+                        }
+                        VoiceChoiceDropdown(
+                            label = "Voice",
+                            value = voiceSettings.enhancedVoice,
+                            choices = voiceChoices,
+                            onValueChange = { scope.launch { prefsRepo.setEnhancedVoice(it) } },
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = voiceSettings.enhancedVoice,
+                            onValueChange = { scope.launch { prefsRepo.setEnhancedVoice(it) } },
+                            label = { Text("Voice (blank = server default)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    if (enhanced.models.isNotEmpty()) {
+                        val modelChoices = buildList {
+                            add(VoiceChoice(value = "", label = "Server default"))
+                            enhanced.models.forEach { model ->
+                                add(
+                                    VoiceChoice(
+                                        value = model,
+                                        label = model,
+                                        detail = if (model in enhanced.audioTagModels) {
+                                            "supports tone tags"
+                                        } else {
+                                            null
+                                        },
+                                    ),
+                                )
+                            }
+                        }
+                        VoiceChoiceDropdown(
+                            label = "Model",
+                            value = voiceSettings.enhancedModel,
+                            choices = modelChoices,
+                            onValueChange = { scope.launch { prefsRepo.setEnhancedModel(it) } },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    // Tone/speech tags. xAI advertises no gating model list, so
+                    // they're always available there; Gemini requires a 3.1 TTS
+                    // model (matches upstream _gemini_model_supports_audio_tags).
+                    val effectiveModel =
+                        voiceSettings.enhancedModel.ifBlank { voiceConfig?.tts?.model.orEmpty() }
+                    val audioTagsSupported = enhanced.audioTagModels.isEmpty() ||
+                        enhanced.audioTagModels.any { it.equals(effectiveModel, ignoreCase = true) } ||
+                        (
+                            effectiveModel.contains("gemini-3.1", ignoreCase = true) &&
+                                effectiveModel.contains("tts", ignoreCase = true)
+                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = enhanced.audioTagsLabel,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = if (audioTagsSupported) {
+                                    "Let the model add tone cues (e.g. [whispers], " +
+                                        "[excitedly]) to the spoken script."
+                                } else {
+                                    "Requires a Gemini 3.1 TTS model — pick one above to enable."
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = voiceSettings.enhancedAudioTags && audioTagsSupported,
+                            enabled = audioTagsSupported,
+                            onCheckedChange = { scope.launch { prefsRepo.setEnhancedAudioTags(it) } },
+                        )
+                    }
+
+                    if (enhanced.supportsPersona) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = voiceSettings.enhancedPersona,
+                            onValueChange = { scope.launch { prefsRepo.setEnhancedPersona(it) } },
+                            label = { Text("Voice direction (optional)") },
+                            placeholder = { Text("e.g. Warm, calm narrator; unhurried pace.") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                        )
+                    }
+
+                    if (enhanced.supportsLanguage) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = voiceSettings.enhancedLanguage,
+                            onValueChange = { scope.launch { prefsRepo.setEnhancedLanguage(it) } },
+                            label = { Text("Language (optional, e.g. en)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+
             if (currentEngine == VoiceEngineMode.HermesVoiceOutput && relayVoiceReady) {
                 // --- Hermes Chat + Voice Output ---
                 // Relay-backed provider editing; standard-only connections get
@@ -737,6 +875,18 @@ fun VoiceSettingsScreen(
                         voiceOutputConfig?.enabled == true -> "active"
                         voiceOutputConfigError != null -> "unavailable"
                         voiceOutputConfig != null -> "disabled"
+                        else -> "loading..."
+                    },
+                )
+                // Which path actually renders speech, for troubleshooting:
+                // streaming /voice/output when enabled, else the basic
+                // /voice/synthesize fallback (where the streaming speech-tags
+                // toggle does not apply).
+                ProviderRow(
+                    label = "Render path",
+                    value = when {
+                        voiceOutputConfig?.enabled == true -> "streaming (/voice/output)"
+                        voiceOutputConfig != null -> "basic synthesize (/voice/synthesize)"
                         else -> "loading..."
                     },
                 )
@@ -945,6 +1095,31 @@ fun VoiceSettingsScreen(
                     )
                 }
 
+                // xAI expressive speech tags on the streaming renderer (xai_tts
+                // only). Persisted with the Save buttons below via
+                // updateVoiceOutputConfig(autoSpeechTags=...).
+                if (voiceOutputProvider == "xai_tts") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Expressive speech tags", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Let xAI add tone cues (whisper, laugh, sigh, pitch " +
+                                    "shifts) to streamed speech.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = voiceOutputSpeechTags,
+                            onCheckedChange = { voiceOutputSpeechTags = it },
+                        )
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -993,6 +1168,7 @@ fun VoiceSettingsScreen(
                                     language = voiceOutputLanguage,
                                     codec = "pcm",
                                     optimizeStreamingLatency = voiceOutputLatency.toInt(),
+                                    autoSpeechTags = voiceOutputSpeechTags,
                                     fallbackEnabled = voiceOutputFallback,
                                 )
                                 voiceOutputSaving = false
@@ -1058,6 +1234,7 @@ fun VoiceSettingsScreen(
                                     language = voiceOutputLanguage,
                                     codec = "pcm",
                                     optimizeStreamingLatency = voiceOutputLatency.toInt(),
+                                    autoSpeechTags = voiceOutputSpeechTags,
                                     fallbackEnabled = voiceOutputFallback,
                                 )
                                 voiceOutputSaving = false

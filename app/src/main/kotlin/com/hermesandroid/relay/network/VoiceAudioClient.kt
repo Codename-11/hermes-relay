@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network
 
 import android.content.Context
+import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -29,6 +30,7 @@ interface VoiceAudioClient {
 
 class RelayVoiceAudioClientAdapter(
     private val relayVoiceClient: RelayVoiceClient,
+    private val enhancedOverridesProvider: () -> EnhancedVoiceOverrides? = { null },
 ) : VoiceAudioClient {
     override val route: VoiceAudioRoute = VoiceAudioRoute.Relay
 
@@ -36,7 +38,7 @@ class RelayVoiceAudioClientAdapter(
         relayVoiceClient.transcribe(audioFile)
 
     override suspend fun synthesize(text: String): Result<File> =
-        relayVoiceClient.synthesize(text)
+        relayVoiceClient.synthesize(text, enhancedOverridesProvider())
 }
 
 /**
@@ -150,6 +152,14 @@ class StandardHermesVoiceClient(
         if (!audioFile.exists() || audioFile.length() == 0L) {
             return@withContext Result.failure(IOException("Audio file missing or empty: ${audioFile.name}"))
         }
+        // Upstream caps decoded transcription audio at 25 MB (web_server.py
+        // _MAX_TRANSCRIPTION_UPLOAD_BYTES → HTTP 413). The decoded size equals
+        // the file size, so guard here to avoid a wasted ~33 MB base64 upload.
+        if (audioFile.length() > MAX_TRANSCRIBE_BYTES) {
+            return@withContext Result.failure(
+                IOException("Recording too long for Hermes - try a shorter utterance"),
+            )
+        }
 
         val dataUrl = buildAudioDataUrl(audioFile)
         val payload = buildJsonObject {
@@ -241,8 +251,10 @@ class StandardHermesVoiceClient(
         val body = runCatching { response.body.string() }.getOrDefault("")
         val detail = body.takeIf { it.isNotBlank() } ?: response.message
         val message = when (response.code) {
+            400 -> "$operation rejected that input - ${detail.ifBlank { "bad request" }}"
             401, 403 -> "$operation needs dashboard sign-in - open Manage to sign in"
             404 -> "$operation unavailable on this Hermes build - update hermes-agent or use Relay"
+            413 -> "Recording too long for Hermes - try a shorter utterance"
             in 500..599 -> "$operation failed - server error HTTP ${response.code}"
             else -> "$operation failed - HTTP ${response.code}: $detail"
         }
@@ -292,5 +304,9 @@ class StandardHermesVoiceClient(
 
     private companion object {
         val JSON_MEDIA = "application/json".toMediaType()
+
+        // Matches upstream _MAX_TRANSCRIPTION_UPLOAD_BYTES (web_server.py): the
+        // dashboard rejects decoded transcription audio above 25 MB with 413.
+        const val MAX_TRANSCRIBE_BYTES = 25L * 1024 * 1024
     }
 }

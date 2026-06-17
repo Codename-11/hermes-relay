@@ -81,6 +81,7 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
@@ -387,6 +388,9 @@ fun RelayApp() {
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
     val standardVoiceReadyState = rememberUpdatedState(standardVoiceReady)
     val relayVoiceReadyState = rememberUpdatedState(relayVoiceReady)
+    // Latest enhanced-voice overrides (null when nothing is set). Read lazily by
+    // the relay TTS adapter so changes apply without rebuilding it.
+    val enhancedOverridesState = rememberUpdatedState(EnhancedVoiceOverrides.fromSettings(voiceSettings))
 
     // Voice pipeline wiring — mirrors ChatViewModel.initializeMedia (above).
     // We build a dedicated OkHttpClient so voice requests don't contend with
@@ -438,7 +442,10 @@ fun RelayApp() {
     val voiceAudioClient = remember {
         AutoVoiceAudioClient(
             standardClient = standardVoiceClient,
-            relayClient = RelayVoiceAudioClientAdapter(voiceClient),
+            relayClient = RelayVoiceAudioClientAdapter(
+                voiceClient,
+                enhancedOverridesProvider = { enhancedOverridesState.value },
+            ),
             routeProvider = { selectedAudioRouteState.value },
             standardReadyProvider = { standardVoiceReadyState.value },
             relayReadyProvider = { relayVoiceReadyState.value },
