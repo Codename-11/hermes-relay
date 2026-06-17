@@ -2434,15 +2434,26 @@ class ChatViewModel : ViewModel() {
             // restart. By message.complete the server has persisted the turn, so the
             // REST read is authoritative.
             val sid = handler.currentSessionId.value
+            // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
+            // has NO assistant message persisted server-side, so reconciling the
+            // server transcript would WIPE the just-shown error bubble (the user
+            // message stays, the assistant error vanishes — the disappearing-reply
+            // regression). Skip the message reconcile for errored turns — keep the
+            // local error visible — but still refresh the drawer + drain the queue.
+            val turnErrored = handler.messages.value
+                .lastOrNull { it.id == currentMessageId }
+                ?.badges?.contains("Error") == true
             if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
                 viewModelScope.launch {
-                    // Profile-aware read: a gateway turn on a non-default profile
-                    // persists into THAT profile's own state.db, so the bare
-                    // api_server `/api/sessions/{id}/messages` 404s → emptyList()
-                    // → a silent wipe of the just-finished turn. loadSessionHistory
-                    // prefers the `?profile=` dashboard loader on gateway connections.
-                    val serverMessages = loadSessionHistory(sid)
-                    handler.loadMessageHistory(serverMessages)
+                    if (!turnErrored) {
+                        // Profile-aware read: a gateway turn on a non-default profile
+                        // persists into THAT profile's own state.db, so the bare
+                        // api_server `/api/sessions/{id}/messages` 404s → emptyList()
+                        // → a silent wipe of the just-finished turn. loadSessionHistory
+                        // prefers the `?profile=` dashboard loader on gateway connections.
+                        val serverMessages = loadSessionHistory(sid)
+                        handler.loadMessageHistory(serverMessages)
+                    }
                     // Re-sync the drawer now that the turn is persisted server-side.
                     // The only other auto-refresh fires ~160ms after session creation
                     // (RelayApp) — mid-stream, BEFORE the new session's first message
