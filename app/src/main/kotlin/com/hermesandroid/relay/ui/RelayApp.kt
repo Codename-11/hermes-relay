@@ -120,10 +120,10 @@ import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
-import com.hermesandroid.relay.network.RelayProfileInspectorClient
-import com.hermesandroid.relay.network.AutoVoiceAudioClient
-import com.hermesandroid.relay.network.DynamicDashboardCookieJar
-import com.hermesandroid.relay.network.RelayVoiceAudioClientAdapter
+import com.hermesandroid.relay.network.relay.RelayProfileInspectorClient
+import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
+import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
+import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
@@ -133,8 +133,8 @@ import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.StandardHermesVoiceClient
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
 import com.hermesandroid.relay.auth.AuthState
 import androidx.lifecycle.viewModelScope
 

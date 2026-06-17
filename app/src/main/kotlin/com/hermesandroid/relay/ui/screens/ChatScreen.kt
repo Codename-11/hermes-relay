@@ -98,10 +98,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
-import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.RealtimeVoiceConfig
-import com.hermesandroid.relay.network.VoiceOutputConfig
+import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -144,6 +145,7 @@ import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
+import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
@@ -428,6 +430,7 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    val turnStatus by chatViewModel.turnStatus.collectAsState()
     val voiceStats by voiceViewModel.voiceStats.collectAsState()
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
@@ -476,6 +479,12 @@ fun ChatScreen(
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
+    val recentPrompts by chatViewModel.recentPrompts.collectAsState()
+    val recentPromptsEnabled by connectionViewModel.chatRecentPromptsEnabled.collectAsState()
+    // Effective approval-bypass (server-computed: ORs global approvals.mode=off,
+    // the --yolo env, and the per-session flag). Drives a subtle status-strip
+    // marker so the user knows approvals are off without opening the agent drawer.
+    val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
     val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
@@ -483,6 +492,7 @@ fun ChatScreen(
     // === Gateway desktop-parity state ===
     val serverCommands by chatViewModel.serverCommands.collectAsState()
     val contextUsage by chatViewModel.contextUsage.collectAsState()
+    val contextWindow by chatViewModel.contextWindow.collectAsState()
     val steerableTurn by chatViewModel.steerableTurn.collectAsState()
     val steerNotice by chatViewModel.steerNotice.collectAsState()
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
@@ -510,6 +520,27 @@ fun ChatScreen(
             chatViewModel.prewarmGateway()
             chatViewModel.refreshModelOptions()
             chatViewModel.refreshReasoningSettings()
+        }
+    }
+
+    // Cold-open recovery: the dashboard probe that flips gatewayAvailability to
+    // Ready (and with it isGatewayTransport, which gates the model + reasoning-
+    // effort controls) is otherwise only retried on the 30s periodic health
+    // tick. So a freshly-opened chat — especially when the dashboard route
+    // resolves a beat after the API client is built — can sit up to ~30s
+    // showing the model pill but no effort chip. Nudge a few quick probes
+    // until the verdict settles, then fall back to the slow cadence. Cheap
+    // (a public GET /api/status), bounded, and self-disarming.
+    LaunchedEffect(appForeground, chatReady) {
+        if (!appForeground || !chatReady) return@LaunchedEffect
+        var tries = 0
+        while (
+            tries < 5 &&
+            connectionViewModel.gatewayAvailability.value == GatewayAvailability.Unknown
+        ) {
+            connectionViewModel.refreshStandardVoice()
+            tries++
+            delay(1_500)
         }
     }
 
@@ -561,6 +592,7 @@ fun ChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
+    var showModelSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
 
     // Server command dispatch can ask the composer to prefill (e.g. /undo).
@@ -568,6 +600,21 @@ fun ChatScreen(
         chatViewModel.composerPrefill.collect { text ->
             editingMessage = null
             inputText = text.take(charLimit)
+        }
+    }
+
+    // A bare `/personality` opens the agent sheet (its Personality section is the
+    // mobile equivalent of the desktop's inline arg-picker for picker commands).
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.openPersonalityPicker.collect {
+            showAgentInfo = true
+        }
+    }
+
+    // A bare `/model` opens the model picker — the sibling picker command.
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.openModelPicker.collect {
+            showModelSheet = true
         }
     }
 
@@ -598,6 +645,15 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Ephemeral notices from the VM (model-switch warnings/errors, etc.) →
+    // transient snackbar, never a chat bubble.
+    LaunchedEffect(Unit) {
+        chatViewModel.transientNotice.collect { msg ->
+            snackbarHostState.showSnackbar(message = msg, duration = SnackbarDuration.Short)
+        }
+    }
+
     val realtimeAgentActive = voiceStats.voiceEngineMode == "realtime_agent"
     val activeVoiceProvider = if (realtimeAgentActive) {
         realtimeAgentConfig?.default_provider
@@ -802,29 +858,48 @@ fun ChatScreen(
         }
     }
 
-    // Watch the user's scroll state. Any drag/fling that ends with the list
-    // not at the bottom flips userScrolledAway = true. Returning to the
-    // bottom (manually or via the FAB) resets it to false.
+    // Decide "is the user reading history" from GENUINE scroll gestures only.
+    // A bare isAtBottom flip — the streaming bubble grew and pushed content
+    // below the fold — must NOT count as the user scrolling away. That false
+    // signal was the bounce: it popped the scroll-to-bottom FAB and (worse)
+    // aborted auto-follow even though the user never touched the screen.
+    // Content growth never sets isScrollInProgress, so keying off the scroll's
+    // falling edge ignores it; only a real drag/fling that ENDS above the
+    // bottom flips userScrolledAway. (Programmatic animated scrolls also set
+    // isScrollInProgress, so they're excluded via programmaticBottomScroll.)
     LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress to isAtBottom }
-            .distinctUntilChanged()
-            .collectLatest { (scrolling, atBottom) ->
-                if (programmaticBottomScroll) {
-                    if (atBottom) userScrolledAway = false
-                    return@collectLatest
+        var wasScrolling = false
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (wasScrolling && !scrolling && !programmaticBottomScroll) {
+                    userScrolledAway = !isAtBottom
                 }
-                if (atBottom) {
-                    userScrolledAway = false
-                } else if (!scrolling) {
-                    // Scroll gesture ended above the bottom — user is reading.
-                    userScrolledAway = true
-                }
+                wasScrolling = scrolling
             }
     }
+    // Reaching the bottom by any means (user, follow-pin, content shrank)
+    // always re-arms auto-follow.
+    LaunchedEffect(isAtBottom) {
+        if (isAtBottom) userScrolledAway = false
+    }
 
-    // Scroll-to-bottom FAB visibility
+    // Scroll-to-bottom FAB visibility. The button means "you've scrolled up —
+    // tap to catch up", so it must NOT flash while we're auto-pinning to the
+    // bottom. Suppress it when:
+    //   • a programmatic scroll is in flight (we're actively settling), or
+    //   • we're streaming-and-following (smoothAutoScroll on, not scrolled
+    //     away) — a content burst can momentarily make the list scrollable-
+    //     forward for a frame before the re-pin, which would otherwise blink
+    //     the FAB on every token.
+    // Once the user genuinely scrolls up (userScrolledAway), the streaming
+    // suppression lifts and the button appears.
     val showScrollToBottom by remember {
-        derivedStateOf { messages.isNotEmpty() && !isAtBottom }
+        derivedStateOf {
+            messages.isNotEmpty() &&
+                !isAtBottom &&
+                !programmaticBottomScroll &&
+                !(isStreaming && smoothAutoScroll && !userScrolledAway)
+        }
     }
 
     // Build all commands dynamically: built-in + personalities + server
@@ -867,8 +942,15 @@ fun ChatScreen(
                 SlashCommand("/profile", "Show active profile", "info"),
             )
 
-            // Dynamic personality commands from server
-            val personalities = personalityNames.map { name ->
+            // Dynamic personality commands from server, plus the upstream
+            // "none" (clear the overlay) option that completions list first.
+            val personalities = listOf(
+                SlashCommand(
+                    command = "/personality none",
+                    description = "Clear the personality overlay",
+                    category = "personality"
+                )
+            ) + personalityNames.map { name ->
                 SlashCommand(
                     command = "/personality $name",
                     description = name.replaceFirstChar { it.uppercase() } + " personality",
@@ -1042,12 +1124,24 @@ fun ChatScreen(
                 val isSameTurnGrowth = prev != null
                     && snapshot.messageCount == prev.messageCount
 
-                // scrollOffset = Int.MAX_VALUE → Compose clamps to the
-                // deepest valid offset. The helper waits for LazyColumn
-                // layout and retries across a few frames so a history load
-                // or late markdown/code-block measurement cannot leave us
-                // anchored above the real bottom.
-                scrollConversationToBottom(animated = !(isListRebuild || isSameTurnGrowth))
+                if (isSameTurnGrowth) {
+                    // Tail-follow: a single atomic pin to the clamped bottom.
+                    // The helper's multi-frame settle loop gets cancelled by
+                    // collectLatest on the very next token (streaming arrives
+                    // ~every frame), stranding the viewport mid-settle → the
+                    // bounce. One withFrameNanos to let the grown content lay
+                    // out, then one scrollToItem — instant and cancellation-safe.
+                    withFrameNanos { }
+                    val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                    if (lastIndex >= 0) listState.scrollToItem(lastIndex, Int.MAX_VALUE)
+                } else {
+                    // Discrete events (new bubble, list rebuild, history load):
+                    // scrollOffset = Int.MAX_VALUE clamps to the deepest offset;
+                    // the helper retries across frames so late markdown/code
+                    // measurement can't leave us anchored above the real bottom.
+                    // Instant for a rebuild (avoids fighting animateItem()).
+                    scrollConversationToBottom(animated = !isListRebuild)
+                }
             }
     }
 
@@ -1324,26 +1418,21 @@ fun ChatScreen(
                                             maxLines = 1,
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
-                                        // Context escalation: >=85% the subtitle
-                                        // gains a context suffix in the caution
-                                        // ladder color. The ambient strip below
-                                        // the app bar covers the 50-85% range.
-                                        val ctxFraction = contextUsage
+                                        // Context % now lives in the dedicated
+                                        // per-session ContextMeterBar just below
+                                        // the app bar, so the subtitle stays clean.
+                                        // The one thing it does still carry is a
+                                        // subtle approval-bypass marker: when the
+                                        // server reports approvals effectively off
+                                        // (YOLO / --yolo / global approvals.mode=off)
+                                        // a quiet amber "⚡ approvals off" rides the
+                                        // subtitle so the risk is visible without
+                                        // opening the agent drawer.
                                         val subtitleAnnotated = buildAnnotatedString {
                                             append(subtitleText)
-                                            if (headerApiReachable &&
-                                                ctxFraction != null &&
-                                                ctxFraction >= 0.85f
-                                            ) {
-                                                val ctxColor = if (ctxFraction >= 0.9f) {
-                                                    RelayRefresh.Danger
-                                                } else {
-                                                    RelayRefresh.Amber
-                                                }
-                                                withStyle(SpanStyle(color = ctxColor)) {
-                                                    append(
-                                                        " · ${(ctxFraction * 100).roundToInt()}% ctx"
-                                                    )
+                                            if (yoloEnabled == true) {
+                                                withStyle(SpanStyle(color = RelayRefresh.Amber)) {
+                                                    append(" · ⚡ approvals off")
                                                 }
                                             }
                                         }
@@ -1417,9 +1506,15 @@ fun ChatScreen(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
-            // Ambient context-window meter — 2dp strip at the seam between
-            // the app bar and the mode strip; composes to nothing below 50%.
-            ContextMeterBar(usedFraction = contextUsage)
+            // Per-session context-window gauge at the seam between the app bar
+            // and the mode strip — slim bar + `NN% · used/max` token readout,
+            // color-graded by fullness. Composes to nothing until the server
+            // reports a context_max for the session.
+            ContextMeterBar(
+                usedFraction = contextUsage,
+                usedTokens = contextWindow?.usedTokens,
+                maxTokens = contextWindow?.maxTokens,
+            )
             RelayModeStrip(
                 selected = RelayPrimaryMode.Chat,
                 onModeSelected = { mode ->
@@ -1672,7 +1767,15 @@ fun ChatScreen(
                                     ) {
                                         suggestions.forEach { suggestion ->
                                             AssistChip(
-                                                onClick = { inputText = suggestion },
+                                                onClick = {
+                                                    // Send on tap — a casual user expects a
+                                                    // suggestion to start the conversation, not
+                                                    // prefill the composer for a second tap.
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    chatViewModel.sendMessage(suggestion)
+                                                    inputText = ""
+                                                    finishSuccessfulSend()
+                                                },
                                                 label = {
                                                     Text(
                                                         text = suggestion,
@@ -1954,27 +2057,97 @@ fun ChatScreen(
             }
 
             // Queue indicator
+            // Recent-prompt recall — a soft keyboard has no up-arrow, so surface
+            // your last prompts as tappable chips while the composer is empty.
+            // Tapping prefills (not auto-sends) so you can tweak before resending;
+            // the row vanishes the moment you type or a queue/fresh-chat shows.
+            AnimatedVisibility(
+                visible = recentPromptsEnabled && messages.isNotEmpty() && inputText.isBlank() &&
+                    queuedMessages.isEmpty() && recentPrompts.isNotEmpty(),
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                ) {
+                    recentPrompts.take(6).forEach { prompt ->
+                        AssistChip(
+                            onClick = { inputText = prompt },
+                            label = {
+                                Text(
+                                    text = if (prompt.length > 40) prompt.take(40) + "…" else prompt,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
+                }
+            }
+
             AnimatedVisibility(visible = queuedMessages.isNotEmpty()) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "${queuedMessages.size} message${if (queuedMessages.size > 1) "s" else ""} queued",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    TextButton(
-                        onClick = { chatViewModel.clearQueue() },
-                        modifier = Modifier.height(28.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "Clear",
-                            style = MaterialTheme.typography.labelSmall
+                            text = "${queuedMessages.size} message${if (queuedMessages.size > 1) "s" else ""} queued · delivers after this turn",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
+                        TextButton(
+                            onClick = { chatViewModel.clearQueue() },
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text(
+                                "Clear",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                    // Per-item: tap the text to pull it back into the composer
+                    // for editing; ✕ to drop just that one. (Reorder omitted —
+                    // low value vs. drag-handle complexity on a transient queue.)
+                    queuedMessages.forEachIndexed { index, msg ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        chatViewModel.takeQueuedForEdit(index)?.let { t ->
+                                            inputText = if (inputText.isBlank()) t else "$inputText $t"
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp),
+                            )
+                            TextButton(
+                                onClick = { chatViewModel.removeQueuedAt(index) },
+                                modifier = Modifier.height(28.dp),
+                            ) {
+                                Text("✕", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 }
             }
@@ -2152,15 +2325,29 @@ fun ChatScreen(
                             ),
                         )
                         if (modelProviders.any { it.models.isNotEmpty() }) {
-                            modelProviders.forEach { provider ->
+                            // Current provider first — matches the desktop picker,
+                            // which defaults the selection to is_current, so the
+                            // user's authenticated/current provider leads.
+                            modelProviders.sortedByDescending { it.isCurrent }.forEach { provider ->
                                 provider.models.distinct().forEach { model ->
+                                    // Respect upstream's per-provider availability:
+                                    // unavailable_models are paid models the account
+                                    // can't pick (free-tier / no credits) — disable
+                                    // them so a switch can't 400 / credits-fail.
+                                    val unavailable = model in provider.unavailableModels
                                     add(
                                         ChatInputPickerOption(
                                             label = model,
                                             value = model,
                                             provider = provider.slug,
                                             group = provider.name,
+                                            secondary = when {
+                                                unavailable -> "Not on your plan"
+                                                !provider.authenticated -> provider.warning ?: "Needs setup"
+                                                else -> null
+                                            },
                                             selected = selectedModelOverride == model,
+                                            enabled = !unavailable,
                                         ),
                                     )
                                 }
@@ -2256,11 +2443,24 @@ fun ChatScreen(
                         ).show()
                     }
                 },
-                onStop = { chatViewModel.cancelStream() },
+                onStop = {
+                    chatViewModel.cancelStream()
+                    // Firm haptic (LongPress — TextHandleMove was near-
+                    // imperceptible) plus a "Stopped" badge stamped on the turn
+                    // (see ChatViewModel.cancelStream) so the cancel is
+                    // unmistakable, not just a transient toast.
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Stopped",
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                },
                 onAttach = { filePickerLauncher.launch(arrayOf("*/*")) },
                 onLongPressAttach = { showCommandPalette = true },
                 charLimit = charLimit,
-                caption = inputCaption,
+                caption = turnStatus ?: inputCaption,
                 voiceReady = voiceReady,
                 showVoiceHint = !voiceHintSeen,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
@@ -2274,7 +2474,19 @@ fun ChatScreen(
                     option.value?.let { chatViewModel.selectReasoningEffort(it) }
                 },
                 enabled = chatReady,
+                onModelPickerClick = { showModelSheet = true },
             )
+
+            if (showModelSheet) {
+                ModelPickerSheet(
+                    options = modelPickerOptions,
+                    onSelect = { option ->
+                        showModelSheet = false
+                        chatViewModel.selectModel(option.value, option.provider)
+                    },
+                    onDismiss = { showModelSheet = false },
+                )
+            }
         } // end Column
 
         // Mic permission denied banner — title + body + Open Settings action.

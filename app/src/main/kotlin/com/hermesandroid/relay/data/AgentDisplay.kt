@@ -66,11 +66,17 @@ object AgentDisplay {
         localDisplayAlias(localDisplayAlias)?.let { return it }
         profileDisplayName(profile)?.let { return it }
 
+        // "none"/"neutral" are the upstream "cleared overlay" aliases — treat
+        // them like "default" for identity: fall through to the server default
+        // (or the base connection identity) rather than rendering the literal
+        // word as an agent name.
         val personalityName = if (
-            selectedPersonality == "default" &&
+            isClearedPersonality(selectedPersonality) &&
             defaultPersonality.isNotBlank()
         ) {
             defaultPersonality
+        } else if (isClearedPersonality(selectedPersonality)) {
+            ""
         } else {
             selectedPersonality
         }
@@ -83,10 +89,18 @@ object AgentDisplay {
         }
     }
 
+    /** True for the upstream "clear the overlay" aliases (default == none == neutral). */
+    fun isClearedPersonality(value: String): Boolean =
+        value.trim().lowercase() in setOf("default", "none", "neutral", "")
+
     fun personalityLabel(
         selectedPersonality: String,
         defaultPersonality: String,
     ): String = when {
+        // Explicit "none" — show "None" (or the configured default name, if any)
+        // so the cleared-overlay state is legible in the picker header.
+        selectedPersonality.trim().lowercase() in setOf("none", "neutral") ->
+            if (defaultPersonality.isNotBlank()) titleCase(defaultPersonality.trim()) else "None"
         selectedPersonality != "default" && selectedPersonality.isNotBlank() ->
             titleCase(selectedPersonality.trim())
         defaultPersonality.isNotBlank() -> titleCase(defaultPersonality.trim())
@@ -94,6 +108,19 @@ object AgentDisplay {
     }
 
     fun displayModelName(model: String?): String? =
+        model
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.takeUnless { it.lowercase() in GENERIC_MODEL_ALIASES }
+
+    /**
+     * A model string safe to SEND to the server as a model override or
+     * `config.set model=…`. Returns null for the generic agent placeholders
+     * ("hermes-agent", …) which are NOT real models — the server rejects them
+     * (HTTP 400) and falls back. Null means "send no model; use the server's
+     * configured default."
+     */
+    fun requestModelName(model: String?): String? =
         model
             ?.trim()
             ?.takeIf { it.isNotEmpty() }

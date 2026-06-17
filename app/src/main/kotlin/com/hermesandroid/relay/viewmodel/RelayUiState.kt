@@ -17,7 +17,7 @@ import com.hermesandroid.relay.ui.components.BadgeState
  * underlying moment.
  *
  * Grace-window behavior: when the session is paired but the WSS is
- * currently [com.hermesandroid.relay.network.ConnectionState.Disconnected],
+ * currently [com.hermesandroid.relay.network.relay.ConnectionState.Disconnected],
  * the VM emits [Connecting] for a short grace window (see
  * `RELAY_RECONNECT_GRACE_MS` in [ConnectionViewModel]) and only promotes
  * to [Stale] if the WSS doesn't come up in time. This avoids the "flash
@@ -45,7 +45,7 @@ sealed interface RelayUiState {
     data object Connected : RelayUiState
 
     /**
-     * Either an in-flight [Connecting]/[com.hermesandroid.relay.network.ConnectionState.Reconnecting]
+     * Either an in-flight [Connecting]/[com.hermesandroid.relay.network.relay.ConnectionState.Reconnecting]
      * WSS attempt OR the grace window right after a Paired-but-Disconnected
      * transition. UI renders this in amber — "we're trying, hold on."
      */
@@ -58,6 +58,17 @@ sealed interface RelayUiState {
      * re-pair needed. Rendered as unreachable with a "tap to reconnect" hint.
      */
     data object Stale : RelayUiState
+
+    /**
+     * The relay rejected our session token (revoked, or wiped by a relay
+     * restart) — i.e. [com.hermesandroid.relay.auth.AuthState.Failed]. Unlike
+     * [Stale], reconnecting won't help: the fix is to pair again. Rendered red
+     * with a "tap to pair again" hint, and the row's tap opens the relay info /
+     * re-pair surface rather than firing another doomed reconnect. This is the
+     * highest-frequency real failure because the relay's session store is
+     * in-memory and wiped on every restart.
+     */
+    data object Expired : RelayUiState
 
     /**
      * No paired session (or auth failed). User action required — usually
@@ -144,7 +155,7 @@ fun ConnectionHandoffStatus.asConnectionStatusSnapshot(): ConnectionStatusSnapsh
 fun RelayUiState.asBadgeState(): BadgeState = when (this) {
     RelayUiState.Connected -> BadgeState.Connected
     RelayUiState.Connecting -> BadgeState.Connecting
-    RelayUiState.Stale, RelayUiState.Disconnected, RelayUiState.NotConfigured -> BadgeState.Disconnected
+    RelayUiState.Stale, RelayUiState.Expired, RelayUiState.Disconnected, RelayUiState.NotConfigured -> BadgeState.Disconnected
 }
 
 /** Shortcut — delegate to the phase. */
@@ -161,6 +172,7 @@ fun RelayUiState.statusText(connectedLabel: String): String = when (this) {
     RelayUiState.Connected -> connectedLabel
     RelayUiState.Connecting -> "Reconnecting…"
     RelayUiState.Stale -> "Relay unreachable - tap to reconnect"
+    RelayUiState.Expired -> "Pairing expired — tap to pair again"
     RelayUiState.Disconnected -> "Disconnected"
 }
 
@@ -187,6 +199,7 @@ fun RelayRowState.statusText(connectedLabel: String): String {
         RelayUiState.Connected -> "$base \u00B7 $display"
         RelayUiState.Connecting -> "$base \u00B7 $display"
         RelayUiState.Stale -> "Unreachable \u00B7 $display - tap to reconnect"
+        RelayUiState.Expired -> base
         RelayUiState.Disconnected -> "$base (last via $display)"
         RelayUiState.NotConfigured -> base
     }

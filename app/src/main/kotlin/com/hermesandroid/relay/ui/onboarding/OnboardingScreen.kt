@@ -315,11 +315,11 @@ private fun WelcomePage() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SetupPathSummary(
-                label = "Standard",
+                label = "Chat & Manage",
                 description = "Connect to your running Hermes dashboard and API. No Relay install or pairing required.",
             )
             SetupPathSummary(
-                label = "Advanced",
+                label = "Power tools",
                 description = "Add Hermes-Relay for Terminal, Bridge, relay sessions, and channel grants.",
             )
         }
@@ -402,7 +402,7 @@ private fun SetupPathSummary(
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.width(78.dp),
+                modifier = Modifier.width(96.dp),
             )
             Text(
                 text = description,

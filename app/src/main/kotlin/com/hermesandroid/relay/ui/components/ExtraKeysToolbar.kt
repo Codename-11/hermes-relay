@@ -51,6 +51,9 @@ fun ExtraKeysToolbar(
     onScrollUp: (() -> Unit)? = null,
     onScrollDown: (() -> Unit)? = null,
     onScrollToBottom: (() -> Unit)? = null,
+    onPaste: (() -> Unit)? = null,
+    onCopy: (() -> Unit)? = null,
+    onToggleKeyboard: (() -> Unit)? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     val containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -99,6 +102,43 @@ fun ExtraKeysToolbar(
                 onAltToggle()
             }
         )
+
+        // Clipboard + keyboard cluster — selecting/copying/pasting and raising
+        // the soft keyboard are all unreliable through long-press inside an
+        // Android WebView, so these explicit keys are the dependable path.
+        onCopy?.let { copy ->
+            ToolbarKey(
+                label = "COPY",
+                active = false,
+                weight = 1.7f,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    copy()
+                }
+            )
+        }
+        onPaste?.let { paste ->
+            ToolbarKey(
+                label = "PASTE",
+                active = false,
+                weight = 1.7f,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    paste()
+                }
+            )
+        }
+        onToggleKeyboard?.let { toggle ->
+            ToolbarKey(
+                label = "⌨", // ⌨ — show/hide the soft keyboard
+                active = false,
+                weight = 1f,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    toggle()
+                }
+            )
+        }
 
         Spacer(modifier = Modifier.width(4.dp))
 

@@ -145,6 +145,7 @@ fun ChatInputBar(
     isDarkTheme: Boolean,
     modelControl: ChatInputPickerControl? = null,
     onModelOptionSelected: (ChatInputPickerOption) -> Unit = {},
+    onModelPickerClick: (() -> Unit)? = null,
     effortControl: ChatInputPickerControl? = null,
     onEffortOptionSelected: (ChatInputPickerOption) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -294,6 +295,7 @@ fun ChatInputBar(
                             control = modelControl,
                             onSelect = onModelOptionSelected,
                             modifier = Modifier.widthIn(max = 126.dp),
+                            onClickOverride = onModelPickerClick,
                         )
                     }
 
@@ -422,6 +424,9 @@ private fun ChatInputPickerChip(
     control: ChatInputPickerControl,
     onSelect: (ChatInputPickerOption) -> Unit,
     modifier: Modifier = Modifier,
+    // When set, tapping the chip opens this instead of the inline dropdown —
+    // used by the model chip to open the full searchable ModelPickerSheet.
+    onClickOverride: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val enabled = control.enabled && control.options.isNotEmpty()
@@ -439,7 +444,9 @@ private fun ChatInputPickerChip(
             modifier = Modifier
                 .heightIn(min = 32.dp)
                 .clip(ChatInputChipShape)
-                .clickable(enabled = enabled) { expanded = true },
+                .clickable(enabled = enabled) {
+                    if (onClickOverride != null) onClickOverride() else expanded = true
+                },
         ) {
             Row(
                 modifier = Modifier.padding(start = 10.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),

@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +49,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -394,10 +396,33 @@ fun MessageBubble(
 
                 // Streaming indicator
                 if (message.isStreaming) {
-                    StreamingDots(
-                        color = textColor.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                    // After a few seconds with no content yet, escalate the bare
+                    // dots to a labeled "Still working…" so a slow first token
+                    // never reads as a hang on the SSE / sessions paths.
+                    val awaitingFirstToken = message.content.isBlank()
+                    var showStillWorking by remember(message.id) { mutableStateOf(false) }
+                    LaunchedEffect(message.id, awaitingFirstToken) {
+                        showStillWorking = false
+                        if (awaitingFirstToken) {
+                            delay(4_000)
+                            showStillWorking = true
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StreamingDots(
+                            color = textColor.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        if (showStillWorking && awaitingFirstToken) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Still working…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = textColor.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                    }
                 }
 
                 // Timestamp

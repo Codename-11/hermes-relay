@@ -149,6 +149,18 @@
             }
         });
 
+        // Report scroll position so the host can show a "jump to latest" pill
+        // while the user is scrolled up into scrollback. atBottom is true when
+        // the viewport is pinned to the live tail.
+        const reportScroll = function () {
+            if (!(window.AndroidBridge && window.AndroidBridge.onScrollPosition)) return;
+            try {
+                const buf = term.buffer.active;
+                window.AndroidBridge.onScrollPosition(buf.viewportY >= buf.baseY);
+            } catch (_) {}
+        };
+        term.onScroll(function () { reportScroll(); });
+
         // ── Inbound: Android → terminal ───────────────────────────────────
         // Base64-encoded payloads avoid JS string-escaping headaches when the
         // stream contains control characters, raw escape sequences, or bytes
@@ -221,6 +233,13 @@
 
         window.focusTerminal = function () {
             try { term.focus(); } catch (_) {}
+        };
+
+        // Current xterm selection as plain text ('' when nothing selected).
+        // Read back via WebView.evaluateJavascript for the toolbar Copy key,
+        // since long-press copy is unreliable inside an Android WebView.
+        window.getSelectionText = function () {
+            try { return term.getSelection() || ''; } catch (_) { return ''; }
         };
 
         window.clearTerminal = function () {

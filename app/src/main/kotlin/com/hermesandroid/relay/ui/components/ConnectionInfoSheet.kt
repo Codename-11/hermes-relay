@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -69,8 +70,8 @@ import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
-import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -645,10 +646,20 @@ fun AgentInfoSheet(
     val availableModels by chatViewModel.availableModels.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
+    val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
+    val fastEnabled by chatViewModel.fastEnabled.collectAsState()
 
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
     LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    // Re-pull server-supplied personalities (list + default + active) on open so
+    // a server-side change shows without an app reload.
+    LaunchedEffect(Unit) { chatViewModel.refreshPersonalities() }
+    // Re-pull the SSE-fallback model list + skill catalog on open so server-side
+    // changes surface without an app reload (gateway model groups are covered by
+    // refreshModelOptions above; skills feed the command palette).
+    LaunchedEffect(Unit) { chatViewModel.refreshModels() }
+    LaunchedEffect(Unit) { chatViewModel.refreshSkills() }
     // Pull the host's agent profiles from the dashboard so they appear in the
     // Profile picker even on a dashboard-only (non-relay) connection.
     LaunchedEffect(Unit) { connectionViewModel.refreshDashboardProfiles() }
@@ -662,6 +673,7 @@ fun AgentInfoSheet(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
+    val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
 
     // Multi-connection switcher state — folded into this sheet in place of
     // the separate top-bar ConnectionChip (see 2026-04-20 DEVLOG). Read
@@ -731,12 +743,19 @@ fun AgentInfoSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // ---- Header: avatar + agent name + live status ----
+            // Detail view shows the provider next to the model (desktop-style);
+            // the chat composer pill stays model-only.
+            val currentProviderLabel = modelProviders
+                .firstOrNull { gatewayCurrentProvider.isNotBlank() && it.slug.equals(gatewayCurrentProvider, ignoreCase = true) }
+                ?.name
+                ?.takeIf { it.isNotBlank() }
             AgentSheetHeader(
                 profile = effectiveDisplayProfile,
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 localDisplayAlias = profileDisplayAlias,
                 serverModelName = serverModelName,
+                modelProviderLabel = currentProviderLabel,
                 apiServerReachable = apiServerReachable,
                 chatMode = chatMode,
                 isCustomized = selectedProfile != null ||
@@ -1017,47 +1036,47 @@ fun AgentInfoSheet(
                 modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
             ) {
 
-                // Default row — maps to selectedPersonality == "default" which
-                // the VM resolves to whatever server-side personality is
-                // currently active.
+                // None row — the explicit "no personality overlay" state
+                // (upstream `/personality none`). On the gateway this is
+                // server-applied; on SSE it just sends no persona prompt. There
+                // is intentionally no synthetic client "Default" row — upstream's
+                // active value is `none` or a named personality, and the server's
+                // configured default (if any) shows below as the row tagged
+                // "(default)", highlighted whenever it's the active one.
                 ProfileRadioRow(
-                    primary = if (defaultPersonality.isNotBlank()) {
-                        "${defaultPersonality.replaceFirstChar { it.uppercase() }} (default)"
-                    } else {
-                        "Default"
-                    },
-                    secondary = null,
-                    selected = selectedPersonality == "default",
+                    primary = "None",
+                    secondary = "No personality overlay",
+                    selected = selectedPersonality == "none" || selectedPersonality == "neutral",
                     enabled = !isStreaming,
                     onSelect = {
-                        if (selectedPersonality != "default") {
-                            chatViewModel.selectPersonality("default")
+                        if (selectedPersonality != "none") {
+                            chatViewModel.selectPersonality("none")
                             if (!profileOverridesPersonality) {
-                                toast("Using default personality")
+                                toast("Personality cleared")
                             }
                         }
                     },
                 )
 
-                personalityNames
-                    .filter { it != defaultPersonality }
-                    .forEach { name ->
-                        ProfileRadioRow(
-                            primary = name.replaceFirstChar { it.uppercase() },
-                            secondary = null,
-                            selected = selectedPersonality == name,
-                            enabled = !isStreaming,
-                            onSelect = {
-                                if (selectedPersonality != name) {
-                                    chatViewModel.selectPersonality(name)
-                                    if (!profileOverridesPersonality) {
-                                        val display = name.replaceFirstChar { it.uppercase() }
-                                        toast("Personality: $display")
-                                    }
+                personalityNames.forEach { name ->
+                    val isServerDefault = name.equals(defaultPersonality, ignoreCase = true)
+                    ProfileRadioRow(
+                        primary = name.replaceFirstChar { it.uppercase() } +
+                            if (isServerDefault) " (default)" else "",
+                        secondary = null,
+                        selected = selectedPersonality == name,
+                        enabled = !isStreaming,
+                        onSelect = {
+                            if (selectedPersonality != name) {
+                                chatViewModel.selectPersonality(name)
+                                if (!profileOverridesPersonality) {
+                                    val display = name.replaceFirstChar { it.uppercase() }
+                                    toast("Personality: $display")
                                 }
-                            },
-                        )
-                    }
+                            }
+                        },
+                    )
+                }
 
                 // When a profile SOUL is active AND the user has picked a
                 // non-default personality, make the precedence explicit
@@ -1065,7 +1084,9 @@ fun AgentInfoSheet(
                 // The mirror caption in the Profile section tells the same
                 // story from the other direction — both are kept because a
                 // user scanning either section should see the constraint.
-                if (profileOverridesPersonality && selectedPersonality != "default") {
+                if (profileOverridesPersonality &&
+                    selectedPersonality != "default" && selectedPersonality != "none"
+                ) {
                     Text(
                         text = "Profile SOUL overrides personality while active.",
                         style = MaterialTheme.typography.labelSmall,
@@ -1153,6 +1174,85 @@ fun AgentInfoSheet(
                                 },
                             )
                         }
+                    }
+                }
+            }
+
+            // ---- Safety & speed section (gateway only) ----
+            // YOLO (approval bypass) + Fast (priority tier) mirror the desktop
+            // config.set yolo/fast. Gated on a live gateway (model.options groups
+            // present); both are session-scoped and track live via session.info.
+            if (modelProviders.isNotEmpty()) {
+                HorizontalDivider()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel(title = "Safety & speed", hint = null)
+
+                    // YOLO — bypasses command approvals. On-state is loud.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("YOLO mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Bypasses command approvals — Hermes runs tools without asking.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (yoloEnabled == true) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        Switch(
+                            checked = yoloEnabled == true,
+                            enabled = !isStreaming,
+                            onCheckedChange = { chatViewModel.setYolo(it) },
+                        )
+                    }
+                    if (yoloEnabled == true) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.errorContainer)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = "Approvals are OFF for this session.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+
+                    // Fast — priority service tier (model-gated server-side).
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Fast mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Priority service tier — lower latency where the model supports it.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = fastEnabled == true,
+                            enabled = !isStreaming,
+                            onCheckedChange = { chatViewModel.setFast(it) },
+                        )
                     }
                 }
             }
@@ -1632,6 +1732,7 @@ private fun AgentSheetHeader(
     defaultPersonality: String,
     localDisplayAlias: String?,
     serverModelName: String,
+    modelProviderLabel: String? = null,
     apiServerReachable: Boolean,
     chatMode: ChatMode,
     isCustomized: Boolean,
@@ -1697,7 +1798,8 @@ private fun AgentSheetHeader(
             )
             modelLabel?.takeIf { it.isNotBlank() }?.let { label ->
                 Text(
-                    text = label,
+                    text = modelProviderLabel?.takeIf { it.isNotBlank() }
+                        ?.let { "$label · $it" } ?: label,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

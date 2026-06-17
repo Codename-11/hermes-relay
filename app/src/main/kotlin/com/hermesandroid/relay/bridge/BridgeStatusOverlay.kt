@@ -25,7 +25,6 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hermesandroid.relay.ui.components.BridgeStatusOverlayChip
 import com.hermesandroid.relay.ui.components.DestructiveVerbConfirmDialog
-import com.hermesandroid.relay.util.ComposeArrWorkaround
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -158,7 +157,6 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
                 Log.w(TAG, "addView(chip) failed", it)
                 return
             }
-        compose.post { ComposeArrWorkaround.disableForViewTree(compose) }
         chipView = compose
         chipUnattended = unattended
     }
@@ -227,7 +225,6 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
             onResult(false)
             return
         }
-        compose.post { ComposeArrWorkaround.disableForViewTree(compose) }
         activeConfirmations[request.id] = compose
     }
 

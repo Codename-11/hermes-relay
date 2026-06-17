@@ -23,25 +23,25 @@ import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.HermesCardField
 import com.hermesandroid.relay.data.HermesCardInput
-import com.hermesandroid.relay.network.ActiveTurnHandle
-import com.hermesandroid.relay.network.GatewayAsk
-import com.hermesandroid.relay.network.GatewayChatClient
-import com.hermesandroid.relay.network.GatewayConnectionState
-import com.hermesandroid.relay.network.GatewayModelProvider
-import com.hermesandroid.relay.network.GatewayAttachment
-import com.hermesandroid.relay.network.GatewayRpcException
-import com.hermesandroid.relay.network.GatewayTurnCallbacks
-import com.hermesandroid.relay.network.HermesApiClient
-import com.hermesandroid.relay.network.RelayHttpClient
-import com.hermesandroid.relay.network.RealtimeVoiceEvent
-import com.hermesandroid.relay.network.SteerResult
-import com.hermesandroid.relay.network.handlers.ChatHandler
-import com.hermesandroid.relay.network.handlers.LocalDispatchResult
-import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
-import com.hermesandroid.relay.network.models.MessageItem
-import com.hermesandroid.relay.network.models.SessionItem
-import com.hermesandroid.relay.network.models.SkillInfo
-import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
+import com.hermesandroid.relay.network.upstream.GatewayAsk
+import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayAttachment
+import com.hermesandroid.relay.network.upstream.GatewayRpcException
+import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
+import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.relay.RelayHttpClient
+import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
+import com.hermesandroid.relay.network.upstream.SteerResult
+import com.hermesandroid.relay.network.upstream.ChatHandler
+import com.hermesandroid.relay.network.shared.LocalDispatchResult
+import com.hermesandroid.relay.network.upstream.formatPhoneActionResult
+import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.models.SkillInfo
+import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
@@ -72,6 +72,18 @@ import kotlinx.serialization.json.contentOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Absolute per-session context-window usage in tokens — the data behind the
+ * desktop-style "used / max" context bar. [fraction] is the fill 0..1.
+ */
+data class ContextWindowUsage(
+    val usedTokens: Int,
+    val maxTokens: Int,
+) {
+    val fraction: Float
+        get() = if (maxTokens > 0) (usedTokens.toFloat() / maxTokens).coerceIn(0f, 1f) else 0f
+}
 
 class ChatViewModel : ViewModel() {
 
@@ -162,6 +174,19 @@ class ChatViewModel : ViewModel() {
     private val _queuedMessages = MutableStateFlow<List<String>>(emptyList())
     val queuedMessages: StateFlow<List<String>> = _queuedMessages.asStateFlow()
 
+    // --- Recent prompts (mobile-friendly history recall — no physical up-arrow
+    // on a soft keyboard, so the composer surfaces these as tappable chips) ---
+    private val _recentPrompts = MutableStateFlow<List<String>>(emptyList())
+    val recentPrompts: StateFlow<List<String>> = _recentPrompts.asStateFlow()
+
+    private fun recordRecentPrompt(text: String) {
+        val t = text.trim()
+        if (t.isBlank() || t.startsWith("/")) return // skip blanks + slash commands
+        _recentPrompts.update { prev ->
+            (listOf(t) + prev.filterNot { it == t }).take(RECENT_PROMPTS_LIMIT)
+        }
+    }
+
     /**
      * Recent tool-call timeline for the Stats-for-Nerds + Timeline views.
      *
@@ -241,6 +266,14 @@ class ChatViewModel : ViewModel() {
 
     private val _reasoningDisplay = MutableStateFlow<String?>(null)
 
+    /** Effective YOLO (approval-bypass) state for the active gateway session; null = unknown. */
+    private val _yoloEnabled = MutableStateFlow<Boolean?>(null)
+    val yoloEnabled: StateFlow<Boolean?> = _yoloEnabled.asStateFlow()
+
+    /** Fast-mode (priority tier) state for the active gateway session; null = unknown. */
+    private val _fastEnabled = MutableStateFlow<Boolean?>(null)
+    val fastEnabled: StateFlow<Boolean?> = _fastEnabled.asStateFlow()
+
     /**
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
@@ -312,15 +345,19 @@ class ChatViewModel : ViewModel() {
      * default.
      */
     fun selectModel(model: String?, provider: String? = null) {
-        _selectedModelOverride.value = model?.takeIf { it.isNotBlank() }
+        _selectedModelOverride.value = AgentDisplay.requestModelName(model)
         val gateway = gatewayClient
         val handler = chatHandler
         if (model.isNullOrBlank()) {
             if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
-                val defaultModel = (effectiveProfileProvider() ?: selectedProfileProvider())
-                    ?.model
-                    ?.takeIf { it.isNotBlank() }
-                    ?: _serverModelName.value.takeIf { it.isNotBlank() }
+                // Never send a generic agent alias ("hermes-agent") as a model —
+                // the server rejects it (HTTP 400 → fallback). Resolving to null
+                // here skips the setModel below, leaving the gateway on its true
+                // server-configured default.
+                val defaultModel = AgentDisplay.requestModelName(
+                    (effectiveProfileProvider() ?: selectedProfileProvider())?.model
+                        ?: _serverModelName.value,
+                )
                 if (!defaultModel.isNullOrBlank()) {
                     viewModelScope.launch {
                         gateway.prewarm(handler.currentSessionId.value)
@@ -330,12 +367,9 @@ class ChatViewModel : ViewModel() {
                                 val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
                                 _gatewayCurrentModel.value = resolved
                                 _gatewayCurrentProvider.value = ""
-                                handler.addSystemNotice(
-                                    listOfNotNull(
-                                        "Using server default model ($resolved).",
-                                        warning,
-                                    ).joinToString("\n\n"),
-                                )
+                                // Pill update is the confirmation — no bubble.
+                                // Surface only a server warning, ephemerally.
+                                warning?.let { _transientNotice.tryEmit(it) }
                                 gateway.modelOptions().onSuccess {
                                     _modelProviders.value = it.providers
                                     _gatewayCurrentModel.value = it.currentModel
@@ -343,7 +377,7 @@ class ChatViewModel : ViewModel() {
                                 }
                             },
                             onFailure = { e ->
-                                handler.addSystemNotice(
+                                _transientNotice.tryEmit(
                                     "Couldn't switch to server default model: ${e.message ?: "unknown error"}",
                                 )
                             },
@@ -355,8 +389,15 @@ class ChatViewModel : ViewModel() {
             return
         }
         if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
+            // Defensive: never push a generic agent alias ("hermes-agent") as a
+            // model — it's not a real model and the server 400s on it.
+            val sendModel = AgentDisplay.requestModelName(model)
+            if (sendModel == null) {
+                refreshActiveAgentName()
+                return
+            }
             // Upstream model-switch flag string: `<model> [--provider <slug>]`.
-            val value = if (!provider.isNullOrBlank()) "$model --provider $provider" else model
+            val value = if (!provider.isNullOrBlank()) "$sendModel --provider $provider" else sendModel
             viewModelScope.launch {
                 // Warm a session so the switch is session-scoped (config.set
                 // also works sessionless, falling back to the global default).
@@ -370,9 +411,9 @@ class ChatViewModel : ViewModel() {
                         val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
                         _gatewayCurrentModel.value = resolved
                         _gatewayCurrentProvider.value = provider.orEmpty()
-                        handler.addSystemNotice(
-                            listOfNotNull("Model switched to $resolved.", warning).joinToString("\n\n"),
-                        )
+                        // Pill update is the confirmation — no system bubble.
+                        // Surface only a server warning, ephemerally.
+                        warning?.let { _transientNotice.tryEmit(it) }
                         gateway.modelOptions().onSuccess {
                             _modelProviders.value = it.providers
                             _gatewayCurrentModel.value = it.currentModel
@@ -380,7 +421,7 @@ class ChatViewModel : ViewModel() {
                         }
                     },
                     onFailure = { e ->
-                        handler.addSystemNotice("Couldn't switch model: ${e.message ?: "unknown error"}")
+                        _transientNotice.tryEmit("Couldn't switch model: ${e.message ?: "unknown error"}")
                     },
                 )
             }
@@ -417,6 +458,70 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * Toggle per-session approval bypass (YOLO). Session-scoped + ephemeral the
+     * way the desktop does it — never persists global auto-approve. Optimistic;
+     * rolls back + notices on failure. The effective state also tracks live via
+     * `session.info` ([startGatewayStateSync]). Gateway-only.
+     */
+    fun setYolo(enabled: Boolean) {
+        val previous = _yoloEnabled.value
+        _yoloEnabled.value = enabled
+        val gateway = gatewayClient ?: run { _yoloEnabled.value = previous; return }
+        val handler = chatHandler
+        if (streamingEndpoint != "gateway" || handler == null) {
+            _yoloEnabled.value = previous
+            return
+        }
+        viewModelScope.launch {
+            // The session-scoped flag needs a live session — warm it first.
+            gateway.prewarm(handler.currentSessionId.value)
+            // A session/connection switch during the (possibly slow) prewarm may
+            // have swapped the client or nulled the state — don't write stale.
+            if (gatewayClient !== gateway) return@launch
+            gateway.setYolo(enabled).fold(
+                onSuccess = { _yoloEnabled.value = it },
+                onFailure = { e ->
+                    // Only roll back if we still own the optimistic value (a
+                    // mid-flight switch may have already nulled it).
+                    if (_yoloEnabled.value == enabled) _yoloEnabled.value = previous
+                    handler.addSystemNotice(
+                        "Couldn't ${if (enabled) "enable" else "disable"} YOLO: ${e.message ?: "gateway error"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Toggle fast mode (priority service tier). Optimistic; rolls back + notices
+     * on failure — including the upstream capability gate (a model with no fast
+     * tier rejects it). Gateway-only; live state tracks via `session.info`.
+     */
+    fun setFast(enabled: Boolean) {
+        val previous = _fastEnabled.value
+        _fastEnabled.value = enabled
+        val gateway = gatewayClient ?: run { _fastEnabled.value = previous; return }
+        val handler = chatHandler
+        if (streamingEndpoint != "gateway" || handler == null) {
+            _fastEnabled.value = previous
+            return
+        }
+        viewModelScope.launch {
+            gateway.prewarm(handler.currentSessionId.value)
+            if (gatewayClient !== gateway) return@launch
+            gateway.setFast(enabled).fold(
+                onSuccess = { _fastEnabled.value = it },
+                onFailure = { e ->
+                    if (_fastEnabled.value == enabled) _fastEnabled.value = previous
+                    handler.addSystemNotice(
+                        "Couldn't switch fast mode: ${e.message ?: "gateway error"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
      * Switch the active Hermes profile from the in-chat picker. Verified against
      * upstream `tui_gateway`: a profile is a FULL agent (its own HERMES_HOME/db,
      * model, SOUL, personality, skills), sessions are PROFILE-BOUND, and the
@@ -442,6 +547,10 @@ class ChatViewModel : ViewModel() {
         // the agent to the new profile (pulled live via sessionProfileProvider),
         // like the desktop spawning the profile's backend lazily on the next send.
         gateway.clearSession()
+        // Session-scoped YOLO/Fast don't carry across the profile's fresh session —
+        // null them so a stale flag can't show until the new session.info re-seeds.
+        _yoloEnabled.value = null
+        _fastEnabled.value = null
         // The profile brings its own model — refresh the picker's "current".
         viewModelScope.launch {
             gateway.modelOptions().onSuccess {
@@ -505,6 +614,13 @@ class ChatViewModel : ViewModel() {
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
+        // (Re)bind the session.info state sync to the live client so server-side
+        // personality/model changes drive the UI. Cancelled when the client drops.
+        if (changed) {
+            gatewayStateSyncJob?.cancel()
+            gatewayStateSyncJob = null
+            client?.let { startGatewayStateSync(it) }
+        }
         when {
             client == null -> {
                 _serverCommands.value = emptyList()
@@ -522,6 +638,9 @@ class ChatViewModel : ViewModel() {
                 fetchServerCommands(client)
                 refreshModelOptions()
                 refreshReasoningSettings()
+                // Seed the active personality over the already-ready socket so the
+                // picker reflects server truth without waiting for the first turn.
+                seedServerPersonality(client)
             }
             changed -> {
                 _serverCommands.value = emptyList()
@@ -531,6 +650,15 @@ class ChatViewModel : ViewModel() {
                 _selectedReasoningEffort.value = DEFAULT_REASONING_EFFORT
                 _reasoningDisplay.value = null
             }
+        }
+    }
+
+    /** One-shot `config.get personality` over a ready socket → drives the collector. */
+    private fun seedServerPersonality(client: GatewayChatClient) {
+        viewModelScope.launch {
+            // getPersonality() updates serverPersonality, which startGatewayStateSync
+            // observes — so no need to apply the result here directly.
+            client.getPersonality()
         }
     }
 
@@ -568,6 +696,17 @@ class ChatViewModel : ViewModel() {
     private val _contextUsage = MutableStateFlow<Float?>(null)
     val contextUsage: StateFlow<Float?> = _contextUsage.asStateFlow()
 
+    /**
+     * Absolute per-session context-window tokens (`used` / `max`) from the same
+     * gateway usage events that drive [contextUsage] — exposed so the context
+     * bar can show real token counts (`31k / 200k`) like the desktop, not just
+     * a percent. Null until the server reports a `context_used` + `context_max`
+     * for the active session; reset on every session switch / new / clear so it
+     * is strictly per-session.
+     */
+    private val _contextWindow = MutableStateFlow<ContextWindowUsage?>(null)
+    val contextWindow: StateFlow<ContextWindowUsage?> = _contextWindow.asStateFlow()
+
     /** Server slash-command catalog (`commands.catalog`) — 4th allCommands source. */
     private val _serverCommands = MutableStateFlow<List<SlashCommand>>(emptyList())
     val serverCommands: StateFlow<List<SlashCommand>> = _serverCommands.asStateFlow()
@@ -588,6 +727,14 @@ class ChatViewModel : ViewModel() {
     val steerNotice: StateFlow<String?> = _steerNotice.asStateFlow()
 
     /**
+     * One-shot ephemeral notices (e.g. a model-switch warning or error) that
+     * ChatScreen surfaces as a transient snackbar — never a persistent chat
+     * bubble. Model switches confirm via the pill updating, not a bubble.
+     */
+    private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
+
+    /**
      * Composer prefill requests from server command dispatch
      * (`{type:"prefill"}` — e.g. `/undo`). ChatScreen collects and sets the
      * input text.
@@ -598,6 +745,32 @@ class ChatViewModel : ViewModel() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val composerPrefill: SharedFlow<String> = _composerPrefill.asSharedFlow()
+
+    /**
+     * One-shot request to open the personality picker — emitted when a bare
+     * `/personality` (no argument) is sent. Picker commands aren't raw-forwarded
+     * on mobile (there's no inline arg-expansion popover like the desktop's), so
+     * the bare command opens the agent sheet's personality section instead.
+     * ChatScreen collects this and shows the sheet.
+     */
+    private val _openPersonalityPicker = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val openPersonalityPicker: SharedFlow<Unit> = _openPersonalityPicker.asSharedFlow()
+
+    /**
+     * One-shot request to open the model picker — emitted for a bare `/model`
+     * (the sibling picker command). `/model <args>` stays a real switch the
+     * gateway applies. ChatScreen collects this and shows the model sheet.
+     */
+    private val _openModelPicker = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val openModelPicker: SharedFlow<Unit> = _openModelPicker.asSharedFlow()
 
     /**
      * "Notify when Hermes finishes" setting — mirrored from
@@ -706,16 +879,157 @@ class ChatViewModel : ViewModel() {
         return apiClient?.getMessages(sessionId) ?: emptyList()
     }
 
+    /**
+     * Pick a personality. On the gateway this is server-owned the way the
+     * desktop + TUI do it: the value is pushed via `config.set` (which persists
+     * `display.personality` + applies the overlay live to the session), and the
+     * picker selection is then reconciled from the server's `session.info` /
+     * `config.get` truth by [startGatewayStateSync]. On the SSE fallbacks there is
+     * no server-side session personality, so the pick only drives the per-turn
+     * system-prompt injection in [startStream]. Pass "none" (or "default") to
+     * clear the overlay.
+     */
     fun selectPersonality(name: String) {
+        val previous = _selectedPersonality.value
         _selectedPersonality.value = name
         refreshActiveAgentName()
+        if (streamingEndpoint == "gateway") {
+            val gateway = gatewayClient ?: return
+            viewModelScope.launch {
+                gateway.setPersonality(personalityConfigValue(name)).onFailure { e ->
+                    // Server rejected it (e.g. unknown personality) — roll the
+                    // optimistic pick back and surface why. The notice now
+                    // survives the post-turn reconcile (system-notice preserve).
+                    _selectedPersonality.value = previous
+                    refreshActiveAgentName()
+                    chatHandler?.addSystemNotice(
+                        "Couldn't set personality: ${e.message ?: "gateway error"}"
+                    )
+                }
+                // On success the session.info echo + collector confirm the value.
+            }
+        }
+    }
+
+    /** App selection → upstream `config.set` value. default/none/neutral all clear. */
+    private fun personalityConfigValue(name: String): String =
+        if (AgentDisplay.isClearedPersonality(name)) "none" else name.trim().lowercase()
+
+    /**
+     * Mirror the gateway's active personality (`session.info` / `config.get`) into
+     * the picker selection so a change made via `/personality`, the desktop, or
+     * the TUI is reflected — and so the app stops injecting a stale overlay.
+     */
+    private fun applyServerPersonality(value: String) {
+        val mapped = if (AgentDisplay.isClearedPersonality(value)) "none" else value.trim().lowercase()
+        if (_selectedPersonality.value != mapped) {
+            _selectedPersonality.value = mapped
+            refreshActiveAgentName()
+        }
+    }
+
+    private var gatewayStateSyncJob: Job? = null
+
+    /**
+     * Last credential_warning already surfaced as a system notice, so the
+     * recurring `session.info` echoes (one per model/personality/profile switch
+     * + periodic refresh) don't re-post the same warning. Reset when the warning
+     * goes absent and on client change so a re-occurrence is shown again.
+     */
+    private var lastSurfacedCredentialWarning: String? = null
+
+    /**
+     * Track the active client's `session.info`-derived state (personality, model,
+     * provider, reasoning effort, credential warning, YOLO, fast) so a change made
+     * via a slash command, the desktop, or the TUI reflects in the app without an
+     * app reload. The collectors only observe flows (never cold-open the socket);
+     * the one-shot seed in [updateGatewayClient] is gated on a ready socket.
+     */
+    private fun startGatewayStateSync(client: GatewayChatClient) {
+        gatewayStateSyncJob?.cancel()
+        lastSurfacedCredentialWarning = null
+        gatewayStateSyncJob = viewModelScope.launch {
+            launch {
+                client.serverPersonality.collect { value ->
+                    if (gatewayClient !== client || value == null) return@collect
+                    applyServerPersonality(value)
+                }
+            }
+            launch {
+                client.serverModel.collect { value ->
+                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
+                    if (_gatewayCurrentModel.value != value) _gatewayCurrentModel.value = value
+                }
+            }
+            launch {
+                client.serverProvider.collect { value ->
+                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
+                    if (_gatewayCurrentProvider.value != value) _gatewayCurrentProvider.value = value
+                }
+            }
+            launch {
+                client.serverReasoningEffort.collect { value ->
+                    // Ignore blank (upstream "" = reasoning disabled — never
+                    // clobber the chip). Compare on the normalized value, the
+                    // same form the optimistic setter + config.get refresh store.
+                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
+                    val normalized = normalizeReasoningEffort(value)
+                    if (_selectedReasoningEffort.value != normalized) {
+                        _selectedReasoningEffort.value = normalized
+                    }
+                }
+            }
+            launch {
+                client.serverCredentialWarning.collect { warning ->
+                    if (gatewayClient !== client) return@collect
+                    if (warning.isNullOrBlank()) {
+                        // Key fixed / provider switched — reset so a future
+                        // recurrence is surfaced again. (Identity already guarded
+                        // above so a torn-down old client can't reset the new one.)
+                        lastSurfacedCredentialWarning = null
+                        return@collect
+                    }
+                    // One notice per DISTINCT warning — session.info repeats it
+                    // on every config echo.
+                    if (warning == lastSurfacedCredentialWarning) return@collect
+                    lastSurfacedCredentialWarning = warning
+                    chatHandler?.addSystemNotice("⚠ $warning")
+                }
+            }
+            launch {
+                client.serverYolo.collect { value ->
+                    if (gatewayClient !== client || value == null) return@collect
+                    if (_yoloEnabled.value != value) _yoloEnabled.value = value
+                }
+            }
+            launch {
+                client.serverFast.collect { value ->
+                    if (gatewayClient !== client || value == null) return@collect
+                    if (_fastEnabled.value != value) _fastEnabled.value = value
+                }
+            }
+            launch {
+                // Paint the context bar from session.info (emitted on resume) so
+                // it doesn't wait for the first turn's usage event.
+                client.serverContext.collect { ctx ->
+                    if (gatewayClient !== client || ctx == null) return@collect
+                    val (used, max) = ctx
+                    if (max > 0) {
+                        _contextWindow.value = ContextWindowUsage(usedTokens = used, maxTokens = max)
+                        _contextUsage.value = (used.toFloat() / max).coerceIn(0f, 1f)
+                    }
+                }
+            }
+        }
     }
 
     /** The display name of the currently active personality (for chat bubbles). */
     val activePersonalityName: String
         get() {
             val selected = _selectedPersonality.value
-            return if (selected == "default") _defaultPersonality.value else selected
+            // "none"/"neutral" are cleared-overlay aliases — fall to the base
+            // identity, not the literal word.
+            return if (AgentDisplay.isClearedPersonality(selected)) _defaultPersonality.value else selected
         }
 
     private val _isLoadingHistory = MutableStateFlow(false)
@@ -740,6 +1054,7 @@ class ChatViewModel : ViewModel() {
     private val _emptySessions = MutableStateFlow<List<ChatSession>>(emptyList())
     private val _emptyError = MutableStateFlow<String?>(null)
     private val _emptySessionId = MutableStateFlow<String?>(null)
+    private val _emptyTurnStatus = MutableStateFlow<String?>(null)
 
     // Delegated to ChatHandler
     val messages: StateFlow<List<ChatMessage>>
@@ -764,6 +1079,10 @@ class ChatViewModel : ViewModel() {
      */
     val isStreaming: StateFlow<Boolean>
         get() = chatHandler?.isStreaming ?: _emptyStreaming
+
+    /** Latest gateway lifecycle status for the in-flight turn (or null). */
+    val turnStatus: StateFlow<String?>
+        get() = chatHandler?.turnStatus ?: _emptyTurnStatus
 
     val sessions: StateFlow<List<ChatSession>>
         get() = chatHandler?.sessions ?: _emptySessions
@@ -929,6 +1248,9 @@ class ChatViewModel : ViewModel() {
                 _steerNotice.value = null
                 _pendingAsk.value = null
                 _contextUsage.value = null
+                _contextWindow.value = null
+                _yoloEnabled.value = null
+                _fastEnabled.value = null
                 pendingTruncateOrdinal = null
                 chatHandler?.let { handler ->
                     handler.clearMessages()
@@ -980,6 +1302,9 @@ class ChatViewModel : ViewModel() {
         _steerNotice.value = null
         _pendingAsk.value = null
         _contextUsage.value = null
+        _contextWindow.value = null
+        _yoloEnabled.value = null
+        _fastEnabled.value = null
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
@@ -1026,6 +1351,42 @@ class ChatViewModel : ViewModel() {
             _serverModelName.value = config.modelName
             refreshActiveAgentName(relabelGenericMessages = true)
         }
+    }
+
+    /**
+     * Re-pull server-supplied personality data — the list + configured default
+     * (`/api/config`) and, on the gateway, the active value (`config.get`). Safe
+     * to call whenever the personality UI becomes visible (agent sheet open) so a
+     * personality added/removed/changed server-side shows up without an app
+     * reload. The active selection also tracks live via `session.info`
+     * ([startGatewayStateSync]); this covers the LIST + cross-session changes.
+     */
+    fun refreshPersonalities() {
+        fetchPersonalities()
+        if (streamingEndpoint == "gateway") {
+            val client = gatewayClient
+            if (client != null && client.connectionState.value == GatewayConnectionState.Ready) {
+                viewModelScope.launch { client.getPersonality() }
+            }
+        }
+    }
+
+    /**
+     * Re-pull the server's skill catalog (GET /api/skills) so a skill
+     * added/removed server-side surfaces without an app reload. Fetched once
+     * otherwise (initialize / API-client update). Cheap idempotent GET.
+     */
+    fun refreshSkills() {
+        fetchSkills()
+    }
+
+    /**
+     * Re-pull the SSE-fallback model list (GET /v1/models). The gateway's curated
+     * groups refresh via [refreshModelOptions]; this covers [availableModels] used
+     * when no gateway model.options groups exist. Fetched once otherwise.
+     */
+    fun refreshModels() {
+        fetchModels()
     }
 
     // --- Session management ---
@@ -1109,7 +1470,10 @@ class ChatViewModel : ViewModel() {
                         handler.setSessionId(session.id)
                         handler.clearMessages()
                         _contextUsage.value = null
+                        _contextWindow.value = null
                         _pendingAsk.value = null
+                        _yoloEnabled.value = null
+                        _fastEnabled.value = null
                         onSessionChanged?.invoke(session.id)
                         AppAnalytics.onSessionCreated()
                     }
@@ -1136,7 +1500,10 @@ class ChatViewModel : ViewModel() {
         handler.setSessionId(sessionId)
         handler.clearMessages()
         _contextUsage.value = null
+        _contextWindow.value = null
         _pendingAsk.value = null
+        _yoloEnabled.value = null
+        _fastEnabled.value = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
 
@@ -1203,6 +1570,7 @@ class ChatViewModel : ViewModel() {
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
+        recordRecentPrompt(text)
 
         val client = apiClient ?: return
         val handler = chatHandler ?: return
@@ -1621,6 +1989,36 @@ class ChatViewModel : ViewModel() {
         val normalizedName = normalizeSlashCommandName(rawName) ?: return false
         val handler = chatHandler ?: return true
 
+        // `/personality` is a picker command upstream (model/skin/personality) —
+        // the desktop + TUI never raw-forward it: a bare command opens the picker
+        // and `/personality <name>` applies via config.set. Mirror that here
+        // instead of slash.exec (which on mobile dead-ends and only leaves a
+        // fragile notice). Handled before the gateway-route gate so it also
+        // works on the SSE fallbacks via the per-turn injection path.
+        if (normalizedName == "personality") {
+            val arg = text.substringAfter(' ', "").trim()
+            if (arg.isBlank()) {
+                _openPersonalityPicker.tryEmit(Unit)
+            } else if (AgentDisplay.isClearedPersonality(arg)) {
+                selectPersonality("none")
+                handler.addSystemNotice("Personality cleared — no overlay.")
+            } else {
+                selectPersonality(arg.lowercase())
+                handler.addSystemNotice(
+                    "Personality → ${arg.trim().replaceFirstChar { it.uppercase() }}"
+                )
+            }
+            return true
+        }
+
+        // `/model` is the sibling picker command: a bare `/model` opens the model
+        // picker (like the desktop), while `/model <args>` stays a real switch the
+        // gateway applies via slash.exec below.
+        if (normalizedName == "model" && text.substringAfter(' ', "").isBlank()) {
+            _openModelPicker.tryEmit(Unit)
+            return true
+        }
+
         if (streamingEndpoint != "gateway") {
             handler.addSystemNotice("Slash commands are available when chat is using the Hermes gateway route.")
             return true
@@ -1767,6 +2165,26 @@ class ChatViewModel : ViewModel() {
 
     fun clearQueue() {
         _queuedMessages.value = emptyList()
+    }
+
+    /** Drop a single queued message by index (no-op if out of range). */
+    fun removeQueuedAt(index: Int) {
+        _queuedMessages.update { list ->
+            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        }
+    }
+
+    /**
+     * Pull a queued message out for editing: removes it and returns its text so
+     * the composer can prefill it. Null if the index is out of range.
+     */
+    fun takeQueuedForEdit(index: Int): String? {
+        val current = _queuedMessages.value
+        if (index !in current.indices) return null
+        _queuedMessages.update { list ->
+            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        }
+        return current[index]
     }
 
     private fun drainQueue() {
@@ -2255,6 +2673,11 @@ class ChatViewModel : ViewModel() {
      *
      * **System-message precedence (Pass 3, 2026-04-18):**
      *
+     *  0. **Gateway transport** — the server owns the persona end-to-end: the
+     *     session is bound to the selected profile (SOUL applied server-side) and
+     *     the personality overlay rides `config.set`/`ephemeral_system_prompt`.
+     *     The phone sends NO persona/profile prompt (only the phone-status block)
+     *     so it can't double-apply. Cases 1–3 are the SSE-fallback rules.
      *  1. **Selected profile with a non-blank [Profile.systemMessage]** —
      *     profile wins outright. Profile is a richer, newer concept than
      *     personality: it bundles model + persona (from the profile's
@@ -2294,8 +2717,17 @@ class ChatViewModel : ViewModel() {
             ?.systemMessage
             ?.takeIf { !useIsolatedProfileApi && it.isNotBlank() }
         val personaPrompt: String? = when {
+            // On the gateway the server owns BOTH the profile SOUL (session.create
+            // is bound to the selected profile via sessionProfileProvider, so the
+            // backend builds the agent from its SOUL) AND the personality overlay
+            // (config.set → ephemeral_system_prompt). Re-sending either as a
+            // per-turn system message double-applies it, so send neither — the SSE
+            // fallbacks, which have no server-side profile/personality state, keep
+            // the injection paths below. The phone-status block is still appended.
+            streamingEndpoint == "gateway" -> null
             profileSystemMessage != null -> profileSystemMessage
-            selected != "default" && selected != _defaultPersonality.value ->
+            selected != "default" && !AgentDisplay.isClearedPersonality(selected) &&
+                selected != _defaultPersonality.value ->
                 // Non-default personality selected — send its system prompt
                 // to override the server default.
                 personalityPrompts[selected]
@@ -2418,15 +2850,26 @@ class ChatViewModel : ViewModel() {
             // restart. By message.complete the server has persisted the turn, so the
             // REST read is authoritative.
             val sid = handler.currentSessionId.value
+            // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
+            // has NO assistant message persisted server-side, so reconciling the
+            // server transcript would WIPE the just-shown error bubble (the user
+            // message stays, the assistant error vanishes — the disappearing-reply
+            // regression). Skip the message reconcile for errored turns — keep the
+            // local error visible — but still refresh the drawer + drain the queue.
+            val turnErrored = handler.messages.value
+                .lastOrNull { it.id == currentMessageId }
+                ?.badges?.contains("Error") == true
             if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
                 viewModelScope.launch {
-                    // Profile-aware read: a gateway turn on a non-default profile
-                    // persists into THAT profile's own state.db, so the bare
-                    // api_server `/api/sessions/{id}/messages` 404s → emptyList()
-                    // → a silent wipe of the just-finished turn. loadSessionHistory
-                    // prefers the `?profile=` dashboard loader on gateway connections.
-                    val serverMessages = loadSessionHistory(sid)
-                    handler.loadMessageHistory(serverMessages)
+                    if (!turnErrored) {
+                        // Profile-aware read: a gateway turn on a non-default profile
+                        // persists into THAT profile's own state.db, so the bare
+                        // api_server `/api/sessions/{id}/messages` 404s → emptyList()
+                        // → a silent wipe of the just-finished turn. loadSessionHistory
+                        // prefers the `?profile=` dashboard loader on gateway connections.
+                        val serverMessages = loadSessionHistory(sid)
+                        handler.loadMessageHistory(serverMessages)
+                    }
                     // Re-sync the drawer now that the turn is persisted server-side.
                     // The only other auto-refresh fires ~160ms after session creation
                     // (RelayApp) — mid-stream, BEFORE the new session's first message
@@ -2468,6 +2911,12 @@ class ChatViewModel : ViewModel() {
                         used != null -> (used.toFloat() / ctxMax).coerceIn(0f, 1f)
                         percent != null -> (percent / 100f).coerceIn(0f, 1f)
                         else -> _contextUsage.value
+                    }
+                    // Keep the absolute token window in lockstep so the bar can
+                    // render `used / max` — only when the server gave a real
+                    // `context_used` (percent-only servers stay token-less).
+                    if (used != null) {
+                        _contextWindow.value = ContextWindowUsage(usedTokens = used, maxTokens = ctxMax)
                     }
                 }
             }
@@ -2561,12 +3010,14 @@ class ChatViewModel : ViewModel() {
         // [selectedProfile] resolved at the top of this function so a
         // rapid switch doesn't give us a systemMessage from profile A but
         // a model from profile B.
-        val modelOverride: String? = when {
-            useIsolatedProfileApi -> null
-            // An explicit in-chat model pick wins over the profile's model.
-            !_selectedModelOverride.value.isNullOrBlank() -> _selectedModelOverride.value
-            else -> selectedProfile?.model?.takeIf { it.isNotBlank() }
-        }
+        val modelOverride: String? = AgentDisplay.requestModelName(
+            when {
+                useIsolatedProfileApi -> null
+                // An explicit in-chat model pick wins over the profile's model.
+                !_selectedModelOverride.value.isNullOrBlank() -> _selectedModelOverride.value
+                else -> selectedProfile?.model?.takeIf { it.isNotBlank() }
+            },
+        )
         val profileName: String? = if (useIsolatedProfileApi) {
             null
         } else {
@@ -2751,6 +3202,15 @@ class ChatViewModel : ViewModel() {
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)
                         },
+                        onStatusUpdate = { _, text ->
+                            handler.setTurnStatus(text)
+                            // The server prefixes terminal failures with ❌ —
+                            // stamp the turn so a failed reply doesn't read as
+                            // a normal answer.
+                            if (text.trimStart().startsWith("❌")) {
+                                handler.markError(currentMessageId)
+                            }
+                        },
                     ),
                     attachments = attachments.orEmpty()
                         .map { it.toGatewayAttachment() },
@@ -2852,6 +3312,7 @@ class ChatViewModel : ViewModel() {
         chatHandler?.let { handler ->
             val streamingMsg = handler.messages.value.findLast { it.isStreaming }
             if (streamingMsg != null) {
+                handler.markStopped(streamingMsg.id)
                 handler.onStreamComplete(streamingMsg.id)
             }
         }
@@ -3569,6 +4030,7 @@ private fun summarizeToolPreviewObject(obj: JsonObject): String? {
 private fun JsonObject.stringValue(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
 
+private const val RECENT_PROMPTS_LIMIT = 15
 private const val DEFAULT_REASONING_EFFORT = "medium"
 private val VALID_REASONING_EFFORTS = setOf("none", "minimal", "low", "medium", "high", "xhigh")
 

@@ -47,7 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.network.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -164,6 +164,32 @@ fun ChatSettingsScreen(
                         Switch(
                             checked = closeDrawerOnSend,
                             onCheckedChange = { connectionViewModel.setCloseDrawerOnSend(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    val recentPromptsEnabled by
+                        connectionViewModel.chatRecentPromptsEnabled.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Recent prompt chips",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Show your recent messages as tappable chips above the composer to send them again. Off by default.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = recentPromptsEnabled,
+                            onCheckedChange = { connectionViewModel.setChatRecentPromptsEnabled(it) }
                         )
                     }
 

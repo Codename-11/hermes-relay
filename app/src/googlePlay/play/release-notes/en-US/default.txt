@@ -1,0 +1,5 @@
+Settings & chat polish:
+• Status chips now show only when something needs attention; Power tools shows one live plugin badge; Connections moved to the top of Settings.
+• Chat settings: fixed the streaming-endpoint picker layout; the system-prompt preview now reflects your enabled toggles.
+• Fixed a rare crash on connect from a corrupt saved credential (now self-heals).
+• Server-side relay-plugin improvements.

@@ -65,13 +65,13 @@ import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.ProviderOptionsDynamic
-import com.hermesandroid.relay.network.RealtimeVoiceConfig
-import com.hermesandroid.relay.network.RealtimeProviderInfo
-import com.hermesandroid.relay.network.VoiceProviderValidationResponse
-import com.hermesandroid.relay.network.VoiceOutputConfig
-import com.hermesandroid.relay.network.VoiceConfig
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.ProviderOptionsDynamic
+import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.relay.RealtimeProviderInfo
+import com.hermesandroid.relay.network.relay.VoiceProviderValidationResponse
+import com.hermesandroid.relay.network.relay.VoiceOutputConfig
+import com.hermesandroid.relay.network.relay.VoiceConfig
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
@@ -667,6 +667,9 @@ fun VoiceSettingsScreen(
                         )
                     }
                     Switch(
+                        // Disabled while Auto-TTS is unimplemented — a live toggle
+                        // that does nothing reads as broken. Re-enable when wired.
+                        enabled = false,
                         checked = voiceSettings.autoTts,
                         onCheckedChange = { enabled ->
                             scope.launch { prefsRepo.setAutoTts(enabled) }

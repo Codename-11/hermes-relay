@@ -52,7 +52,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.ExtraKeysToolbar
 import com.hermesandroid.relay.ui.components.TerminalSearchBar
@@ -315,8 +315,36 @@ fun TerminalScreen(
                     modifier = Modifier.zIndex(2f),
                 )
             }
+
+            // "Jump to latest" pill — shows when the user has scrolled up off
+            // the live tail (xterm onScroll → bridge). Tap snaps back to the
+            // bottom. Hidden while an overlay owns the surface.
+            if (activeTab?.scrolledUp == true && !showBlockingOverlay && !tabNotStarted) {
+                androidx.compose.material3.Surface(
+                    onClick = {
+                        webViewByTab[activeTabId]?.evaluateJavascript(
+                            "window.scrollTerminalToBottom && window.scrollTerminalToBottom();",
+                            null,
+                        )
+                    },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .zIndex(2f),
+                ) {
+                    Text(
+                        text = "↓ Jump to latest",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
         }
 
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
         ExtraKeysToolbar(
             ctrlActive = activeTab?.ctrlActive == true,
             altActive = activeTab?.altActive == true,
@@ -338,6 +366,48 @@ fun TerminalScreen(
             },
             onArrow = { key ->
                 activeTab?.let { terminalViewModel.sendKey(it.tabId, key) }
+            },
+            onPaste = {
+                val pasted = clipboardManager.getText()?.text
+                if (!pasted.isNullOrEmpty()) {
+                    activeTab?.let { terminalViewModel.sendInput(it.tabId, pasted) }
+                }
+            },
+            // Copy the current xterm selection to the system clipboard. The
+            // selection lives in JS, so read it back asynchronously and only
+            // commit a non-empty result. WebView long-press copy is unreliable;
+            // this is the dependable path (pairs with PASTE).
+            onCopy = {
+                webViewByTab[activeTabId]?.evaluateJavascript(
+                    "window.getSelectionText && window.getSelectionText();"
+                ) { result ->
+                    val text = runCatching {
+                        org.json.JSONTokener(result).nextValue() as? String
+                    }.getOrNull()
+                    if (!text.isNullOrEmpty()) {
+                        clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
+                    }
+                }
+            },
+            // Show/hide the soft keyboard for the active tab — tapping the
+            // terminal doesn't reliably raise the IME on phones. Toggle off the
+            // current IME visibility; on show, focus xterm first so keystrokes land.
+            onToggleKeyboard = {
+                webViewByTab[activeTabId]?.let { wv ->
+                    val imeType = androidx.core.view.WindowInsetsCompat.Type.ime()
+                    val visible = androidx.core.view.ViewCompat
+                        .getRootWindowInsets(wv)?.isVisible(imeType) == true
+                    val controller = androidx.core.view.ViewCompat.getWindowInsetsController(wv)
+                    if (visible) {
+                        controller?.hide(imeType)
+                    } else {
+                        wv.requestFocus()
+                        wv.evaluateJavascript(
+                            "window.focusTerminal && window.focusTerminal();", null,
+                        )
+                        controller?.show(imeType)
+                    }
+                }
             },
             // Scroll callbacks bypass the ViewModel — they're pure JS calls
             // against the active WebView, not envelopes to the relay.

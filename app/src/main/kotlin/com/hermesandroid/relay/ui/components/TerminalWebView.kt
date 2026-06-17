@@ -264,6 +264,11 @@ private class TerminalBridge(
     }
 
     @JavascriptInterface
+    fun onScrollPosition(atBottom: Boolean) {
+        viewModel.onScrollPosition(tabId, atBottom)
+    }
+
+    @JavascriptInterface
     fun onLink(url: String) {
         val context = webView.context ?: return
         try {

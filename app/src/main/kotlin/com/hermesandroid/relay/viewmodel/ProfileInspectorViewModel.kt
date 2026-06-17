@@ -7,7 +7,7 @@ import com.hermesandroid.relay.data.ProfileConfigResponse
 import com.hermesandroid.relay.data.ProfileMemoryResponse
 import com.hermesandroid.relay.data.ProfileSkillsResponse
 import com.hermesandroid.relay.data.ProfileSoulResponse
-import com.hermesandroid.relay.network.RelayProfileInspectorClient
+import com.hermesandroid.relay.network.relay.RelayProfileInspectorClient
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow

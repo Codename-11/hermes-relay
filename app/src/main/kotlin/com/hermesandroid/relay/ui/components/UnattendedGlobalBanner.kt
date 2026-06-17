@@ -1,10 +1,5 @@
 package com.hermesandroid.relay.ui.components
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -137,16 +132,12 @@ fun UnattendedGlobalBanner(
  */
 @Composable
 private fun PulsingStatusDot(color: Color) {
-    val infinite = rememberInfiniteTransition(label = "unattended-banner-pulse")
-    val alpha by infinite.animateFloat(
-        initialValue = 0.4f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "unattended-banner-pulse-alpha",
-    )
+    // Throttled to ~30fps (this banner can sit on screen for the whole
+    // unattended-access session). Reverse ping-pong over 1.2s each way → a
+    // 2.4s linear phase folded into a 0→1→0 triangle. See [rememberAmbientPhase].
+    val phase = rememberAmbientPhase(periodMillis = 2400)
+    val triangle = 1f - kotlin.math.abs(2f * phase - 1f)
+    val alpha = 0.4f + 0.6f * triangle
     Box(
         modifier = Modifier
             .size(8.dp)

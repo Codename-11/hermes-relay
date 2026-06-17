@@ -88,8 +88,8 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
-import com.hermesandroid.relay.network.HermesLanDiscovery
-import com.hermesandroid.relay.network.HermesLanDiscoveryResult
+import com.hermesandroid.relay.network.shared.HermesLanDiscovery
+import com.hermesandroid.relay.network.shared.HermesLanDiscoveryResult
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import kotlinx.coroutines.TimeoutCancellationException
@@ -236,10 +236,15 @@ fun ConnectionWizard(
         if (granted) {
             showQrScanner = true
         } else {
+            // Don't dead-end on denial — return to the chooser and point the
+            // user at the manual pairing paths (URL entry / 6-char code)
+            // instead of leaving them on a vanishing toast with no scanner.
+            step = WizardStep.Method
             Toast.makeText(
                 context,
-                "Camera permission needed to scan QR codes",
-                Toast.LENGTH_SHORT
+                "Camera permission denied. Pair manually instead — choose " +
+                    "\"Pair Relay by code\" or enter your server URL.",
+                Toast.LENGTH_LONG
             ).show()
         }
     }
@@ -319,8 +324,22 @@ fun ConnectionWizard(
                 "ConnectionWizard",
                 "verify[$verifyAttempt] TIMEOUT after 15s (current=${connectionViewModel.authState.value::class.simpleName})"
             )
-            verifyError = "Timed out waiting for the relay. " +
-                "Check that the relay is running and the URL is correct."
+            // Method-aware timeout copy. The watchdog only sees authState, but
+            // it knows which pairing method the user chose — enough to name the
+            // most likely cause instead of one generic "relay timed out."
+            verifyError = when (chosenMethod) {
+                PairMethod.EnterCode, PairMethod.ShowCode ->
+                    "The host hasn't accepted this pairing code yet. Run the pairing " +
+                        "command on your Hermes host (or re-check the code), then tap Retry."
+                PairMethod.Scan ->
+                    "Timed out before the relay confirmed pairing. Check the relay is " +
+                        "running and reachable on this network, then Retry. If pairing " +
+                        "seems to succeed but Hermes still can't be reached, the API " +
+                        "server may be behind a login gateway."
+                else ->
+                    "Timed out waiting for the relay. Check that the relay is running " +
+                        "and the URL is correct."
+            }
         }
     }
 
@@ -2729,7 +2748,7 @@ private fun SoftPill(
  * Reorder the endpoints array so the chosen role lands at priority 0.
  * Priority values are renumbered to match the new order — this matters at
  * persist time because `setDeviceEndpoints` stores the list verbatim and
- * downstream [com.hermesandroid.relay.network.EndpointResolver] trusts the
+ * downstream [com.hermesandroid.relay.network.shared.EndpointResolver] trusts the
  * `priority` field (see ADR 24 "strict priority").
  *
  * No-op when the preferred role is already at index 0, or when the role

@@ -1,8 +1,8 @@
 package com.hermesandroid.relay.ui.screens
 
-import com.hermesandroid.relay.network.DashboardAuthProvider
-import com.hermesandroid.relay.network.DashboardAuthSession
-import com.hermesandroid.relay.network.DashboardStatus
+import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
+import com.hermesandroid.relay.network.upstream.DashboardAuthSession
+import com.hermesandroid.relay.network.upstream.DashboardStatus
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
