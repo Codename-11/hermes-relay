@@ -73,40 +73,33 @@ Reference: current gaps in `TerminalScreen.kt` / `TerminalWebView.kt` / `ExtraKe
 Every item below refines a component that **already exists** — this phase adds polish/affordances,
 it does not introduce a terminal surface or replace the chat view.
 
-- [ ] **2.1 Collapsible tool/thinking tree.** Unify `ThinkingBlock` / `ToolProgressCard` /
-  `CompactToolCall` / `SubagentLane` into a consistently nestable, collapsible presentation
-  (chevrons + rails like the TUI's `ToolTrail`), with expand/collapse persisted per turn.
-  *Verify first:* how nested/collapsible today vs. flat.
-  *Why:* the TUI's tree is its standout "readable agent work" affordance.
-  *Accept:* tool/thinking blocks collapse/expand and nest legibly.
+- [x] **2.1 Collapsible tool/thinking — collapse state now persists.** Verify-first found the
+  tree affordance already exists: `ToolProgressCard` + `ThinkingBlock` + `SubagentLane` are all
+  chevron-collapsible and `SubagentLane` has a guide rail. The only real gap was that expand
+  state reset on scroll-off / re-render. Fixed `ToolProgressCard` to `rememberSaveable` keyed per
+  tool call (namespaced by the message item key), so a manual expand survives. Deeper multi-level
+  nesting (beyond the 1-level subagent rail) left out — there's only ever 1 level today.
 
-- [~] **2.2 Clean per-session context-usage bar (pulled forward 2026-06-17 at user request).**
-  `ContextMeterBar` already renders `contextUsage`; make it cleanly mirror the desktop TUI's
-  per-session gauge: filled bar + percent + token counts (`used / window`) + color-coded health
-  (green <50% · yellow 50–80% · orange 80–95% · red ≥95%). Context is **per session and loaded
-  per session** — verify the value resets/loads on session switch.
-  *Why:* the desktop status line's context gauge is its clearest "where am I" signal.
-  *Accept:* the bar shows tokens + %, color-grades by fullness, and tracks the active session.
-  Later (separate): also fold session duration into the bottom status strip.
+- [x] **2.2 Clean per-session context-usage bar.** Done (committed earlier): `ContextMeterBar`
+  rewritten into a `NN% · used/max` color-graded gauge backed by a per-session `contextWindow`
+  token flow, reset at all 4 session points; redundant header suffix removed. ⚠️ on-device verify
+  (loads on resume after first server usage report; instant-on-resume fetch is a future option).
 
-- [ ] **2.3 Input history recall in the composer.** `CommandPalette` + slash list already
-  exist; add ↑/↓ recall of previously *sent prompts* (not just slash commands) when the
-  composer is empty/at-start.
-  *Why:* the TUI's smart ↑ history recall is a core power-user affordance.
-  *Accept:* ↑ in an empty composer recalls the last sent prompt(s).
+- [x] **2.3 Recent-prompt recall (mobile-native).** A soft keyboard has no ↑, so instead of
+  keystroke recall the composer surfaces a row of tappable recent-prompt chips while it's empty
+  (`recentPrompts` flow in `ChatViewModel`, bounded 15, slash-commands excluded). Tapping
+  prefills (not auto-sends) so the user can tweak before resending; the row hides on typing /
+  when a queue or fresh-chat is showing. `ChatViewModel.kt` + `ChatScreen.kt`.
 
-- [ ] **2.4 Session picker polish toward `/resume`.** `SessionDrawerContent` already lists
-  sessions; align it with the TUI's `/resume` (recency sort, message-count, preview/title,
-  quick-jump).
-  *Verify first:* what the drawer shows today.
-  *Why:* faster, more legible session switching.
-  *Accept:* the session list shows recency + preview and jumps quickly.
+- [x] **2.4 Session picker — already adequate (no work).** Verify-first: `SessionDrawer` already
+  has recency sort, message counts, title/preview, quick-switch, rename, delete, pin, archive,
+  and search. Nothing to add for `/resume` parity.
 
-- [ ] **2.5 Queued-message edit/reorder.** `queuedMessages` already exists; add edit/reorder
-  before send (TUI queue behavior).
-  *Verify first:* current queue affordances.
-  *Why:* lowers friction for sequential asks.
-  *Accept:* a queued message can be edited or removed before it sends.
+- [x] **2.5 Queued-message management — list + edit + remove.** Verify-first found the queue was
+  opaque (count + Clear only). Now each queued message renders as a row: tap to pull it back into
+  the composer for editing (`takeQueuedForEdit`), `✕` to drop just that one (`removeQueuedAt`).
+  Reorder omitted — low value vs. drag-handle complexity on a transient queue.
+  `ChatViewModel.kt` + `ChatScreen.kt`.
 
 ---
 
@@ -124,5 +117,9 @@ it does not introduce a terminal surface or replace the chat view.
 - 2026-06-17 — **Phase 1 COMPLETE.** 1.4 unread dots + 1.5 jump-to-latest pill done. 1.1 (history)
   reclassified — shell-native `↑` already recalls history; no app work needed. 1.6 (render parity)
   reclassified — font cascade + resize contract already present, WebGL addon not vendored (can't
-  add), OSC 52 left out. 1.7 still deferred. Next: Phase 2 (native-Chat parity) — 2.2 done; 2.1
-  tool tree, 2.3 input history recall, 2.4 session-picker polish, 2.5 queue edit remain.
+  add), OSC 52 left out. 1.7 still deferred.
+- 2026-06-17 — **Phase 2 COMPLETE.** 2.1 tool-card collapse now persists (rememberSaveable; tree
+  affordance already existed). 2.2 context bar (done earlier). 2.3 recent-prompt chips (mobile
+  recall — no soft-keyboard ↑). 2.4 session picker already adequate (no work). 2.5 queue list +
+  per-item edit/remove (reorder omitted). **Both phases done — only 1.7 (inline rename) deferred.**
+  All on-device-verify items flagged ⚠️ above. Next session could revisit 1.7 + the IA question.

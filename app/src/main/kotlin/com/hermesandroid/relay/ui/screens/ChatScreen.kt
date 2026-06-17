@@ -479,6 +479,7 @@ fun ChatScreen(
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
+    val recentPrompts by chatViewModel.recentPrompts.collectAsState()
     val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
@@ -2000,27 +2001,97 @@ fun ChatScreen(
             }
 
             // Queue indicator
+            // Recent-prompt recall — a soft keyboard has no up-arrow, so surface
+            // your last prompts as tappable chips while the composer is empty.
+            // Tapping prefills (not auto-sends) so you can tweak before resending;
+            // the row vanishes the moment you type or a queue/fresh-chat shows.
+            AnimatedVisibility(
+                visible = messages.isNotEmpty() && inputText.isBlank() &&
+                    queuedMessages.isEmpty() && recentPrompts.isNotEmpty(),
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                ) {
+                    recentPrompts.take(6).forEach { prompt ->
+                        AssistChip(
+                            onClick = { inputText = prompt },
+                            label = {
+                                Text(
+                                    text = if (prompt.length > 40) prompt.take(40) + "…" else prompt,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
+                }
+            }
+
             AnimatedVisibility(visible = queuedMessages.isNotEmpty()) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "${queuedMessages.size} message${if (queuedMessages.size > 1) "s" else ""} queued",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    TextButton(
-                        onClick = { chatViewModel.clearQueue() },
-                        modifier = Modifier.height(28.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "Clear",
-                            style = MaterialTheme.typography.labelSmall
+                            text = "${queuedMessages.size} message${if (queuedMessages.size > 1) "s" else ""} queued · delivers after this turn",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
+                        TextButton(
+                            onClick = { chatViewModel.clearQueue() },
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text(
+                                "Clear",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                    // Per-item: tap the text to pull it back into the composer
+                    // for editing; ✕ to drop just that one. (Reorder omitted —
+                    // low value vs. drag-handle complexity on a transient queue.)
+                    queuedMessages.forEachIndexed { index, msg ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        chatViewModel.takeQueuedForEdit(index)?.let { t ->
+                                            inputText = if (inputText.isBlank()) t else "$inputText $t"
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp),
+                            )
+                            TextButton(
+                                onClick = { chatViewModel.removeQueuedAt(index) },
+                                modifier = Modifier.height(28.dp),
+                            ) {
+                                Text("✕", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 }
             }

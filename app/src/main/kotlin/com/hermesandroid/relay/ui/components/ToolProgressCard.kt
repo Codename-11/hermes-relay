@@ -43,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +69,12 @@ fun ToolProgressCard(
 ) {
     // Preparing (tool.generating) starts collapsed — the args preview line
     // under the header is the whole story until tool.start lands.
-    var expanded by remember { mutableStateOf(!toolCall.isComplete && !toolCall.isGenerating) }
+    // rememberSaveable (keyed per tool call, namespaced by the message item's
+    // key in the chat LazyColumn) so a manual expand survives scroll-off /
+    // re-render instead of snapping shut every time the row recomposes.
+    var expanded by rememberSaveable(
+        key = "toolcard:" + (toolCall.id ?: "${toolCall.name}:${toolCall.startedAt}"),
+    ) { mutableStateOf(!toolCall.isComplete && !toolCall.isGenerating) }
     val isPreparing = toolCall.isGenerating && !toolCall.isComplete
     val timeMillis = toolCall.completedAt ?: messageTimestamp
     val locale = LocalLocale.current.platformLocale

@@ -174,6 +174,19 @@ class ChatViewModel : ViewModel() {
     private val _queuedMessages = MutableStateFlow<List<String>>(emptyList())
     val queuedMessages: StateFlow<List<String>> = _queuedMessages.asStateFlow()
 
+    // --- Recent prompts (mobile-friendly history recall — no physical up-arrow
+    // on a soft keyboard, so the composer surfaces these as tappable chips) ---
+    private val _recentPrompts = MutableStateFlow<List<String>>(emptyList())
+    val recentPrompts: StateFlow<List<String>> = _recentPrompts.asStateFlow()
+
+    private fun recordRecentPrompt(text: String) {
+        val t = text.trim()
+        if (t.isBlank() || t.startsWith("/")) return // skip blanks + slash commands
+        _recentPrompts.update { prev ->
+            (listOf(t) + prev.filterNot { it == t }).take(RECENT_PROMPTS_LIMIT)
+        }
+    }
+
     /**
      * Recent tool-call timeline for the Stats-for-Nerds + Timeline views.
      *
@@ -1388,6 +1401,7 @@ class ChatViewModel : ViewModel() {
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
+        recordRecentPrompt(text)
 
         val client = apiClient ?: return
         val handler = chatHandler ?: return
@@ -1982,6 +1996,26 @@ class ChatViewModel : ViewModel() {
 
     fun clearQueue() {
         _queuedMessages.value = emptyList()
+    }
+
+    /** Drop a single queued message by index (no-op if out of range). */
+    fun removeQueuedAt(index: Int) {
+        _queuedMessages.update { list ->
+            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        }
+    }
+
+    /**
+     * Pull a queued message out for editing: removes it and returns its text so
+     * the composer can prefill it. Null if the index is out of range.
+     */
+    fun takeQueuedForEdit(index: Int): String? {
+        val current = _queuedMessages.value
+        if (index !in current.indices) return null
+        _queuedMessages.update { list ->
+            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        }
+        return current[index]
     }
 
     private fun drainQueue() {
@@ -3813,6 +3847,7 @@ private fun summarizeToolPreviewObject(obj: JsonObject): String? {
 private fun JsonObject.stringValue(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
 
+private const val RECENT_PROMPTS_LIMIT = 15
 private const val DEFAULT_REASONING_EFFORT = "medium"
 private val VALID_REASONING_EFFORTS = setOf("none", "minimal", "low", "medium", "high", "xhigh")
 
