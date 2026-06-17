@@ -212,6 +212,35 @@ class GatewayChatClient(
     private val _serverProvider = MutableStateFlow<String?>(null)
     val serverProvider: StateFlow<String?> = _serverProvider.asStateFlow()
 
+    /**
+     * Active reasoning EFFORT from `session.info` (string; "" when reasoning is
+     * disabled). The reasoning DISPLAY mode is NOT on session.info — it stays a
+     * `config.get reasoning` concern ([getReasoningSettings]). Only ever set to a
+     * non-blank value so a disabled-reasoning "" never clobbers the chip.
+     */
+    private val _serverReasoningEffort = MutableStateFlow<String?>(null)
+    val serverReasoningEffort: StateFlow<String?> = _serverReasoningEffort.asStateFlow()
+
+    /**
+     * Server-reported credential warning (upstream `session.info.credential_warning`)
+     * — present ONLY when the active provider's key is missing/invalid, absent
+     * (→ null here) when healthy. Cleared on absence so it self-resolves when the
+     * key is fixed.
+     */
+    private val _serverCredentialWarning = MutableStateFlow<String?>(null)
+    val serverCredentialWarning: StateFlow<String?> = _serverCredentialWarning.asStateFlow()
+
+    /**
+     * Effective approval-bypass (YOLO) + fast-mode state from `session.info`
+     * (`yolo`/`fast` booleans). YOLO has NO `config.get` upstream — session.info
+     * is the only read. Null until first observed.
+     */
+    private val _serverYolo = MutableStateFlow<Boolean?>(null)
+    val serverYolo: StateFlow<Boolean?> = _serverYolo.asStateFlow()
+
+    private val _serverFast = MutableStateFlow<Boolean?>(null)
+    val serverFast: StateFlow<Boolean?> = _serverFast.asStateFlow()
+
     /** Serializes connect / session-establish so concurrent sends share one socket. */
     private val connectMutex = Mutex()
 
@@ -739,6 +768,58 @@ class GatewayChatClient(
             },
         )
 
+    /**
+     * Toggle per-session approval bypass (YOLO) via `config.set {key:"yolo"}` —
+     * the same session-scoped flag the desktop's setSessionYolo and the TUI's
+     * Shift+Tab use (`value` "1"/"0", `scope` "session" = ephemeral, never writes
+     * config.yaml). Requires a live session for the per-session flag. Updates
+     * [serverYolo] from the echo so observers don't wait on `session.info`.
+     * Returns the resolved enabled state. There is deliberately NO `getYolo()` —
+     * upstream has no `config.get yolo`; session.info is the only read.
+     */
+    suspend fun setYolo(enabled: Boolean, scope: String = "session"): Result<Boolean> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val params = buildJsonObject {
+            put("key", "yolo")
+            put("value", if (enabled) "1" else "0")
+            put("scope", scope)
+            liveSessionId?.let { put("session_id", it) }
+        }
+        return rpc("config.set", params).map { result ->
+            (result.stringField("value") == "1").also { _serverYolo.value = it }
+        }
+    }
+
+    /**
+     * Toggle fast mode (priority service tier) via `config.set {key:"fast"}` —
+     * desktop parity (`value` "fast"/"normal", session-scoped). Capability-gated
+     * upstream: enabling fails (error 4002) when the current model has no fast
+     * tier. Updates [serverFast]; returns the resolved enabled state.
+     */
+    suspend fun setFast(enabled: Boolean): Result<Boolean> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val params = buildJsonObject {
+            put("key", "fast")
+            put("value", if (enabled) "fast" else "normal")
+            liveSessionId?.let { put("session_id", it) }
+        }
+        return rpc("config.set", params).map { result ->
+            (result.stringField("value") == "fast").also { _serverFast.value = it }
+        }
+    }
+
     fun shutdown() {
         activeTurn?.cancel()
         activeTurn = null
@@ -997,6 +1078,18 @@ class GatewayChatClient(
                 }
                 p.stringField("model")?.takeIf { it.isNotBlank() }?.let { _serverModel.value = it }
                 p.stringField("provider")?.takeIf { it.isNotBlank() }?.let { _serverProvider.value = it }
+                // reasoning effort: ignore "" (reasoning disabled) so it can't
+                // clobber the chip; display mode is config.get-only, not here.
+                p.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
+                    ?.let { _serverReasoningEffort.value = it }
+                // credential_warning: present only when the provider key is
+                // missing/invalid. ABSENT means healthy — clear to null so the
+                // warning self-resolves (no ?.let, assign through takeIf).
+                _serverCredentialWarning.value =
+                    p.stringField("credential_warning")?.takeIf { it.isNotBlank() }
+                // yolo / fast: effective booleans (approval bypass + priority tier).
+                (p["yolo"] as? JsonPrimitive)?.booleanOrNull?.let { _serverYolo.value = it }
+                (p["fast"] as? JsonPrimitive)?.booleanOrNull?.let { _serverFast.value = it }
             }
         }
 

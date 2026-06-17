@@ -266,6 +266,14 @@ class ChatViewModel : ViewModel() {
 
     private val _reasoningDisplay = MutableStateFlow<String?>(null)
 
+    /** Effective YOLO (approval-bypass) state for the active gateway session; null = unknown. */
+    private val _yoloEnabled = MutableStateFlow<Boolean?>(null)
+    val yoloEnabled: StateFlow<Boolean?> = _yoloEnabled.asStateFlow()
+
+    /** Fast-mode (priority tier) state for the active gateway session; null = unknown. */
+    private val _fastEnabled = MutableStateFlow<Boolean?>(null)
+    val fastEnabled: StateFlow<Boolean?> = _fastEnabled.asStateFlow()
+
     /**
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
@@ -453,6 +461,70 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * Toggle per-session approval bypass (YOLO). Session-scoped + ephemeral the
+     * way the desktop does it — never persists global auto-approve. Optimistic;
+     * rolls back + notices on failure. The effective state also tracks live via
+     * `session.info` ([startGatewayStateSync]). Gateway-only.
+     */
+    fun setYolo(enabled: Boolean) {
+        val previous = _yoloEnabled.value
+        _yoloEnabled.value = enabled
+        val gateway = gatewayClient ?: run { _yoloEnabled.value = previous; return }
+        val handler = chatHandler
+        if (streamingEndpoint != "gateway" || handler == null) {
+            _yoloEnabled.value = previous
+            return
+        }
+        viewModelScope.launch {
+            // The session-scoped flag needs a live session — warm it first.
+            gateway.prewarm(handler.currentSessionId.value)
+            // A session/connection switch during the (possibly slow) prewarm may
+            // have swapped the client or nulled the state — don't write stale.
+            if (gatewayClient !== gateway) return@launch
+            gateway.setYolo(enabled).fold(
+                onSuccess = { _yoloEnabled.value = it },
+                onFailure = { e ->
+                    // Only roll back if we still own the optimistic value (a
+                    // mid-flight switch may have already nulled it).
+                    if (_yoloEnabled.value == enabled) _yoloEnabled.value = previous
+                    handler.addSystemNotice(
+                        "Couldn't ${if (enabled) "enable" else "disable"} YOLO: ${e.message ?: "gateway error"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Toggle fast mode (priority service tier). Optimistic; rolls back + notices
+     * on failure — including the upstream capability gate (a model with no fast
+     * tier rejects it). Gateway-only; live state tracks via `session.info`.
+     */
+    fun setFast(enabled: Boolean) {
+        val previous = _fastEnabled.value
+        _fastEnabled.value = enabled
+        val gateway = gatewayClient ?: run { _fastEnabled.value = previous; return }
+        val handler = chatHandler
+        if (streamingEndpoint != "gateway" || handler == null) {
+            _fastEnabled.value = previous
+            return
+        }
+        viewModelScope.launch {
+            gateway.prewarm(handler.currentSessionId.value)
+            if (gatewayClient !== gateway) return@launch
+            gateway.setFast(enabled).fold(
+                onSuccess = { _fastEnabled.value = it },
+                onFailure = { e ->
+                    if (_fastEnabled.value == enabled) _fastEnabled.value = previous
+                    handler.addSystemNotice(
+                        "Couldn't switch fast mode: ${e.message ?: "gateway error"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
      * Switch the active Hermes profile from the in-chat picker. Verified against
      * upstream `tui_gateway`: a profile is a FULL agent (its own HERMES_HOME/db,
      * model, SOUL, personality, skills), sessions are PROFILE-BOUND, and the
@@ -478,6 +550,10 @@ class ChatViewModel : ViewModel() {
         // the agent to the new profile (pulled live via sessionProfileProvider),
         // like the desktop spawning the profile's backend lazily on the next send.
         gateway.clearSession()
+        // Session-scoped YOLO/Fast don't carry across the profile's fresh session —
+        // null them so a stale flag can't show until the new session.info re-seeds.
+        _yoloEnabled.value = null
+        _fastEnabled.value = null
         // The profile brings its own model — refresh the picker's "current".
         viewModelScope.launch {
             gateway.modelOptions().onSuccess {
@@ -850,14 +926,23 @@ class ChatViewModel : ViewModel() {
     private var gatewayStateSyncJob: Job? = null
 
     /**
-     * Track the active client's `session.info`-derived state (personality +
-     * model + provider) so a change made via `/personality` / `/model`, the
-     * desktop, or the TUI reflects in the app without an app reload. The
-     * collectors only observe flows (never cold-open the socket); the one-shot
-     * seed in [updateGatewayClient] is gated on a ready socket.
+     * Last credential_warning already surfaced as a system notice, so the
+     * recurring `session.info` echoes (one per model/personality/profile switch
+     * + periodic refresh) don't re-post the same warning. Reset when the warning
+     * goes absent and on client change so a re-occurrence is shown again.
+     */
+    private var lastSurfacedCredentialWarning: String? = null
+
+    /**
+     * Track the active client's `session.info`-derived state (personality, model,
+     * provider, reasoning effort, credential warning, YOLO, fast) so a change made
+     * via a slash command, the desktop, or the TUI reflects in the app without an
+     * app reload. The collectors only observe flows (never cold-open the socket);
+     * the one-shot seed in [updateGatewayClient] is gated on a ready socket.
      */
     private fun startGatewayStateSync(client: GatewayChatClient) {
         gatewayStateSyncJob?.cancel()
+        lastSurfacedCredentialWarning = null
         gatewayStateSyncJob = viewModelScope.launch {
             launch {
                 client.serverPersonality.collect { value ->
@@ -875,6 +960,47 @@ class ChatViewModel : ViewModel() {
                 client.serverProvider.collect { value ->
                     if (gatewayClient !== client || value.isNullOrBlank()) return@collect
                     if (_gatewayCurrentProvider.value != value) _gatewayCurrentProvider.value = value
+                }
+            }
+            launch {
+                client.serverReasoningEffort.collect { value ->
+                    // Ignore blank (upstream "" = reasoning disabled — never
+                    // clobber the chip). Compare on the normalized value, the
+                    // same form the optimistic setter + config.get refresh store.
+                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
+                    val normalized = normalizeReasoningEffort(value)
+                    if (_selectedReasoningEffort.value != normalized) {
+                        _selectedReasoningEffort.value = normalized
+                    }
+                }
+            }
+            launch {
+                client.serverCredentialWarning.collect { warning ->
+                    if (gatewayClient !== client) return@collect
+                    if (warning.isNullOrBlank()) {
+                        // Key fixed / provider switched — reset so a future
+                        // recurrence is surfaced again. (Identity already guarded
+                        // above so a torn-down old client can't reset the new one.)
+                        lastSurfacedCredentialWarning = null
+                        return@collect
+                    }
+                    // One notice per DISTINCT warning — session.info repeats it
+                    // on every config echo.
+                    if (warning == lastSurfacedCredentialWarning) return@collect
+                    lastSurfacedCredentialWarning = warning
+                    chatHandler?.addSystemNotice("⚠ $warning")
+                }
+            }
+            launch {
+                client.serverYolo.collect { value ->
+                    if (gatewayClient !== client || value == null) return@collect
+                    if (_yoloEnabled.value != value) _yoloEnabled.value = value
+                }
+            }
+            launch {
+                client.serverFast.collect { value ->
+                    if (gatewayClient !== client || value == null) return@collect
+                    if (_fastEnabled.value != value) _fastEnabled.value = value
                 }
             }
         }
@@ -1106,6 +1232,8 @@ class ChatViewModel : ViewModel() {
                 _pendingAsk.value = null
                 _contextUsage.value = null
                 _contextWindow.value = null
+                _yoloEnabled.value = null
+                _fastEnabled.value = null
                 pendingTruncateOrdinal = null
                 chatHandler?.let { handler ->
                     handler.clearMessages()
@@ -1158,6 +1286,8 @@ class ChatViewModel : ViewModel() {
         _pendingAsk.value = null
         _contextUsage.value = null
         _contextWindow.value = null
+        _yoloEnabled.value = null
+        _fastEnabled.value = null
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
@@ -1222,6 +1352,24 @@ class ChatViewModel : ViewModel() {
                 viewModelScope.launch { client.getPersonality() }
             }
         }
+    }
+
+    /**
+     * Re-pull the server's skill catalog (GET /api/skills) so a skill
+     * added/removed server-side surfaces without an app reload. Fetched once
+     * otherwise (initialize / API-client update). Cheap idempotent GET.
+     */
+    fun refreshSkills() {
+        fetchSkills()
+    }
+
+    /**
+     * Re-pull the SSE-fallback model list (GET /v1/models). The gateway's curated
+     * groups refresh via [refreshModelOptions]; this covers [availableModels] used
+     * when no gateway model.options groups exist. Fetched once otherwise.
+     */
+    fun refreshModels() {
+        fetchModels()
     }
 
     // --- Session management ---
@@ -1307,6 +1455,8 @@ class ChatViewModel : ViewModel() {
                         _contextUsage.value = null
                         _contextWindow.value = null
                         _pendingAsk.value = null
+                        _yoloEnabled.value = null
+                        _fastEnabled.value = null
                         onSessionChanged?.invoke(session.id)
                         AppAnalytics.onSessionCreated()
                     }
@@ -1335,6 +1485,8 @@ class ChatViewModel : ViewModel() {
         _contextUsage.value = null
         _contextWindow.value = null
         _pendingAsk.value = null
+        _yoloEnabled.value = null
+        _fastEnabled.value = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
 

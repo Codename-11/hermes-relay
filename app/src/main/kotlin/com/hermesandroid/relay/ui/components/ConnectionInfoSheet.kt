@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -645,6 +646,8 @@ fun AgentInfoSheet(
     val availableModels by chatViewModel.availableModels.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
+    val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
+    val fastEnabled by chatViewModel.fastEnabled.collectAsState()
 
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
@@ -652,6 +655,11 @@ fun AgentInfoSheet(
     // Re-pull server-supplied personalities (list + default + active) on open so
     // a server-side change shows without an app reload.
     LaunchedEffect(Unit) { chatViewModel.refreshPersonalities() }
+    // Re-pull the SSE-fallback model list + skill catalog on open so server-side
+    // changes surface without an app reload (gateway model groups are covered by
+    // refreshModelOptions above; skills feed the command palette).
+    LaunchedEffect(Unit) { chatViewModel.refreshModels() }
+    LaunchedEffect(Unit) { chatViewModel.refreshSkills() }
     // Pull the host's agent profiles from the dashboard so they appear in the
     // Profile picker even on a dashboard-only (non-relay) connection.
     LaunchedEffect(Unit) { connectionViewModel.refreshDashboardProfiles() }
@@ -1166,6 +1174,85 @@ fun AgentInfoSheet(
                                 },
                             )
                         }
+                    }
+                }
+            }
+
+            // ---- Safety & speed section (gateway only) ----
+            // YOLO (approval bypass) + Fast (priority tier) mirror the desktop
+            // config.set yolo/fast. Gated on a live gateway (model.options groups
+            // present); both are session-scoped and track live via session.info.
+            if (modelProviders.isNotEmpty()) {
+                HorizontalDivider()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel(title = "Safety & speed", hint = null)
+
+                    // YOLO — bypasses command approvals. On-state is loud.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("YOLO mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Bypasses command approvals — Hermes runs tools without asking.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (yoloEnabled == true) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        Switch(
+                            checked = yoloEnabled == true,
+                            enabled = !isStreaming,
+                            onCheckedChange = { chatViewModel.setYolo(it) },
+                        )
+                    }
+                    if (yoloEnabled == true) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.errorContainer)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = "Approvals are OFF for this session.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+
+                    // Fast — priority service tier (model-gated server-side).
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Fast mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Priority service tier — lower latency where the model supports it.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = fastEnabled == true,
+                            enabled = !isStreaming,
+                            onCheckedChange = { chatViewModel.setFast(it) },
+                        )
                     }
                 }
             }
