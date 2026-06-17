@@ -99,6 +99,19 @@ object AgentDisplay {
             ?.takeIf { it.isNotEmpty() }
             ?.takeUnless { it.lowercase() in GENERIC_MODEL_ALIASES }
 
+    /**
+     * A model string safe to SEND to the server as a model override or
+     * `config.set model=…`. Returns null for the generic agent placeholders
+     * ("hermes-agent", …) which are NOT real models — the server rejects them
+     * (HTTP 400) and falls back. Null means "send no model; use the server's
+     * configured default."
+     */
+    fun requestModelName(model: String?): String? =
+        model
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.takeUnless { it.lowercase() in GENERIC_MODEL_ALIASES }
+
     fun isServerDefaultAlias(profileName: String?): Boolean =
         profileName?.trim()?.equals("default", ignoreCase = true) == true
 

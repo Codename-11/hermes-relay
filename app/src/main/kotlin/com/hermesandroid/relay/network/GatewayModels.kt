@@ -196,4 +196,10 @@ class GatewayTurnCallbacks(
      * cancelled.
      */
     val onInteractionRequest: (GatewayAsk) -> Unit,
+    /**
+     * Gateway `status.update` lifecycle line — model fallback, retries, and
+     * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default
+     * no-op so non-gateway/legacy constructors don't need to provide it.
+     */
+    val onStatusUpdate: (kind: String?, text: String) -> Unit = { _, _ -> },
 )

@@ -428,6 +428,7 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    val turnStatus by chatViewModel.turnStatus.collectAsState()
     val voiceStats by voiceViewModel.voiceStats.collectAsState()
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
@@ -2266,10 +2267,11 @@ fun ChatScreen(
                 },
                 onStop = {
                     chatViewModel.cancelStream()
-                    // Acknowledge the cancel — a long tool run can keep its
-                    // spinner for a beat after the tap, so a momentary "Stopped"
-                    // confirms the tap landed.
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    // Firm haptic (LongPress — TextHandleMove was near-
+                    // imperceptible) plus a "Stopped" badge stamped on the turn
+                    // (see ChatViewModel.cancelStream) so the cancel is
+                    // unmistakable, not just a transient toast.
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     scope.launch {
                         snackbarHostState.showSnackbar(
                             message = "Stopped",
@@ -2280,7 +2282,7 @@ fun ChatScreen(
                 onAttach = { filePickerLauncher.launch(arrayOf("*/*")) },
                 onLongPressAttach = { showCommandPalette = true },
                 charLimit = charLimit,
-                caption = inputCaption,
+                caption = turnStatus ?: inputCaption,
                 voiceReady = voiceReady,
                 showVoiceHint = !voiceHintSeen,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },

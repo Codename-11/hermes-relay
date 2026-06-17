@@ -312,15 +312,19 @@ class ChatViewModel : ViewModel() {
      * default.
      */
     fun selectModel(model: String?, provider: String? = null) {
-        _selectedModelOverride.value = model?.takeIf { it.isNotBlank() }
+        _selectedModelOverride.value = AgentDisplay.requestModelName(model)
         val gateway = gatewayClient
         val handler = chatHandler
         if (model.isNullOrBlank()) {
             if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
-                val defaultModel = (effectiveProfileProvider() ?: selectedProfileProvider())
-                    ?.model
-                    ?.takeIf { it.isNotBlank() }
-                    ?: _serverModelName.value.takeIf { it.isNotBlank() }
+                // Never send a generic agent alias ("hermes-agent") as a model —
+                // the server rejects it (HTTP 400 → fallback). Resolving to null
+                // here skips the setModel below, leaving the gateway on its true
+                // server-configured default.
+                val defaultModel = AgentDisplay.requestModelName(
+                    (effectiveProfileProvider() ?: selectedProfileProvider())?.model
+                        ?: _serverModelName.value,
+                )
                 if (!defaultModel.isNullOrBlank()) {
                     viewModelScope.launch {
                         gateway.prewarm(handler.currentSessionId.value)
@@ -355,8 +359,15 @@ class ChatViewModel : ViewModel() {
             return
         }
         if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
+            // Defensive: never push a generic agent alias ("hermes-agent") as a
+            // model — it's not a real model and the server 400s on it.
+            val sendModel = AgentDisplay.requestModelName(model)
+            if (sendModel == null) {
+                refreshActiveAgentName()
+                return
+            }
             // Upstream model-switch flag string: `<model> [--provider <slug>]`.
-            val value = if (!provider.isNullOrBlank()) "$model --provider $provider" else model
+            val value = if (!provider.isNullOrBlank()) "$sendModel --provider $provider" else sendModel
             viewModelScope.launch {
                 // Warm a session so the switch is session-scoped (config.set
                 // also works sessionless, falling back to the global default).
@@ -740,6 +751,7 @@ class ChatViewModel : ViewModel() {
     private val _emptySessions = MutableStateFlow<List<ChatSession>>(emptyList())
     private val _emptyError = MutableStateFlow<String?>(null)
     private val _emptySessionId = MutableStateFlow<String?>(null)
+    private val _emptyTurnStatus = MutableStateFlow<String?>(null)
 
     // Delegated to ChatHandler
     val messages: StateFlow<List<ChatMessage>>
@@ -764,6 +776,10 @@ class ChatViewModel : ViewModel() {
      */
     val isStreaming: StateFlow<Boolean>
         get() = chatHandler?.isStreaming ?: _emptyStreaming
+
+    /** Latest gateway lifecycle status for the in-flight turn (or null). */
+    val turnStatus: StateFlow<String?>
+        get() = chatHandler?.turnStatus ?: _emptyTurnStatus
 
     val sessions: StateFlow<List<ChatSession>>
         get() = chatHandler?.sessions ?: _emptySessions
@@ -2561,12 +2577,14 @@ class ChatViewModel : ViewModel() {
         // [selectedProfile] resolved at the top of this function so a
         // rapid switch doesn't give us a systemMessage from profile A but
         // a model from profile B.
-        val modelOverride: String? = when {
-            useIsolatedProfileApi -> null
-            // An explicit in-chat model pick wins over the profile's model.
-            !_selectedModelOverride.value.isNullOrBlank() -> _selectedModelOverride.value
-            else -> selectedProfile?.model?.takeIf { it.isNotBlank() }
-        }
+        val modelOverride: String? = AgentDisplay.requestModelName(
+            when {
+                useIsolatedProfileApi -> null
+                // An explicit in-chat model pick wins over the profile's model.
+                !_selectedModelOverride.value.isNullOrBlank() -> _selectedModelOverride.value
+                else -> selectedProfile?.model?.takeIf { it.isNotBlank() }
+            },
+        )
         val profileName: String? = if (useIsolatedProfileApi) {
             null
         } else {
@@ -2737,6 +2755,15 @@ class ChatViewModel : ViewModel() {
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)
                         },
+                        onStatusUpdate = { _, text ->
+                            handler.setTurnStatus(text)
+                            // The server prefixes terminal failures with ❌ —
+                            // stamp the turn so a failed reply doesn't read as
+                            // a normal answer.
+                            if (text.trimStart().startsWith("❌")) {
+                                handler.markError(currentMessageId)
+                            }
+                        },
                     ),
                     attachments = attachments.orEmpty()
                         .map { it.toGatewayAttachment() },
@@ -2838,6 +2865,7 @@ class ChatViewModel : ViewModel() {
         chatHandler?.let { handler ->
             val streamingMsg = handler.messages.value.findLast { it.isStreaming }
             if (streamingMsg != null) {
+                handler.markStopped(streamingMsg.id)
                 handler.onStreamComplete(streamingMsg.id)
             }
         }
