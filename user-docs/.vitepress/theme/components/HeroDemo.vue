@@ -153,17 +153,37 @@ function applyScene(t: number) {
   fadingOut.value = t >= FADE_AT
 }
 
+// Keep the backing store in lockstep with the canvas's CURRENT css box and
+// return the logical (css-px) dimensions to draw against. The canvas size is
+// CSS-driven (88cqw, plus the 900ms boot→chat width tween) so it changes
+// WITHOUT screenEl ever resizing — measuring it live and reallocating only on
+// a real pixel-size change keeps the backing store and the per-frame draw math
+// from ever diverging. That divergence was the "sphere shrinks to ~1/3 and
+// hugs the top-left on mobile" bug: resize() snapshotted one size, drawSphere
+// read another, and a bailed first resize left the 300×150 default store (with
+// no dpr transform) that the truthy-width guard never retried.
+function syncCanvasSize(canvas: HTMLCanvasElement): { w: number; h: number } | null {
+  const rect = canvas.getBoundingClientRect()
+  const cw = rect.width
+  const ch = rect.height
+  if (cw <= 0 || ch <= 0) return null
+  const dpr = window.devicePixelRatio || 1
+  const bw = Math.round(cw * dpr)
+  const bh = Math.round(ch * dpr)
+  if (canvas.width !== bw || canvas.height !== bh) {
+    // Assigning width/height clears the canvas AND resets the transform, so
+    // re-apply the dpr scale right after. We redraw every frame anyway.
+    canvas.width = bw
+    canvas.height = bh
+    const ctx = canvas.getContext('2d')
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  }
+  return { w: cw, h: ch }
+}
+
 function resize() {
   const canvas = canvasEl.value
-  if (!canvas) return
-  const dpr = window.devicePixelRatio || 1
-  const cw = canvas.clientWidth
-  const ch = canvas.clientHeight
-  if (cw <= 0 || ch <= 0) return
-  canvas.width = Math.floor(cw * dpr)
-  canvas.height = Math.floor(ch * dpr)
-  const ctx = canvas.getContext('2d')
-  if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  if (canvas) syncCanvasSize(canvas)
 }
 
 // sceneT loops (drives WHAT the sphere is doing); clockT is monotonic and
@@ -176,10 +196,10 @@ function drawSphere(sceneT: number, clockT: number) {
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  if (!canvas.width || !canvas.height) {
-    resize()
-    if (!canvas.width || !canvas.height) return
-  }
+  // Re-sync every frame so a late-resolving layout (mobile container queries)
+  // or the boot→chat width tween can't leave the backing store stale.
+  const dims = syncCanvasSize(canvas)
+  if (!dims) return
 
   retargetTo(sceneStateFor(sceneT), clockT)
   for (const k in tw) (tw as Record<string, Tween>)[k].update(clockT)
@@ -188,8 +208,8 @@ function drawSphere(sceneT: number, clockT: number) {
   tw.intensity.setTarget(sphereState === SphereState.Speaking ? 0.4 : 0, clockT, 0.4)
   const burst = sceneT >= TOOL_AT && sceneT < TOOL_AT + 1.2 ? Math.exp(-(sceneT - TOOL_AT) / 0.35) : 0
 
-  const canvasW = canvas.clientWidth
-  const canvasH = canvas.clientHeight
+  const canvasW = dims.w
+  const canvasH = dims.h
   const cellW = canvasW / COLS
   const cellH = canvasH / ROWS
   const charSize = Math.min(cellW * 1.3, cellH * 1.1)
@@ -300,8 +320,10 @@ onMounted(() => {
       { threshold: 0 }
     )
     intersectionObserver.observe(screenEl.value)
+    // Observe the CANVAS, not screenEl: the canvas resizes on its own during
+    // the 88cqw→80cqw boot→chat tween, which never changes screenEl's box.
     resizeObserver = new ResizeObserver(() => resize())
-    resizeObserver.observe(screenEl.value)
+    if (canvasEl.value) resizeObserver.observe(canvasEl.value)
   }
   rafId = requestAnimationFrame(render)
 })
