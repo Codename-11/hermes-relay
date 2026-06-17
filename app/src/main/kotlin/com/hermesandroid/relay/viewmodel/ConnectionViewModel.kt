@@ -22,12 +22,8 @@ import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
-import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
-import com.hermesandroid.relay.data.ProfileDisplayAliasStore
-import com.hermesandroid.relay.data.ProfileSessionStore
-import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
@@ -67,6 +63,7 @@ import com.hermesandroid.relay.network.relay.BridgeCommandHandler
 // === END PHASE3-accessibility ===
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.viewmodel.connection.PairingController
+import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -85,7 +82,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
@@ -385,6 +381,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         activeConnectionIdProvider = { connectionStore.activeConnectionId.value },
         dashboardUrlProvider = { activeDashboardUrl() },
         gatewayKeepAliveProvider = { gatewayKeepAlive.value },
+    )
+
+    // Agent-profiles collaborator — owns the merged profile list, the
+    // per-connection selected-profile state machine + its persistence stores,
+    // the profile display alias, and the per-profile last-session restore.
+    // Lifecycle hooks are driven by this ViewModel's init observers (below).
+    private val profileController = ProfileController(
+        context = application,
+        scope = viewModelScope,
+        authManagerFlow = _authManagerFlow,
+        activeConnectionId = connectionStore.activeConnectionId,
+        activeDashboardUrlProvider = { activeDashboardUrl() },
+        dashboardClientFactory = { cid, url -> upstreamTransport.dashboardClientFor(cid, url) },
+        streamingEndpointProvider = { streamingEndpoint.value },
+        gatewayAvailabilityProvider = { upstreamTransport.gatewayAvailability.value },
+        setLastSessionId = { _lastSessionId.value = it },
+        legacyDefaultSessionId = {
+            getApplication<Application>().relayDataStore.data.first()[KEY_LAST_SESSION_ID]
+        },
+        rebuildChatApiClient = { rebuildChatApiClient() },
     )
 
     // --- Relay connection state ---
@@ -914,252 +930,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .flatMapLatest { it.currentPairedSession }
         .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.currentPairedSession.value)
 
-    // --- Agent profiles (Pass 2) -------------------------------------------
+    // --- Agent profiles (Pass 2) — owned by [profileController] -------------
     //
-    // Server-advertised named agent configs, flattened to a StateFlow the
-    // profile picker reads. Must flatMapLatest over [_authManagerFlow] for
-    // the same reason as [authState] / [pairingCode] — after a connection
-    // switch the underlying [AuthManager] instance is replaced and the
-    // public flow needs to repoint at the new manager's backing state.
-    /**
-     * Host agent profiles loaded from the dashboard `GET /api/profiles` — the
-     * same profiles Manage and the official desktop expose. Populates
-     * [agentProfiles] on a dashboard-only (non-relay) connection, where the
-     * relay's `auth.ok` profile list is empty. Refreshed by
-     * [refreshDashboardProfiles] when the agent sheet opens.
-     */
-    private val _dashboardProfiles = MutableStateFlow<List<Profile>>(emptyList())
+    // The merged profile list, the per-connection selected-profile state
+    // machine + its persistence stores, the display alias, and the per-profile
+    // last-session restore now live in ProfileController; these getters/
+    // functions delegate. The state machine's lifecycle hooks are driven by
+    // this ViewModel's init observers (connection switch / active-connection
+    // change / agent-profile arrival / gateway-availability settle) further
+    // down, calling profileController.* in their original order.
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val agentProfiles: StateFlow<List<Profile>> = combine(
-        _authManagerFlow.flatMapLatest { it.agentProfiles },
-        _dashboardProfiles,
-    ) { relay, dashboard ->
-        // Prefer the relay's list when it has entries (richer runtime metadata);
-        // fall back to the dashboard list so a dashboard-only connection still
-        // sees its server profiles in the chat picker.
-        relay.ifEmpty { dashboard }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, authManager.agentProfiles.value)
+    val agentProfiles: StateFlow<List<Profile>> get() = profileController.agentProfiles
 
-    /**
-     * Load the host's agent profiles from the dashboard `/api/profiles` into
-     * [agentProfiles] (merged in the combine above). Lets the chat agent sheet
-     * offer server profiles on a dashboard-only connection. Best-effort: leaves
-     * the current list untouched on failure (e.g. dashboard not signed in).
-     */
-    fun refreshDashboardProfiles() {
-        val connectionId = connectionStore.activeConnectionId.value ?: return
-        val dashboardUrl = activeDashboardUrl() ?: return
-        viewModelScope.launch {
-            upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
-                .listProfiles().onSuccess { profiles ->
-                    _dashboardProfiles.value = profiles
-                }
-        }
-    }
+    fun refreshDashboardProfiles() = profileController.refreshDashboardProfiles()
 
-    /**
-     * The ACTIVE profile's chat sessions, scoped server-side via the dashboard
-     * `GET /api/sessions?profile=` surface — upstream opens that profile's own
-     * `state.db` directly, the same per-profile scoping the official desktop
-     * sidebar uses. Returns `null` when there's no dashboard URL (an api_server-
-     * only connection with no Manage session), so the caller falls back to the
-     * shared api_server session list.
-     *
-     * The gateway `session.list` RPC can't substitute here: it reads one process-
-     * global DB pinned to the launch profile, so it never re-scopes on a profile
-     * switch. The default/`null` selection omits the param → the launch profile's
-     * DB (the server's configured default), matching [selectProfile]'s semantics.
-     */
-    suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? {
-        val connectionId = connectionStore.activeConnectionId.value ?: return null
-        val dashboardUrl = activeDashboardUrl() ?: return null
-        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
-        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
-            .listSessions(profile = profileName, limit = limit)
-    }
+    suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
+        profileController.listProfileScopedSessions(limit)
 
-    /**
-     * A session's transcript, scoped to the active profile via the dashboard
-     * `/api/sessions/{id}/messages?profile=`. The twin of [listProfileScopedSessions]:
-     * once the drawer lists a non-default profile's sessions, opening one must read
-     * that profile's own `state.db` (the api_server's shared DB has no such rows).
-     * Returns `null` off the dashboard surface so the caller falls back to the
-     * api_server transcript.
-     */
-    suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? {
-        val connectionId = connectionStore.activeConnectionId.value ?: return null
-        val dashboardUrl = activeDashboardUrl() ?: return null
-        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
-        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
-            .getSessionMessages(sessionId, profileName)
-    }
+    suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? =
+        profileController.loadProfileScopedMessages(sessionId)
 
-    /**
-     * User's current profile pick for the chat send pipeline. `null` means
-     * "no explicit pick — let the server fall back to its configured
-     * default profile."
-     *
-     * **v0.7.0: persisted per-connection** via [profileSelectionStore].
-     * Hydrated on init (for the active connection) and on every
-     * [switchConnection] (loads the destination connection's persisted
-     * selection). Written through on [selectProfile]. Cleared on
-     * [removeConnection] after the switch completes.
-     *
-     * Resolution from persisted `profileName: String?` to `Profile?` happens
-     * after the destination connection is active and its own [agentProfiles]
-     * list has arrived. That prevents a same-named profile from the previous
-     * connection from being reused during a connection switch.
-     */
-    private val _selectedProfile = MutableStateFlow<Profile?>(null)
-    val selectedProfile: StateFlow<Profile?> = _selectedProfile.asStateFlow()
-    private val _pendingSelectedProfileConnectionId = MutableStateFlow<String?>(null)
-    private val _pendingSelectedProfileName = MutableStateFlow<String?>(null)
+    val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
 
-    /**
-     * DataStore-backed persistence for [_selectedProfile] keyed by
-     * connection id. See [ProfileSelectionStore] for the schema. Separate
-     * from [connectionStore] so the selection survives (and can be
-     * cleared) independently of other connection fields.
-     */
-    private val profileSelectionStore: ProfileSelectionStore =
-        ProfileSelectionStore(application)
-    private val profileSessionStore: ProfileSessionStore =
-        ProfileSessionStore(application)
-    private val profileDisplayAliasStore: ProfileDisplayAliasStore =
-        ProfileDisplayAliasStore(application)
+    val profileDisplayAlias: StateFlow<String?> get() = profileController.profileDisplayAlias
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val profileDisplayAlias: StateFlow<String?> = combine(
-        activeConnectionId,
-        selectedProfile,
-    ) { connectionId, profile ->
-        connectionId to AgentDisplay.profileRequestName(profile?.name)
-    }.flatMapLatest { (connectionId, profileName) ->
-        if (connectionId == null) {
-            flowOf(null)
-        } else {
-            profileDisplayAliasStore.aliasFlow(connectionId, profileName)
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    fun setProfileDisplayAlias(alias: String?) = profileController.setProfileDisplayAlias(alias)
 
-    fun setProfileDisplayAlias(alias: String?) {
-        val connectionId = activeConnectionId.value ?: return
-        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
-        val normalizedAlias = AgentDisplay.localDisplayAlias(alias)
-        viewModelScope.launch {
-            profileDisplayAliasStore.setAlias(connectionId, profileName, normalizedAlias)
-        }
-    }
-
-    /**
-     * Set (or clear, with `null`) the active profile pick. Writes through
-     * to [profileSelectionStore] for the currently-active connection so
-     * the selection survives process death and connection switches.
-     */
-    fun selectProfile(profile: Profile?) {
-        val normalizedProfile = AgentDisplay.normalizeSelection(profile)
-        _selectedProfile.value = normalizedProfile
-        _lastSessionId.value = null
-        val connectionId = activeConnectionId.value ?: return
-        _pendingSelectedProfileConnectionId.value = connectionId
-        _pendingSelectedProfileName.value = normalizedProfile?.name
-        viewModelScope.launch {
-            profileSelectionStore.setSelectedProfile(connectionId, normalizedProfile?.name)
-            rebuildChatApiClient()
-        }
-        refreshLastSessionForProfile(connectionId, normalizedProfile?.name)
-    }
-
-    private fun resolvePendingProfileFrom(list: List<Profile>): Boolean {
-        val connectionId = activeConnectionId.value ?: return false
-        if (_pendingSelectedProfileConnectionId.value != connectionId) {
-            return false
-        }
-        val current = _selectedProfile.value
-        if (current != null) {
-            if (AgentDisplay.isServerDefaultAlias(current.name)) {
-                _selectedProfile.value = null
-                _pendingSelectedProfileName.value = null
-                return true
-            }
-            val refreshed = list.firstOrNull { it.name == current.name }
-            if (refreshed != null) {
-                if (refreshed != current) {
-                    _selectedProfile.value = refreshed
-                    return true
-                }
-                return false
-            }
-            _selectedProfile.value = null
-            _pendingSelectedProfileName.value = current.name
-            return true
-        }
-        val pendingName = _pendingSelectedProfileName.value ?: return false
-        if (AgentDisplay.isServerDefaultAlias(pendingName)) {
-            _pendingSelectedProfileName.value = null
-            _selectedProfile.value = null
-            return true
-        }
-        val resolved = list.firstOrNull { it.name == pendingName }
-        if (resolved != null) {
-            _selectedProfile.value = resolved
-            return true
-        }
-        return false
-    }
-
-    /**
-     * Which transport's session slot to restore right now — or `null` when the
-     * decision is still pending (the gateway probe hasn't landed). A manual
-     * streaming-endpoint override resolves immediately; under `"auto"` the slot
-     * follows the gateway probe, and we deliberately DEFER while it's [Unknown]
-     * rather than guess SSE — otherwise a gateway connection would momentarily
-     * restore the wrong (or empty) slot before the probe confirms it. The
-     * gateway-availability collector re-runs the restore once it settles.
-     */
-    private fun activeSessionTransport(): SessionTransport? {
-        val preference = streamingEndpoint.value
-        if (preference != "auto") return SessionTransport.forEndpoint(preference)
-        return when (upstreamTransport.gatewayAvailability.value) {
-            GatewayAvailability.Ready -> SessionTransport.GATEWAY
-            GatewayAvailability.Unknown -> null
-            else -> SessionTransport.SSE
-        }
-    }
-
-    private fun refreshLastSessionForProfile(
-        connectionId: String?,
-        profileName: String?,
-    ) {
-        _lastSessionId.value = null
-        if (connectionId == null) return
-        // Defer until the active transport is known — restoring an id the
-        // current transport can't resume is exactly what forks a session
-        // mid-conversation on a non-default profile.
-        val transport = activeSessionTransport() ?: return
-        viewModelScope.launch {
-            val profileScoped = profileSessionStore
-                .sessionIdFlow(connectionId, profileName, transport)
-                .first()
-            // Default profile shares the launch DB across both transports, so a
-            // pre-transport (untransported) pointer is still resumable — surface
-            // it as the fallback only for the server-default context.
-            val legacyDefault = if (profileName == null) {
-                getApplication<Application>().relayDataStore.data
-                    .first()[KEY_LAST_SESSION_ID]
-            } else {
-                null
-            }
-            if (
-                activeConnectionId.value == connectionId &&
-                _selectedProfile.value?.name == profileName &&
-                activeSessionTransport() == transport
-            ) {
-                _lastSessionId.value = profileScoped ?: legacyDefault
-            }
-        }
-    }
+    fun selectProfile(profile: Profile?) = profileController.selectProfile(profile)
 
     // --- Paired devices list (GET /sessions) -------------------------------
     //
@@ -2417,9 +2214,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // AuthManager could race with the delete. Safe because
         // ProfileSelectionStore is a separate DataStore file from
         // ConnectionStore's EncryptedSharedPrefs.
-        profileSelectionStore.clear(connectionId)
-        profileSessionStore.clearConnection(connectionId)
-        profileDisplayAliasStore.clearConnection(connectionId)
+        profileController.profileSelectionStore.clear(connectionId)
+        profileController.profileSessionStore.clearConnection(connectionId)
+        profileController.profileDisplayAliasStore.clearConnection(connectionId)
     }
 
     private suspend fun readStoredDeviceIdForRemoval(
@@ -2816,8 +2613,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             readStoredDeviceIdForRemoval(duplicate, wasActive = false),
                         )
                         connectionStore.removeConnection(duplicate.id)
-                        profileSelectionStore.clear(duplicate.id)
-                        profileSessionStore.clearConnection(duplicate.id)
+                        profileController.profileSelectionStore.clear(duplicate.id)
+                        profileController.profileSessionStore.clearConnection(duplicate.id)
                     }
 
                     // Auto-rename the placeholder label created by
@@ -3202,13 +2999,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // changes, then resolved by the agentProfiles collector below.
         viewModelScope.launch {
             connectionSwitchEvents.collect {
-                _selectedProfile.value = null
-                _pendingSelectedProfileConnectionId.value = null
-                _pendingSelectedProfileName.value = null
-                // Dashboard profile lists are per-connection — drop the old one so
-                // the pending persisted name can't resolve against the previous
-                // connection's profiles before the new connection's list arrives.
-                _dashboardProfiles.value = emptyList()
+                // Profile + pending state + dashboard list are per-connection —
+                // drop them so the pending persisted name can't resolve against
+                // the previous connection's profiles before the new list arrives.
+                profileController.resetForConnectionSwitch()
                 // Gateway state is per-connection: drop the sticky
                 // Unsupported verdict and tear down the old socket so the
                 // next probe/send evaluates the new connection fresh.
@@ -3225,14 +3019,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     connectionStore.connections.value.firstOrNull { it.id == cid }
                 }
                 connectionManager.setManualRoleOverride(connection?.preferredRouteRole)
-                _selectedProfile.value = null
+                profileController.clearSelectedProfile()
                 _lastSessionId.value = null
-                _pendingSelectedProfileConnectionId.value = connectionId
-                _pendingSelectedProfileName.value = connectionId?.let { cid ->
-                    profileSelectionStore.selectedProfileFlow(cid).first()
-                }
-                resolvePendingProfileFrom(agentProfiles.value)
-                refreshLastSessionForProfile(connectionId, _selectedProfile.value?.name)
+                profileController.setPendingConnectionId(connectionId)
+                profileController.setPendingName(
+                    connectionId?.let { cid ->
+                        profileController.profileSelectionStore.selectedProfileFlow(cid).first()
+                    }
+                )
+                profileController.resolvePendingProfileFrom(profileController.agentProfiles.value)
+                profileController.refreshLastSessionForProfile(
+                    connectionId,
+                    profileController.selectedProfile.value?.name,
+                )
                 val apiRouteBefore = effectiveApiServerUrlSnapshot()
                 connectionManager.refreshActiveEndpoint()
                 if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
@@ -3255,11 +3054,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // connection's current agentProfiles list. A missing persisted name
         // remains pending so it can recover if the server advertises it later.
         viewModelScope.launch {
-            agentProfiles.collect { list ->
-                if (resolvePendingProfileFrom(list)) {
-                    refreshLastSessionForProfile(
+            profileController.agentProfiles.collect { list ->
+                if (profileController.resolvePendingProfileFrom(list)) {
+                    profileController.refreshLastSessionForProfile(
                         activeConnectionId.value,
-                        _selectedProfile.value?.name,
+                        profileController.selectedProfile.value?.name,
                     )
                     rebuildChatApiClient()
                 }
@@ -3277,7 +3076,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 if (availability == GatewayAvailability.Unknown) return@collect
                 if (_lastSessionId.value != null) return@collect
                 val connectionId = activeConnectionId.value ?: return@collect
-                refreshLastSessionForProfile(connectionId, _selectedProfile.value?.name)
+                profileController.refreshLastSessionForProfile(
+                    connectionId,
+                    profileController.selectedProfile.value?.name,
+                )
             }
         }
     }
@@ -4357,7 +4159,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun rebuildChatApiClient() {
         val baseApiUrl = ProfileApiUrlResolver.normalize(effectiveApiServerUrlSnapshot())
         val profileApiUrl = ProfileApiUrlResolver.resolveForConnection(
-            profileApiUrl = _selectedProfile.value?.apiServerUrl,
+            profileApiUrl = profileController.selectedProfile.value?.apiServerUrl,
             baseApiUrl = baseApiUrl,
         )
         val baseClient = _apiClient.value
@@ -5043,7 +4845,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun saveLastSessionId(sessionId: String?) {
         _lastSessionId.value = sessionId
         val connectionId = activeConnectionId.value
-        val profileName = _selectedProfile.value?.name
+        val profileName = profileController.selectedProfile.value?.name
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {
@@ -5051,7 +4853,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     // ground truth about which transport can resume it, robust to a
                     // turn that fell back from gateway to SSE.
                     val transport = SessionTransport.forSessionId(sessionId)
-                    profileSessionStore.setSessionId(
+                    profileController.profileSessionStore.setSessionId(
                         connectionId,
                         profileName,
                         transport,
@@ -5065,8 +4867,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     // transient forwarded by switchProfileContext, NOT a user clear;
                     // clearing then would wipe a still-valid session before the
                     // availability collector restores it.
-                    activeSessionTransport()?.let { transport ->
-                        profileSessionStore.setSessionId(
+                    profileController.activeSessionTransport()?.let { transport ->
+                        profileController.profileSessionStore.setSessionId(
                             connectionId,
                             profileName,
                             transport,
@@ -5134,8 +4936,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.clearSession()
             authManager.clearApiKey()
             dataManager.resetAppData()
-            profileSelectionStore.clearAll()
-            profileSessionStore.clearAll()
+            profileController.profileSelectionStore.clearAll()
+            profileController.profileSessionStore.clearAll()
             _apiServerUrl.value = ""
             _relayUrl.value = ""
             rebuildApiClient()
@@ -5143,10 +4945,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             profileChatApiClient = null
             profileChatApiClientUrl = null
             profileChatApiClientKey = null
-            _selectedProfile.value = null
+            profileController.clearSelectionState()
             _lastSessionId.value = null
-            _pendingSelectedProfileConnectionId.value = null
-            _pendingSelectedProfileName.value = null
         }
     }
 
