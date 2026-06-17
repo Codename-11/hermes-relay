@@ -8,6 +8,7 @@
     "path": "/relay",
     "position": "after:skills"
   },
+  "slots": ["header-right"],
   "entry": "dist/index.js",
   "css": "dist/style.css",
   "api": "plugin_api.py"

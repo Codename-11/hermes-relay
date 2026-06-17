@@ -6,6 +6,7 @@ import RelayManagement from "./tabs/RelayManagement.jsx";
 import BridgeActivity from "./tabs/BridgeActivity.jsx";
 import MediaInspector from "./tabs/MediaInspector.jsx";
 import RemoteAccess from "./tabs/RemoteAccess.jsx";
+import RelayStatusSlot from "./components/RelayStatusSlot.jsx";
 import { Switch } from "./lib/ui-shims.jsx";
 
 const { Label } = SDK.components;
@@ -108,6 +109,14 @@ if (typeof window !== "undefined") {
   const hub = window.__HERMES_PLUGINS__;
   if (hub && typeof hub.register === "function") {
     hub.register("hermes-relay", RelayPluginRoot);
+    // Inject a compact status badge into the shell header (visible on every
+    // page, not just the Relay tab). registerSlot(pluginName, slotName,
+    // Component) — the host stacks slot components in registration order and
+    // re-renders <PluginSlot name="header-right" /> when this arrives. Guarded
+    // so an older host without slot support still registers the main tab.
+    if (typeof hub.registerSlot === "function") {
+      hub.registerSlot("hermes-relay", "header-right", RelayStatusSlot);
+    }
   } else {
     // eslint-disable-next-line no-console
     console.error(

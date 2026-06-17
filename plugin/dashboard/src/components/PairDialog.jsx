@@ -4,8 +4,9 @@ const { useState, useEffect, useRef, useCallback, useMemo } = SDK.hooks;
 
 import QRCode from "qrcode";
 import { mintPairingWithMode } from "../lib/api.js";
+import { Button, Badge } from "../lib/ui-shims.jsx";
 
-const { Button, Badge, Input, Label } = SDK.components;
+const { Input, Label } = SDK.components;
 
 // localStorage keys — per-browser, not per-user. Sensible defaults on first
 // open; stick with whatever the operator last used.
