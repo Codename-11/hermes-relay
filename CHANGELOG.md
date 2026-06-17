@@ -6,10 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-16
+
 ### Added
 
 - **Automated Play Console upload on release.** When a `PLAY_SERVICE_ACCOUNT_JSON` secret is configured, pushing a stable `android-v*` tag uploads the `googlePlay` App Bundle to the Production track as a draft (a human still starts the rollout). Prereleases are skipped, and the `sideload` flavor is structurally blocked from ever publishing to Play. Without the secret, the release builds publish to GitHub Releases exactly as before.
 - **Desktop UI preview harness (`:ui-preview`).** A non-shipped Compose for Desktop module renders presentational composables in a window on the PC with Compose Hot Reload, for fast UI iteration without a device build/install loop. It reuses the shared sphere algorithm as its single source of truth.
+- **Plugin: guided env-key setup.** The relay plugin declares its optional voice-provider keys (`XAI_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`) in its manifest, so `hermes plugins install` prompts for them (masked, with a "get yours" link) instead of hand-editing `.env`. The standard no-plugin path needs none.
+- **Plugin: native install path.** Tools-only setups can install via `hermes plugins install Codename-11/hermes-relay/plugin`; the full relay still uses the curl `install.sh`.
+- **`/relay` slash commands.** `relay status · devices · pair` usable mid-conversation from any platform (CLI / Discord / TUI).
+- **Dashboard relay-status widget.** A `Relay · connected / offline / unpaired` badge in the dashboard header, visible on every page.
+- **Session-start relay health check.** A minimal, fully-guarded `on_session_start` hook records relay reachability without slowing the gateway.
 
 ### Changed
 

@@ -1,22 +1,22 @@
-# Hermes-Relay-Android v1.0.0
+# Hermes-Relay-Android v1.1.0
 
-**Release Date:** June 14, 2026
-**Since v0.8.1:** The 1.0 milestone — a rechromed app, a first-class standard (no-plugin) path, live-thinking gateway chat, and a broad polish pass.
+**Release Date:** June 16, 2026
+**Since v1.0.0:** A settings + chat-UX overhaul — quieter status surfaces, a single state-aware plugin badge, and chat-settings polish — plus a force-close fix and release-pipeline upgrades.
 
-v1.0.0 is the first stable release. The headline is that a **plain, unmodified Hermes agent is now enough**: chat, Manage, and voice all work against vanilla upstream with no relay plugin. The relay plugin is now purely additive (phone control, terminal, notification companion, extra voice engines).
+v1.1.0 is a refinement release on top of the 1.0 milestone. Settings is calmer and easier to read: status pills now appear only when a surface needs attention, the Power tools section shows one **Plugin active / required / offline** badge instead of an identical chip on every card, and the most-used controls sit where you reach for them. Chat settings render correctly, the system-prompt preview reflects your toggles, and a crash that could hit right after a successful pair is gone.
 
 ---
 
 ## Download
 
-v1.0.0 ships in two Android build flavors. APK and AAB filenames are version-tagged:
+v1.1.0 ships in two Android build flavors. APK and AAB filenames are version-tagged:
 
 | Flavor | File | Who it's for |
 |---|---|---|
-| Google Play | `hermes-relay-1.0.0-googlePlay-release.aab` | Upload this Android App Bundle to Play Console. It has no AccessibilityService, screen reading, screenshots, gestures, SMS/calls, contacts/location, overlays, or unattended phone control. |
-| sideload | `hermes-relay-1.0.0-sideload-release.apk` | Direct-install APK for full Device Control. Installs as `com.axiomlabs.hermesrelay.sideload`. |
-| googlePlay APK | `hermes-relay-1.0.0-googlePlay-release.apk` | Parity/testing artifact. |
-| sideload AAB | `hermes-relay-1.0.0-sideload-release.aab` | Parity/testing artifact. |
+| Google Play | `hermes-relay-1.1.0-googlePlay-release.aab` | Upload this Android App Bundle to Play Console. It has no AccessibilityService, screen reading, screenshots, gestures, SMS/calls, contacts/location, overlays, or unattended phone control. |
+| sideload | `hermes-relay-1.1.0-sideload-release.apk` | Direct-install APK for full Device Control. Installs as `com.axiomlabs.hermesrelay.sideload`. |
+| googlePlay APK | `hermes-relay-1.1.0-googlePlay-release.apk` | Parity/testing artifact. |
+| sideload AAB | `hermes-relay-1.1.0-sideload-release.aab` | Parity/testing artifact. |
 
 Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 
@@ -24,43 +24,32 @@ Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload 
 
 ## Highlights
 
-### Standard path is first-class — no plugin required
+### Settings screen overhaul
 
-Chat, Manage, and voice now work against an unmodified upstream Hermes agent. Chat prefers the dashboard `/api/ws` gateway when Manage auth is ready and falls back to API-server SSE; Manage and standard voice use the Hermes dashboard with a single sign-in. The relay plugin stays optional and only adds power tools.
+Settings was reorganized around what you actually touch and quieted down everywhere else:
 
-### Gateway chat transport with live thinking
+- **Exception-only status pills.** Status pills now appear only when a surface needs attention and stay quiet when everything is healthy — no more a wall of green chips to read past.
+- **One state-aware plugin badge.** The Power tools section shows a single **Plugin active / required / offline** badge instead of an identical "Relay paired" chip repeated on every card.
+- **Layout that follows your reach.** Connections moved to the top (above the Hermes section), and Diagnostics + Developer options moved into the App section.
+- **Restyled to match the app.** The status chips now use the app's translucent-bordered language, and the brand blue was deepened.
 
-Chat can now ride the upstream dashboard `/api/ws` gateway (the same surface the official hermes-desktop client speaks). It's the only vanilla-upstream path that streams reasoning **live**, so the Thinking block and sphere light up *during* generation instead of after. "Auto" prefers the gateway when the dashboard is reachable and Manage is signed in, and falls back to the SSE endpoints per turn on any failure.
+### Chat settings polish
 
-- **Warm-start + keep-alive.** The app pre-warms the gateway on foreground so the first token lands fast (the cold session-setup cost moves off the send path). An opt-in **Keep connected in background** toggle (both flavors) holds the connection open via a foreground service so a long-backgrounded conversation resumes instantly.
-- **Attachments at desktop parity.** Images, PDFs, and any other file upload natively over the gateway (`image.attach_bytes` / `pdf.attach` / `file.attach`). Turns that fall back to an endpoint that can't carry a file now post a visible notice instead of dropping it silently.
-- **Steering, edit & resend, subagent lanes.** Send mid-turn to inject guidance into the running turn; edit your own messages to rewind and regenerate; watch per-task subagent lanes stream under the bubble; a context-window meter warns as the window fills.
-- **Turn-complete notifications** when the app is backgrounded.
+- **Streaming-endpoint picker fixed.** The picker no longer wraps "Gateway" / "Sessions" onto a second line.
+- **Live system-prompt preview.** The system-prompt preview now reflects the context toggles you've enabled (foreground app, battery, safety rails) with representative placeholder values, instead of looking inert.
 
-### Manage parity with the desktop dashboard
+### Force-close fix
 
-The Manage tab now does what the desktop dashboard does: change models from the full provider catalog, manage provider keys (write-only, masked, reveal), create/edit profiles and SOUL.md, and browse/install/update skills. Manage data is cached to disk so a cold launch renders instantly.
+A corrupt encrypted token store — which can happen after an app upgrade or a device restore — used to throw during construction and crash the app right after a successful pair, on both standard and relay connections. The token store now heals a corrupt keyset in place, and credential storage degrades to a re-pair instead of crashing if the device keystore is unusable.
 
-### Per-conversation agent profiles
+### Release pipeline
 
-Switch the whole agent — model, persona (SOUL), and skills — from the chat header. The selection is **ephemeral and per-conversation** (bound to the session, like the official desktop): it never changes your server's default agent for other clients. The session drawer scopes to the active profile, opening one of its chats loads that profile's history, and the right agent is restored on cold start.
-
-### Redesigned chat input + seamless connection UX
-
-A cleaner Telegram-style input bar (pill field, one morphing Send/Voice/Stop/Steer/Queue button, no slash button). Network route handoffs (LAN↔Tailscale) and reconnects no longer repaint or reload the chat, and connection/update status now slide down as in-theme toasts over the content instead of pushing the UI around.
-
-### Voice
-
-The provider-native Realtime Agent keeps one session open across turns (follow-ups retain context), and long Hermes runs are promoted to tracked background tasks so the conversation stays responsive and the answer is spoken when it's ready.
-
-### Docs + branding
-
-The documentation site was rechromed to the app's cockpit theme and repositioned around the two-path story (just connect → give it hands), with a reworked Android getting-started funnel and a Google Play badge.
+- **Automated Play Console upload.** When a `PLAY_SERVICE_ACCOUNT_JSON` secret is configured, pushing a stable `android-v*` tag uploads the `googlePlay` App Bundle to the Production track as a draft (a human still starts the rollout). Prereleases are skipped, and the `sideload` flavor is structurally blocked from ever publishing to Play. Without the secret, releases publish to GitHub Releases exactly as before.
+- **Desktop UI preview harness (`:ui-preview`).** A non-shipped Compose for Desktop module renders presentational composables in a window on the PC with Compose Hot Reload, for fast UI iteration without a device build/install loop. It reuses the shared sphere algorithm as its single source of truth.
 
 ---
 
 ## Upgrade notes
 
-- **Google Play submission:** the opt-in keep-alive feature adds a `FOREGROUND_SERVICE_SPECIAL_USE` service. Complete the Play Console **Foreground service permissions** declaration for `specialUse` at submission (see `docs/play-store-listing.md`).
-- **PDF attachments** over the gateway require `poppler-utils` (`pdftoppm`) on the Hermes host; without it, PDF attach reports an error and the message still sends as text.
-- `appVersionCode` is **12**.
+- The force-close fix means devices that previously crashed on connect after an upgrade or restore will heal their token store automatically on first launch of this build — no manual re-pair required in most cases.
+- `appVersionCode` is **13**.
