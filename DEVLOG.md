@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-16 — GitHub issue and PR templates
+
+**Why.** The repository needed clearer GitHub community templates so bug reports, feature requests, and documentation/setup reports arrive with enough context while preserving public-repo hygiene.
+
+- **Issue forms.** Added `.github/ISSUE_TEMPLATE/bug_report.yml`, `feature_request.yml`, and `docs.yml` with default labels, affected-surface prompts, reproduction or acceptance fields, upstream/standard-path context where relevant, and required reminders to remove secrets, private infrastructure, and personal names.
+- **Issue chooser.** Added `.github/ISSUE_TEMPLATE/config.yml` with contact links to security guidance, user documentation, and contributor setup while keeping blank issues enabled for edge cases.
+- **Pull request template.** Refreshed `.github/PULL_REQUEST_TEMPLATE.md` to include an explicit verification section and path-specific Android/server/desktop/docs checks instead of a blanket full APK/test requirement.
+- **Verification.** YAML syntax and the GitHub template diff were reviewed locally.
+
 ## 2026-06-16 — Per-surface release notes (plugin + CLI parity with Android)
 
 **Why.** Plugin and CLI GitHub Release bodies were static boilerplate baked into the workflow YAML (version-interpolated, but change-agnostic — a reader couldn't tell what a `plugin-v*`/`cli-v*` release actually changed). Only Android had real per-release notes (`RELEASE_NOTES.md` via `body_path`). Brought plugin and CLI up to the same Summary/Added/Changed/Fixed format.

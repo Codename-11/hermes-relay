@@ -1,0 +1,78 @@
+name: Feature request
+description: Propose a product, workflow, or platform improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep requests focused on user-visible outcomes. Do not include private infrastructure, secrets, personal names, or branch/workspace plumbing.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Android app
+        - Standard Hermes chat or voice
+        - Relay plugin or server
+        - Desktop CLI or tray
+        - Dashboard plugin
+        - Docs or installer
+        - CI, release, or packaging
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What is hard, missing, slow, confusing, or unsafe today?
+      placeholder: Describe the concrete user workflow this would improve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the outcome, not just an implementation detail.
+      placeholder: After this change, a user should be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: standard_path
+    attributes:
+      label: Standard upstream compatibility
+      description: If this touches chat, voice, dashboard, API routes, or server behavior, note whether it can work against unmodified upstream hermes-agent.
+      placeholder: This should work on vanilla upstream because... / This requires the relay plugin because...
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Mention current workarounds or related approaches.
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What would make the request complete?
+      placeholder: |
+        - Users can...
+        - The app/server handles...
+        - Documentation covers...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: I described the user outcome and affected surface.
+          required: true
+        - label: I removed private infrastructure details and personal names.
+          required: true

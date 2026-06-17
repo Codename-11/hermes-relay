@@ -1,0 +1,64 @@
+name: Documentation or setup issue
+description: Report unclear, stale, or missing docs and setup guidance.
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for docs, installer, setup, release-note, or contribution-guide problems. Remove private hostnames/IPs, tokens, and personal names before posting.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Documentation area
+      options:
+        - README
+        - User docs site
+        - Android setup
+        - Relay plugin setup
+        - Desktop CLI or tray setup
+        - Release notes or changelog
+        - Contributor docs
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Page, file, or section
+      description: Link the page or name the file and heading.
+      placeholder: user-docs/guide/getting-started.md, README install section, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is wrong or missing?
+      description: Explain what was unclear, outdated, misleading, or absent.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Suggested correction
+      description: Optional. Include the wording, command, screenshot need, or structure that would help.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Optional. Include the version, install path, device, or command you were following.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked that this is not already covered in current docs.
+          required: true
+        - label: I removed secrets, private hostnames/IPs, internal deployment names, and personal names.
+          required: true
