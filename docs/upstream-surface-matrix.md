@@ -1,6 +1,6 @@
 # Hermes-Relay Surface Matrix
 
-Updated: 2026-06-16
+Updated: 2026-06-17
 
 This matrix records the v1.0.0 route ownership contract. It is meant to keep
 future app, plugin, and agent work honest about what is standard upstream
@@ -32,6 +32,43 @@ Verified upstream source snapshot:
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab | FastAPI plugin backend proxies loopback requests to the Relay server. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports standard route reachability, plugin layout, Relay loopback state, and legacy bootstrap presence. |
 | `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-standard | Fallback only | Installed via `.pth` by legacy installer. Keep only for older Hermes builds or compatibility-only gaps. |
+
+## Voice Surfaces (standard vs. relay)
+
+Voice splits the same way as everything else: standard rides vanilla upstream,
+relay is the additive power path.
+
+### Route ownership
+
+Be explicit, because the names look similar:
+
+| Route | Owner | Requires Relay | Notes |
+|-------|-------|----------------|-------|
+| Dashboard `POST /api/audio/transcribe` | **Upstream** (dashboard web_server) | No | Standard STT. Cookie/session auth. |
+| Dashboard `POST /api/audio/speak` | **Upstream** (dashboard web_server) | No | Standard TTS. Accepts ONLY `{text}` — one-shot, config-driven. |
+| Dashboard `GET /api/audio/elevenlabs/voices` | **Upstream** (dashboard web_server) | No | Voice-list helper. |
+| `POST /voice/transcribe`, `POST /voice/synthesize` | **Relay** (`plugin/relay/voice.py`) | Yes | Basic STT/TTS. `/voice/synthesize` wraps upstream `text_to_speech_tool` + adds per-request enhanced overrides. |
+| `GET /voice/config` | **Relay** | Yes | Reports `tts:`/`stt:` + a provider-aware `tts.enhanced` capability block. |
+| `GET/PATCH /voice/output/config`, `POST /voice/output/session`, `GET /voice/output/{id}` (WS) | **Relay** (`plugin/relay/voice_output.py` + `plugin/voice_lab/`) | Yes | Streaming TTS renderer. **No upstream equivalent** — the API server advertises `audio_api: false` and there is no upstream streaming/WS audio route (`/v1/audio/*` PR is unmerged). |
+| `GET/PATCH /voice/realtime/*`, `GET/PATCH /voice/realtime-agent/*` | **Relay** | Yes | Provider playground + the experimental Realtime Agent engine. Not upstream. |
+
+**Bottom line: every `/voice/*` route is relay-owned. The only upstream audio surface is the dashboard `/api/audio/*` set.**
+
+### Enhanced voice (provider-native voice/tone control)
+
+| Capability | Standard path (vanilla upstream) | Relay path (plugin) |
+|------------|----------------------------------|---------------------|
+| Where it applies | Dashboard `/api/audio/speak`. | Relay `/voice/synthesize` (basic) **and** `/voice/output/*` (streaming renderer, the default when `voice_output_enabled`). |
+| Control model | **Config-only.** Read from `~/.hermes/config.yaml` `tts.<provider>.*`. `/api/audio/speak` takes only `{text}`. The phone changes enhanced behavior only via Manage `PUT /api/config` (global), never per utterance. | **Synthesize:** per-request override (`voice`/`model`/`audio_tags`/`persona_prompt`/`language`), advertised via `/voice/config` `tts.enhanced`. **Streaming:** per-profile `voice_output:` config (incl. `auto_speech_tags` for xAI), set via `PATCH /voice/output/config`. Neither mutates the basic `tts:` config. |
+| Feature coverage | Whatever the server config enables (any provider). | **Synthesize:** Gemini (`voice`/`model`/`audio_tags` tone-tag rewrite/`persona_prompt`) + xAI (`voice`→`voice_id`/`audio_tags`→`auto_speech_tags`/`language`). **Streaming:** xAI `auto_speech_tags` (the `voice_lab` renderer has xai/openai/elevenlabs but **no Gemini provider**). Others config-only. |
+| How it's implemented | Upstream `text_to_speech_tool` reads config; relay/app do nothing special. | **Synthesize:** relay merges overrides into a config copy and calls the upstream generator (`_generate_gemini_tts`/`_generate_xai_tts`) directly. **Streaming:** the relay applies `upstream_voice.apply_xai_speech_tags()` to the chunk text before the `voice_lab` `xai_tts` renderer. No fork patch; all upstream imports isolated in `plugin/relay/upstream_voice.py`. |
+
+Upstream parity notes (verify against `tools/tts_tool.py`): Gemini `audio_tags` needs a
+`gemini-3.1*tts` model and runs a hidden auxiliary-LLM rewrite that **fails soft**
+(unavailable aux client → untagged text). OpenAI TTS exposes only `voice` + `speed`
+upstream — the `gpt-4o-mini-tts` `instructions` tone param is **not** wired — so it is
+intentionally not offered as a relay enhanced provider. The standard path stays vanilla
+upstream regardless; the relay enhanced surface is purely additive.
 
 ## Plugin Lifecycle Contract
 
