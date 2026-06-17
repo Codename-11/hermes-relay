@@ -119,6 +119,18 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
          * and reattach. Null when the user hasn't named this session.
          */
         val displayName: String? = null,
+        /**
+         * True when this tab received output while it was NOT the active tab —
+         * drives the unread dot on its tab chip. Cleared when the tab is
+         * selected. Background tabs keep rendering output (stacked WebViews),
+         * so without this the user has no signal that a hidden session moved.
+         */
+        val unreadOutput: Boolean = false,
+        /**
+         * True when the user has scrolled up off the live tail — drives the
+         * "jump to latest" pill. Reported by xterm's onScroll via the bridge.
+         */
+        val scrolledUp: Boolean = false,
     )
 
     /**
@@ -397,6 +409,17 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
     fun selectTab(tabId: Int) {
         if (_tabs.value.any { it.tabId == tabId }) {
             _activeTabId.value = tabId
+            // Viewing the tab clears its unread dot.
+            _tabs.update { list ->
+                list.map { if (it.tabId == tabId) it.copy(unreadOutput = false) else it }
+            }
+        }
+    }
+
+    /** xterm scroll position for [tabId] — drives the "jump to latest" pill. */
+    fun onScrollPosition(tabId: Int, atBottom: Boolean) {
+        _tabs.update { list ->
+            list.map { if (it.tabId == tabId) it.copy(scrolledUp = !atBottom) else it }
         }
     }
 
@@ -634,6 +657,12 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
                 )
                 viewModelScope.launch {
                     _outputFlow.emit(TabOutput(tab.tabId, b64))
+                }
+                // Flag unread output on hidden tabs so the tab chip can dot.
+                if (tab.tabId != _activeTabId.value) {
+                    _tabs.update { list ->
+                        list.map { if (it.tabId == tab.tabId) it.copy(unreadOutput = true) else it }
+                    }
                 }
             }
 

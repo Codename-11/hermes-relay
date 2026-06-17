@@ -315,6 +315,33 @@ fun TerminalScreen(
                     modifier = Modifier.zIndex(2f),
                 )
             }
+
+            // "Jump to latest" pill — shows when the user has scrolled up off
+            // the live tail (xterm onScroll → bridge). Tap snaps back to the
+            // bottom. Hidden while an overlay owns the surface.
+            if (activeTab?.scrolledUp == true && !showBlockingOverlay && !tabNotStarted) {
+                androidx.compose.material3.Surface(
+                    onClick = {
+                        webViewByTab[activeTabId]?.evaluateJavascript(
+                            "window.scrollTerminalToBottom && window.scrollTerminalToBottom();",
+                            null,
+                        )
+                    },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .zIndex(2f),
+                ) {
+                    Text(
+                        text = "↓ Jump to latest",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
         }
 
         val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current

@@ -27,12 +27,12 @@ Build note: Kotlin changes are built via `assembleSideloadDebug` only on explici
 Reference: current gaps in `TerminalScreen.kt` / `TerminalWebView.kt` / `ExtraKeysToolbar.kt`
 + render parity from the web dashboard's xterm config.
 
-- [ ] **1.1 Command history (↑ recall / recents).** Track submitted lines per tab; expose a
-  recents affordance (↑ in the extra-keys row, or a small recents chip) to re-insert prior
-  commands into the PTY input.
-  *Why:* no history recall today — users retype or scroll-and-copy. The single biggest
-  shell-ergonomics gap on mobile.
-  *Accept:* a recent command can be recalled and sent without retyping.
+- [-] **1.1 Command history — reclassified (already satisfied at the shell).** The extra-keys
+  `↑` already sends `[A` (`TerminalViewModel.sendKey`), which is exactly what bash/zsh
+  consume for native history recall. So history works today via the shell itself; an app-level
+  parallel history would be redundant and could fight the shell's line editor. The audit's
+  "no history" finding was inaccurate. An app-level cross-session *recents* quick-run is a
+  possible future nicety, not a gap — left out.
 
 - [x] **1.2 Explicit Copy-selection button.** Added a COPY key in `ExtraKeysToolbar` beside
   PASTE; reads the xterm selection via a new `window.getSelectionText()` JS hook
@@ -44,22 +44,23 @@ Reference: current gaps in `TerminalScreen.kt` / `TerminalWebView.kt` / `ExtraKe
   on show). `ExtraKeysToolbar.kt` + `TerminalScreen.kt`.
   *Accept:* the key reliably raises/dismisses the keyboard. ⚠️ on-device verify (IME insets vary).
 
-- [ ] **1.4 Unread-activity dots on background tabs.** Inactive tabs already keep receiving
-  output (stacked WebViews); badge a tab when new output arrives while hidden, clear on focus.
-  *Why:* no signal that a background session produced output.
-  *Accept:* a hidden tab that emits output shows a dot until viewed.
+- [x] **1.4 Unread-activity dots on background tabs.** `TabState.unreadOutput` set when a
+  `terminal.output` lands on a non-active tab, cleared on `selectTab`; a small primary-colored
+  dot on the inactive tab chip (`TerminalTabBar`). `TerminalViewModel.kt` + `TerminalTabBar.kt`.
+  *Accept:* a hidden tab that emits output shows a dot until viewed. ⚠️ on-device verify.
 
-- [ ] **1.5 Scrollback position indicator.** Surface a lightweight position hint for the
-  10k-line buffer (scrollbar overlay or "↑ N lines" pill); WebView scrollbar is currently off.
-  *Why:* no sense of position when reviewing long output.
-  *Accept:* scrolling shows where you are in scrollback.
+- [x] **1.5 "Jump to latest" pill.** xterm `onScroll` reports `atBottom` via a new
+  `onScrollPosition` bridge method → `TabState.scrolledUp`; a tappable pill appears over the
+  terminal when scrolled up and snaps back via the existing `scrollTerminalToBottom`.
+  `index.html` + `TerminalWebView.kt` + `TerminalViewModel.kt` + `TerminalScreen.kt`.
+  *Accept:* scrolling up shows the pill; tap returns to the live tail. ⚠️ on-device verify.
 
-- [ ] **1.6 Render parity with the web dashboard's xterm.** Adopt the proven web config:
-  WebGL addon (DOM fallback on low-end), OSC 52 clipboard, confirm the `\x1b[RESIZE:cols;rows]`
-  resize contract, and the JetBrains-Mono→Cascadia→Fira font cascade.
-  *Why:* the web `/chat` terminal is the right *rendering* reference; matching it improves
-  crispness, clipboard, and resize robustness.
-  *Accept:* parity items present; no regression in reflow/selection.
+- [-] **1.6 Render parity — reclassified (largely already present / blocked).** The font cascade
+  (`JetBrains Mono → Fira Code → Cascadia → Roboto Mono → monospace`) is **already** in
+  `index.html`, and the `\x1b[RESIZE:cols;rows]` resize contract already holds. **WebGL** can't
+  be added — `addon-webgl.js` isn't vendored (only fit/search/web-links are) and fetching it is
+  out of scope; the DOM renderer is fine. **OSC 52** is niche now that COPY (1.2) covers
+  user-initiated copy + carries a minor clipboard-write surface — left out. Net: no work needed.
 
 - [-] **1.7 Inline rename + "don't ask again" on close.** Pencil affordance on the tab chip
   (rename is buried in the info sheet) and a remembered default for the detach-vs-kill dialog.
@@ -118,10 +119,10 @@ it does not introduce a terminal surface or replace the chat view.
 - 2026-06-17 — Plan scoped from the 3-way terminal comparison. Direction chosen: **both,
   sequenced** (Phase 1 terminal ergonomics, then Phase 2 Chat parity). Phase 2 is explicitly
   an *enhancement* of the existing native Chat — not a TUI/xterm replacement.
-- 2026-06-17 — **Batch 1 landed (not yet built/deployed):** 2.2 context bar pulled forward at
-  user request + done (ChatViewModel `ContextWindowUsage` + `contextWindow` flow, per-session
-  reset at all 4 points; `ContextMeterBar` rewritten into a clean `NN% · used/max` color-graded
-  gauge; redundant header "NN% ctx" suffix removed). Terminal 1.2 (COPY key) + 1.3 (⌨ keyboard
-  toggle) done. **Remaining Phase 1:** 1.1 history, 1.4 unread dots, 1.5 scroll indicator,
-  1.6 web-render parity. Files: ChatViewModel.kt, ContextMeterBar.kt, ChatScreen.kt,
-  ExtraKeysToolbar.kt, TerminalScreen.kt, assets/terminal/index.html.
+- 2026-06-17 — **Batch 1 (committed):** 2.2 context bar pulled forward + done; terminal 1.2
+  (COPY) + 1.3 (⌨ toggle). Committed to dev (animations/ARR, chat, terminal, docs, play-listing).
+- 2026-06-17 — **Phase 1 COMPLETE.** 1.4 unread dots + 1.5 jump-to-latest pill done. 1.1 (history)
+  reclassified — shell-native `↑` already recalls history; no app work needed. 1.6 (render parity)
+  reclassified — font cascade + resize contract already present, WebGL addon not vendored (can't
+  add), OSC 52 left out. 1.7 still deferred. Next: Phase 2 (native-Chat parity) — 2.2 done; 2.1
+  tool tree, 2.3 input history recall, 2.4 session-picker polish, 2.5 queue edit remain.
