@@ -131,6 +131,9 @@ def voice_output_settings(config: Any, profile: str | None) -> dict[str, Any]:
         "text_normalization": bool(
             getattr(config, "voice_output_text_normalization", False)
         ),
+        "auto_speech_tags": bool(
+            getattr(config, "voice_output_auto_speech_tags", False)
+        ),
         "fallback_enabled": bool(getattr(config, "voice_output_fallback_enabled", True)),
     }
 
@@ -268,6 +271,7 @@ def _voice_output_overrides(data: dict[str, Any]) -> dict[str, Any]:
         _copy_string(out, section, "codec")
         _copy_int(out, section, "optimize_streaming_latency")
         _copy_bool(out, section, "text_normalization")
+        _copy_bool(out, section, "auto_speech_tags")
         _copy_bool(out, section, "fallback_enabled")
         _copy_bool(out, section, "enabled")
     return out

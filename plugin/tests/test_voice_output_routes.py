@@ -179,6 +179,7 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
                 "codec": "pcm",
                 "optimize_streaming_latency": 0,
                 "text_normalization": True,
+                "auto_speech_tags": True,
                 "fallback_enabled": False,
             },
             headers=self._bearer(token),
@@ -191,7 +192,9 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
         self.assertEqual(body["default_voice"], "square")
         self.assertEqual(body["sample_rate"], 16000)
         self.assertFalse(body["fallback_enabled"])
+        self.assertTrue(body["auto_speech_tags"])
         self.assertEqual(self._server().config.voice_output_model, "patched-tone")
+        self.assertTrue(self._server().config.voice_output_auto_speech_tags)
 
         with open(
             self._server().config.voice_output_config_path,
@@ -202,6 +205,7 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
         self.assertEqual(saved["voice_output"]["voice"], "square")
         self.assertEqual(saved["voice_output"]["sample_rate"], 16000)
         self.assertFalse(saved["voice_output"]["fallback_enabled"])
+        self.assertTrue(saved["voice_output"]["auto_speech_tags"])
 
     async def test_voice_output_config_patch_rejects_realtime_provider(self) -> None:
         token = await self._make_session()

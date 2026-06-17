@@ -50,6 +50,7 @@ from .provider_options import (
     merge_provider_options,
     validate_provider_selection,
 )
+from . import upstream_voice
 from .realtime_voice import _read_relay_xai_oauth_token
 from .voice_auth import AuthPrincipal, require_voice_auth
 
@@ -83,6 +84,9 @@ class VoiceOutputSession:
     auth_kind: str
     auth_session_device_id: str | None = None
     auth_token_hash: str | None = None
+    # xAI expressive speech tags (xai_tts only). Applied to the render text at
+    # the relay layer; other providers ignore it.
+    auto_speech_tags: bool = False
     resume_ttl_seconds: float = _RESUME_TTL_SECONDS
     resume_deadline: float | None = None
     attached_ws: web.WebSocketResponse | None = None
@@ -214,6 +218,7 @@ class VoiceOutputHandler:
             optimize_streaming_latency=int(settings["optimize_streaming_latency"]),
             text_normalization=bool(settings["text_normalization"]),
             fallback_enabled=bool(settings["fallback_enabled"]),
+            auto_speech_tags=bool(settings["auto_speech_tags"]),
             profile=settings.get("profile"),
             config_scope=str(settings["config_scope"]),
             config_path=settings.get("config_path"),
@@ -584,6 +589,7 @@ class VoiceOutputHandler:
             "optimize_streaming_latency": settings["optimize_streaming_latency"],
             "text_normalization": settings["text_normalization"],
             "fallback_enabled": settings["fallback_enabled"],
+            "auto_speech_tags": settings["auto_speech_tags"],
             "fallback_provider": "legacy_hermes_tts",
             "providers": providers,
             "auth": _voice_output_auth_status(self.config),
@@ -654,6 +660,16 @@ class VoiceOutputHandler:
         output_path = session.event_log_path.with_suffix(".wav")
         provider_options = self._provider_options(session, payload)
         provider_options["render_mode"] = render_mode
+
+        # xAI expressive speech tags: the voice_lab xai_tts renderer streams text
+        # verbatim and does not inject xAI's inline/wrapping tags, so apply them
+        # here (same transform the basic /voice/synthesize path uses) when the
+        # session/request opts in. Other providers ignore the flag.
+        if (
+            session.provider == "xai_tts"
+            and _bool_value(provider_options.get("auto_speech_tags")) is True
+        ):
+            text = upstream_voice.apply_xai_speech_tags(text)
 
         def audio_sink(chunk: bytes, meta: dict[str, Any]) -> None:
             peak, rms = _pcm_levels(chunk)
@@ -754,6 +770,10 @@ class VoiceOutputHandler:
             "text_normalization",
             "true" if session.text_normalization else "false",
         )
+        provider_options.setdefault(
+            "auto_speech_tags",
+            "true" if session.auto_speech_tags else "false",
+        )
 
         if session.provider == "xai_tts":
             token = _read_relay_xai_oauth_token(self.config)
@@ -795,6 +815,7 @@ class VoiceOutputHandler:
             "optimize_streaming_latency",
             "text_normalization",
             "fallback_enabled",
+            "auto_speech_tags",
         }
         unsupported = sorted(set(payload) - allowed)
         if unsupported:
@@ -853,6 +874,12 @@ class VoiceOutputHandler:
             if value is None:
                 raise web.HTTPBadRequest(text="fallback_enabled must be a boolean")
             updates["fallback_enabled"] = value
+
+        if "auto_speech_tags" in payload:
+            value = _bool_value(payload["auto_speech_tags"])
+            if value is None:
+                raise web.HTTPBadRequest(text="auto_speech_tags must be a boolean")
+            updates["auto_speech_tags"] = value
 
         if not updates:
             raise web.HTTPBadRequest(text="no voice output config fields supplied")

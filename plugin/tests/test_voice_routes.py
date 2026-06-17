@@ -299,6 +299,7 @@ class VoiceRoutesTests(AioHTTPTestCase):
 
         def _fake_tts(text, output_path=None):
             captured["text"] = text
+            captured["output_path"] = output_path
             return json.dumps({"success": True, "file_path": mp3_path})
 
         sys.modules["tools.tts_tool"].text_to_speech_tool = _fake_tts
@@ -314,8 +315,127 @@ class VoiceRoutesTests(AioHTTPTestCase):
         body = await resp.read()
         self.assertEqual(body, payload)
         self.assertEqual(captured["text"], "hello there")
-        # The handler should NOT delete the TTS file.
-        self.assertTrue(os.path.isfile(mp3_path))
+        # The relay now owns the output path and deletes the artifact after
+        # streaming, so synthesis never leaks files into ~/voice-memos.
+        self.assertIsNotNone(captured["output_path"])
+        self.assertFalse(os.path.isfile(mp3_path))
+
+    async def test_synthesize_applies_gemini_overrides(self) -> None:
+        # When Gemini is the effective provider, per-request voice/model/
+        # audio_tags/persona are merged into a config copy and the Gemini
+        # generator is invoked directly — text_to_speech_tool is bypassed.
+        unset = object()
+        payload = b"ID3\x03gemini-mp3-body"
+        captured: dict = {}
+        tts_mod = sys.modules["tools.tts_tool"]
+        saved = {
+            name: getattr(tts_mod, name, unset)
+            for name in (
+                "text_to_speech_tool",
+                "_load_tts_config",
+                "_get_provider",
+                "_generate_gemini_tts",
+            )
+        }
+
+        def _fake_generate_gemini(text, output_path, tts_config):
+            captured["text"] = text
+            captured["gemini"] = dict(tts_config.get("gemini") or {})
+            with open(output_path, "wb") as fh:
+                fh.write(payload)
+            return output_path
+
+        def _no_tts_tool(*args, **kwargs):
+            raise AssertionError("override path must bypass text_to_speech_tool")
+
+        tts_mod._load_tts_config = lambda: {"provider": "gemini", "gemini": {"voice": "Kore"}}
+        tts_mod._get_provider = lambda cfg: cfg.get("provider", "gemini")
+        tts_mod._generate_gemini_tts = _fake_generate_gemini
+        tts_mod.text_to_speech_tool = _no_tts_tool
+
+        try:
+            token = await self._make_session()
+            resp = await self.client.post(
+                "/voice/synthesize",
+                json={
+                    "text": "hello there",
+                    "voice": "Puck",
+                    "model": "gemini-3.1-flash-tts-preview",
+                    "audio_tags": True,
+                    "style": "Warm, calm narrator.",
+                },
+                headers=self._bearer(token),
+            )
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(await resp.read(), payload)
+            self.assertEqual(captured["gemini"]["voice"], "Puck")
+            self.assertEqual(captured["gemini"]["model"], "gemini-3.1-flash-tts-preview")
+            self.assertTrue(captured["gemini"]["audio_tags"])
+            # Inline persona/style is written to a temp persona_prompt_file.
+            self.assertIn("persona_prompt_file", captured["gemini"])
+        finally:
+            for name, original in saved.items():
+                if original is unset:
+                    if hasattr(tts_mod, name):
+                        delattr(tts_mod, name)
+                else:
+                    setattr(tts_mod, name, original)
+
+    async def test_synthesize_applies_xai_overrides(self) -> None:
+        # xAI maps the generic override vocabulary onto its config: voice→
+        # voice_id, audio_tags→auto_speech_tags, plus language.
+        unset = object()
+        payload = b"ID3\x03xai-mp3-body"
+        captured: dict = {}
+        tts_mod = sys.modules["tools.tts_tool"]
+        saved = {
+            name: getattr(tts_mod, name, unset)
+            for name in (
+                "text_to_speech_tool",
+                "_load_tts_config",
+                "_get_provider",
+                "_generate_xai_tts",
+            )
+        }
+
+        def _fake_generate_xai(text, output_path, tts_config):
+            captured["xai"] = dict(tts_config.get("xai") or {})
+            with open(output_path, "wb") as fh:
+                fh.write(payload)
+            return output_path
+
+        def _no_tts_tool(*args, **kwargs):
+            raise AssertionError("override path must bypass text_to_speech_tool")
+
+        tts_mod._load_tts_config = lambda: {"provider": "xai", "xai": {"voice_id": "eve"}}
+        tts_mod._get_provider = lambda cfg: cfg.get("provider", "xai")
+        tts_mod._generate_xai_tts = _fake_generate_xai
+        tts_mod.text_to_speech_tool = _no_tts_tool
+
+        try:
+            token = await self._make_session()
+            resp = await self.client.post(
+                "/voice/synthesize",
+                json={
+                    "text": "hello",
+                    "voice": "thomas",
+                    "audio_tags": True,
+                    "language": "en",
+                },
+                headers=self._bearer(token),
+            )
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(await resp.read(), payload)
+            self.assertEqual(captured["xai"]["voice_id"], "thomas")
+            self.assertTrue(captured["xai"]["auto_speech_tags"])
+            self.assertEqual(captured["xai"]["language"], "en")
+        finally:
+            for name, original in saved.items():
+                if original is unset:
+                    if hasattr(tts_mod, name):
+                        delattr(tts_mod, name)
+                else:
+                    setattr(tts_mod, name, original)
 
     async def test_synthesize_accepts_valid_hermes_api_bearer(self) -> None:
         calls = self._stub_api_token_validator({"api-token"})
@@ -658,6 +778,103 @@ class VoiceRoutesTests(AioHTTPTestCase):
         self.assertEqual(media_resp.status, 401)
         self.assertEqual(sessions_resp.status, 401)
         self.assertEqual(clipboard_resp.status, 401)
+
+
+class EnhancedVoiceHelpersTests(unittest.TestCase):
+    """Pure-function coverage for the provider-aware enhanced-voice plumbing."""
+
+    def test_extract_overrides_top_level(self) -> None:
+        from plugin.relay.voice import _extract_voice_overrides
+
+        out = _extract_voice_overrides(
+            {
+                "text": "hi",
+                "voice": "Puck",
+                "model": "gemini-3.1-flash-tts-preview",
+                "audio_tags": True,
+                "style": "calm narrator",
+            }
+        )
+        self.assertEqual(out["voice"], "Puck")
+        self.assertEqual(out["model"], "gemini-3.1-flash-tts-preview")
+        self.assertTrue(out["audio_tags"])
+        self.assertEqual(out["persona_prompt"], "calm narrator")
+
+    def test_extract_overrides_nested_block_and_language(self) -> None:
+        from plugin.relay.voice import _extract_voice_overrides
+
+        out = _extract_voice_overrides(
+            {"text": "hi", "enhanced": {"voice": "eve", "audio_tags": False, "language": "en"}}
+        )
+        self.assertEqual(out["voice"], "eve")
+        self.assertEqual(out["audio_tags"], False)
+        self.assertEqual(out["language"], "en")
+
+    def test_extract_overrides_empty_for_plain_body(self) -> None:
+        from plugin.relay.voice import _extract_voice_overrides
+
+        self.assertEqual(_extract_voice_overrides({"text": "hi"}), {})
+
+    def test_enhanced_block_none_for_unsupported_provider(self) -> None:
+        from plugin.relay.voice import _enhanced_voice_block
+
+        self.assertIsNone(_enhanced_voice_block({"provider": "elevenlabs"}))
+
+    def test_enhanced_block_for_gemini(self) -> None:
+        from plugin.relay.voice import GEMINI_PREBUILT_VOICES, _enhanced_voice_block
+
+        block = _enhanced_voice_block(
+            {
+                "provider": "gemini",
+                "model": "gemini-3.1-flash-tts-preview",
+                "gemini": {"audio_tags": True, "persona_prompt_file": "~/p.md"},
+            }
+        )
+        self.assertIsNotNone(block)
+        assert block is not None  # narrow for type-checkers
+        self.assertEqual(block["provider"], "gemini")
+        self.assertTrue(block["supported"])
+        self.assertTrue(block["audio_tags_enabled"])
+        self.assertTrue(block["supports_persona"])
+        self.assertEqual(len(block["voices"]), len(GEMINI_PREBUILT_VOICES))
+        self.assertIn("voice", block["overrides"])
+
+    def test_enhanced_block_for_xai(self) -> None:
+        from plugin.relay.voice import _enhanced_voice_block
+
+        block = _enhanced_voice_block(
+            {"provider": "xai", "xai": {"auto_speech_tags": True}}
+        )
+        self.assertIsNotNone(block)
+        assert block is not None  # narrow for type-checkers
+        self.assertEqual(block["provider"], "xai")
+        self.assertTrue(block["supported"])
+        self.assertTrue(block["audio_tags_enabled"])
+        self.assertFalse(block["supports_persona"])
+        self.assertTrue(block["supports_language"])
+        self.assertEqual(block["voices"], [])  # free-text on the client
+        self.assertIn("language", block["overrides"])
+
+    def test_apply_xai_speech_tags_calls_through_and_fails_soft(self) -> None:
+        # Used by the streaming /voice/output renderer to match the synthesize
+        # path's xAI tone behavior; must call upstream when present, fail soft
+        # (return the original text) when the symbol is unavailable.
+        from plugin.relay import upstream_voice
+
+        tts_mod = sys.modules["tools.tts_tool"]
+        unset = object()
+        original = getattr(tts_mod, "_apply_xai_auto_speech_tags", unset)
+        try:
+            tts_mod._apply_xai_auto_speech_tags = lambda t: f"[whisper]{t}"
+            self.assertEqual(upstream_voice.apply_xai_speech_tags("hi"), "[whisper]hi")
+        finally:
+            if original is unset:
+                if hasattr(tts_mod, "_apply_xai_auto_speech_tags"):
+                    delattr(tts_mod, "_apply_xai_auto_speech_tags")
+            else:
+                tts_mod._apply_xai_auto_speech_tags = original
+        # Symbol now absent → fail soft.
+        self.assertEqual(upstream_voice.apply_xai_speech_tags("hi"), "hi")
 
 
 if __name__ == "__main__":

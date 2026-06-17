@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -43,7 +45,7 @@ from .provider_options import (
     merge_provider_options,
     validate_provider_selection,
 )
-from .voice_auth import require_voice_auth
+from .voice_auth import AuthPrincipal, _bearer_from_request, require_voice_auth
 
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
@@ -64,6 +66,13 @@ class RealtimeVoiceSession:
     config_path: Path | None
     created_at: float
     event_log_path: Path
+    # Bind the session to the principal that created it so another caller
+    # holding a valid voice:realtime grant can't attach to it by guessing the
+    # id (mirrors VoiceOutputSession; the realtime_agent broker already does
+    # this via _auth_matches_session).
+    auth_kind: str | None = None
+    auth_session_device_id: str | None = None
+    auth_token_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +157,8 @@ class RealtimeVoiceHandler:
         )
 
     async def handle_create_session(self, request: web.Request) -> web.StreamResponse:
-        await require_voice_auth(request, "voice:realtime")
+        principal = await require_voice_auth(request, "voice:realtime")
+        bearer_token = _bearer_from_request(request)
 
         payload = await _optional_json(request)
         profile = request_profile(payload, request.query)
@@ -178,6 +188,11 @@ class RealtimeVoiceHandler:
             config_path=settings.get("config_path"),
             created_at=time.time(),
             event_log_path=event_log_path,
+            auth_kind=principal.kind,
+            auth_session_device_id=(
+                principal.session.device_id if principal.session is not None else None
+            ),
+            auth_token_hash=_token_hash(bearer_token),
         )
         self.sessions[session_id] = session
         self._log(session, "voice.session.created")
@@ -200,15 +215,30 @@ class RealtimeVoiceHandler:
             }
         )
 
+    def _auth_matches_session(
+        self,
+        session: RealtimeVoiceSession,
+        principal: AuthPrincipal,
+        bearer_token: str,
+    ) -> bool:
+        if principal.kind != session.auth_kind:
+            return False
+        if principal.kind == "relay_session":
+            device_id = principal.session.device_id if principal.session is not None else None
+            return bool(device_id) and device_id == session.auth_session_device_id
+        return hmac.compare_digest(_token_hash(bearer_token), session.auth_token_hash or "")
+
     async def handle_ws(self, request: web.Request) -> web.StreamResponse:
         if not self.enabled:
             raise web.HTTPNotFound(text="realtime voice is disabled")
-        await require_voice_auth(request, "voice:realtime")
+        principal = await require_voice_auth(request, "voice:realtime")
 
         session_id = request.match_info.get("session_id", "")
         session = self.sessions.get(session_id)
         if session is None:
             raise web.HTTPNotFound(text="unknown realtime voice session")
+        if not self._auth_matches_session(session, principal, _bearer_from_request(request)):
+            raise web.HTTPForbidden(text="realtime voice session belongs to another principal")
 
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=2 * 1024 * 1024)
         await ws.prepare(request)
@@ -872,6 +902,10 @@ def _pcm_levels(pcm: bytes) -> tuple[float, float]:
         round(min(1.0, peak / 32767.0), 4),
         round(min(1.0, rms / 32767.0), 4),
     )
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _str_option(payload: dict[str, Any], name: str) -> str | None:
