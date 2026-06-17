@@ -58,8 +58,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
-import com.hermesandroid.relay.network.ConnectionState
-import com.hermesandroid.relay.network.RelayUrlDeriver
+import com.hermesandroid.relay.network.relay.ConnectionState
+import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError

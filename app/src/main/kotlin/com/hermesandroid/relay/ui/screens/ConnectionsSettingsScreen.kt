@@ -64,8 +64,8 @@ import com.hermesandroid.relay.ui.components.RouteEditorDialog
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
-import com.hermesandroid.relay.network.RelayUrlDeriver
-import com.hermesandroid.relay.network.RouteProbeOutcome
+import com.hermesandroid.relay.network.relay.RelayUrlDeriver
+import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.statusText

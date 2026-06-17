@@ -6,8 +6,8 @@ import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.models.Envelope
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.relay.models.Envelope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement

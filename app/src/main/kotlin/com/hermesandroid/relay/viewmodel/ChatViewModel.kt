@@ -23,25 +23,25 @@ import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.HermesCardField
 import com.hermesandroid.relay.data.HermesCardInput
-import com.hermesandroid.relay.network.ActiveTurnHandle
-import com.hermesandroid.relay.network.GatewayAsk
-import com.hermesandroid.relay.network.GatewayChatClient
-import com.hermesandroid.relay.network.GatewayConnectionState
-import com.hermesandroid.relay.network.GatewayModelProvider
-import com.hermesandroid.relay.network.GatewayAttachment
-import com.hermesandroid.relay.network.GatewayRpcException
-import com.hermesandroid.relay.network.GatewayTurnCallbacks
-import com.hermesandroid.relay.network.HermesApiClient
-import com.hermesandroid.relay.network.RelayHttpClient
-import com.hermesandroid.relay.network.RealtimeVoiceEvent
-import com.hermesandroid.relay.network.SteerResult
-import com.hermesandroid.relay.network.handlers.ChatHandler
-import com.hermesandroid.relay.network.handlers.LocalDispatchResult
-import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
-import com.hermesandroid.relay.network.models.MessageItem
-import com.hermesandroid.relay.network.models.SessionItem
-import com.hermesandroid.relay.network.models.SkillInfo
-import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
+import com.hermesandroid.relay.network.upstream.GatewayAsk
+import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayAttachment
+import com.hermesandroid.relay.network.upstream.GatewayRpcException
+import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
+import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.relay.RelayHttpClient
+import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
+import com.hermesandroid.relay.network.upstream.SteerResult
+import com.hermesandroid.relay.network.upstream.ChatHandler
+import com.hermesandroid.relay.network.shared.LocalDispatchResult
+import com.hermesandroid.relay.network.upstream.formatPhoneActionResult
+import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.models.SkillInfo
+import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
@@ -367,12 +367,9 @@ class ChatViewModel : ViewModel() {
                                 val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
                                 _gatewayCurrentModel.value = resolved
                                 _gatewayCurrentProvider.value = ""
-                                handler.addSystemNotice(
-                                    listOfNotNull(
-                                        "Using server default model ($resolved).",
-                                        warning,
-                                    ).joinToString("\n\n"),
-                                )
+                                // Pill update is the confirmation — no bubble.
+                                // Surface only a server warning, ephemerally.
+                                warning?.let { _transientNotice.tryEmit(it) }
                                 gateway.modelOptions().onSuccess {
                                     _modelProviders.value = it.providers
                                     _gatewayCurrentModel.value = it.currentModel
@@ -380,7 +377,7 @@ class ChatViewModel : ViewModel() {
                                 }
                             },
                             onFailure = { e ->
-                                handler.addSystemNotice(
+                                _transientNotice.tryEmit(
                                     "Couldn't switch to server default model: ${e.message ?: "unknown error"}",
                                 )
                             },
@@ -414,9 +411,9 @@ class ChatViewModel : ViewModel() {
                         val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
                         _gatewayCurrentModel.value = resolved
                         _gatewayCurrentProvider.value = provider.orEmpty()
-                        handler.addSystemNotice(
-                            listOfNotNull("Model switched to $resolved.", warning).joinToString("\n\n"),
-                        )
+                        // Pill update is the confirmation — no system bubble.
+                        // Surface only a server warning, ephemerally.
+                        warning?.let { _transientNotice.tryEmit(it) }
                         gateway.modelOptions().onSuccess {
                             _modelProviders.value = it.providers
                             _gatewayCurrentModel.value = it.currentModel
@@ -424,7 +421,7 @@ class ChatViewModel : ViewModel() {
                         }
                     },
                     onFailure = { e ->
-                        handler.addSystemNotice("Couldn't switch model: ${e.message ?: "unknown error"}")
+                        _transientNotice.tryEmit("Couldn't switch model: ${e.message ?: "unknown error"}")
                     },
                 )
             }
@@ -730,6 +727,14 @@ class ChatViewModel : ViewModel() {
     val steerNotice: StateFlow<String?> = _steerNotice.asStateFlow()
 
     /**
+     * One-shot ephemeral notices (e.g. a model-switch warning or error) that
+     * ChatScreen surfaces as a transient snackbar — never a persistent chat
+     * bubble. Model switches confirm via the pill updating, not a bubble.
+     */
+    private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
+
+    /**
      * Composer prefill requests from server command dispatch
      * (`{type:"prefill"}` — e.g. `/undo`). ChatScreen collects and sets the
      * input text.
@@ -1001,6 +1006,18 @@ class ChatViewModel : ViewModel() {
                 client.serverFast.collect { value ->
                     if (gatewayClient !== client || value == null) return@collect
                     if (_fastEnabled.value != value) _fastEnabled.value = value
+                }
+            }
+            launch {
+                // Paint the context bar from session.info (emitted on resume) so
+                // it doesn't wait for the first turn's usage event.
+                client.serverContext.collect { ctx ->
+                    if (gatewayClient !== client || ctx == null) return@collect
+                    val (used, max) = ctx
+                    if (max > 0) {
+                        _contextWindow.value = ContextWindowUsage(usedTokens = used, maxTokens = max)
+                        _contextUsage.value = (used.toFloat() / max).coerceIn(0f, 1f)
+                    }
                 }
             }
         }

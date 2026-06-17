@@ -233,7 +233,7 @@ object UnattendedAccessManager {
      * Acquire the screen-bright wake lock + opportunistically request
      * keyguard dismiss. Synchronous — does not suspend. The caller (
      * [com.hermesandroid.relay.accessibility.ActionExecutor] wrapper, or
-     * [com.hermesandroid.relay.network.handlers.BridgeCommandHandler]
+     * [com.hermesandroid.relay.network.relay.BridgeCommandHandler]
      * pre-dispatch hook) holds onto the result and decides whether to
      * proceed with the action.
      *

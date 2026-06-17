@@ -12,8 +12,8 @@ import android.util.Log
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.BuildFlavor
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.models.Envelope
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.relay.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay

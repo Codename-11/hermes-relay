@@ -283,6 +283,8 @@ dependencies {
     // across priority groups against real local sockets so the behavior we
     // validate matches on-device.
     testImplementation(libs.okhttp.mockwebserver)
+    // Konsist — enforces the ADR 34 upstream/relay/shared package fence as a JUnit test
+    testImplementation(libs.konsist)
     androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

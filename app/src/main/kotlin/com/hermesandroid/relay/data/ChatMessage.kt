@@ -46,7 +46,7 @@ data class ChatMessage(
     /**
      * Rich content cards emitted by the agent via `CARD:{json}` line
      * markers in the text stream. Parsed in
-     * [com.hermesandroid.relay.network.handlers.ChatHandler.scanForCardMarkers]
+     * [com.hermesandroid.relay.network.upstream.ChatHandler.scanForCardMarkers]
      * and rendered inline by
      * [com.hermesandroid.relay.ui.components.HermesCardBubble]. Mirrors
      * [attachments]' lifecycle — the marker line is stripped from
@@ -76,7 +76,7 @@ data class ChatMessage(
      * The sync builder treats messages with [voiceIntent] != null and
      * [VoiceIntentTrace.syncedToServer] == false as the inputs to its
      * synthesis pass; on a successful send we flip [VoiceIntentTrace.syncedToServer]
-     * to true via [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
+     * to true via [com.hermesandroid.relay.network.upstream.ChatHandler.markVoiceIntentsSynced]
      * so they're not re-sent on the next turn.
      */
     val voiceIntent: VoiceIntentTrace? = null,
@@ -94,7 +94,7 @@ data class ChatMessage(
 
 /**
  * Structured details about a phone-local voice intent that was dispatched
- * in-process via [com.hermesandroid.relay.network.handlers.BridgeCommandHandler.handleLocalCommand].
+ * in-process via [com.hermesandroid.relay.network.relay.BridgeCommandHandler.handleLocalCommand].
  *
  * Captured on a [ChatMessage] (id prefix `voice-intent-`) so the next chat
  * payload can include synthetic OpenAI-format `assistant` + `tool` message
@@ -123,12 +123,12 @@ data class ChatMessage(
  *   includes an `error` field.
  * @property resultJson Compact JSON object describing the dispatch outcome.
  *   On success, typically `{"ok":true,...}` with any tool-specific fields
- *   from [com.hermesandroid.relay.network.handlers.LocalDispatchResult.resultJson].
+ *   from [com.hermesandroid.relay.network.shared.LocalDispatchResult.resultJson].
  *   On failure, an error envelope including `ok:false`, `error`, optionally
  *   `error_code`. Stored as a string and rendered verbatim into the
  *   synthetic `tool`-role message's `content` field.
  * @property syncedToServer Idempotency guard. Flipped to true by
- *   [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
+ *   [com.hermesandroid.relay.network.upstream.ChatHandler.markVoiceIntentsSynced]
  *   the moment we hand the request payload to the API client. Once true,
  *   the trace is excluded from future sync passes — the server-side
  *   session has already absorbed it.

@@ -6,9 +6,9 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.handlers.LocalDispatchResult
-import com.hermesandroid.relay.network.models.Envelope
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.shared.LocalDispatchResult
+import com.hermesandroid.relay.network.relay.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

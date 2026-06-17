@@ -73,7 +73,7 @@
              runs while the user has explicitly enabled the toggle. specialUse
              needs a Play Console foreground-service declaration at submission. -->
         <service
-            android:name=".network.GatewayKeepAliveService"
+            android:name=".network.upstream.GatewayKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property

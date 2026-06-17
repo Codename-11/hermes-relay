@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.ui.screens
 
-import com.hermesandroid.relay.network.DashboardAuthSession
-import com.hermesandroid.relay.network.DashboardStatus
+import com.hermesandroid.relay.network.upstream.DashboardAuthSession
+import com.hermesandroid.relay.network.upstream.DashboardStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

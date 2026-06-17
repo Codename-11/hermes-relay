@@ -1,8 +1,8 @@
 package com.hermesandroid.relay.voice
 
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.handlers.LocalDispatchResult
-import com.hermesandroid.relay.network.models.Envelope
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.shared.LocalDispatchResult
+import com.hermesandroid.relay.network.relay.models.Envelope
 
 /**
  * Local in-process bridge dispatcher type. Voice intents call this instead
