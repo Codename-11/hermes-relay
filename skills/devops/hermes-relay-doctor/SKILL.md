@@ -26,13 +26,14 @@ Runs a sequential smoke-test of the full bridge stack and reports pass/fail with
 
 ## Procedure
 
-Run the shim if it is installed:
+Run the plugin CLI:
 
 ```bash
-hermes-relay-doctor
+hermes relay doctor        # host CLI (plugin enabled in Hermes)
+hermes-relay doctor        # shell shim (installed by install.sh → plugin.cli)
 ```
 
-If the shim is missing (pre-0.3.x installs or after a manual uninstall), run the checks inline:
+If neither is available (plugin not enabled, or the `hermes-relay` shim was never installed), run the checks inline:
 
 ```bash
 PORT="${RELAY_PORT:-8767}"
@@ -69,7 +70,13 @@ Fix:
 
 This is a per-boot requirement on Android — the MediaProjection grant is revoked on reboot.
 
-## Re-installing the shim
+## Re-running after a fix
+
+```bash
+hermes relay doctor
+```
+
+If the `hermes-relay` shim is missing, refresh it (and the rest of the install) with the idempotent updater:
 
 ```bash
 hermes-relay-update

@@ -2,7 +2,7 @@
 
 ## Connection Model
 
-The app maintains two independent connection paths — direct HTTP/SSE for chat, persistent WSS for relay channels.
+The app maintains independent connection paths — chat over the standard Hermes surfaces (preferring the dashboard gateway, falling back to API-server SSE), and persistent WSS for the optional relay channels.
 
 For a compact shareable reference covering connection paths, transport boundaries, pairing/session lifecycle, and operator controls, see the [Relay Architecture Spec](/architecture/relay-architecture-spec).
 
@@ -10,7 +10,8 @@ For a compact shareable reference covering connection paths, transport boundarie
 
 | Path | Protocol | Server | Purpose |
 |------|----------|--------|---------|
-| Chat | HTTP/SSE | API Server `:8642` | Streaming conversations via Sessions API |
+| Chat (preferred) | WS | Dashboard `:9119` | Gateway chat via `/api/ws` (`tui_gateway`) — live thinking/reasoning |
+| Chat (fallback) | HTTP/SSE | API Server `:8642` | Streaming conversations via the Sessions / runs / completions APIs |
 | Terminal | WSS | Relay Server `:8767` | Remote shell via tmux (Phase 2) |
 | Bridge | WSS | Relay Server `:8767` | Device control via AccessibilityService + MediaProjection (Phase 3) |
 | Notifications | WSS | Relay Server `:8767` | `NotificationListenerService` forwards posted notifications over a bounded channel |
@@ -31,6 +32,8 @@ The bridge channel was consolidated onto the unified relay port `:8767` in v0.3 
 | `ConnectivityObserver` | Network connectivity monitoring |
 
 ## Chat Message Flow
+
+When the dashboard gateway is available, the turn rides the `/api/ws` WebSocket (`GatewayChatClient`) and the same lifecycle events arrive over JSON-RPC, with live reasoning. The flow below is the **API-server SSE fallback**, used when there's no dashboard auth yet or the server is older:
 
 <HermesFlow diagram="chat-flow" height="300px" />
 
@@ -72,12 +75,14 @@ The relay connection (bridge/terminal) uses a pairing code for initial setup, th
 
 Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim) on the Hermes host mints the code and pre-registers it with the relay via a loopback-only `/pairing/register` endpoint before embedding it in the QR — so the phone never types a code by hand. Session tokens are stored in EncryptedSharedPreferences backed by Android Keystore.
 
-## Direct API vs Relay
+## Standard chat vs Relay
 
-| Aspect | Direct API (Chat) | Relay (Bridge/Terminal/Notifications) |
-|--------|-------------------|------------------------|
-| Protocol | HTTP/SSE | WSS |
-| Connection | Per-request | Persistent |
-| Auth | Bearer token | Pairing code + session token. Voice endpoints may also accept the Direct API bearer token. |
-| Server | Hermes API `:8642` | Unified Relay `:8767` |
-| State | Stateless | Channel-multiplexed |
+Chat uses standard upstream Hermes either way (gateway preferred, API-server SSE as fallback); the relay is a separate, optional surface for bridge/terminal/notifications.
+
+| Aspect | Standard Chat (gateway / API fallback) | Relay (Bridge/Terminal/Notifications) |
+|--------|----------------------------------------|------------------------|
+| Protocol | WS (`/api/ws`) preferred · HTTP/SSE fallback | WSS |
+| Connection | Persistent gateway socket · per-request on SSE fallback | Persistent |
+| Auth | Dashboard ws-ticket (gateway) · API bearer token (SSE fallback) | Pairing code + session token. Voice endpoints may also accept the API bearer token. |
+| Server | Hermes dashboard `:9119` · Hermes API `:8642` | Unified Relay `:8767` |
+| Live reasoning | Yes on gateway · post-hoc only on SSE fallback | — |

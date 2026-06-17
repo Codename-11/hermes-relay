@@ -153,7 +153,7 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
 
 ### Android
 
-- **Streaming chat** — direct SSE to the Hermes API server with live markdown, tool-call cards, session history, a searchable command palette, file attachments, quote-in-reply, conversation share, and send-while-streaming queuing.
+- **Streaming chat** — rides standard Hermes, preferring the dashboard gateway (`/api/ws`, live thinking) when signed in to Manage and falling back to API-server SSE otherwise, with live markdown, tool-call cards, session history, a searchable command palette, file attachments, quote-in-reply, conversation share, and send-while-streaming queuing.
 - **Manage your agent** — the full Hermes dashboard, native: switch models from your provider catalog, manage keys (write-only, masked, rate-limited reveal), create and edit profiles including `SOUL.md`, and browse/install/update skills. One dashboard sign-in covers it all.
 - **Hands-free voice** — talk on a vanilla install: speech rides your server's configured providers, unlocked by the same Manage sign-in. Relay-paired setups add per-profile voice and an opt-in provider-native Realtime Agent with background task handoff.
 - **Works away from home** — add a Tailscale or public URL and the app roams automatically (LAN at home, fallback elsewhere). An unreachable server gets a diagnosis, not just a red dot.

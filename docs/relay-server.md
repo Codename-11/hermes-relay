@@ -14,7 +14,7 @@ The relay server is a lightweight Python service that bridges the Hermes-Relay A
 | **Terminal** | Yes | Relay session over WSS (`:8767`) |
 | **Bridge** | Yes | Relay session over WSS/HTTP (`:8767`) |
 
-If you only use chat, you do **not** need the relay server. The app connects directly to the Hermes API Server for chat, sessions, profiles, and skills. Voice endpoints live on the relay but can authenticate with the same Hermes API server key used for chat; remote-control features such as terminal, bridge, TUI, media/session management, and Android control still require relay pairing.
+If you only use chat, you do **not** need the relay server. The app rides the standard upstream Hermes surfaces — the dashboard `/api/ws` gateway (live thinking) preferred, the API server's SSE routes as fallback — for chat, sessions, profiles, and skills. Voice endpoints live on the relay but can authenticate with the same Hermes API server key used for chat; remote-control features such as terminal, bridge, TUI, media/session management, and Android control still require relay pairing.
 
 When using the dashboard's pair/repair flow, the QR still needs both credential families: top-level `key` for direct Hermes API chat/sessions, and `relay.code` for the relay session token used by voice/bridge/terminal surfaces. The relay's loopback-only `/pairing/mint` endpoint reads `API_SERVER_KEY` from the same host-local config chain as `hermes pair` when the dashboard does not explicitly pass `api_key`.
 

@@ -114,7 +114,7 @@ async function copy(key: string, text: string) {
       </div>
 
       <p class="path-note">
-        Installs the 18 <code>android_*</code> + 9 <code>desktop_*</code> tool surfaces, the <code>/hermes-relay-pair</code> skill, and a <code>hermes-pair</code> shell shim. Requires hermes-agent v0.8.0+ and Python 3.11+.
+        Installs the 18 <code>android_*</code> + 23 <code>desktop_*</code> tool surfaces, the <code>/hermes-relay-pair</code> skill, and a <code>hermes-pair</code> shell shim. Requires current upstream hermes-agent (API server + dashboard enabled) and Python 3.11+.
       </p>
 
       <p>

@@ -2,7 +2,7 @@
 
 **A hand for your agent, on any computer you pair.**
 
-`hermes-relay` is a single binary you drop on a machine — desktop, laptop, or headless box — so your Hermes agent can work there: read and write files, search a codebase, run commands, manage processes, read the clipboard, capture screenshots — all over the same WSS relay, all consent-gated per device. The brain (LLM, tools, memory, sessions) never leaves your Hermes host. This binary is the hand it reaches with.
+`hermes-relay` is a single binary you drop on a machine — desktop, laptop, or headless box — so your Hermes agent can work there: read and write files, search a codebase, run shell and PowerShell commands, manage processes and long-running background jobs, transfer and archive files, read the clipboard, capture screenshots — all over the same WSS relay, all consent-gated per device. The brain (LLM, tools, memory, sessions) never leaves your Hermes host. This binary is the hand it reaches with.
 
 It also includes a terminal escape hatch for when *you* want to drive: bare `hermes-relay` attaches your server's own Hermes TUI over a PTY, tmux-backed so disconnects lose nothing.
 
@@ -43,7 +43,7 @@ The same chord set works on macOS (`Cmd+Shift+4` → screenshot to clipboard →
 
 | Mode | Command | Best for |
 |------|---------|----------|
-| **Tools (the hand)** | Automatic, in-session | The remote agent can call `desktop_read_file`, `desktop_write_file`, `desktop_terminal`, `desktop_search_files`, `desktop_patch`, `desktop_clipboard_read/write`, `desktop_screenshot`, `desktop_open_in_editor` — **executed on your machine**, not the server. One-time per-URL consent gate. |
+| **Tools (the hand)** | Automatic, in-session | The remote agent can call 23 `desktop_*` tools — filesystem (`read_file` / `write_file` / `patch` / `search_files`), shell (`terminal` / `powershell`), process control (`spawn_detached` / `list_processes` / `kill_process` / `find_pid_by_port`), a job API for long tasks (`job_start` / `_status` / `_logs` / `_cancel` / `_list`), archive/transfer (`copy_directory` / `zip` / `unzip` / `checksum`), and user-context bridges (`clipboard_read/write` / `screenshot` / `open_in_editor`) — **executed on your machine**, not the server. One-time per-URL consent gate. An experimental computer-use family is off by default. |
 | **Daemon** | `hermes-relay daemon` | Headless tool router. Keeps the agent's hands available even when no shell is open. JSON-line lifecycle logs. |
 | **Shell** (default) | `hermes-relay` | The escape hatch: full Hermes Ink TUI over a PTY — banner, Victor, slash commands, the whole experience. Uses tmux on the host so disconnects preserve state. |
 | **Chat (structured)** | `hermes-relay chat "<prompt>"` / `hermes-relay "<prompt>"` | Scriptable, one-shot, pipes stdin. `--json` emits `GatewayEvent`s per line for `jq` / automation. Maintained for scripting; not a growth surface. |
@@ -67,7 +67,7 @@ While inside the shell/TUI session (bare `hermes-relay`, the default mode), `Ctr
 ## Headline features
 
 - **[Native paste / screenshot / image](./subcommands.md)** — the chord set above, plus REPL slash commands `/paste`, `/screenshot`, `/screenshot primary`, `/screenshot 1`, `/image <path>`. Multi-monitor aware: `/screenshot` defaults to the virtual-screen union; `primary` / a 1-indexed display narrows. Identical wire format to a local Hermes paste.
-- **[Local tool routing](./tools.md)** — agent-callable file I/O, shell exec, ripgrep, clipboard, screenshot, editor-launcher, and unified-diff patching. Strict consent gate per relay URL; non-TTY stdin fails closed.
+- **[Local tool routing](./tools.md)** — 23 agent-callable tools: file I/O, unified-diff patching, ripgrep, shell + PowerShell exec, process control, a background-job API, archive/transfer, clipboard, screenshot, and editor-launcher. Strict consent gate per relay URL; non-TTY stdin fails closed. (An experimental computer-use family is off by default.)
 - **[Self-update](./subcommands.md#hermes-relay-update)** — `hermes-relay update` polls GitHub Releases, semver-compares, downloads + verifies SHA256, and atomic-swaps the binary. POSIX renames in place; Windows uses cooperative `.new.exe` swap on next start.
 - **[Surface plugins](./subcommands.md#hermes-relay-plugins)** — install, update, launch, or embed terminal dashboard plugins from the tray or CLI. The first built-in plugin is [Herm](https://github.com/liftaris/herm), installed as `herm-tui` and resumed with `herm -c`.
 - **[Workspace awareness](./subcommands.md#hermes-relay-workspace)** — on connect, the client advertises `cwd`, `git_root`, `git_branch`, `repo_name`, `hostname`, `platform`, `active_shell` to the relay so the agent knows which repo you're in. Client-side capability shipped in alpha.6; server-side prompt-context consumption is on the way (see [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental)).
