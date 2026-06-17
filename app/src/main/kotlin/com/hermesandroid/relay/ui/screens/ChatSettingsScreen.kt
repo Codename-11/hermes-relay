@@ -379,10 +379,18 @@ fun ChatSettingsScreen(
                                         battery = appContextBattery,
                                         safetyStatus = appContextSafetyStatus,
                                     ),
-                                    // Preview uses a neutral "nothing bound" snapshot so the
-                                    // user sees the shape without leaking their current
-                                    // phone state into the settings screen.
-                                    snapshot = com.hermesandroid.relay.util.PhoneSnapshot(),
+                                    // Preview uses representative placeholder values (NOT the
+                                    // user's real phone state) so each enabled toggle visibly
+                                    // contributes its line — an empty snapshot left the
+                                    // Foreground app / Battery / Safety rails toggles looking
+                                    // inert because their lines guard on snapshot data.
+                                    snapshot = com.hermesandroid.relay.util.PhoneSnapshot(
+                                        currentApp = "com.android.chrome",
+                                        batteryPercent = 82,
+                                        blocklistCount = 3,
+                                        destructiveVerbCount = 5,
+                                        autoDisableMinutes = 15,
+                                    ),
                                 )
                             }
                             Card(
@@ -527,9 +535,18 @@ fun ChatSettingsScreen(
                                         count = endpointOptions.size
                                     ),
                                     onClick = { connectionViewModel.setStreamingEndpoint(option) },
-                                    selected = index == selectedEndpointIndex
+                                    selected = index == selectedEndpointIndex,
+                                    // Drop the default check icon — with 5 segments its
+                                    // reserved width pushed "Gateway"/"Sessions" onto a
+                                    // second line. Selection still reads via the fill.
+                                    icon = {},
                                 ) {
-                                    Text(endpointLabels[index])
+                                    Text(
+                                        text = endpointLabels[index],
+                                        style = MaterialTheme.typography.labelMedium,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
                                 }
                             }
                         }

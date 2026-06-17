@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -62,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
@@ -71,6 +73,7 @@ import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
+import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -161,7 +164,10 @@ fun SettingsScreen(
     val dashboardStatus = activeConnection?.dashboardLastStatus
     val dashboardSignInRequired =
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
-    val apiPill = when {
+    // Status pills are exception-only: a pill appears only when the surface
+    // needs attention (missing / checking / offline / sign-in). When it's
+    // healthy the pill is null so the card + agent summary stay clean.
+    val apiPill: SettingsStatusPillModel? = when {
         activeConnection?.apiServerUrl.isNullOrBlank() -> SettingsStatusPillModel(
             label = "API missing",
             tone = SettingsStatusTone.Warning,
@@ -170,22 +176,19 @@ fun SettingsScreen(
             label = "API checking",
             tone = SettingsStatusTone.Info,
         )
-        apiServerReachable -> SettingsStatusPillModel(
-            label = "API ready",
-            tone = SettingsStatusTone.Good,
-        )
+        apiServerReachable -> null
         apiServerHealth == ConnectionViewModel.HealthStatus.Unreachable -> SettingsStatusPillModel(
             label = "API offline",
             tone = SettingsStatusTone.Warning,
         )
-        else -> SettingsStatusPillModel(label = "API configured")
+        else -> null
     }
-    val dashboardPill = when {
+    val dashboardPill: SettingsStatusPillModel? = when {
         activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> SettingsStatusPillModel(
             label = "Dashboard missing",
             tone = SettingsStatusTone.Warning,
         )
-        dashboardStatus == null -> SettingsStatusPillModel(label = "Dashboard unchecked")
+        dashboardStatus == null -> null
         !dashboardStatus.reachable -> SettingsStatusPillModel(
             label = "Dashboard offline",
             tone = SettingsStatusTone.Warning,
@@ -194,20 +197,11 @@ fun SettingsScreen(
             label = "Dashboard sign in",
             tone = SettingsStatusTone.Info,
         )
-        dashboardStatus.authenticated == true -> SettingsStatusPillModel(
-            label = "Dashboard signed in",
-            tone = SettingsStatusTone.Good,
-        )
-        else -> SettingsStatusPillModel(
-            label = "Dashboard available",
-            tone = SettingsStatusTone.Good,
-        )
+        dashboardStatus.authenticated == true -> null
+        else -> null
     }
-    val relayPill = when (relayUiState) {
-        RelayUiState.Connected -> SettingsStatusPillModel(
-            label = "Relay ready",
-            tone = SettingsStatusTone.Good,
-        )
+    val relayPill: SettingsStatusPillModel? = when (relayUiState) {
+        RelayUiState.Connected -> null
         RelayUiState.Connecting -> SettingsStatusPillModel(
             label = "Relay reconnecting",
             tone = SettingsStatusTone.Info,
@@ -220,12 +214,22 @@ fun SettingsScreen(
             label = if (relayPaired) "Relay offline" else "Requires pairing",
             tone = SettingsStatusTone.Warning,
         )
-        RelayUiState.NotConfigured -> SettingsStatusPillModel(label = "Relay optional")
+        RelayUiState.NotConfigured -> null
     }
-    val relayRequiredPill = if (relayPaired) {
-        SettingsStatusPillModel(label = "Relay paired", tone = SettingsStatusTone.Good)
-    } else {
-        SettingsStatusPillModel(label = "Requires pairing", tone = SettingsStatusTone.Info)
+    // The Power tools below all ride the relay plugin. Rather than stamp an
+    // identical badge on every card (noise, not signal), the dependency is
+    // surfaced ONCE on the section header as a single plugin-state badge.
+    val pluginBadge = when {
+        !relayPaired ->
+            SettingsStatusPillModel(label = "Plugin required", tone = SettingsStatusTone.Info)
+        relayUiState == RelayUiState.Disconnected ->
+            SettingsStatusPillModel(label = "Plugin offline", tone = SettingsStatusTone.Warning)
+        relayUiState == RelayUiState.Stale ->
+            SettingsStatusPillModel(label = "Plugin stale", tone = SettingsStatusTone.Warning)
+        relayUiState == RelayUiState.Connecting ->
+            SettingsStatusPillModel(label = "Plugin connecting", tone = SettingsStatusTone.Info)
+        else ->
+            SettingsStatusPillModel(label = "Plugin active", tone = SettingsStatusTone.Good)
     }
 
     // Kick a WSS reconnect when Settings first composes so the Connections
@@ -301,7 +305,7 @@ fun SettingsScreen(
                     defaultPersonality = defaultPersonality,
                 ),
                 isCustomized = selectedProfile != null || selectedPersonality != "default",
-                statusPills = listOf(apiPill, dashboardPill, relayPill),
+                statusPills = listOfNotNull(apiPill, dashboardPill, relayPill),
                 onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
             )
@@ -337,8 +341,9 @@ fun SettingsScreen(
             // connection-settings unification.)
 
             // ── Category list ──────────────────────────────────────────
-            SettingsSectionHeader("Hermes")
-
+            // Connections sits ABOVE the Hermes section: it's the foundational
+            // layer everything else points at (standard + plugin), not a Hermes
+            // feature — and the home for multi-connection.
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
                 title = "Connections",
@@ -346,6 +351,8 @@ fun SettingsScreen(
                 onClick = onNavigateToConnections,
                 isDarkTheme = isDarkTheme,
             )
+
+            SettingsSectionHeader("Hermes")
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,
@@ -373,14 +380,12 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
-            SettingsSectionHeader("Power tools")
+            SettingsSectionHeader("Power tools", trailing = pluginBadge)
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Code,
                 title = "Terminal",
-                subtitle = "Server shell access through a paired relay session",
-                badge = relayRequiredPill,
-                onClick = onNavigateToTerminal,
+                subtitle = "Server shell access through a paired relay session",                onClick = onNavigateToTerminal,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -391,18 +396,14 @@ fun SettingsScreen(
                     "Relay-granted phone bridge controls"
                 } else {
                     "Relay features without sideload device control"
-                },
-                badge = relayRequiredPill,
-                onClick = onNavigateToBridge,
+                },                onClick = onNavigateToBridge,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
                 title = "Relay sessions",
-                subtitle = "Phones paired with this server, revoke, extend",
-                badge = relayRequiredPill,
-                onClick = onNavigateToPairedDevices,
+                subtitle = "Phones paired with this server, revoke, extend",                onClick = onNavigateToPairedDevices,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -410,9 +411,7 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.Notifications,
                 title = "Notification companion",
-                subtitle = "Shared phone notifications for paired relay tools",
-                badge = relayRequiredPill,
-                onClick = onNavigateToNotificationCompanion,
+                subtitle = "Shared phone notifications for paired relay tools",                onClick = onNavigateToNotificationCompanion,
                 isDarkTheme = isDarkTheme,
             )
             // === END PHASE3-notif-listener-followup ===
@@ -420,9 +419,7 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,
                 title = "Media",
-                subtitle = "Relay inbound attachments, auto-fetch, cache cap",
-                badge = relayRequiredPill,
-                onClick = onNavigateToMediaSettings,
+                subtitle = "Relay inbound attachments, auto-fetch, cache cap",                onClick = onNavigateToMediaSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -442,25 +439,6 @@ fun SettingsScreen(
                 // === END PHASE3-safety-rails ===
             }
 
-            SettingsCategoryRow(
-                icon = Icons.Filled.Info,
-                title = "Diagnostics",
-                subtitle = "Recent API, relay, session, and voice activity",
-                badge = relayPill,
-                onClick = { showDiagnosticsSheet = true },
-                isDarkTheme = isDarkTheme,
-            )
-
-            if (devOptionsUnlocked) {
-                SettingsCategoryRow(
-                    icon = Icons.Filled.Code,
-                    title = "Developer options",
-                    subtitle = "Feature flags, data management, experimental",
-                    onClick = onNavigateToDeveloperSettings,
-                    isDarkTheme = isDarkTheme,
-                )
-            }
-
             SettingsSectionHeader("App")
 
             SettingsCategoryRow(
@@ -478,6 +456,24 @@ fun SettingsScreen(
                 onClick = onNavigateToAnalytics,
                 isDarkTheme = isDarkTheme,
             )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Info,
+                title = "Diagnostics",
+                subtitle = "Recent API, relay, session, and voice activity",
+                onClick = { showDiagnosticsSheet = true },
+                isDarkTheme = isDarkTheme,
+            )
+
+            if (devOptionsUnlocked) {
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Code,
+                    title = "Developer options",
+                    subtitle = "Feature flags, data management, experimental",
+                    onClick = onNavigateToDeveloperSettings,
+                    isDarkTheme = isDarkTheme,
+                )
+            }
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Info,
@@ -667,43 +663,58 @@ private enum class SettingsStatusTone {
 
 @Composable
 private fun SettingsStatusPill(pill: SettingsStatusPillModel) {
-    val containerColor = when (pill.tone) {
-        SettingsStatusTone.Good -> MaterialTheme.colorScheme.primaryContainer
-        SettingsStatusTone.Info -> MaterialTheme.colorScheme.tertiaryContainer
-        SettingsStatusTone.Warning -> MaterialTheme.colorScheme.errorContainer
-        SettingsStatusTone.Neutral -> MaterialTheme.colorScheme.surface
+    // Soft "chip" treatment that matches the translucent, bordered language
+    // of the chat/manage/bridge mode strip (relaySelectedPanel) instead of a
+    // solid full-strength fill — a tinted wash + hairline accent border + cream
+    // label reads cleaner and stays in-theme across tones.
+    val hue = when (pill.tone) {
+        SettingsStatusTone.Good -> RelayRefresh.Electric
+        SettingsStatusTone.Info -> RelayRefresh.Purple
+        SettingsStatusTone.Warning -> RelayRefresh.Amber
+        SettingsStatusTone.Neutral -> RelayRefresh.Muted
     }
     val contentColor = when (pill.tone) {
-        SettingsStatusTone.Good -> MaterialTheme.colorScheme.onPrimaryContainer
-        SettingsStatusTone.Info -> MaterialTheme.colorScheme.onTertiaryContainer
-        SettingsStatusTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
-        SettingsStatusTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+        SettingsStatusTone.Good, SettingsStatusTone.Info -> RelayRefresh.Paper
+        SettingsStatusTone.Warning -> RelayRefresh.Amber
+        SettingsStatusTone.Neutral -> RelayRefresh.Muted
     }
     Surface(
-        color = containerColor,
+        color = hue.copy(alpha = 0.18f),
         contentColor = contentColor,
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(7.dp),
+        border = BorderStroke(1.dp, hue.copy(alpha = 0.55f)),
     ) {
         Text(
             text = pill.label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
         )
     }
 }
 
 @Composable
-private fun SettingsSectionHeader(label: String) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
+private fun SettingsSectionHeader(
+    label: String,
+    trailing: SettingsStatusPillModel? = null,
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp, bottom = 2.dp),
-    )
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        if (trailing != null) {
+            SettingsStatusPill(trailing)
+        }
+    }
 }
 
 /**
