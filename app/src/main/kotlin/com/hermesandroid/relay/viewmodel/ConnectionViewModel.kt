@@ -68,6 +68,7 @@ import com.hermesandroid.relay.accessibility.ScreenCapture
 import com.hermesandroid.relay.network.relay.BridgeCommandHandler
 // === END PHASE3-accessibility ===
 import com.hermesandroid.relay.util.MediaCacheWriter
+import com.hermesandroid.relay.viewmodel.connection.PairingController
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -363,6 +364,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // paired yet, return null and the fetch fails with a clean error.
             (authManager.authState.value as? AuthState.Paired)?.token
         }
+    )
+
+    // Pairing-management collaborator — owns the paired-devices list
+    // (GET /sessions) and the insecure-ack DataStore flags. Extracted from
+    // this ViewModel (ADR 34 decomposition); the public getters/functions
+    // below delegate here unchanged.
+    private val pairingController = PairingController(
+        context = application,
+        scope = viewModelScope,
+        relayHttpClient = relayHttpClient,
     )
 
     // --- Relay connection state ---
@@ -1231,17 +1242,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // --- Paired devices list (GET /sessions) -------------------------------
     //
-    // Loaded on-demand from PairedDevicesScreen. State is held here so the
-    // screen can navigate away and come back without re-fetching every time.
+    // Loaded on-demand from PairedDevicesScreen. Owned by [pairingController];
+    // these getters preserve the public surface unchanged.
 
-    private val _pairedDevices = MutableStateFlow<List<PairedDeviceInfo>>(emptyList())
-    val pairedDevices: StateFlow<List<PairedDeviceInfo>> = _pairedDevices.asStateFlow()
-
-    private val _pairedDevicesLoading = MutableStateFlow(false)
-    val pairedDevicesLoading: StateFlow<Boolean> = _pairedDevicesLoading.asStateFlow()
-
-    private val _pairedDevicesError = MutableStateFlow<String?>(null)
-    val pairedDevicesError: StateFlow<String?> = _pairedDevicesError.asStateFlow()
+    val pairedDevices: StateFlow<List<PairedDeviceInfo>> get() = pairingController.pairedDevices
+    val pairedDevicesLoading: StateFlow<Boolean> get() = pairingController.pairedDevicesLoading
+    val pairedDevicesError: StateFlow<String?> get() = pairingController.pairedDevicesError
 
     // --- Tailscale detection (informational) -------------------------------
     //
@@ -5328,181 +5334,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     // --- Paired devices management ----------------------------------------
+    //
+    // Owned by [pairingController]; these functions preserve the public
+    // surface unchanged.
 
-    /**
-     * Fetch the list of paired devices from the relay. Idempotent — safe to
-     * call repeatedly (e.g. on screen entry and on pull-to-refresh). Errors
-     * surface through [pairedDevicesError]; a partial failure (404 = endpoint
-     * not implemented) yields an empty list rather than an error.
-     */
-    fun loadPairedDevices() {
-        viewModelScope.launch {
-            _pairedDevicesLoading.value = true
-            _pairedDevicesError.value = null
-            val result = relayHttpClient.listSessions()
-            result.fold(
-                onSuccess = { list -> _pairedDevices.value = list },
-                onFailure = { e ->
-                    _pairedDevicesError.value = e.message ?: "Unknown error"
-                }
-            )
-            _pairedDevicesLoading.value = false
-        }
-    }
+    fun loadPairedDevices() = pairingController.loadPairedDevices()
 
-    /**
-     * Revoke a paired device by its token prefix. Returns `true` on success
-     * (and on 404, which we treat as "already gone"). Refreshes the list
-     * automatically on success.
-     */
-    suspend fun revokeDevice(tokenPrefix: String): Boolean {
-        val result = relayHttpClient.revokeSession(tokenPrefix)
-        return if (result.isSuccess) {
-            // Optimistic local removal so the UI updates immediately while
-            // the refresh round-trips.
-            _pairedDevices.value = _pairedDevices.value.filterNot { it.tokenPrefix == tokenPrefix }
-            loadPairedDevices()
-            true
-        } else {
-            _pairedDevicesError.value = result.exceptionOrNull()?.message
-            false
-        }
-    }
+    suspend fun revokeDevice(tokenPrefix: String): Boolean =
+        pairingController.revokeDevice(tokenPrefix)
 
-    /**
-     * Extend (or update) a paired device's session TTL.
-     *
-     * Backs the "Extend" button on the Paired Devices card. Passes through
-     * to [RelayHttpClient.extendSession] and refreshes the list on success
-     * so the UI shows the new expiry immediately. Errors surface via
-     * [pairedDevicesError] the same way revoke errors do.
-     *
-     * Grants are intentionally NOT exposed on this path — the MVP UX is
-     * "pick a new session duration", and server-side re-clamping ensures
-     * existing grants stay inside the (possibly new) session lifetime.
-     * Callers that want to edit grants can call [RelayHttpClient.extendSession]
-     * directly.
-     *
-     * @param ttlSeconds new session lifetime in seconds. `0` means "never
-     *   expire". Must be non-negative.
-     * @return `true` on success, `false` otherwise (error message in
-     *   [pairedDevicesError]).
-     */
-    suspend fun extendDevice(tokenPrefix: String, ttlSeconds: Long): Boolean {
-        val result = relayHttpClient.extendSession(tokenPrefix, ttlSeconds = ttlSeconds)
-        return if (result.isSuccess) {
-            loadPairedDevices()
-            true
-        } else {
-            _pairedDevicesError.value = result.exceptionOrNull()?.message
-            false
-        }
-    }
+    suspend fun extendDevice(tokenPrefix: String, ttlSeconds: Long): Boolean =
+        pairingController.extendDevice(tokenPrefix, ttlSeconds)
 
-    // === PER-CHANNEL-REVOKE: revoke a single channel grant on a device ===
-    /**
-     * Revoke a single per-channel grant on a paired device without touching
-     * the rest of the session.
-     *
-     * The relay's `PATCH /sessions/{prefix}` accepts a `grants` map of
-     * `channel → seconds-from-now`. The server-side `_materialize_grants`
-     * helper rebuilds the entire grants table from whatever we send (plus
-     * the relay's defaults for channels we omit), so we must reconstruct
-     * the FULL current grants map and only swap the target channel.
-     *
-     * Quirks of the relay-side encoding we have to honor:
-     *  * `0` means "never expire" (NOT "expired").
-     *  * Omitted channels default to `_default_grants`, which would extend
-     *    a previously-shorter grant. So we re-send every existing channel
-     *    explicitly, converted from absolute-epoch back to seconds-from-now.
-     *  * To express "revoked", we send `1` second — the round trip alone
-     *    pushes us past the expiry, and `_materialize_grants` clamps the
-     *    candidate to the session lifetime so a stale `1` is harmless.
-     *
-     * @param tokenPrefix the device's token prefix from `PairedDeviceInfo`.
-     * @param channel the channel name to revoke (`"chat"`, `"terminal"`,
-     *   `"bridge"`, `"tui"`, `"voice:config"`, `"voice:stt"`,
-     *   `"voice:tts"`, …).
-     * @return `true` on success.
-     */
     suspend fun revokeChannelGrant(
         tokenPrefix: String,
         channel: String,
-    ): Boolean {
-        // Look up the device locally so we can rebuild the full grants
-        // map from its current state. If the device list is stale we
-        // bail rather than guessing.
-        val device = _pairedDevices.value
-            .firstOrNull { it.tokenPrefix == tokenPrefix }
-            ?: return run {
-                _pairedDevicesError.value = "Device not in cache — refresh and retry"
-                false
-            }
-
-        val nowSec = System.currentTimeMillis() / 1000.0
-        val rebuilt: MutableMap<String, Long> = mutableMapOf()
-        for ((existingChannel, expiryEpoch) in device.grants) {
-            if (existingChannel == channel) {
-                // Target channel — encode as expired (1s from now → past
-                // by the time the relay processes the PATCH).
-                rebuilt[existingChannel] = 1L
-            } else if (expiryEpoch == null) {
-                // Existing "never expire" grant — preserve via 0.
-                rebuilt[existingChannel] = 0L
-            } else {
-                // Existing capped grant — convert absolute epoch to
-                // seconds-from-now, clamped to >= 1 so the relay
-                // accepts it as a valid non-negative integer.
-                val secsFromNow = (expiryEpoch - nowSec).toLong().coerceAtLeast(1L)
-                rebuilt[existingChannel] = secsFromNow
-            }
-        }
-        if (rebuilt.isEmpty()) {
-            _pairedDevicesError.value = "Device has no grants to revoke"
-            return false
-        }
-        if (channel !in rebuilt) {
-            // The channel wasn't in the device's grant table — nothing
-            // to do. Treat as success so the UI updates cleanly.
-            return true
-        }
-
-        val result = relayHttpClient.extendSession(
-            tokenPrefix = tokenPrefix,
-            ttlSeconds = null,
-            grants = rebuilt,
-        )
-        return if (result.isSuccess) {
-            loadPairedDevices()
-            true
-        } else {
-            _pairedDevicesError.value = result.exceptionOrNull()?.message
-            false
-        }
-    }
-    // === END PER-CHANNEL-REVOKE ===
+    ): Boolean = pairingController.revokeChannelGrant(tokenPrefix, channel)
 
     // --- Insecure-ack helpers ---------------------------------------------
+    //
+    // Owned by [pairingController]; getters/function preserve the public
+    // surface unchanged. [applyPairingPayload] reads [insecureReason].value.
 
-    /**
-     * DataStore-backed flow of whether the user has acknowledged the
-     * [com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog].
-     */
-    val insecureAckSeen: StateFlow<Boolean> =
-        PairingPreferences.insecureAckSeen(application)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val insecureAckSeen: StateFlow<Boolean> get() = pairingController.insecureAckSeen
 
-    val insecureReason: StateFlow<String> =
-        PairingPreferences.insecureReason(application)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val insecureReason: StateFlow<String> get() = pairingController.insecureReason
 
-    fun setInsecureAckComplete(reason: String) {
-        viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            PairingPreferences.setInsecureAckSeen(ctx, true)
-            PairingPreferences.setInsecureReason(ctx, reason)
-        }
-    }
+    fun setInsecureAckComplete(reason: String) = pairingController.setInsecureAckComplete(reason)
 
     override fun onCleared() {
         super.onCleared()
