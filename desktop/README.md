@@ -43,7 +43,7 @@ $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/C
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
 ```
 
-Windows downloads and verifies `hermes-relay-desktop-windows-x64-setup.exe`, then launches the tray installer. The tray app bundles the compiled CLI sidecar so pair, daemon start/stop, devices, revoke, and task log work without a separate PATH install. CLI-only installs download the prebuilt single-file binary from GitHub Releases (Bun `--compile`, ~60–110 MB per platform) into `~/.hermes/bin/`. Pin a specific release with `HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.1`; CLI-only installs can override the install dir with `HERMES_RELAY_INSTALL_DIR=...`.
+Windows downloads and verifies `hermes-relay-desktop-windows-x64-setup.exe`, then launches the tray installer. The tray app bundles the compiled CLI sidecar so pair, daemon start/stop, devices, revoke, and task log work without a separate PATH install. CLI-only installs download the prebuilt single-file binary from GitHub Releases (Bun `--compile`, ~60–110 MB per platform) into `~/.hermes/bin/`. Pin a specific release with `HERMES_RELAY_VERSION=cli-v0.3.0-alpha.18`; CLI-only installs can override the install dir with `HERMES_RELAY_INSTALL_DIR=...`.
 
 After install, use `hermes-relay <prompt>`. The shorter `hermes <prompt>` alias is optional because it can shadow a real local hermes-agent install. Enable it only when you want hermes-relay to be the `hermes` command for tools like Orca:
 

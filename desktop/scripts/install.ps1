@@ -6,7 +6,7 @@
 # Install only the CLI binary instead:
 #   $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm ... | iex
 # Pin a specific release:
-#   $env:HERMES_RELAY_VERSION='desktop-v0.3.0-alpha.1'; irm ... | iex
+#   $env:HERMES_RELAY_VERSION='cli-v0.3.0-alpha.18'; irm ... | iex
 # Override CLI install dir:
 #   $env:HERMES_RELAY_INSTALL_DIR='C:\tools\hermes\bin'; irm ... | iex
 # Optional `hermes` alias for Orca/upstream-style workflows:
@@ -54,7 +54,7 @@ function Read-InstalledVersion {
   }
 }
 
-# Strip the `desktop-v` tag prefix to get the bare semver (KEEPS the
+# Strip the `cli-v` tag prefix to get the bare semver (KEEPS the
 # prerelease suffix — `0.3.0-alpha.11`, not `0.3.0`). The binary's
 # `--version` output has reported the full semver since alpha.4 (when
 # `gen:version` started embedding the full string from package.json), so
@@ -66,7 +66,8 @@ function Get-NormalizedPin {
   param([string]$Pin)
   if (-not $Pin -or $Pin -eq 'latest') { return '' }
   $v = $Pin
-  if ($v.StartsWith('desktop-v')) { $v = $v.Substring('desktop-v'.Length) }
+  if ($v.StartsWith('cli-v'))     { $v = $v.Substring('cli-v'.Length) }
+  elseif ($v.StartsWith('desktop-v')) { $v = $v.Substring('desktop-v'.Length) }
   elseif ($v.StartsWith('v'))     { $v = $v.Substring(1) }
   return $v
 }
@@ -109,12 +110,12 @@ $asset = if ($surface -eq 'tray') { "hermes-relay-desktop-windows-$arch-setup.ex
 
 # Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL
 # always skips prereleases, which breaks install during any all-alpha window.
-# Walk the releases API (newest first) and pick the first `desktop-v*` tag,
-# prerelease or not. Pinned versions (HERMES_RELAY_VERSION=desktop-v...) skip
-# this and use the tag directly.
+# Walk the releases API and prefer the SemVer-max `cli-v*` tag. Historical
+# public prereleases used `desktop-v*`, so fall back to that track when no new
+# CLI tag exists. Pinned versions skip this and use the tag directly.
 $resolvedVersion = $version
 if ($version -eq 'latest') {
-  Say "-> resolving latest desktop-v* release..."
+  Say "-> resolving latest cli-v* release..."
   try {
     $releases = Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases"
     # Don't trust the API's first-element ordering — GitHub orders by the
@@ -125,10 +126,15 @@ if ($version -eq 'latest') {
     # PRERANK is 1=alpha, 2=beta, 3=rc, 999=stable (semver §11: stable >
     # any prerelease) and PRENUM is the prerelease number (so alpha.10 >
     # alpha.9).
-    $candidates = $releases | Where-Object { $_.tag_name -like 'desktop-v*' }
-    if (-not $candidates) { Die "no desktop-v* releases found on $repo" }
+    $candidates = $releases | Where-Object { $_.tag_name -like 'cli-v*' }
+    if (-not $candidates) {
+      Say '   no cli-v* releases yet; checking historical desktop-v* prereleases...'
+      $candidates = $releases | Where-Object { $_.tag_name -like 'desktop-v*' }
+    }
+    if (-not $candidates) { Die "no cli-v* or historical desktop-v* releases found on $repo" }
     $pick = $candidates | Sort-Object @{Expression = {
-        $v = $_.tag_name -replace '^desktop-v', ''
+        $v = $_.tag_name -replace '^cli-v', ''
+        $v = $v -replace '^desktop-v', ''
         $core, $pre = ($v -split '-', 2)
         $parts = $core -split '\.'
         $major = [int]$parts[0]; $minor = [int]$parts[1]; $patch = [int]$parts[2]

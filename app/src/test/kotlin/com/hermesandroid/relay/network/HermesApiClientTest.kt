@@ -228,8 +228,8 @@ class HermesApiClientTest {
     @Test
     fun urlConstruction_sessionsEndpoint() {
         val baseUrl = "http://localhost:8642"
-        val url = "$baseUrl/api/sessions?limit=50"
-        assertEquals("http://localhost:8642/api/sessions?limit=50", url)
+        val url = "$baseUrl/api/sessions?limit=200"
+        assertEquals("http://localhost:8642/api/sessions?limit=200", url)
     }
 
     @Test

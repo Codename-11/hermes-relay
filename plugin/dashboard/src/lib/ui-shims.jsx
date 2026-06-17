@@ -2,6 +2,102 @@ const SDK = window.__HERMES_PLUGIN_SDK__;
 const { React } = SDK;
 const C = SDK.components || {};
 
+// ── Button / Badge variant adapters ─────────────────────────────────────────
+//
+// The host's Nous DS components do NOT use the shadcn ``variant="default|
+// outline|ghost|secondary|destructive"`` / ``size`` string API this plugin was
+// written against. The real ``Button`` takes boolean flags
+// (``outlined`` / ``ghost`` / ``invert`` / ``destructive``) plus a ``size``
+// of ``default|sm|icon|xs``; the real ``Badge`` takes ``tone="default|outline|
+// secondary|destructive|success|warning"``. A bare ``variant`` prop is
+// silently dropped, so every call site collapsed to the solid default —
+// which on the DS theme is a light ``bg-midground`` fill (the "white boxes").
+//
+// These adapters wrap the real components and translate our props into the DS
+// contract, so the existing call sites keep working and render with authentic
+// DS styling (shadows, hover, theme tokens) instead of unstyled fallbacks.
+
+const _NousButton = C.Button;
+const _NousBadge = C.Badge;
+
+function buttonFlagsForVariant(variant) {
+  switch (variant) {
+    case "outline":
+      return { outlined: true };
+    case "ghost":
+      return { ghost: true };
+    case "secondary":
+      return { invert: true };
+    case "destructive":
+      return { destructive: true };
+    case "default":
+    case undefined:
+    case null:
+    default:
+      return {};
+  }
+}
+
+export const Button = _NousButton
+  ? (({ variant, size, className = "", children, ...rest }) => {
+      const flags = buttonFlagsForVariant(variant);
+      const dsSize = size === "icon" || size === "xs" || size === "sm" ? size : "default";
+      return (
+        <_NousButton size={dsSize} className={className} {...flags} {...rest}>
+          {children}
+        </_NousButton>
+      );
+    })
+  : (({ variant, size, className = "", children, ...rest }) => {
+      // Theme-matching fallback for hosts that don't expose a Button. Uses the
+      // plugin's own scoped utility classes (see styles.css) so it tracks the
+      // dashboard tokens rather than a raw white default.
+      const base =
+        "hr-btn inline-flex items-center justify-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors";
+      const tone =
+        variant === "ghost"
+          ? "hr-btn-ghost"
+          : variant === "outline"
+          ? "hr-btn-outline"
+          : variant === "destructive"
+          ? "hr-btn-destructive"
+          : "hr-btn-solid";
+      return (
+        <button type="button" className={`${base} ${tone} ${className}`} {...rest}>
+          {children}
+        </button>
+      );
+    });
+
+const BADGE_TONE = {
+  default: "secondary",
+  secondary: "secondary",
+  outline: "outline",
+  destructive: "destructive",
+  success: "success",
+  warning: "warning",
+};
+
+export const Badge = _NousBadge
+  ? (({ variant, className = "", children, ...rest }) => (
+      <_NousBadge tone={BADGE_TONE[variant] || "secondary"} className={className} {...rest}>
+        {children}
+      </_NousBadge>
+    ))
+  : (({ variant, className = "", children, ...rest }) => {
+      const tone =
+        variant === "destructive"
+          ? "hr-badge-destructive"
+          : variant === "outline"
+          ? "hr-badge-outline"
+          : "hr-badge-secondary";
+      return (
+        <span className={`hr-badge ${tone} ${className}`} {...rest}>
+          {children}
+        </span>
+      );
+    });
+
 export const Alert = C.Alert || (({ children, variant, className = "" }) => (
   <div
     className={`rounded-md border p-3 ${

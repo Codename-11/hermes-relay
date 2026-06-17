@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -70,6 +74,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
@@ -77,15 +82,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
@@ -93,7 +103,12 @@ import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.VoiceOutputConfig
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInVertically
@@ -120,10 +135,13 @@ import androidx.compose.ui.platform.LocalContext
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.ChatInputPickerControl
+import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
@@ -145,6 +163,7 @@ import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import kotlin.math.abs
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import androidx.compose.ui.text.SpanStyle
@@ -184,6 +203,147 @@ private data class ChatScrollSnapshot(
     val lastToolCallCount: Int,
     val isStreaming: Boolean
 )
+
+private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
+    val layout = layoutInfo
+    if (layout.totalItemsCount == 0) return true
+    val last = layout.visibleItemsInfo.lastOrNull() ?: return false
+    return last.index == layout.totalItemsCount - 1 &&
+        (last.offset + last.size) - layout.viewportEndOffset <= slopPx
+}
+
+private suspend fun LazyListState.scrollToConversationBottom(
+    animated: Boolean,
+    slopPx: Int,
+) {
+    var animateNext = animated
+    var settledFrames = 0
+    repeat(10) { attempt ->
+        withFrameNanos { }
+        val lastIndex = layoutInfo.totalItemsCount - 1
+        if (lastIndex < 0) return
+        if (attempt == 0 || !isAtConversationBottom(slopPx)) {
+            if (animateNext) {
+                animateNext = false
+                animateScrollToItem(lastIndex, Int.MAX_VALUE)
+            } else {
+                scrollToItem(lastIndex, Int.MAX_VALUE)
+            }
+        }
+        withFrameNanos { }
+        if (isAtConversationBottom(slopPx)) {
+            settledFrames += 1
+            if (settledFrames >= 2) return
+        } else {
+            settledFrames = 0
+        }
+    }
+}
+
+private fun LazyListState.scrollTickerProgress(): Float {
+    val layout = layoutInfo
+    val visibleItems = layout.visibleItemsInfo
+    if (layout.totalItemsCount == 0 || visibleItems.isEmpty()) return 1f
+    if (!canScrollBackward) return 0f
+    if (!canScrollForward) return 1f
+
+    val first = visibleItems.first()
+    val visibleItemCount = visibleItems.size.coerceAtLeast(1)
+    val maxFirstIndex = (layout.totalItemsCount - visibleItemCount).coerceAtLeast(1)
+    val itemScroll =
+        (layout.viewportStartOffset - first.offset).coerceAtLeast(0).toFloat() /
+            first.size.coerceAtLeast(1)
+
+    return ((first.index + itemScroll) / maxFirstIndex).coerceIn(0f, 1f)
+}
+
+@Composable
+private fun ChatScrollTicker(
+    listState: LazyListState,
+    modifier: Modifier = Modifier,
+) {
+    val isScrollable by remember(listState) {
+        derivedStateOf { listState.canScrollBackward || listState.canScrollForward }
+    }
+    val targetProgress by remember(listState) {
+        derivedStateOf { listState.scrollTickerProgress() }
+    }
+    val progress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(
+            durationMillis = if (listState.isScrollInProgress) 90 else 180,
+            easing = LinearEasing,
+        ),
+        label = "chatScrollTickerProgress",
+    )
+    val alpha by animateFloatAsState(
+        targetValue = when {
+            !isScrollable -> 0f
+            listState.isScrollInProgress -> 0.95f
+            else -> 0.54f
+        },
+        animationSpec = tween(durationMillis = 160),
+        label = "chatScrollTickerAlpha",
+    )
+
+    if (alpha <= 0.02f) return
+
+    val baseColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val activeColor = RelayRefresh.Relay
+    Canvas(
+        modifier = modifier
+            .width(18.dp)
+            .fillMaxHeight()
+            .alpha(alpha),
+    ) {
+        if (size.height <= 0f) return@Canvas
+
+        val dashHeight = 8.dp.toPx()
+        val dashGap = 7.dp.toPx()
+        val step = dashHeight + dashGap
+        val minDashWidth = 1.4.dp.toPx()
+        val maxDashWidth = 4.4.dp.toPx()
+        val rightInset = 6.dp.toPx()
+        val activeRadius = 72.dp.toPx().coerceAtMost(size.height * 0.42f)
+        val activeCenter = (dashHeight / 2f) +
+            progress.coerceIn(0f, 1f) * (size.height - dashHeight).coerceAtLeast(1f)
+        val phase = (progress * step * 2f) % step
+        val x = size.width - rightInset
+        var y = -phase
+
+        while (y < size.height) {
+            val dashCenter = y + dashHeight / 2f
+            val influence = (1f - abs(dashCenter - activeCenter) / activeRadius)
+                .coerceIn(0f, 1f)
+            val dashWidth = minDashWidth + (maxDashWidth - minDashWidth) * influence
+            val dashAlpha = 0.18f + 0.64f * influence
+            val color = if (influence > 0.04f) activeColor else baseColor
+
+            drawRoundRect(
+                color = color.copy(alpha = dashAlpha),
+                topLeft = Offset(x - dashWidth / 2f, y),
+                size = Size(dashWidth, dashHeight),
+                cornerRadius = CornerRadius(dashWidth / 2f, dashWidth / 2f),
+            )
+            y += step
+        }
+    }
+}
+
+private data class ChatLoadingCommand(
+    val state: ChatLoadingCommandState,
+    val command: String,
+    val detail: String,
+)
+
+private enum class ChatLoadingCommandState {
+    Pending,
+    Active,
+    Done,
+    Failed,
+}
+
+private val CHAT_LOADING_SPINNER_FRAMES = listOf("|", "/", "-", "\\")
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -299,11 +459,20 @@ fun ChatScreen(
     // has been made (the /api/config fallback is more useful than the bare
     // connection label).
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
+    val availableModels by chatViewModel.availableModels.collectAsState()
+    val modelProviders by chatViewModel.modelProviders.collectAsState()
+    val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
+    val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+    val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
+    val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
+    val keepComposerFocusedOnSend by
+        connectionViewModel.keepComposerFocusedOnSend.collectAsState()
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
@@ -336,8 +505,12 @@ fun ChatScreen(
     // token) instead of paying the cold connect + session.resume on the send
     // path. Best-effort / idempotent; re-fires on return-to-foreground.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
-    LaunchedEffect(isGatewayTransport, appForeground) {
-        if (isGatewayTransport && appForeground) chatViewModel.prewarmGateway()
+    LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
+        if (isGatewayTransport && appForeground && chatReady) {
+            chatViewModel.prewarmGateway()
+            chatViewModel.refreshModelOptions()
+            chatViewModel.refreshReasoningSettings()
+        }
     }
 
     // Edit-and-resend mode: long-press a user bubble → "Edit & resend"
@@ -413,6 +586,15 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val finishSuccessfulSend: () -> Unit = {
+        if (closeDrawerOnSend && drawerState.isOpen) {
+            scope.launch { drawerState.close() }
+        }
+        if (!keepComposerFocusedOnSend) {
+            focusManager.clearFocus()
+        }
+    }
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -596,11 +778,7 @@ fun ChatScreen(
     val atBottomSlopPx = 140
     val isAtBottom by remember {
         derivedStateOf {
-            val layout = listState.layoutInfo
-            val last = layout.visibleItemsInfo.lastOrNull()
-                ?: return@derivedStateOf true
-            last.index == layout.totalItemsCount - 1 &&
-                (last.offset + last.size) - layout.viewportEndOffset <= atBottomSlopPx
+            listState.isAtConversationBottom(atBottomSlopPx)
         }
     }
 
@@ -609,6 +787,20 @@ fun ChatScreen(
     // user back to the latest token while they are reading history.
     // Reset to false the moment the user returns to the bottom.
     var userScrolledAway by remember { mutableStateOf(false) }
+    var programmaticBottomScroll by remember { mutableStateOf(false) }
+
+    suspend fun scrollConversationToBottom(animated: Boolean) {
+        programmaticBottomScroll = true
+        try {
+            listState.scrollToConversationBottom(
+                animated = animated,
+                slopPx = atBottomSlopPx,
+            )
+            userScrolledAway = false
+        } finally {
+            programmaticBottomScroll = false
+        }
+    }
 
     // Watch the user's scroll state. Any drag/fling that ends with the list
     // not at the bottom flips userScrolledAway = true. Returning to the
@@ -617,6 +809,10 @@ fun ChatScreen(
         snapshotFlow { listState.isScrollInProgress to isAtBottom }
             .distinctUntilChanged()
             .collectLatest { (scrolling, atBottom) ->
+                if (programmaticBottomScroll) {
+                    if (atBottom) userScrolledAway = false
+                    return@collectLatest
+                }
                 if (atBottom) {
                     userScrolledAway = false
                 } else if (!scrolling) {
@@ -669,7 +865,6 @@ fun ChatScreen(
                 SlashCommand("/insights", "Usage analytics", "info"),
                 SlashCommand("/commands", "Browse all commands", "info"),
                 SlashCommand("/profile", "Show active profile", "info"),
-                SlashCommand("/update", "Update Hermes Agent", "info"),
             )
 
             // Dynamic personality commands from server
@@ -747,6 +942,12 @@ fun ChatScreen(
         }
     }
 
+    LaunchedEffect(currentSessionId, isLoadingHistory) {
+        if (!isLoadingHistory && currentSessionId != null && messages.isNotEmpty()) {
+            scrollConversationToBottom(animated = false)
+        }
+    }
+
     // Auto-scroll to bottom while streaming.
     //
     // Bugs the previous versions had:
@@ -818,9 +1019,6 @@ fun ChatScreen(
                     && prev.isStreaming != snapshot.isStreaming
                 if (onlyStreamingFlagChanged) return@collectLatest
 
-                val lastIndex = listState.layoutInfo.totalItemsCount - 1
-                if (lastIndex < 0) return@collectLatest
-
                 // Sessions endpoint reloads the entire message list on
                 // stream complete (one streaming message → multiple final
                 // messages with proper boundaries + tool call cards).
@@ -844,17 +1042,12 @@ fun ChatScreen(
                 val isSameTurnGrowth = prev != null
                     && snapshot.messageCount == prev.messageCount
 
-                if (isListRebuild || isSameTurnGrowth) {
-                    // Instant — no animation, no conflict with animateItem,
-                    // no pile-up at delta frequency.
-                    listState.scrollToItem(lastIndex, Int.MAX_VALUE)
-                } else {
-                    // scrollOffset = Int.MAX_VALUE → Compose clamps to
-                    // (item height - viewport height), pinning the bottom
-                    // of the last item to the bottom of the viewport
-                    // regardless of how tall the streaming bubble has grown.
-                    listState.animateScrollToItem(lastIndex, Int.MAX_VALUE)
-                }
+                // scrollOffset = Int.MAX_VALUE → Compose clamps to the
+                // deepest valid offset. The helper waits for LazyColumn
+                // layout and retries across a few frames so a history load
+                // or late markdown/code-block measurement cannot leave us
+                // anchored above the real bottom.
+                scrollConversationToBottom(animated = !(isListRebuild || isSameTurnGrowth))
             }
     }
 
@@ -872,7 +1065,7 @@ fun ChatScreen(
         }
     }
 
-    // Effective profile — the one the header should reflect. Priority:
+    // Display profile - the one the header should reflect. Priority:
     //   1. explicit user pick (selectedProfile)
     //   2. server-advertised profile named "default"
     //   3. null (fall back to personality-derived name)
@@ -882,7 +1075,7 @@ fun ChatScreen(
     // loading and a "default" entry shows up.
     val effectiveProfile by remember(selectedProfile, agentProfiles) {
         derivedStateOf {
-            AgentDisplay.effectiveProfile(
+            AgentDisplay.effectiveDisplayProfile(
                 selectedProfile = selectedProfile,
                 profiles = agentProfiles,
             )
@@ -898,12 +1091,18 @@ fun ChatScreen(
     //
     // Wrapped in `derivedStateOf` so the recomposition scope tracks every
     // state read inside (effectiveProfile, selectedPersonality,
-    // defaultPersonality, activeConnection) — the previous plain
+    // defaultPersonality, local alias, activeConnection) — the previous plain
     // `remember(k1,k2,k3,k4)` form relied on equality diffs against those
     // four keys, which missed updates in some cases (most notably a
     // profile switch while the ConnectionInfoSheet was open, where the
     // ambient sheet scope appeared to swallow the key comparison).
-    val agentDisplayName by remember {
+    val agentDisplayName by remember(
+        effectiveProfile,
+        selectedPersonality,
+        defaultPersonality,
+        profileDisplayAlias,
+        activeConnection?.label,
+    ) {
         derivedStateOf {
             val profile = effectiveProfile
             AgentDisplay.agentName(
@@ -911,9 +1110,13 @@ fun ChatScreen(
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 connectionLabel = activeConnection?.label,
+                localDisplayAlias = profileDisplayAlias,
             )
         }
     }
+    val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
+    val isChatConnecting = chatConnectState == ChatConnectState.Connecting &&
+        !hasLiveConversationSurface
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -938,6 +1141,7 @@ fun ChatScreen(
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
                 isLoading = isLoadingSessions,
+                isOpen = drawerState.isOpen,
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }
@@ -974,14 +1178,16 @@ fun ChatScreen(
                     }
                 },
                 title = {
-                    val isConnecting = !apiReachable && chatMode != ChatMode.DISCONNECTED
+                    val headerApiReachable = apiReachable || isStreaming
+                    val isConnecting = isChatConnecting ||
+                        (!headerApiReachable && chatMode != ChatMode.DISCONNECTED)
                     val statusText = when {
-                        apiReachable -> "Connected"
+                        headerApiReachable -> if (isStreaming) "Streaming" else "Connected"
                         isConnecting -> "Connecting..."
                         else -> "Disconnected"
                     }
                     val statusColor = when {
-                        apiReachable -> Color(0xFF4CAF50)
+                        headerApiReachable -> Color(0xFF4CAF50)
                         isConnecting -> Color(0xFFFFA726)
                         else -> MaterialTheme.colorScheme.error
                     }
@@ -998,9 +1204,8 @@ fun ChatScreen(
                         selectedPersonality = selectedPersonality,
                         defaultPersonality = defaultPersonality,
                     )
-                    val modelName = effectiveProfile?.model
-                        ?.takeIf { it.isNotBlank() }
-                        ?: serverModelName
+                    val modelName = AgentDisplay.displayModelName(effectiveProfile?.model)
+                        ?: AgentDisplay.displayModelName(serverModelName)
                     // Subtext: a NON-default personality shown BEFORE the model
                     // (e.g. "Catgirl \u00B7 gpt-5.5"); the default personality is
                     // implied, so it's just the model. Falls back to the
@@ -1013,13 +1218,13 @@ fun ChatScreen(
                         }
                         ?.replaceFirstChar { it.uppercase() }
                     val subtitleText = when {
-                        !apiReachable -> statusText
+                        !headerApiReachable -> statusText
                         else -> listOfNotNull(
                             nonDefaultPersonality,
-                            modelName.takeIf { it.isNotBlank() },
+                            modelName?.takeIf { it.isNotBlank() },
                         ).joinToString(" \u00B7 ").ifBlank { personalityLabel }
                     }
-                    val subtitleColor = if (apiReachable) {
+                    val subtitleColor = if (headerApiReachable) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         statusColor
@@ -1039,6 +1244,9 @@ fun ChatScreen(
                                 shape = CircleShape,
                                 color = MaterialTheme.colorScheme.primary
                             ) {
+                                if (isChatConnecting) {
+                                    ChatConnectingAvatarGlyph()
+                                } else {
                                     // Cross-fade the letter when the
                                     // effective agent (profile or personality)
                                     // changes so the avatar feels alive on a
@@ -1062,8 +1270,9 @@ fun ChatScreen(
                                         }
                                     }
                                 }
+                            }
                             ConnectionStatusBadge(
-                                isConnected = apiReachable,
+                                isConnected = headerApiReachable,
                                 isConnecting = isConnecting,
                                 modifier = Modifier
                                     .size(10.dp)
@@ -1073,40 +1282,81 @@ fun ChatScreen(
                         }
 
                         // Name + single-line subtitle.
-                        Column {
-                            Text(
-                                text = if (agentDisplayName.isNotBlank()) agentDisplayName else "Hermes",
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            )
-                            // Context escalation: ≥85% the subtitle gains a
-                            // " · NN% ctx" suffix in the caution ladder color
-                            // (Amber, Danger past 90%). The ambient strip
-                            // below the app bar covers the 50–85% range.
-                            val ctxFraction = contextUsage
-                            val subtitleAnnotated = buildAnnotatedString {
-                                append(subtitleText)
-                                if (apiReachable && ctxFraction != null && ctxFraction >= 0.85f) {
-                                    val ctxColor = if (ctxFraction >= 0.9f) {
-                                        RelayRefresh.Danger
-                                    } else {
-                                        RelayRefresh.Amber
+                        Column(
+                            modifier = Modifier.animateContentSize(
+                                animationSpec = tween(durationMillis = 220),
+                            ),
+                            verticalArrangement = if (isChatConnecting) {
+                                Arrangement.spacedBy(6.dp)
+                            } else {
+                                Arrangement.Top
+                            },
+                        ) {
+                            AnimatedContent(
+                                targetState = isChatConnecting,
+                                transitionSpec = {
+                                    (
+                                        fadeIn(tween(180)) +
+                                            slideInVertically(tween(220)) { it / 6 }
+                                        ) togetherWith (
+                                        fadeOut(tween(140)) +
+                                            slideOutVertically(tween(180)) { -it / 8 }
+                                        )
+                                },
+                                label = "chatHeaderIdentityTransition",
+                            ) { connecting ->
+                                if (connecting) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        ChatSkeletonLine(
+                                            modifier = Modifier.width(112.dp),
+                                            height = 15.dp,
+                                        )
+                                        ChatSkeletonLine(
+                                            modifier = Modifier.width(156.dp),
+                                            height = 11.dp,
+                                        )
                                     }
-                                    withStyle(SpanStyle(color = ctxColor)) {
-                                        append(
-                                            " · ${(ctxFraction * 100).roundToInt()}% ctx"
+                                } else {
+                                    Column {
+                                        Text(
+                                            text = if (agentDisplayName.isNotBlank()) agentDisplayName else "Hermes",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        )
+                                        // Context escalation: >=85% the subtitle
+                                        // gains a context suffix in the caution
+                                        // ladder color. The ambient strip below
+                                        // the app bar covers the 50-85% range.
+                                        val ctxFraction = contextUsage
+                                        val subtitleAnnotated = buildAnnotatedString {
+                                            append(subtitleText)
+                                            if (headerApiReachable &&
+                                                ctxFraction != null &&
+                                                ctxFraction >= 0.85f
+                                            ) {
+                                                val ctxColor = if (ctxFraction >= 0.9f) {
+                                                    RelayRefresh.Danger
+                                                } else {
+                                                    RelayRefresh.Amber
+                                                }
+                                                withStyle(SpanStyle(color = ctxColor)) {
+                                                    append(
+                                                        " · ${(ctxFraction * 100).roundToInt()}% ctx"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            text = subtitleAnnotated,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = subtitleColor,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
                                     }
                                 }
                             }
-                            Text(
-                                text = subtitleAnnotated,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = subtitleColor,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            )
                         }
                     }
                 },
@@ -1208,7 +1458,7 @@ fun ChatScreen(
             }
 
             // Loading history indicator
-            if (isLoadingHistory) {
+            if (isLoadingHistory && !isChatConnecting) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1274,159 +1524,175 @@ fun ChatScreen(
                 }
             }
             // Message list or empty state
-            else if (messages.isEmpty() && !isStreaming && !isLoadingHistory) {
-                val suggestions = listOf(
-                    "What can you do?",
-                    "Help me code",
-                    "Explain something"
-                )
-
-                Box(
+            else if (messages.isEmpty() && !isStreaming && (!isLoadingHistory || isChatConnecting)) {
+                AnimatedContent(
+                    targetState = chatConnectState,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(horizontal = 32.dp)
-                    ) {
-                        Spacer(modifier = Modifier.weight(0.15f))
+                    transitionSpec = {
+                        (
+                            fadeIn(tween(260)) +
+                                slideInVertically(tween(280)) { it / 10 }
+                            ) togetherWith (
+                            fadeOut(tween(180)) +
+                                slideOutVertically(tween(220)) { -it / 12 }
+                            )
+                    },
+                    label = "chatEmptyStatePhaseTransition",
+                ) { targetConnectState ->
+                    if (targetConnectState == ChatConnectState.Connecting) {
+                    ChatColdStartLoadingState(
+                        animationEnabled = animationEnabled,
+                        streamingIntensity = streamingIntensity,
+                        toolCallBurst = toolCallBurst,
+                        connectionLabel = activeConnection
+                            ?.label
+                            ?.takeIf { it.isNotBlank() }
+                            ?: activeConnection
+                                ?.apiServerUrl
+                                ?.let(Connection::extractDefaultLabel),
+                        chatMode = chatMode,
+                        apiReachable = apiReachable,
+                        chatReady = chatReady,
+                        isLoadingHistory = isLoadingHistory,
+                        isLoadingSessions = isLoadingSessions,
+                        onNavigateToConnections = onNavigateToConnections,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    val suggestions = listOf(
+                        "What can you do?",
+                        "Help me code",
+                        "Explain something"
+                    )
 
-                        // ASCII sphere (constrained to square aspect)
-                        if (animationEnabled) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(1f)
-                                    .weight(0.7f, fill = false)
-                            ) {
-                                MorphingSphere(
-                                    modifier = Modifier.fillMaxSize(),
-                                    state = if (error != null) SphereState.Error else SphereState.Idle,
-                                    intensity = streamingIntensity,
-                                    toolCallBurst = toolCallBurst
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 32.dp)
+                        ) {
+                            Spacer(modifier = Modifier.weight(0.15f))
+
+                            // ASCII sphere (constrained to square aspect)
+                            if (animationEnabled) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f)
+                                        .weight(0.7f, fill = false)
+                                ) {
+                                    MorphingSphere(
+                                        modifier = Modifier.fillMaxSize(),
+                                        state = if (error != null) SphereState.Error else SphereState.Idle,
+                                        intensity = streamingIntensity,
+                                        toolCallBurst = toolCallBurst
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            Text(
+                                text = when (targetConnectState) {
+                                    // Name the agent when a profile is picked,
+                                    // so a profile switch is legible in the
+                                    // thread itself (not just the header) -
+                                    // the desktop's intro.
+                                    ChatConnectState.Ready ->
+                                        if (selectedProfile != null) "Chat with $agentDisplayName" else "Start a conversation"
+                                    ChatConnectState.Connecting -> "Connecting to Hermes..."
+                                    ChatConnectState.NeedsConnection -> "Connect to Hermes"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+
+                            // The selected agent's role/description - the
+                            // rest of the fresh-session intro, shown only
+                            // when a profile is active.
+                            val profileBlurb = effectiveProfile?.description
+                                ?.trim()
+                                ?.takeIf { it.isNotBlank() && !it.equals(agentDisplayName, ignoreCase = true) }
+                            if (targetConnectState == ChatConnectState.Ready && profileBlurb != null) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = profileBlurb,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-
-                        Text(
-                            text = when (chatConnectState) {
-                                // Name the agent when a profile is picked, so a
-                                // profile switch is legible in the thread itself
-                                // (not just the header) — the desktop's intro.
-                                ChatConnectState.Ready ->
-                                    if (selectedProfile != null) "Chat with $agentDisplayName" else "Start a conversation"
-                                ChatConnectState.Connecting -> "Connecting to Hermes…"
-                                ChatConnectState.NeedsConnection -> "Connect to Hermes"
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        // The selected agent's role/description — the rest of the
-                        // fresh-session intro, shown only when a profile is active.
-                        val profileBlurb = effectiveProfile?.description
-                            ?.trim()
-                            ?.takeIf { it.isNotBlank() && !it.equals(agentDisplayName, ignoreCase = true) }
-                        if (chatConnectState == ChatConnectState.Ready && profileBlurb != null) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = profileBlurb,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                            )
-                        }
-
-                        when (chatConnectState) {
-                            // Hydration finished and there is genuinely nothing
-                            // configured — the only state that shows the CTA.
-                            ChatConnectState.NeedsConnection -> {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                ElevatedCard(
-                                    colors = CardDefaults.elevatedCardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
-                                    ),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(16.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                            when (targetConnectState) {
+                                // Hydration finished and there is genuinely
+                                // nothing configured - the only state that
+                                // shows the CTA.
+                                ChatConnectState.NeedsConnection -> {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    ElevatedCard(
+                                        colors = CardDefaults.elevatedCardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
+                                        ),
+                                        modifier = Modifier.fillMaxWidth(),
                                     ) {
-                                        Text(
-                                            text = "Chat needs a Standard Hermes API connection.",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        Button(
-                                            onClick = onNavigateToConnect,
-                                            modifier = Modifier.fillMaxWidth(),
+                                        Column(
+                                            modifier = Modifier.padding(16.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
-                                            Text("Connect Standard Hermes")
+                                            Text(
+                                                text = "Chat needs a Standard Hermes API connection.",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            Button(
+                                                onClick = onNavigateToConnect,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            ) {
+                                                Text("Connect Standard Hermes")
+                                            }
+                                        }
+                                    }
+                                }
+
+                                ChatConnectState.Connecting -> Unit
+
+                                ChatConnectState.Ready -> {
+                                    Spacer(modifier = Modifier.height(20.dp))
+
+                                    // Suggestion chips
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        suggestions.forEach { suggestion ->
+                                            AssistChip(
+                                                onClick = { inputText = suggestion },
+                                                label = {
+                                                    Text(
+                                                        text = suggestion,
+                                                        style = MaterialTheme.typography.bodySmall
+                                                    )
+                                                },
+                                                colors = AssistChipDefaults.assistChipColors(
+                                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            )
                                         }
                                     }
                                 }
                             }
 
-                            // Cold-start hydration / an active connection still
-                            // coming up. Quiet spinner — never the connect CTA.
-                            // A low-emphasis "Manage connections" escape hatch
-                            // keeps a genuinely-stuck connection recoverable.
-                            ChatConnectState.Connecting -> {
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                    )
-                                    Text(
-                                        text = "Getting things ready…",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                TextButton(onClick = onNavigateToConnections) {
-                                    Text("Manage connections")
-                                }
-                            }
-
-                            ChatConnectState.Ready -> {
-                                Spacer(modifier = Modifier.height(20.dp))
-
-                                // Suggestion chips
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    suggestions.forEach { suggestion ->
-                                        AssistChip(
-                                            onClick = { inputText = suggestion },
-                                            label = {
-                                                Text(
-                                                    text = suggestion,
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                            },
-                                            colors = AssistChipDefaults.assistChipColors(
-                                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        )
-                                    }
-                                }
-                            }
+                            Spacer(modifier = Modifier.weight(0.15f))
                         }
-
-                        Spacer(modifier = Modifier.weight(0.15f))
                     }
+                }
                 }
             } else {
                 Box(
@@ -1625,6 +1891,14 @@ fun ChatScreen(
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
 
+                    ChatScrollTicker(
+                        listState = listState,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(top = 10.dp, end = 2.dp, bottom = 78.dp)
+                            .zIndex(6f),
+                    )
+
                     // Scroll-to-bottom FAB
                     androidx.compose.animation.AnimatedVisibility(
                         visible = showScrollToBottom,
@@ -1633,25 +1907,19 @@ fun ChatScreen(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(16.dp)
+                            .zIndex(8f)
                     ) {
                         SmallFloatingActionButton(
+                            modifier = Modifier.size(48.dp),
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 scope.launch {
-                                    val lastIndex = listState.layoutInfo.totalItemsCount - 1
-                                    if (lastIndex >= 0) {
-                                        // Match the auto-scroll fix: aim at the
-                                        // BOTTOM of the last item, not the top.
-                                        listState.animateScrollToItem(lastIndex, Int.MAX_VALUE)
-                                    }
+                                    // Match the auto-scroll fix: aim at the
+                                    // BOTTOM of the conversation, wait for
+                                    // LazyColumn layout, and retry through
+                                    // late markdown/code-block measurement.
+                                    scrollConversationToBottom(animated = true)
                                 }
-                                // Tapping the FAB is an explicit "take me back to
-                                // live" action — clear the user-scrolled-away gate
-                                // so streaming auto-follow resumes immediately,
-                                // even before the snapshotFlow notices isAtBottom
-                                // (which only flips after the scroll animation
-                                // settles).
-                                userScrolledAway = false
                             },
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         ) {
@@ -1849,6 +2117,96 @@ fun ChatScreen(
                 isStreaming -> "Queue a message..."
                 else -> "Message..."
             }
+            val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
+                (availableModels.mapNotNull(AgentDisplay::displayModelName) +
+                    agentProfiles.mapNotNull { AgentDisplay.displayModelName(it.model) } +
+                    listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
+                    .distinct()
+            }
+            val currentModelForInput = AgentDisplay.displayModelName(selectedModelOverride)
+                ?: AgentDisplay.displayModelName(gatewayCurrentModel)
+                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
+                ?: AgentDisplay.displayModelName(serverModelName)
+            val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
+                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
+                ?: AgentDisplay.displayModelName(serverModelName)
+            val hasModelChoices = modelProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
+            val modelPickerOptions = remember(
+                modelProviders,
+                sseModelOptions,
+                selectedModelOverride,
+                gatewayCurrentModel,
+                fallbackModelDetail,
+                hasModelChoices,
+            ) {
+                if (!hasModelChoices && fallbackModelDetail.isNullOrBlank()) {
+                    emptyList()
+                } else {
+                    buildList {
+                        add(
+                            ChatInputPickerOption(
+                                label = "Server default",
+                                value = null,
+                                secondary = fallbackModelDetail?.let { "Current: ${compactModelChipLabel(it)}" },
+                                selected = selectedModelOverride == null,
+                            ),
+                        )
+                        if (modelProviders.any { it.models.isNotEmpty() }) {
+                            modelProviders.forEach { provider ->
+                                provider.models.distinct().forEach { model ->
+                                    add(
+                                        ChatInputPickerOption(
+                                            label = model,
+                                            value = model,
+                                            provider = provider.slug,
+                                            group = provider.name,
+                                            selected = selectedModelOverride == model,
+                                        ),
+                                    )
+                                }
+                            }
+                        } else {
+                            sseModelOptions.forEach { model ->
+                                add(
+                                    ChatInputPickerOption(
+                                        label = model,
+                                        value = model,
+                                        selected = selectedModelOverride == model,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            val modelControl = modelPickerOptions.takeIf { it.isNotEmpty() }?.let {
+                ChatInputPickerControl(
+                    value = compactModelChipLabel(currentModelForInput),
+                    contentDescription = "Select model",
+                    options = it,
+                    enabled = chatReady && !isStreaming && it.size > 1,
+                )
+            }
+            val normalizedEffort = normalizeReasoningEffortForInput(selectedReasoningEffort)
+            val effortPickerOptions = remember(normalizedEffort) {
+                CHAT_INPUT_REASONING_EFFORTS.map { effort ->
+                    ChatInputPickerOption(
+                        label = reasoningEffortChipLabel(effort),
+                        value = effort,
+                        selected = effort == normalizedEffort,
+                    )
+                }
+            }
+            val effortControl = if (isGatewayTransport) {
+                ChatInputPickerControl(
+                    value = reasoningEffortChipLabel(normalizedEffort),
+                    contentDescription = "Select reasoning effort",
+                    options = effortPickerOptions,
+                    enabled = chatReady && !isStreaming,
+                )
+            } else {
+                null
+            }
             ChatInputBar(
                 value = inputText,
                 onValueChange = { inputText = it },
@@ -1863,6 +2221,7 @@ fun ChatScreen(
                         if (chatViewModel.regenerateFromMessage(editing.id, inputText)) {
                             editingMessage = null
                             inputText = ""
+                            finishSuccessfulSend()
                         } else {
                             scope.launch {
                                 snackbarHostState.showSnackbar(
@@ -1874,6 +2233,7 @@ fun ChatScreen(
                     } else {
                         chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
                         inputText = ""
+                        finishSuccessfulSend()
                     }
                 },
                 onVoice = {
@@ -1905,6 +2265,14 @@ fun ChatScreen(
                 showVoiceHint = !voiceHintSeen,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
                 isDarkTheme = isDarkTheme,
+                modelControl = modelControl,
+                onModelOptionSelected = { option ->
+                    chatViewModel.selectModel(option.value, option.provider)
+                },
+                effortControl = effortControl,
+                onEffortOptionSelected = { option ->
+                    option.value?.let { chatViewModel.selectReasoningEffort(it) }
+                },
                 enabled = chatReady,
             )
         } // end Column
@@ -2057,10 +2425,396 @@ fun ChatScreen(
 
 // --- Helper functions ---
 
+@Composable
+private fun ChatConnectingAvatarGlyph() {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+        val transition = rememberInfiniteTransition(label = "chat-avatar-loading")
+        val glyphAlpha by transition.animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 760, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "chat-avatar-loading-alpha",
+        )
+        CircularProgressIndicator(
+            modifier = Modifier
+                .size(19.dp)
+                .alpha(glyphAlpha),
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+}
+
+@Composable
+private fun ChatSkeletonLine(
+    modifier: Modifier = Modifier,
+    height: Dp = 12.dp,
+) {
+    val transition = rememberInfiniteTransition(label = "chat-skeleton")
+    val alpha by transition.animateFloat(
+        initialValue = 0.18f,
+        targetValue = 0.42f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 980, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "chat-skeleton-alpha",
+    )
+    Box(
+        modifier = modifier
+            .height(height)
+            .clip(RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)),
+    )
+}
+
+@Composable
+private fun ChatColdStartLoadingState(
+    animationEnabled: Boolean,
+    streamingIntensity: Float,
+    toolCallBurst: Float,
+    connectionLabel: String?,
+    chatMode: ChatMode,
+    apiReachable: Boolean,
+    chatReady: Boolean,
+    isLoadingHistory: Boolean,
+    isLoadingSessions: Boolean,
+    onNavigateToConnections: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val commands = remember(
+        connectionLabel,
+        chatMode,
+        apiReachable,
+        chatReady,
+        isLoadingHistory,
+        isLoadingSessions,
+    ) {
+        buildChatLoadingCommands(
+            connectionLabel = connectionLabel,
+            chatMode = chatMode,
+            apiReachable = apiReachable,
+            chatReady = chatReady,
+            isLoadingHistory = isLoadingHistory,
+            isLoadingSessions = isLoadingSessions,
+        )
+    }
+
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
+    ) {
+        if (animationEnabled) {
+            MorphingSphere(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(0.44f),
+                state = SphereState.Thinking,
+                intensity = streamingIntensity.coerceAtLeast(0.18f),
+                toolCallBurst = toolCallBurst,
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ChatSkeletonBubble(
+                widthFraction = 0.78f,
+                lineFractions = listOf(0.82f, 0.54f),
+                alignEnd = false,
+            )
+            ChatSkeletonBubble(
+                widthFraction = 0.62f,
+                lineFractions = listOf(0.70f),
+                alignEnd = true,
+            )
+            ChatSkeletonBubble(
+                widthFraction = 0.84f,
+                lineFractions = listOf(0.88f, 0.68f, 0.38f),
+                alignEnd = false,
+            )
+        }
+
+        ChatLoadingCommandPanel(
+            commands = commands,
+            onNavigateToConnections = onNavigateToConnections,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+        )
+    }
+}
+
+private fun buildChatLoadingCommands(
+    connectionLabel: String?,
+    chatMode: ChatMode,
+    apiReachable: Boolean,
+    chatReady: Boolean,
+    isLoadingHistory: Boolean,
+    isLoadingSessions: Boolean,
+): List<ChatLoadingCommand> {
+    val hasConnection = !connectionLabel.isNullOrBlank()
+    val chatModeDetail = when (chatMode) {
+        ChatMode.ENHANCED_HERMES -> "sessions stream"
+        ChatMode.PORTABLE -> "portable stream"
+        ChatMode.DISCONNECTED -> "waiting"
+    }
+    return listOf(
+        ChatLoadingCommand(
+            state = if (hasConnection) ChatLoadingCommandState.Done else ChatLoadingCommandState.Active,
+            command = "/state restore",
+            detail = if (hasConnection) "active config loaded" else "loading config",
+        ),
+        ChatLoadingCommand(
+            state = when {
+                hasConnection -> ChatLoadingCommandState.Done
+                else -> ChatLoadingCommandState.Pending
+            },
+            command = "/route resolve",
+            detail = connectionLabel?.takeIf { it.isNotBlank() } ?: "selecting route",
+        ),
+        ChatLoadingCommand(
+            state = when {
+                apiReachable -> ChatLoadingCommandState.Done
+                hasConnection -> ChatLoadingCommandState.Active
+                else -> ChatLoadingCommandState.Pending
+            },
+            command = "/hermes ping",
+            detail = if (apiReachable) "online" else "contacting server",
+        ),
+        ChatLoadingCommand(
+            state = when {
+                chatReady -> ChatLoadingCommandState.Done
+                apiReachable || isLoadingHistory || isLoadingSessions -> ChatLoadingCommandState.Active
+                else -> ChatLoadingCommandState.Pending
+            },
+            command = "/chat hydrate",
+            detail = if (chatReady) "ready via $chatModeDetail" else "loading conversation",
+        ),
+    )
+}
+
+@Composable
+private fun ChatLoadingCommandPanel(
+    commands: List<ChatLoadingCommand>,
+    onNavigateToConnections: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 420.dp)
+                .animateContentSize(animationSpec = tween(durationMillis = 240)),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+            tonalElevation = 1.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                commands.forEach { command ->
+                    ChatLoadingCommandRow(command)
+                }
+            }
+        }
+        TextButton(onClick = onNavigateToConnections) {
+            Text("Manage connections")
+        }
+    }
+}
+
+@Composable
+private fun ChatLoadingCommandRow(command: ChatLoadingCommand) {
+    val transition = rememberInfiniteTransition(label = "chat-loading-command")
+    val spinnerFrame by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = CHAT_LOADING_SPINNER_FRAMES.size.toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = CHAT_LOADING_SPINNER_FRAMES.size * 120,
+                easing = LinearEasing,
+            ),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "chat-loading-command-spinner",
+    )
+    val dotsFrame by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "chat-loading-command-dots",
+    )
+    fun glyphFor(state: ChatLoadingCommandState): String = when (state) {
+        ChatLoadingCommandState.Pending -> "."
+        ChatLoadingCommandState.Active -> {
+            val index = spinnerFrame.toInt()
+                .coerceIn(0, CHAT_LOADING_SPINNER_FRAMES.lastIndex)
+            CHAT_LOADING_SPINNER_FRAMES[index]
+        }
+        ChatLoadingCommandState.Done -> "ok"
+        ChatLoadingCommandState.Failed -> "!!"
+    }
+    val dots = if (command.state == ChatLoadingCommandState.Active) {
+        ".".repeat(dotsFrame.toInt().coerceIn(1, 3))
+    } else {
+        ""
+    }
+    val targetRowAlpha = when (command.state) {
+        ChatLoadingCommandState.Pending -> 0.42f
+        ChatLoadingCommandState.Active -> 0.95f
+        else -> 0.82f
+    }
+    val rowAlpha by animateFloatAsState(
+        targetValue = targetRowAlpha,
+        animationSpec = tween(durationMillis = 220),
+        label = "chat-loading-command-row-alpha",
+    )
+    val activeHighlightAlpha by animateFloatAsState(
+        targetValue = if (command.state == ChatLoadingCommandState.Active) 0.10f else 0f,
+        animationSpec = tween(durationMillis = 240),
+        label = "chat-loading-command-highlight",
+    )
+    val glyphColor = when (command.state) {
+        ChatLoadingCommandState.Done -> RelayRefresh.Green
+        ChatLoadingCommandState.Failed -> RelayRefresh.Danger
+        ChatLoadingCommandState.Active -> RelayRefresh.Amber
+        ChatLoadingCommandState.Pending -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(RelayRefresh.Amber.copy(alpha = activeHighlightAlpha))
+            .animateContentSize(animationSpec = tween(durationMillis = 220))
+            .alpha(rowAlpha)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AnimatedContent(
+            targetState = command.state,
+            transitionSpec = {
+                (
+                    fadeIn(tween(130)) +
+                        slideInVertically(tween(160)) { it / 3 }
+                    ) togetherWith (
+                    fadeOut(tween(110)) +
+                        slideOutVertically(tween(140)) { -it / 3 }
+                    )
+            },
+            label = "chat-loading-command-glyph",
+        ) { state ->
+            Text(
+                text = glyphFor(state),
+                modifier = Modifier.width(18.dp),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = glyphColor,
+                maxLines = 1,
+            )
+        }
+        Text(
+            text = command.command,
+            modifier = Modifier.width(104.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+        AnimatedContent(
+            targetState = command.detail,
+            modifier = Modifier.weight(1f),
+            transitionSpec = {
+                fadeIn(tween(170)) togetherWith fadeOut(tween(120))
+            },
+            label = "chat-loading-command-detail",
+        ) { detail ->
+            Text(
+                text = "$detail$dots",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChatSkeletonBubble(
+    widthFraction: Float,
+    lineFractions: List<Float>,
+    alignEnd: Boolean,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (alignEnd) Arrangement.End else Arrangement.Start,
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(widthFraction),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                lineFractions.forEach { fraction ->
+                    ChatSkeletonLine(
+                        modifier = Modifier.fillMaxWidth(fraction),
+                        height = 10.dp,
+                    )
+                }
+            }
+        }
+    }
+}
+
 private fun formatFileSize(bytes: Long): String = when {
     bytes < 1024 -> "${bytes} B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+}
+
+private val CHAT_INPUT_REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
+
+private fun compactModelChipLabel(model: String?): String {
+    val raw = model?.trim().orEmpty()
+    if (raw.isBlank()) return "Model"
+    val label = raw.substringAfterLast('/').ifBlank { raw }
+    return if (label.length <= 18) label else label.take(15).trimEnd() + "..."
+}
+
+private fun normalizeReasoningEffortForInput(value: String?): String {
+    val normalized = value?.trim()?.lowercase().orEmpty()
+    return normalized.takeIf { it in CHAT_INPUT_REASONING_EFFORTS } ?: "medium"
+}
+
+private fun reasoningEffortChipLabel(value: String): String = when (value) {
+    "none" -> "None"
+    "minimal" -> "Minimal"
+    "low" -> "Low"
+    "medium" -> "Medium"
+    "high" -> "High"
+    "xhigh" -> "XHigh"
+    else -> "Medium"
 }
 
 private fun isSameDay(ts1: Long, ts2: Long): Boolean {

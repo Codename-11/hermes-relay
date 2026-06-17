@@ -93,9 +93,8 @@ If the hashes don't match, **don't install** — redownload and try again.
 
 **5. Verify the signing certificate (advanced).** The APK is signed with the
 Codename-11 release keystore. To confirm the signature matches the one Google
-Play pins to the app:
+Play pins to the app, compare this fingerprint:
 
-- **Subject:** `CN=Bailey Dixon, Codename-11`
 - **SHA256 fingerprint:**
   ```
   A9:A4:2D:94:20:8B:94:B3:68:5B:01:93:E3:94:9B:90:50:AD:80:60:56:E7:16:3C:FC:E5:11:AF:68:0D:79:4B
@@ -129,9 +128,9 @@ URL and key**, you're done with this step — skip straight to
 Hermes server itself the first time.
 :::
 
-You'll need a reachable [Hermes Agent](https://hermes-agent.nousresearch.com)
-instance (v0.8.0+ recommended). The Relay power-user plugin (step 4) additionally
-needs Python 3.11+ on the server.
+You'll need a reachable current [Hermes Agent](https://hermes-agent.nousresearch.com)
+instance with the API server and dashboard enabled. The Relay power-user plugin
+(step 4) additionally needs Python 3.11+ on the server.
 
 ::::details Set up Hermes + an API key (first-time server setup)
 **What the app actually needs** is three things: the Hermes API server
@@ -278,7 +277,9 @@ On first launch:
    - **Scan setup QR** → scan a QR containing your URL and key. There's no
      upstream mobile-pairing command for the standard path yet, so the handy
      trick is to ask your **Hermes agent to generate one** — a QR encoding
-     `{"api_url":"http://192.168.1.100:8642","api_key":"<your-key>"}` is accepted.
+     `{"api_url":"http://192.168.1.100:8642","api_key":"<your-key>","dashboard_url":"http://192.168.1.100:9119"}`
+     is accepted. `dashboard_url` is optional when the dashboard uses the
+     conventional same-host `:9119` URL.
 3. Optional: add a Tailscale API URL such as `https://your-host.ts.net:8642` in
    the **Remote access** field.
 4. Tap **Connect**.
@@ -332,7 +333,8 @@ and Manage all work without it.
 On the Hermes host:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+hermes plugins install Codename-11/hermes-relay/plugin --enable
+hermes relay doctor
 hermes relay start --no-ssl
 hermes pair
 ```
@@ -342,6 +344,26 @@ plugin CLI support; it is not a built-in Hermes core command. Then scan the QR i
 Android from **Settings → Connections → Pair Relay**, or from onboarding's **Scan
 setup QR** path. If the relay isn't running, the plugin can still print an
 API-only QR, so Chat works and Relay can be paired later.
+The QR may include `dashboard_url` for custom dashboard/reverse-proxy layouts;
+otherwise Android derives the dashboard from the API host on port `9119`.
+
+Use the legacy installer only when you also want the systemd user service, shell
+shims, external skill-path registration, and the old clone/update workflow:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+```
+
+The optional compatibility monkeypatch is separate from normal Relay pairing.
+Modern standard chat, Manage, and dashboard voice do not need it. Check it with
+`hermes relay compat status`; install it only for older Hermes builds or
+compatibility-only route gaps:
+
+```bash
+hermes relay compat status
+hermes relay compat install
+hermes relay compat remove
+```
 
 ::: tip Start the relay
 ```bash
@@ -418,8 +440,8 @@ separately from Relay pairing credentials.
 Relay pairing does not replace dashboard login, and dashboard login does not mint
 an API key: it matches the Hermes Desktop remote-gateway path by authenticating
 `/api/ws` and `/api/pty` with dashboard cookies plus a single-use ticket from
-`/api/auth/ws-ticket`. API-key chat remains the fallback until Android's native
-dashboard-gateway chat adapter is wired in.
+`/api/auth/ws-ticket`. Android uses that gateway path when it is ready and falls
+back to API-server SSE when it is not.
 :::
 
 ::: details Manual connection setup (no QR)
@@ -445,13 +467,25 @@ if it's API-only, Android saves the standard API/dashboard connection.
 :::
 
 ::: details Uninstall the Relay plugin
+If you used the upstream plugin manager:
+
+```bash
+hermes relay compat remove --all   # optional; only removes legacy compat hooks
+hermes plugins remove hermes-relay
+```
+
+If you used the legacy installer:
+
 ```bash
 bash ~/.hermes/hermes-relay/uninstall.sh
 # or, if the clone is already gone:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/uninstall.sh | bash
 ```
-Idempotent, and never touches state shared with other Hermes tools. Flags:
-`--dry-run`, `--keep-clone`, `--remove-secret`.
+It removes the legacy systemd service, shell shims, editable package, external
+skill path, clone, and compat hook. It is idempotent and never touches state
+shared with other Hermes tools. Flags: `--dry-run`, `--keep-clone`,
+`--remove-secret`. For agent-assisted cleanup, use the
+[Agent Cleanup Prompt](/reference/agent-cleanup-prompt).
 :::
 
 <style scoped>

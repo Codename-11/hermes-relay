@@ -10,24 +10,38 @@ package com.hermesandroid.relay.data
  */
 object AgentDisplay {
     const val SERVER_DEFAULT_PROFILE_KEY: String = "__server_default__"
+    private val GENERIC_MODEL_ALIASES = setOf(
+        "hermes-agent",
+        "hermes_agent",
+        "hermes agent",
+    )
 
-    // Only an EXPLICIT pick drives the effective profile. We deliberately do
-    // NOT fall back to the advertised "default" profile: a dashboard profile's
-    // description is a verbose SOUL summary ("Builds and maintains…"), and
-    // resolving it here replaced the clean agent name (the personality, e.g.
-    // "Victor") with that summary in the header. With no explicit pick, the
-    // name comes from the personality. ([profiles] kept for call-site symmetry.)
+    // Only an EXPLICIT pick drives request/session identity. The advertised
+    // "default" profile is an alias for server default, so falling back to it
+    // here would split chat, voice, or session scope.
     @Suppress("UNUSED_PARAMETER")
     fun effectiveProfile(
         selectedProfile: Profile?,
         profiles: List<Profile>,
     ): Profile? = selectedProfile
 
-    // The NAME goes in the name slot. A profile's description is a SOUL summary
-    // ("Builds and maintains…"), far too verbose for the agent-name label, so
-    // the profile name wins; description is only a last resort when name is blank.
+    // Display can use the synthetic default profile's metadata without making
+    // it a request/session override. Verbose SOUL summaries are filtered by
+    // profileDisplayName below, so this is safe for headers/cards.
+    fun effectiveDisplayProfile(
+        selectedProfile: Profile?,
+        profiles: List<Profile>,
+    ): Profile? = selectedProfile ?: profiles.firstOrNull { isServerDefaultAlias(it.name) }
+
+    // The NAME goes in the name slot. Non-default profiles use their profile
+    // name first. The synthetic default profile uses its description only when
+    // that description looks like a concise human agent name ("Victor"), not a
+    // verbose SOUL summary.
     fun profileDisplayName(profile: Profile?): String? {
         if (profile == null) return null
+        if (isServerDefaultAlias(profile.name)) {
+            return defaultProfileDisplayName(profile)
+        }
         return when {
             profile.name.isNotBlank() -> titleCase(profile.name.trim())
             profile.description.isNotBlank() -> profile.description.trim()
@@ -35,12 +49,21 @@ object AgentDisplay {
         }
     }
 
+    fun defaultProfileDisplayName(profile: Profile?): String? =
+        profile
+            ?.description
+            ?.trim()
+            ?.takeIf { it.looksLikeConciseAgentName() }
+            ?.let(::titleCase)
+
     fun agentName(
         profile: Profile?,
         selectedPersonality: String,
         defaultPersonality: String,
         connectionLabel: String?,
+        localDisplayAlias: String? = null,
     ): String {
+        localDisplayAlias(localDisplayAlias)?.let { return it }
         profileDisplayName(profile)?.let { return it }
 
         val personalityName = if (
@@ -70,6 +93,12 @@ object AgentDisplay {
         else -> "Default"
     }
 
+    fun displayModelName(model: String?): String? =
+        model
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.takeUnless { it.lowercase() in GENERIC_MODEL_ALIASES }
+
     fun isServerDefaultAlias(profileName: String?): Boolean =
         profileName?.trim()?.equals("default", ignoreCase = true) == true
 
@@ -86,6 +115,22 @@ object AgentDisplay {
 
     fun profileContextKey(connectionId: String?, profileName: String?): String =
         "${connectionId.orEmpty()}::${profileSessionKey(profileName)}"
+
+    fun localDisplayAlias(value: String?): String? =
+        value
+            ?.trim()
+            ?.replace(Regex("\\s+"), " ")
+            ?.takeIf { it.isNotEmpty() }
+
+    private fun String.looksLikeConciseAgentName(): Boolean {
+        if (isBlank() || length > 40 || contains('\n') || contains('\r')) {
+            return false
+        }
+        if (any { it == '.' || it == ':' || it == ';' }) {
+            return false
+        }
+        return trim().split(Regex("\\s+")).size <= 4
+    }
 
     private fun titleCase(value: String): String =
         value.replaceFirstChar { it.uppercase() }

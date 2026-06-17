@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,16 +14,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +68,7 @@ fun SessionDrawerContent(
     scopeTitle: String = "Sessions",
     scopeSubtitle: String? = null,
     isLoading: Boolean = false,
+    isOpen: Boolean = true,
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -73,6 +80,9 @@ fun SessionDrawerContent(
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
     var pinnedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var archivedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val listState = rememberLazyListState()
+    var scrollToTopPending by remember { mutableStateOf(false) }
+    val trimmedQuery = query.trim()
     val visibleSessions = sessions
         .asSequence()
         .filter { session ->
@@ -85,13 +95,44 @@ fun SessionDrawerContent(
             }
         }
         .filter { session ->
-            val needle = query.trim()
+            val needle = trimmedQuery
             needle.isBlank() ||
                 session.sessionId.contains(needle, ignoreCase = true) ||
                 session.title.orEmpty().contains(needle, ignoreCase = true) ||
                 session.model.orEmpty().contains(needle, ignoreCase = true)
         }
+        .sortedWith(
+            compareByDescending<ChatSession> { it.sessionId in pinnedSessionIds }
+                .thenByDescending { it.activityTimestamp }
+                .thenByDescending { it.startTimestamp }
+                .thenBy { it.title.orEmpty().lowercase(locale = Locale.ROOT) }
+        )
         .toList()
+    val topVisibleSessionId = visibleSessions.firstOrNull()?.sessionId
+
+    LaunchedEffect(isOpen) {
+        scrollToTopPending = isOpen
+        if (isOpen && visibleSessions.isNotEmpty()) {
+            listState.scrollToItem(0)
+            scrollToTopPending = false
+        }
+    }
+
+    LaunchedEffect(filter, trimmedQuery) {
+        if (isOpen && visibleSessions.isNotEmpty()) {
+            listState.scrollToItem(0)
+            scrollToTopPending = false
+        } else if (isOpen) {
+            scrollToTopPending = true
+        }
+    }
+
+    LaunchedEffect(isOpen, topVisibleSessionId, visibleSessions.size) {
+        if (isOpen && scrollToTopPending && visibleSessions.isNotEmpty()) {
+            listState.scrollToItem(0)
+            scrollToTopPending = false
+        }
+    }
 
     ModalDrawerSheet(
         modifier = Modifier.width(320.dp),
@@ -200,7 +241,7 @@ fun SessionDrawerContent(
                 )
             }
         } else {
-            LazyColumn {
+            LazyColumn(state = listState) {
                 items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionItem(
                         session = session,
@@ -300,6 +341,7 @@ private fun SessionItem(
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     val locale = LocalLocale.current.platformLocale
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
@@ -315,7 +357,11 @@ private fun SessionItem(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp),
+        ) {
             Text(
                 text = session.title ?: "Untitled",
                 style = MaterialTheme.typography.bodyMedium,
@@ -328,54 +374,120 @@ private fun SessionItem(
                 }
             )
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (session.updatedAt > 0) {
+                sessionTimestampText(session, locale)?.let { timestamp ->
                     Text(
-                        text = formatTimestamp(session.updatedAt, locale),
+                        text = timestamp,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                 }
                 if (session.messageCount > 0) {
                     Text(
                         text = "${session.messageCount} msgs",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
                     )
                 }
             }
         }
 
-        IconButton(onClick = onTogglePinned, modifier = Modifier.padding(0.dp)) {
+        IconButton(
+            onClick = onTogglePinned,
+            modifier = Modifier.size(36.dp),
+        ) {
             Icon(
                 Icons.Filled.Star,
                 contentDescription = if (pinned) "Unpin session" else "Pin session",
-                tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant
+                tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
             )
         }
-        IconButton(onClick = onToggleArchived, modifier = Modifier.padding(0.dp)) {
-            Icon(
-                Icons.Filled.Archive,
-                contentDescription = if (archived) "Restore session" else "Archive session",
-                tint = if (archived) RelayRefresh.Relay else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        IconButton(onClick = onRename, modifier = Modifier.padding(0.dp)) {
-            Icon(
-                Icons.Filled.Edit,
-                contentDescription = "Rename",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        IconButton(onClick = onDelete, modifier = Modifier.padding(0.dp)) {
-            Icon(
-                Icons.Filled.Delete,
-                contentDescription = "Delete",
-                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-            )
+
+        Box {
+            IconButton(
+                onClick = { menuOpen = true },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = "Session actions",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = {
+                        Icon(Icons.Filled.Edit, contentDescription = null)
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onRename()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(if (archived) "Restore" else "Archive") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Archive,
+                            contentDescription = null,
+                            tint = if (archived) {
+                                RelayRefresh.Relay
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onToggleArchived()
+                    },
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "Delete",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.75f),
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onDelete()
+                    },
+                )
+            }
         }
     }
+}
+
+private fun sessionTimestampText(session: ChatSession, locale: Locale): String? {
+    val timestamp = session.activityTimestamp
+    if (timestamp <= 0L) return null
+    val hasDistinctActivity =
+        session.lastActivityAt > 0L &&
+            session.startTimestamp > 0L &&
+            session.lastActivityAt != session.startTimestamp
+    val prefix = if (hasDistinctActivity) "Active" else "Started"
+    return "$prefix ${formatTimestamp(timestamp, locale)}"
 }
 
 private fun formatTimestamp(millis: Long, locale: Locale): String {

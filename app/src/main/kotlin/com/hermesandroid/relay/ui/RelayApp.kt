@@ -373,6 +373,8 @@ fun RelayApp() {
     val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
 
     val mediaContext = androidx.compose.ui.platform.LocalContext.current
@@ -590,6 +592,15 @@ fun RelayApp() {
                 profiles = connectionViewModel.agentProfiles.value,
             )
         }
+        chatViewModel.setDisplayProfileProvider {
+            AgentDisplay.effectiveDisplayProfile(
+                selectedProfile = connectionViewModel.selectedProfile.value,
+                profiles = connectionViewModel.agentProfiles.value,
+            )
+        }
+        chatViewModel.setDisplayAliasProvider {
+            connectionViewModel.profileDisplayAlias.value
+        }
 
         // Drawer session list, scoped to the active profile on gateway
         // connections (dashboard `/api/sessions?profile=`). Returns null off the
@@ -638,6 +649,10 @@ fun RelayApp() {
         voiceViewModel.onProfileChanged(
             AgentDisplay.profileRequestName(selectedProfile?.name)
         )
+    }
+
+    LaunchedEffect(selectedProfile?.name, agentProfiles, profileDisplayAlias) {
+        chatViewModel.refreshAgentDisplayName(relabelGenericMessages = true)
     }
 
     // === PHASE3-status: sync granular phone-status settings to chat ===
@@ -757,6 +772,7 @@ fun RelayApp() {
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
         val isOnboarding = currentRoute == Screen.Onboarding.route
+        val suppressGlobalChrome = !onboardingCompleted || isOnboarding
         var bridgePrimaryReturnRoute by remember { mutableStateOf<String?>(null) }
         var bridgePrimaryReturnLabel by remember { mutableStateOf<String?>(null) }
 
@@ -815,6 +831,7 @@ fun RelayApp() {
         val activeConnection by connectionViewModel.activeConnection.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
+        val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
         // The SAME readiness signal ChatScreen renders its "Connect Standard
@@ -993,7 +1010,7 @@ fun RelayApp() {
             }
         }
         val showStartupSphere =
-            onboardingCompleted &&
+            !suppressGlobalChrome &&
                 !startupGateReleased &&
                 !voiceUiState.voiceMode
 
@@ -1094,7 +1111,7 @@ fun RelayApp() {
         val showUnattendedBanner = BuildFlavor.isSideload &&
             masterEnabled &&
             unattendedEnabled &&
-            !isOnboarding &&
+            !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
         // Sideload-only update availability (UpdateViewModel short-circuits on
@@ -1112,7 +1129,7 @@ fun RelayApp() {
         val showConnectionStatusToast =
             globalConnectionStatus != null &&
                 currentStatusKey != dismissedStatusKey &&
-                !isOnboarding &&
+                !suppressGlobalChrome &&
                 !showStartupSphere &&
                 !voiceUiState.voiceMode
         val onConnectionStatusBannerClick: () -> Unit = {
@@ -1214,7 +1231,7 @@ fun RelayApp() {
             contentWindowInsets = WindowInsets(0),
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                if (!isOnboarding && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
+                if (!suppressGlobalChrome && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
                     val leading = when {
                         apiReachable -> "api online"
                         relayReady -> "relay connected"
@@ -1229,7 +1246,14 @@ fun RelayApp() {
                         ?: activeConnection?.label
                         ?: "no route"
                     val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() } ?: "default"
-                    val modelLabel = serverModelName.takeIf { it.isNotBlank() } ?: "model pending"
+                    val displayProfile = AgentDisplay.effectiveDisplayProfile(
+                        selectedProfile = selectedProfile,
+                        profiles = agentProfiles,
+                    )
+                    val modelLabel = AgentDisplay.displayModelName(gatewayCurrentModel)
+                        ?: AgentDisplay.displayModelName(displayProfile?.model)
+                        ?: AgentDisplay.displayModelName(serverModelName)
+                        ?: "model pending"
                     val safetyLabel = if (BuildFlavor.isSideload && masterEnabled) {
                         "safety: ${if (unattendedEnabled) "unattended" else "on"}"
                     } else {
@@ -2025,7 +2049,7 @@ fun RelayApp() {
                 .windowInsetsPadding(WindowInsets.statusBars),
         ) {
             AnimatedVisibility(
-                visible = availableUpdate != null && !isOnboarding &&
+                visible = availableUpdate != null && !suppressGlobalChrome &&
                     !showStartupSphere && !voiceUiState.voiceMode,
                 enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
                 exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),

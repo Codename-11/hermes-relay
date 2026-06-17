@@ -53,8 +53,9 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
 /**
  * Dedicated Chat settings screen. Hosts message length, attachment size,
- * tool display mode, chat endpoint preference, show-reasoning toggle,
- * smooth auto-scroll, and related chat behavior knobs.
+ * chat endpoint preference, smooth auto-scroll, and related chat behavior knobs.
+ * Reasoning and tool-progress visibility are server display settings managed
+ * through the Manage tab so Android matches desktop.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,8 +63,6 @@ fun ChatSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
 ) {
-    val showThinkingSetting by connectionViewModel.showThinking.collectAsState()
-    val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val appContextEnabled by connectionViewModel.appContextEnabled.collectAsState()
     // === PHASE3-status: granular phone-status sub-toggles ===
     val appContextBridgeState by connectionViewModel.appContextBridgeState.collectAsState()
@@ -119,31 +118,6 @@ fun ChatSettingsScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Show reasoning toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Show reasoning",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "Display the AI's thinking process above responses",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = showThinkingSetting,
-                            onCheckedChange = { connectionViewModel.setShowThinking(it) }
-                        )
-                    }
-
-                    HorizontalDivider()
-
                     // Smooth auto-scroll toggle
                     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
                     Row(
@@ -165,6 +139,59 @@ fun ChatSettingsScreen(
                         Switch(
                             checked = smoothAutoScroll,
                             onCheckedChange = { connectionViewModel.setSmoothAutoScroll(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Close sessions on send",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Return to the conversation after sending from the session drawer. Off keeps the drawer open for session triage.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = closeDrawerOnSend,
+                            onCheckedChange = { connectionViewModel.setCloseDrawerOnSend(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    val keepComposerFocusedOnSend by
+                        connectionViewModel.keepComposerFocusedOnSend.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Keep keyboard open on send",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Stay in the composer after sending. Turn off to dismiss the keyboard after each sent message.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = keepComposerFocusedOnSend,
+                            onCheckedChange = {
+                                connectionViewModel.setKeepComposerFocusedOnSend(it)
+                            }
                         )
                     }
 
@@ -212,40 +239,6 @@ fun ChatSettingsScreen(
                                 }
                             }
                         )
-                    }
-
-                    HorizontalDivider()
-
-                    // Tool call display mode
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Tool call display",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            text = "How tool calls (file reads, searches, etc.) appear in chat",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        val toolDisplayOptions = listOf("off", "compact", "detailed")
-                        val toolDisplayLabels = listOf("Off", "Compact", "Detailed")
-                        val selectedToolIndex = toolDisplayOptions.indexOf(toolDisplay).coerceAtLeast(0)
-
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            toolDisplayOptions.forEachIndexed { index, option ->
-                                SegmentedButton(
-                                    shape = SegmentedButtonDefaults.itemShape(
-                                        index = index,
-                                        count = toolDisplayOptions.size
-                                    ),
-                                    onClick = { connectionViewModel.setToolDisplay(option) },
-                                    selected = index == selectedToolIndex
-                                ) {
-                                    Text(toolDisplayLabels[index])
-                                }
-                            }
-                        }
                     }
 
                     HorizontalDivider()
@@ -386,10 +379,18 @@ fun ChatSettingsScreen(
                                         battery = appContextBattery,
                                         safetyStatus = appContextSafetyStatus,
                                     ),
-                                    // Preview uses a neutral "nothing bound" snapshot so the
-                                    // user sees the shape without leaking their current
-                                    // phone state into the settings screen.
-                                    snapshot = com.hermesandroid.relay.util.PhoneSnapshot(),
+                                    // Preview uses representative placeholder values (NOT the
+                                    // user's real phone state) so each enabled toggle visibly
+                                    // contributes its line — an empty snapshot left the
+                                    // Foreground app / Battery / Safety rails toggles looking
+                                    // inert because their lines guard on snapshot data.
+                                    snapshot = com.hermesandroid.relay.util.PhoneSnapshot(
+                                        currentApp = "com.android.chrome",
+                                        batteryPercent = 82,
+                                        blocklistCount = 3,
+                                        destructiveVerbCount = 5,
+                                        autoDisableMinutes = 15,
+                                    ),
                                 )
                             }
                             Card(
@@ -534,9 +535,18 @@ fun ChatSettingsScreen(
                                         count = endpointOptions.size
                                     ),
                                     onClick = { connectionViewModel.setStreamingEndpoint(option) },
-                                    selected = index == selectedEndpointIndex
+                                    selected = index == selectedEndpointIndex,
+                                    // Drop the default check icon — with 5 segments its
+                                    // reserved width pushed "Gateway"/"Sessions" onto a
+                                    // second line. Selection still reads via the fill.
+                                    icon = {},
                                 ) {
-                                    Text(endpointLabels[index])
+                                    Text(
+                                        text = endpointLabels[index],
+                                        style = MaterialTheme.typography.labelMedium,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
                                 }
                             }
                         }

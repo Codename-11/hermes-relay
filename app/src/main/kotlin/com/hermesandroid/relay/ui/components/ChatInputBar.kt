@@ -11,23 +11,33 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.purpleGlow
@@ -62,6 +73,26 @@ import kotlinx.coroutines.delay
  * ```
  */
 enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
+
+private val ChatComposerShape = RoundedCornerShape(18.dp)
+private val ChatInputChipShape = RoundedCornerShape(12.dp)
+
+data class ChatInputPickerOption(
+    val label: String,
+    val value: String?,
+    val provider: String? = null,
+    val secondary: String? = null,
+    val group: String? = null,
+    val selected: Boolean = false,
+    val enabled: Boolean = true,
+)
+
+data class ChatInputPickerControl(
+    val value: String,
+    val contentDescription: String,
+    val options: List<ChatInputPickerOption>,
+    val enabled: Boolean = true,
+)
 
 /**
  * The minimal Telegram-style chat input bar — 3 elements, one trailing
@@ -112,6 +143,10 @@ fun ChatInputBar(
     showVoiceHint: Boolean,
     onVoiceHintShown: () -> Unit,
     isDarkTheme: Boolean,
+    modelControl: ChatInputPickerControl? = null,
+    onModelOptionSelected: (ChatInputPickerOption) -> Unit = {},
+    effortControl: ChatInputPickerControl? = null,
+    onEffortOptionSelected: (ChatInputPickerOption) -> Unit = {},
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
@@ -190,42 +225,24 @@ fun ChatInputBar(
             )
         }
 
-        Row(
+        Surface(
+            shape = ChatComposerShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.Bottom,
         ) {
-            // "+" — tap attaches, long-press opens the command palette.
-            Box(
-                modifier = Modifier
-                    .padding(bottom = 2.dp)
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .combinedClickable(
-                        onClick = onAttach,
-                        onLongClick = onLongPressAttach,
-                        onLongClickLabel = "Browse commands",
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = "Attach file — hold for commands",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            // Pill field
-            Surface(
-                shape = RoundedCornerShape(22.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.weight(1f),
+            Column(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
             ) {
                 BasicTextField(
                     value = value,
                     onValueChange = { if (it.length <= charLimit) onValueChange(it) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 34.dp)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     maxLines = 5,
                     enabled = enabled,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -233,7 +250,7 @@ fun ChatInputBar(
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { inner ->
-                        Box(Modifier.padding(horizontal = 16.dp, vertical = 11.dp)) {
+                        Box(Modifier.fillMaxWidth()) {
                             if (value.isEmpty()) {
                                 Text(
                                     text = placeholder,
@@ -245,111 +262,266 @@ fun ChatInputBar(
                         }
                     },
                 )
-            }
 
-            // Trailing slot
-            val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
-            Box(
-                modifier = if (glow) {
-                    Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
-                } else {
-                    Modifier
-                },
-            ) {
-                AnimatedContent(
-                    targetState = trailing,
-                    transitionSpec = {
-                        (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
-                            .togetherWith(fadeOut(tween(100)))
-                    },
-                    label = "chatInputTrailing",
-                ) { state ->
-                    when (state) {
-                        ChatInputTrailing.SEND -> IconButton(
-                            onClick = onSend,
-                            enabled = enabled,
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "Send message",
-                                tint = if (enabled) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 40.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    // "+" tap attaches, long-press opens the command palette.
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .combinedClickable(
+                                onClick = onAttach,
+                                onLongClick = onLongPressAttach,
+                                onLongClickLabel = "Browse commands",
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = "Attach file; hold for commands",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
 
-                        ChatInputTrailing.VOICE -> Box {
-                            IconButton(onClick = onVoice) {
-                                Icon(
-                                    imageVector = Icons.Filled.GraphicEq,
-                                    contentDescription = if (voiceReady) "Start voice conversation"
-                                        else "Voice conversation — setup needed",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                            // "Needs setup" badge — full-alpha button + Amber
-                            // dot instead of a half-dimmed broken-looking mic.
-                            if (!voiceReady) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(top = 8.dp, end = 8.dp)
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(RelayRefresh.Amber),
-                                )
-                            }
-                        }
+                    if (modelControl != null) {
+                        ChatInputPickerChip(
+                            control = modelControl,
+                            onSelect = onModelOptionSelected,
+                            modifier = Modifier.widthIn(max = 126.dp),
+                        )
+                    }
 
-                        ChatInputTrailing.STOP -> IconButton(onClick = onStop) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Stop,
-                                    contentDescription = "Stop streaming",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        }
+                    if (effortControl != null) {
+                        ChatInputPickerChip(
+                            control = effortControl,
+                            onSelect = onEffortOptionSelected,
+                            modifier = Modifier.widthIn(max = 104.dp),
+                        )
+                    }
 
-                        ChatInputTrailing.STEER -> IconButton(
-                            onClick = onSend,
-                            enabled = enabled,
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "Steer the response",
-                                tint = MaterialTheme.colorScheme.tertiary,
-                            )
-                        }
+                    Spacer(modifier = Modifier.weight(1f))
 
-                        ChatInputTrailing.QUEUE -> IconButton(
-                            onClick = onSend,
-                            enabled = enabled,
-                        ) {
-                            Box {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = "Queue message",
-                                    tint = MaterialTheme.colorScheme.tertiary,
-                                )
-                                Icon(
-                                    imageVector = Icons.Filled.Schedule,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.tertiary,
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .offset(x = 5.dp, y = (-3).dp)
-                                        .size(10.dp),
-                                )
+                    // Trailing slot
+                    val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
+                    Box(
+                        modifier = if (glow) {
+                            Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
+                        } else {
+                            Modifier
+                        },
+                    ) {
+                        AnimatedContent(
+                            targetState = trailing,
+                            transitionSpec = {
+                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
+                                    .togetherWith(fadeOut(tween(100)))
+                            },
+                            label = "chatInputTrailing",
+                        ) { state ->
+                            when (state) {
+                                ChatInputTrailing.SEND -> IconButton(
+                                    onClick = onSend,
+                                    enabled = enabled,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = "Send message",
+                                        tint = if (enabled) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+
+                                ChatInputTrailing.VOICE -> Box {
+                                    IconButton(onClick = onVoice) {
+                                        Icon(
+                                            imageVector = Icons.Filled.GraphicEq,
+                                            contentDescription = if (voiceReady) "Start voice conversation"
+                                                else "Voice conversation — setup needed",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    // "Needs setup" badge — full-alpha button + Amber
+                                    // dot instead of a half-dimmed broken-looking mic.
+                                    if (!voiceReady) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(top = 8.dp, end = 8.dp)
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(RelayRefresh.Amber),
+                                        )
+                                    }
+                                }
+
+                                ChatInputTrailing.STOP -> IconButton(onClick = onStop) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Stop,
+                                            contentDescription = "Stop streaming",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
+
+                                ChatInputTrailing.STEER -> IconButton(
+                                    onClick = onSend,
+                                    enabled = enabled,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = "Steer the response",
+                                        tint = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                }
+
+                                ChatInputTrailing.QUEUE -> IconButton(
+                                    onClick = onSend,
+                                    enabled = enabled,
+                                ) {
+                                    Box {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = "Queue message",
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Filled.Schedule,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .offset(x = 5.dp, y = (-3).dp)
+                                                .size(10.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatInputPickerChip(
+    control: ChatInputPickerControl,
+    onSelect: (ChatInputPickerOption) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val enabled = control.enabled && control.options.isNotEmpty()
+    val contentColor = if (enabled) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    }
+
+    Box(modifier = modifier) {
+        Surface(
+            shape = ChatInputChipShape,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.32f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
+            modifier = Modifier
+                .heightIn(min = 32.dp)
+                .clip(ChatInputChipShape)
+                .clickable(enabled = enabled) { expanded = true },
+        ) {
+            Row(
+                modifier = Modifier.padding(start = 10.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = control.value,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = control.contentDescription,
+                    tint = contentColor,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            var lastGroup: String? = null
+            control.options.forEachIndexed { index, option ->
+                val group = option.group?.takeIf { it.isNotBlank() }
+                if (group != null && group != lastGroup) {
+                    if (index > 0) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    }
+                    Text(
+                        text = group,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .widthIn(max = 280.dp)
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                    lastGroup = group
+                }
+                DropdownMenuItem(
+                    text = {
+                        Column(modifier = Modifier.widthIn(max = 280.dp)) {
+                            Text(
+                                text = option.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (!option.secondary.isNullOrBlank()) {
+                                Text(
+                                    text = option.secondary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(option)
+                    },
+                    enabled = option.enabled,
+                    leadingIcon = if (option.selected) {
+                        {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                )
             }
         }
     }

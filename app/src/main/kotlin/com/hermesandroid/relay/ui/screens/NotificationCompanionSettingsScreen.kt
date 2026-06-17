@@ -126,7 +126,7 @@ fun NotificationCompanionSettingsScreen(
                             "notifications. When enabled, your phone " +
                             "forwards each notification's app, title, " +
                             "and text to your paired Hermes server " +
-                            "over the same secure connection chat uses."
+                            "through the Relay pairing used by phone tools."
                         ),
                     style = MaterialTheme.typography.bodyMedium,
                 )

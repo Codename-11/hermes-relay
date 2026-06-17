@@ -72,9 +72,12 @@ class KeystoreTokenStore private constructor(
 ) : SessionTokenStore {
 
     // Mutable so [resetPrefs] can swap in a fresh instance after a corrupted
-    // file is deleted. Built lazily via [buildPrefs] so the constructor can't
-    // throw — [tryCreate] still controls the "is this device usable at all"
-    // decision via its init probe below.
+    // file is deleted. This field initializer runs [buildPrefs] eagerly, so it
+    // CAN throw (e.g. AEADBadTagException on a corrupt keyset) — but the
+    // constructor is private and only reachable via [tryCreate], which wraps
+    // construction in try/catch and degrades to the legacy store. The
+    // directly-constructed legacy path self-heals instead; see
+    // [LegacyEncryptedPrefsTokenStore.buildPrefsResilient].
     private var prefs: SharedPreferences = buildPrefs()
 
     private fun buildPrefs(): SharedPreferences {
@@ -257,7 +260,38 @@ class LegacyEncryptedPrefsTokenStore(
 
     // Mutable so [resetPrefs] can swap in a fresh instance after a corrupted
     // file is deleted. See [KeystoreTokenStore.resetPrefs] for the rationale.
-    private var prefs: SharedPreferences = buildPrefs()
+    //
+    // Built via [buildPrefsResilient] so a corrupt keyset can't crash the
+    // constructor. Unlike [KeystoreTokenStore], this class is `new`-ed
+    // directly (it's the fallback when KeystoreTokenStore.tryCreate returns
+    // null, and the migration source), so there's no tryCreate-style guard
+    // upstream — the healing has to live here.
+    private var prefs: SharedPreferences = buildPrefsResilient()
+
+    /**
+     * Build the encrypted prefs, healing a corrupted keyset on the way.
+     *
+     * [EncryptedSharedPreferences.create] decrypts the Tink keyset eagerly, so
+     * a stale/corrupt legacy file throws [javax.crypto.AEADBadTagException]
+     * (AES-GCM tag mismatch) right here in the constructor. This is the classic
+     * post-upgrade / post-restore failure: the encrypted blob persists but the
+     * hardware master key it was sealed against is gone or rotated. Delete the
+     * file and rebuild a fresh keyset against the current master key rather
+     * than letting the exception escape and force-close the app — the token in
+     * the unreadable file was lost anyway, so the user simply re-pairs.
+     */
+    private fun buildPrefsResilient(): SharedPreferences =
+        try {
+            buildPrefs()
+        } catch (e: Exception) {
+            Log.w(TAG, "Initial legacy prefs build failed — wiping corrupted file and rebuilding: ${e.message}")
+            try {
+                appContext.deleteSharedPreferences(prefsName)
+            } catch (e2: Exception) {
+                Log.w(TAG, "deleteSharedPreferences($prefsName) failed: ${e2.message}")
+            }
+            buildPrefs()
+        }
 
     private fun buildPrefs(): SharedPreferences {
         val masterKey = MasterKey.Builder(appContext)
@@ -341,4 +375,25 @@ class LegacyEncryptedPrefsTokenStore(
             resetPrefs()
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// In-memory last-resort implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Non-persistent [SessionTokenStore]. Used only when BOTH the Keystore and the
+ * (self-healing) legacy encrypted store fail to construct — i.e. the device's
+ * AndroidKeystore is so broken it can't even build a fresh key. Tokens live for
+ * the process lifetime only, so the user re-pairs on the next cold start, but
+ * the app stays up instead of force-closing. See [AuthManager.store].
+ */
+class InMemoryTokenStore : SessionTokenStore {
+    private val map = java.util.concurrent.ConcurrentHashMap<String, String>()
+    override val hasHardwareBackedStorage: Boolean = false
+    override fun getString(key: String): String? = map[key]
+    override fun putString(key: String, value: String) { map[key] = value }
+    override fun remove(key: String) { map.remove(key) }
+    override fun contains(key: String): Boolean = map.containsKey(key)
+    override fun clearAll() { map.clear() }
 }

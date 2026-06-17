@@ -9,6 +9,8 @@ import {
   AlertTitle,
   AlertDescription,
   CardDescription,
+  Button,
+  Badge,
   Table,
   TableHeader,
   TableBody,
@@ -22,8 +24,6 @@ const {
   CardHeader,
   CardTitle,
   CardContent,
-  Button,
-  Badge,
 } = SDK.components;
 
 const FILTERS = ["All", "Executed", "Blocked", "Confirmed", "Timeout", "Error"];

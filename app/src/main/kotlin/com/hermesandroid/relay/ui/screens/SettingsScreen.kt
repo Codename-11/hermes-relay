@@ -1,11 +1,14 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,7 +42,6 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,24 +63,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
+import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.RelayUiState
 
 /**
  * Root Settings destination. After the 2026-04-11 split, Settings is a
  * lightweight category list — the heavy lifting for each category lives in
  * a dedicated sub-screen reached by navigation. The top card shows live
- * API / Relay / Session status and taps through to the Connection
- * sub-screen for pairing and manual configuration.
+ * API / Dashboard / Relay status and opens the agent info sheet for the
+ * active connection, profile, and personality.
  *
  * The old mega-file version of this screen (≈2609 lines) carried every
  * setting inline in a single scrolling Column. That was painful to navigate
@@ -87,7 +93,7 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
  * the content went. The split follows the `VoiceSettingsScreen` pattern
  * that was already in the repo.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     connectionViewModel: ConnectionViewModel,
@@ -145,10 +151,86 @@ fun SettingsScreen(
     // ring-accent, and subtitle.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+    val authState by connectionViewModel.authState.collectAsState()
+    val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val apiServerHealth by connectionViewModel.apiServerHealth.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
+    val relayPaired = authState is AuthState.Paired
+    val dashboardStatus = activeConnection?.dashboardLastStatus
+    val dashboardSignInRequired =
+        dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+    // Status pills are exception-only: a pill appears only when the surface
+    // needs attention (missing / checking / offline / sign-in). When it's
+    // healthy the pill is null so the card + agent summary stay clean.
+    val apiPill: SettingsStatusPillModel? = when {
+        activeConnection?.apiServerUrl.isNullOrBlank() -> SettingsStatusPillModel(
+            label = "API missing",
+            tone = SettingsStatusTone.Warning,
+        )
+        apiServerHealth == ConnectionViewModel.HealthStatus.Probing -> SettingsStatusPillModel(
+            label = "API checking",
+            tone = SettingsStatusTone.Info,
+        )
+        apiServerReachable -> null
+        apiServerHealth == ConnectionViewModel.HealthStatus.Unreachable -> SettingsStatusPillModel(
+            label = "API offline",
+            tone = SettingsStatusTone.Warning,
+        )
+        else -> null
+    }
+    val dashboardPill: SettingsStatusPillModel? = when {
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> SettingsStatusPillModel(
+            label = "Dashboard missing",
+            tone = SettingsStatusTone.Warning,
+        )
+        dashboardStatus == null -> null
+        !dashboardStatus.reachable -> SettingsStatusPillModel(
+            label = "Dashboard offline",
+            tone = SettingsStatusTone.Warning,
+        )
+        dashboardSignInRequired -> SettingsStatusPillModel(
+            label = "Dashboard sign in",
+            tone = SettingsStatusTone.Info,
+        )
+        dashboardStatus.authenticated == true -> null
+        else -> null
+    }
+    val relayPill: SettingsStatusPillModel? = when (relayUiState) {
+        RelayUiState.Connected -> null
+        RelayUiState.Connecting -> SettingsStatusPillModel(
+            label = "Relay reconnecting",
+            tone = SettingsStatusTone.Info,
+        )
+        RelayUiState.Stale -> SettingsStatusPillModel(
+            label = "Relay stale",
+            tone = SettingsStatusTone.Warning,
+        )
+        RelayUiState.Disconnected -> SettingsStatusPillModel(
+            label = if (relayPaired) "Relay offline" else "Requires pairing",
+            tone = SettingsStatusTone.Warning,
+        )
+        RelayUiState.NotConfigured -> null
+    }
+    // The Power tools below all ride the relay plugin. Rather than stamp an
+    // identical badge on every card (noise, not signal), the dependency is
+    // surfaced ONCE on the section header as a single plugin-state badge.
+    val pluginBadge = when {
+        !relayPaired ->
+            SettingsStatusPillModel(label = "Plugin required", tone = SettingsStatusTone.Info)
+        relayUiState == RelayUiState.Disconnected ->
+            SettingsStatusPillModel(label = "Plugin offline", tone = SettingsStatusTone.Warning)
+        relayUiState == RelayUiState.Stale ->
+            SettingsStatusPillModel(label = "Plugin stale", tone = SettingsStatusTone.Warning)
+        relayUiState == RelayUiState.Connecting ->
+            SettingsStatusPillModel(label = "Plugin connecting", tone = SettingsStatusTone.Info)
+        else ->
+            SettingsStatusPillModel(label = "Plugin active", tone = SettingsStatusTone.Good)
+    }
 
     // Kick a WSS reconnect when Settings first composes so the Connections
     // subpage's active-card relay row doesn't flash Disconnected on cold
@@ -202,11 +284,9 @@ fun SettingsScreen(
             // ── Active Agent summary ───────────────────────────────────
             // Mirrors the ChatScreen TopAppBar title block (avatar + name
             // + one-line `connection · model · personality` subtitle).
-            // Tapping jumps to Chat AND auto-opens AgentInfoSheet so
-            // users can change Connection / Profile / Personality without
-            // having to navigate to Chat first and then hunt for the
-            // agent-name header.
-            val effectiveProfile = AgentDisplay.effectiveProfile(
+            // Tapping opens AgentInfoSheet inline so users can change
+            // Connection / Profile / Personality without leaving Settings.
+            val effectiveProfile = AgentDisplay.effectiveDisplayProfile(
                 selectedProfile = selectedProfile,
                 profiles = agentProfiles,
             )
@@ -216,6 +296,7 @@ fun SettingsScreen(
                     selectedPersonality = selectedPersonality,
                     defaultPersonality = defaultPersonality,
                     connectionLabel = activeConnection?.label,
+                    localDisplayAlias = profileDisplayAlias,
                 ),
                 connectionLabel = activeConnection?.label ?: "No connection",
                 model = effectiveProfile?.model ?: "default",
@@ -224,6 +305,7 @@ fun SettingsScreen(
                     defaultPersonality = defaultPersonality,
                 ),
                 isCustomized = selectedProfile != null || selectedPersonality != "default",
+                statusPills = listOfNotNull(apiPill, dashboardPill, relayPill),
                 onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
             )
@@ -259,24 +341,24 @@ fun SettingsScreen(
             // connection-settings unification.)
 
             // ── Category list ──────────────────────────────────────────
-            // Multi-connection: Connections sits at the very top of the
-            // list so users who just want to switch server connections
-            // don't have to hunt for it. `Icons.Filled.Devices` is already
-            // imported for the "Paired devices" row below — reusing it
-            // here is visually fine since both rows cover server / device
-            // relationships.
+            // Connections sits ABOVE the Hermes section: it's the foundational
+            // layer everything else points at (standard + plugin), not a Hermes
+            // feature — and the home for multi-connection.
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
                 title = "Connections",
-                subtitle = "Switch or manage server connections",
+                subtitle = "API, dashboard, relay pairing, and routes",
                 onClick = onNavigateToConnections,
                 isDarkTheme = isDarkTheme,
             )
 
+            SettingsSectionHeader("Hermes")
+
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,
                 title = "Hermes management",
-                subtitle = "Skills, cron, MCP, profiles, models, config",
+                subtitle = "Dashboard features: skills, cron, MCP, profiles, models",
+                badge = dashboardPill,
                 onClick = onNavigateToManage,
                 isDarkTheme = isDarkTheme,
             )
@@ -284,7 +366,8 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Chat,
                 title = "Chat",
-                subtitle = "Reasoning, tool display, endpoints, message length",
+                subtitle = "API chat behavior, endpoints, tool display, message length",
+                badge = apiPill,
                 onClick = onNavigateToChatSettings,
                 isDarkTheme = isDarkTheme,
             )
@@ -292,8 +375,35 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.GraphicEq,
                 title = "Voice mode",
-                subtitle = "Interaction mode, silence threshold, providers",
+                subtitle = "Dashboard voice, realtime relay options, providers",
                 onClick = onNavigateToVoiceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsSectionHeader("Power tools", trailing = pluginBadge)
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Code,
+                title = "Terminal",
+                subtitle = "Server shell access through a paired relay session",                onClick = onNavigateToTerminal,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.PhoneAndroid,
+                title = if (BuildFlavor.isSideload) "Bridge" else "Bridge Core",
+                subtitle = if (BuildFlavor.isSideload) {
+                    "Relay-granted phone bridge controls"
+                } else {
+                    "Relay features without sideload device control"
+                },                onClick = onNavigateToBridge,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Devices,
+                title = "Relay sessions",
+                subtitle = "Phones paired with this server, revoke, extend",                onClick = onNavigateToPairedDevices,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -301,8 +411,7 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.Notifications,
                 title = "Notification companion",
-                subtitle = "Let your assistant triage notifications you've shared",
-                onClick = onNavigateToNotificationCompanion,
+                subtitle = "Shared phone notifications for paired relay tools",                onClick = onNavigateToNotificationCompanion,
                 isDarkTheme = isDarkTheme,
             )
             // === END PHASE3-notif-listener-followup ===
@@ -310,42 +419,7 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,
                 title = "Media",
-                subtitle = "Inbound attachment size, auto-fetch, cache cap",
-                onClick = onNavigateToMediaSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Palette,
-                title = "Appearance",
-                subtitle = "Theme, font size, animations",
-                onClick = onNavigateToAppearanceSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsSectionHeader("Power tools")
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Code,
-                title = "Terminal",
-                subtitle = "Server shell access through a paired relay session",
-                onClick = onNavigateToTerminal,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.PhoneAndroid,
-                title = "Bridge",
-                subtitle = "Relay-granted phone bridge controls",
-                onClick = onNavigateToBridge,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Devices,
-                title = "Relay sessions",
-                subtitle = "Phones paired with this server — revoke, extend",
-                onClick = onNavigateToPairedDevices,
+                subtitle = "Relay inbound attachments, auto-fetch, cache cap",                onClick = onNavigateToMediaSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -355,16 +429,30 @@ fun SettingsScreen(
                     icon = Icons.Filled.Security,
                     title = "Bridge safety",
                     subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                    badge = SettingsStatusPillModel(
+                        label = "Sideload",
+                        tone = SettingsStatusTone.Info,
+                    ),
                     onClick = onNavigateToBridgeSafety,
                     isDarkTheme = isDarkTheme,
                 )
                 // === END PHASE3-safety-rails ===
             }
 
+            SettingsSectionHeader("App")
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Palette,
+                title = "Appearance",
+                subtitle = "Theme, font size, animations",
+                onClick = onNavigateToAppearanceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
             SettingsCategoryRow(
                 icon = Icons.Filled.Analytics,
                 title = "Analytics",
-                subtitle = "Stats for nerds — TTFT, tokens, health",
+                subtitle = "Usage stats, TTFT, tokens, health",
                 onClick = onNavigateToAnalytics,
                 isDarkTheme = isDarkTheme,
             )
@@ -447,15 +535,16 @@ fun SettingsScreen(
 
 /**
  * Compact summary card of the currently active agent (Connection + Profile
- * + Personality) rendered at the very top of SettingsScreen. Tapping
- * navigates to the Chat tab with the AgentInfoSheet pre-opened — that sheet
- * is the canonical place to actually change any of these three dimensions.
+ * + Personality) rendered at the very top of SettingsScreen. Tapping opens
+ * AgentInfoSheet inline — that sheet is the canonical place to actually
+ * change any of these three dimensions.
  *
  * Visual parity with the ChatScreen TopAppBar title block: 32dp avatar with
  * an optional 1.5dp primary-color accent ring when the user has overridden
  * either the profile or the personality; single-line subtitle joining the
  * three tokens with a middle-dot separator.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ActiveAgentCard(
     agentName: String,
@@ -465,6 +554,7 @@ private fun ActiveAgentCard(
     isCustomized: Boolean,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
+    statusPills: List<SettingsStatusPillModel>,
 ) {
     val subtitle = "$connectionLabel \u00B7 $model \u00B7 $personalityLabel"
     Card(
@@ -524,7 +614,10 @@ private fun ActiveAgentCard(
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Text(
                     text = agentName.ifBlank { "Hermes" },
                     style = MaterialTheme.typography.bodyLarge,
@@ -538,6 +631,14 @@ private fun ActiveAgentCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    statusPills.forEach { pill ->
+                        SettingsStatusPill(pill)
+                    }
+                }
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -548,16 +649,72 @@ private fun ActiveAgentCard(
     }
 }
 
+private data class SettingsStatusPillModel(
+    val label: String,
+    val tone: SettingsStatusTone = SettingsStatusTone.Neutral,
+)
+
+private enum class SettingsStatusTone {
+    Neutral,
+    Good,
+    Info,
+    Warning,
+}
+
 @Composable
-private fun SettingsSectionHeader(label: String) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
+private fun SettingsStatusPill(pill: SettingsStatusPillModel) {
+    // Soft "chip" treatment that matches the translucent, bordered language
+    // of the chat/manage/bridge mode strip (relaySelectedPanel) instead of a
+    // solid full-strength fill — a tinted wash + hairline accent border + cream
+    // label reads cleaner and stays in-theme across tones.
+    val hue = when (pill.tone) {
+        SettingsStatusTone.Good -> RelayRefresh.Electric
+        SettingsStatusTone.Info -> RelayRefresh.Purple
+        SettingsStatusTone.Warning -> RelayRefresh.Amber
+        SettingsStatusTone.Neutral -> RelayRefresh.Muted
+    }
+    val contentColor = when (pill.tone) {
+        SettingsStatusTone.Good, SettingsStatusTone.Info -> RelayRefresh.Paper
+        SettingsStatusTone.Warning -> RelayRefresh.Amber
+        SettingsStatusTone.Neutral -> RelayRefresh.Muted
+    }
+    Surface(
+        color = hue.copy(alpha = 0.18f),
+        contentColor = contentColor,
+        shape = RoundedCornerShape(7.dp),
+        border = BorderStroke(1.dp, hue.copy(alpha = 0.55f)),
+    ) {
+        Text(
+            text = pill.label,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun SettingsSectionHeader(
+    label: String,
+    trailing: SettingsStatusPillModel? = null,
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp, bottom = 2.dp),
-    )
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        if (trailing != null) {
+            SettingsStatusPill(trailing)
+        }
+    }
 }
 
 /**
@@ -572,6 +729,7 @@ private fun SettingsCategoryRow(
     subtitle: String,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
+    badge: SettingsStatusPillModel? = null,
 ) {
     Card(
         modifier = Modifier
@@ -598,16 +756,26 @@ private fun SettingsCategoryRow(
                 modifier = Modifier.size(22.dp),
             )
             Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                if (badge != null) {
+                    SettingsStatusPill(badge)
+                }
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,

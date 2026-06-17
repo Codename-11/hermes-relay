@@ -159,7 +159,7 @@ Usage:
   hermes-relay devices             List / revoke / extend server-side paired devices
   hermes-relay daemon              Run headless — expose desktop tools even when no shell is open
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
-  hermes-relay update              Check for and install the latest desktop-v* release
+  hermes-relay update              Check for and install the latest cli-v* release
   hermes-relay voice               Show native Hermes voice config (STT/TTS/realtime providers)
   hermes-relay voice mode          Push-to-talk in a browser tab (proxied through this CLI)
   hermes-relay workspace           Print local workspace context (cwd, git, editor, shell) — --json for scripting

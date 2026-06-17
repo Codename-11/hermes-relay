@@ -143,13 +143,13 @@ export async function updateCommand(args: ParsedArgs): Promise<number> {
   }
 
   if (!info) {
-    // No desktop-v* releases at all — surface truthfully, don't crash.
+    // No CLI release-track rows at all — surface truthfully, don't crash.
     if (wantJson) {
       process.stdout.write(JSON.stringify(emptyReport(), null, 2) + '\n')
       return 0
     }
     process.stdout.write(`Current version: ${VERSION}\n`)
-    process.stdout.write(`No desktop-v* releases found on the upstream repo.\n`)
+    process.stdout.write(`No cli-v* or historical desktop-v* releases found on the upstream repo.\n`)
     return 0
   }
 
@@ -170,7 +170,7 @@ export async function updateCommand(args: ParsedArgs): Promise<number> {
       process.stdout.write(JSON.stringify(report, null, 2) + '\n')
       return 0
     }
-    process.stdout.write(`Up to date — you're on the latest desktop-v* release.\n`)
+    process.stdout.write(`Up to date — you're on the latest CLI release.\n`)
     return 0
   }
 

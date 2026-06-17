@@ -87,15 +87,24 @@ Five STT providers are supported:
 **On your phone:**
 
 - Microphone permission (requested the first time you tap the mic).
-- A connected relay at `:8767` with the voice routes available (any hermes-relay build from 0.2.0 onwards).
+- For Standard voice: a saved dashboard URL and dashboard sign-in when the
+  dashboard requires auth.
+- For Relay voice extras or Realtime Agent: a reachable relay at `:8767` with
+  the voice routes available.
 
-Phone voice mode can authenticate two ways: a paired Relay session token with `voice:config`, `voice:stt`, and `voice:tts` grants, or the same saved Hermes API key used for chat. That means chat+voice-only phone setups can skip the full Relay pairing flow: enter the API URL and API key, and the app derives the Relay URL from the same host on port `8767`. If the `/voice/config` probe fails, the app reveals a manual Relay URL override. The API-key exception is limited to voice routes and requires HTTPS outside loopback. For a temporary plain-LAN phone test, run `hermes relay insecure-api-key on` on the relay host, then turn it back off with `hermes relay insecure-api-key off`.
+Relay voice mode can authenticate two ways: a paired Relay session token with
+`voice:config`, `voice:stt`, and `voice:tts` grants, or the same saved Hermes API
+key used for API-server fallback chat. That means relay-backed chat+voice-only
+setups can skip full Relay pairing when only `/voice/*` is needed. The API-key
+exception is limited to Relay voice routes and requires HTTPS outside loopback.
+For a temporary plain-LAN phone test, run `hermes relay insecure-api-key on` on
+the relay host, then turn it back off with `hermes relay insecure-api-key off`.
 
-Before a voice turn is submitted, Android now runs a fast relay health preflight.
-If the host accepts TCP but does not answer HTTP, voice mode fails quickly with a
-Connections-facing error instead of sitting in Thinking until the long realtime
-turn timeout expires. The check is recorded in **Settings -> Diagnostics** and in
-the Relay detail sheet's recent activity tail.
+Before a Relay-backed voice turn is submitted, Android runs a fast relay health
+preflight. If the host accepts TCP but does not answer HTTP, Relay voice fails
+quickly with a Connections-facing error instead of sitting in Thinking until the
+long realtime turn timeout expires. The check is recorded in **Settings ->
+Diagnostics** and in the Relay detail sheet's recent activity tail.
 
 ## Entering Voice Mode
 

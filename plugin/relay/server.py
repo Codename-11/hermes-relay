@@ -385,6 +385,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     api_host_override = payload.get("host")
     api_port_override = payload.get("port")
     api_tls_override = payload.get("tls")
+    dashboard_url_raw = payload.get("dashboard_url") or payload.get("dashboardUrl")
 
     raw_api_host = str(
         api_host_override
@@ -430,6 +431,11 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
                 exc,
             )
             api_key = ""
+    dashboard_url = (
+        str(dashboard_url_raw).strip().rstrip("/")
+        if dashboard_url_raw is not None
+        else None
+    ) or None
 
     # ── Pairing metadata ─────────────────────────────────────────────────
     ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
@@ -503,6 +509,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         relay=relay_block,
         sign=True,
         endpoints=endpoints_list or None,
+        dashboard_url=dashboard_url,
     )
     pairing_url = build_pairing_invite_url(qr_payload)
 
@@ -546,6 +553,8 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         "tls": api_tls,
         "relay_url": relay_url,
     }
+    if dashboard_url is not None:
+        mint_response["dashboard_url"] = dashboard_url
     if endpoints_list is not None:
         # Mirror the endpoints back verbatim so the dashboard can render
         # the same list it sent (useful for "edit URL" round-trips) and

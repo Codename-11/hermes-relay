@@ -45,6 +45,26 @@ def register(ctx):
             check_fn=_make_desktop_check(tool_name),
         )
 
+    # Register the in-session `/relay` slash command (status/devices/pair) and
+    # the `on_session_start` lifecycle hook. Both are self-guarded internally,
+    # and wrapped here too so a missing register_command/register_hook on an
+    # older hermes-agent build cannot block tool/CLI registration below.
+    try:
+        from .slash import register_slash_commands
+
+        register_slash_commands(ctx)
+    except Exception:
+        # Slash commands are additive; never let them break plugin load.
+        pass
+
+    try:
+        from .hooks import register_hooks
+
+        register_hooks(ctx)
+    except Exception:
+        # The lifecycle hook is best-effort; never block plugin load.
+        pass
+
     # Register plugin-native CLI sub-commands: hermes pair + hermes relay.
     # Wrapped in try/except so the plugin still works on older hermes-agent
     # versions that do not expose register_cli_command.

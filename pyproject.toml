@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-relay"
-version = "0.7.0"
+version = "1.1.0"
 description = "Hermes-Relay plugin — Android device control toolset, QR pairing CLI, and WSS relay server for hermes-agent"
 requires-python = ">=3.11"
 dependencies = [
@@ -45,5 +45,7 @@ plugin = ["skill.md", "plugin.yaml"]
 # Note: `hermes_relay_bootstrap.pth` at the repo root is NOT installed by
 # `pip install -e` automatically — setuptools' data-files doesn't ship to
 # site-packages reliably for editable installs. install.sh copies the .pth
-# file into the venv's site-packages as a separate step. The bootstrap
-# package itself (hermes_relay_bootstrap/) IS installed via the find above.
+# file into the venv's site-packages as a separate step. The active bootstrap
+# implementation now lives under plugin/hermes_relay_bootstrap/; the top-level
+# hermes_relay_bootstrap package is a backward-compatible import shim for old
+# hooks and editable installs.

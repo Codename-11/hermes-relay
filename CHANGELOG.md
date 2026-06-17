@@ -6,9 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-16
+
+### Added
+
+- **Automated Play Console upload on release.** When a `PLAY_SERVICE_ACCOUNT_JSON` secret is configured, pushing a stable `android-v*` tag uploads the `googlePlay` App Bundle to the Production track as a draft (a human still starts the rollout). Prereleases are skipped, and the `sideload` flavor is structurally blocked from ever publishing to Play. Without the secret, the release builds publish to GitHub Releases exactly as before.
+- **Desktop UI preview harness (`:ui-preview`).** A non-shipped Compose for Desktop module renders presentational composables in a window on the PC with Compose Hot Reload, for fast UI iteration without a device build/install loop. It reuses the shared sphere algorithm as its single source of truth.
+- **Plugin: guided env-key setup.** The relay plugin declares its optional voice-provider keys (`XAI_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`) in its manifest, so `hermes plugins install` prompts for them (masked, with a "get yours" link) instead of hand-editing `.env`. The standard no-plugin path needs none.
+- **Plugin: native install path.** Tools-only setups can install via `hermes plugins install Codename-11/hermes-relay/plugin`; the full relay still uses the curl `install.sh`.
+- **`/relay` slash commands.** `relay status · devices · pair` usable mid-conversation from any platform (CLI / Discord / TUI).
+- **Dashboard relay-status widget.** A `Relay · connected / offline / unpaired` badge in the dashboard header, visible on every page.
+- **Session-start relay health check.** A minimal, fully-guarded `on_session_start` hook records relay reachability without slowing the gateway.
+
+### Changed
+
+- **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, with future tags on `android-v*`, `plugin-v*`, and `cli-v*`. The CLI installer and updater still understand historical `desktop-v*` prereleases during the migration.
+- **Per-surface release notes.** Plugin and CLI GitHub Releases now use hand-written `PLUGIN_RELEASE_NOTES.md` / `CLI_RELEASE_NOTES.md` files (Summary + Added/Changed/Fixed + Install/Verify) — the same format as Android's `RELEASE_NOTES.md` — instead of static boilerplate baked into the workflow. The release workflows substitute the version into the install commands automatically.
+- **Settings screen overhaul (Android).** Status pills are now exception-only — they appear only when a surface needs attention and stay quiet when healthy. The Power tools section shows a single state-aware **Plugin active / required / offline** badge instead of an identical "Relay paired" chip on every card. Connections moved to the top (above the Hermes section), Diagnostics + Developer options moved into the App section, the status chips were restyled to match the app's translucent-bordered language, and the brand blue was deepened.
+
+### Fixed
+
+- **Force-close on connect when the stored credential keyset was corrupt.** A corrupt encrypted token store (which can happen after an app upgrade or device restore) threw during construction and crashed the app right after a successful pair, on both standard and relay connections. The token store now heals a corrupt keyset on the spot, and credential storage degrades to a re-pair instead of crashing if the device keystore is unusable.
+- **Dashboard plugin: unreadable button labels.** Solid buttons in the relay dashboard panel inherited the container text colour, which matched their background. Solid button variants now keep their proper contrast colour.
+- **Installer failed on uv-managed Hermes hosts.** `install.sh` assumed `pip` lived in the hermes-agent virtualenv, but environments created by `uv` (the upstream default) ship no `pip` module, so the editable install aborted at step 2. The installer now bootstraps `pip` via `ensurepip`, or falls back to `uv pip`, so the plugin installs cleanly on uv-managed cores.
+- **Chat settings (Android).** The streaming-endpoint picker no longer wraps "Gateway"/"Sessions" onto a second line, and the system-prompt preview now reflects the enabled context toggles (foreground app, battery, safety rails) with representative placeholder values instead of looking inert.
+- **Dashboard plugin: buttons rendered as blank boxes.** The host dashboard's Nous design-system `Button`/`Badge` use boolean variant flags (`outlined`/`ghost`/`invert`) and a `tone` prop — not the shadcn-style `variant` prop the plugin passed — so every button collapsed to a solid near-white fill with an invisible label. The plugin now translates its props to the design-system contract via an adapter, and drops a label-hiding CSS reset.
+
 ## [1.0.0] - 2026-06-14
 
 ### Added
+
+- **Relay plugin diagnostics and install guidance.** `hermes relay doctor` now reports standard upstream API/dashboard reachability, Relay loopback state, dashboard plugin presence, plugin-manager layout, and whether the legacy bootstrap monkeypatch is installed. The plugin manifest now advertises its Android and desktop tools, and `after-install.md` gives the upstream plugin manager a first-run handoff.
+
+- **Plugin-owned compatibility hook lifecycle.** `hermes relay compat status/install/remove` now owns the optional `hermes_relay_bootstrap.pth` startup hook, so the monkeypatch can be inspected, added, or removed without rerunning the legacy installer. The standard v1.0.0 path does not require this hook.
+
+- **Legacy cleanup alignment.** The legacy installer now installs the optional `.pth` hook through the plugin compat lifecycle, and the uninstaller removes every shell shim it creates (`hermes-pair`, `hermes-status`, `hermes-relay`, `hermes-relay-update`, `hermes-relay-tailscale`) while delegating hook cleanup to `hermes relay compat remove` when available.
 
 - **Gateway chat transport with live thinking.** Chat can ride the upstream dashboard `/api/ws` (the `tui_gateway` surface the official hermes-desktop client speaks) — the only vanilla-upstream path that streams reasoning *live*, so the Thinking block and sphere light up during generation. "Auto" prefers it when the dashboard is reachable and Manage is signed in, and falls back to the SSE endpoints per turn.
 
@@ -29,6 +61,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Routes card reachability verdicts** ("Reachable", or the specific failure reason) and per-turn **latency tracing** (`TurnLatency`, durations only) for diagnosing transport speed.
 
 ### Changed
+
+- **Relay plugin/server version aligned to v1.0.0.** The Python package, plugin manifest, dashboard manifest, and relay runtime now use the same `1.0.0` line as the stable Android release so a retagged source checkout describes one product version.
 
 - **The standard (no-plugin) path is first-class.** Chat, Manage, and voice all work against an unmodified upstream Hermes agent; standard voice rides the dashboard audio surface (`/api/audio/*`) with the Manage sign-in, and relay-paired voice is the profile-aware fallback. The relay plugin is now purely additive.
 
@@ -82,7 +116,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Google Play Bridge Core split.** The Google Play Android track keeps relay pairing, chat, profiles, voice, terminal/TUI, media, notification companion, relay sessions, diagnostics, and status while removing AccessibilityService-backed Device Control declarations and permissions. Sideload remains the track for screen reading, gestures, screenshots, SMS/calls, contacts/location, overlays, wake locks, and unattended control.
 
-- **Release lanes now use explicit product tags and names.** Future Android releases use `android-v*`, server/Python releases use `server-v*`, and desktop continues on `desktop-v*`. GitHub Release names now publish as `Hermes-Relay-Android vX.Y.Z`, `Hermes-Relay-Server vX.Y.Z`, and `Hermes-Relay-Desktop vX.Y.Z`; the old relay-named server scripts remain compatibility shims.
+- **Release lanes now use explicit product tags and names.** Future Android releases use `android-v*`, plugin/Python releases use `server-v*`, and CLI releases continue on `desktop-v*`. GitHub Release names now publish as `Hermes-Relay-Android vX.Y.Z`, `Hermes-Relay-Plugin vX.Y.Z`, and `Hermes-Relay-CLI vX.Y.Z`; the old relay-named server scripts remain compatibility shims.
 
 - **Realtime voice instructions are provider-neutral.** Realtime providers receive active interface context, local date/time, provider/model/voice/profile metadata, and guidance to ask Hermes for current facts, research, device/desktop state, project context, precise/versioned data, and any requested checks instead of guessing from model knowledge.
 
@@ -208,9 +242,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **desktop CLI binary was a no-op on alpha.3** — installed cleanly, exited 0, produced zero stdout/stderr, wasn't "recognized" as a CLI. Root cause: cli.ts guarded its entry-point invocation with `fileURLToPath(import.meta.url) === process.argv[1]`, which is a valid Node idiom but fails in Bun-compiled binaries because the entry module has a synthetic URL that doesn't match the `.exe` path — the check evaluated false, `main()` was never called, binary exited 0 silently. Replaced with `import.meta.main` (cross-runtime: Bun, Node 20.11+, tsx) which is true in the entry module regardless of compile mode. All four invocation paths stay correct (Bun --compile binary, `bin/hermes-relay.js` shim, `tsx src/cli.ts`, test imports). Caught by adding a local `npm run smoke` target that runs the compiled Windows binary against `--version` / `--help` / `doctor` and verifies each produces output. Same smoke added to `release-desktop.yml` on the Linux target so future regressions of this class are caught pre-publish. Affects `desktop-v0.3.0-alpha.3`; fix ships as `desktop-v0.3.0-alpha.4`.
+- **desktop CLI binary was a no-op on alpha.3** — installed cleanly, exited 0, produced zero stdout/stderr, wasn't "recognized" as a CLI. Root cause: cli.ts guarded its entry-point invocation with `fileURLToPath(import.meta.url) === process.argv[1]`, which is a valid Node idiom but fails in Bun-compiled binaries because the entry module has a synthetic URL that doesn't match the `.exe` path — the check evaluated false, `main()` was never called, binary exited 0 silently. Replaced with `import.meta.main` (cross-runtime: Bun, Node 20.11+, tsx) which is true in the entry module regardless of compile mode. All four invocation paths stay correct (Bun --compile binary, `bin/hermes-relay.js` shim, `tsx src/cli.ts`, test imports). Caught by adding a local `npm run smoke` target that runs the compiled Windows binary against `--version` / `--help` / `doctor` and verifies each produces output. Same smoke runs in `release-cli.yml` on the Linux target so future regressions of this class are caught pre-publish. Affects `desktop-v0.3.0-alpha.3`; fix ships as `desktop-v0.3.0-alpha.4`.
 - **`hermes-relay --version` printed `0.0.0` in compiled binaries.** `readVersion()` tried to read `package.json` via `__dirname + '../package.json'`, which doesn't resolve in a Bun `--compile` binary (no real filesystem layout). Replaced with a build-time-generated `src/version.ts` module (`npm run gen:version` writes the version from package.json before every build and every `build:bin:*`). `readVersion()` now just returns the embedded constant. Works identically in tsx / Node / Bun.
-- **desktop CLI binary segfaulted at startup on Bun 1.3.13 Windows x64** (`panic(main thread): Segmentation fault at address 0x100000D9C`). Root cause identified as Bun's experimental `--bytecode` flag; attempted fix in alpha.2 only edited `desktop/package.json`'s build scripts while the release workflow's inline `bun build` commands silently kept `--bytecode`, so alpha.2 shipped with the same crash. alpha.3 fixes the workflow two ways: (1) dropped `--bytecode` from release-desktop.yml, and (2) refactored the four build steps to delegate to `npm run build:bin:*` so the package.json scripts are the single source of truth for compile flags. Added a `bun --version` diagnostic step to the workflow for future triage. Versions affected: `desktop-v0.3.0-alpha.1` and `desktop-v0.3.0-alpha.2`. Fix ships as `desktop-v0.3.0-alpha.3`.
+- **desktop CLI binary segfaulted at startup on Bun 1.3.13 Windows x64** (`panic(main thread): Segmentation fault at address 0x100000D9C`). Root cause identified as Bun's experimental `--bytecode` flag; attempted fix in alpha.2 only edited `desktop/package.json`'s build scripts while the release workflow's inline `bun build` commands silently kept `--bytecode`, so alpha.2 shipped with the same crash. alpha.3 fixes the workflow two ways: (1) dropped `--bytecode` from the CLI release workflow, and (2) refactored the four build steps to delegate to `npm run build:bin:*` so the package.json scripts are the single source of truth for compile flags. Added a `bun --version` diagnostic step to the workflow for future triage. Versions affected: `desktop-v0.3.0-alpha.1` and `desktop-v0.3.0-alpha.2`. Fix ships as `desktop-v0.3.0-alpha.3`.
 - **Installer couldn't find alpha-only releases.** GitHub's `/releases/latest/download/` URL deliberately skips prereleases, so the default `curl | sh` / `irm | iex` one-liner failed against alpha.1 with "maybe no Windows release for this version yet?" Both `install.sh` and `install.ps1` now query the Releases API directly (`GET /repos/.../releases`, filter to `desktop-v*` tags, take first) when `HERMES_RELAY_VERSION=latest`. Pinned versions unchanged.
 
 ### Added
@@ -1225,7 +1259,9 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.0.0...HEAD
+[1.0.0]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...android-v1.0.0
+[0.8.1]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...android-v0.8.1
 [0.8.0]: https://github.com/Codename-11/hermes-relay/compare/v0.7.0...android-v0.8.0
 [0.7.0]: https://github.com/Codename-11/hermes-relay/compare/v0.6.1...v0.7.0
 [0.1.0]: https://github.com/Codename-11/hermes-relay/compare/v0.1.0-beta...v0.1.0

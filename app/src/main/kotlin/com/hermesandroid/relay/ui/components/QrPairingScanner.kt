@@ -163,6 +163,8 @@ data class HermesPairingPayload(
     val port: Int = 8642,
     val key: String = "",
     val tls: Boolean = false,
+    @SerialName("dashboard_url")
+    val dashboardUrl: String? = null,
     val relay: RelayPairing? = null,
     val sig: String? = null,
     /**
@@ -228,7 +230,8 @@ private val json = Json {
  * For standard Hermes setup, also accepts generic API-only QRs:
  *  - a plain `http://host:8642` or `https://host:8642` URL
  *  - JSON with `api_url`, `apiUrl`, `server_url`, `serverUrl`, or `url`, plus
- *    optional `api_key`, `apiKey`, or `key`
+ *    optional `api_key`, `apiKey`, or `key`, and optional `dashboard_url` or
+ *    `dashboardUrl`
  *
  * **Endpoint synthesis (ADR 24):** when the payload has no `endpoints`
  * array (v1/v2 QRs), a single priority-0 [EndpointCandidate] is materialized
@@ -257,6 +260,13 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
         if (version < 1) return null
         val decoded = json.decodeFromString<HermesPairingPayload>(raw)
         if (decoded.host.isBlank()) return null
+        val dashboardAlias = firstString(obj, "dashboardUrl")
+        val decodedWithAliases =
+            if (decoded.dashboardUrl.isNullOrBlank() && dashboardAlias != null) {
+                decoded.copy(dashboardUrl = dashboardAlias)
+            } else {
+                decoded
+            }
 
         // TODO(security): verify `decoded.sig` against the server's HMAC
         // secret once the pairing protocol exposes a public verification
@@ -267,10 +277,12 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
         // Synthesize a single priority-0 candidate from the top-level fields
         // when the wire payload didn't carry an explicit `endpoints` array.
         // v3+ payloads with an explicit array pass through untouched.
-        if (decoded.endpoints.isNullOrEmpty()) {
-            decoded.copy(endpoints = listOf(synthesizeLegacyEndpoint(decoded)))
+        if (decodedWithAliases.endpoints.isNullOrEmpty()) {
+            decodedWithAliases.copy(
+                endpoints = listOf(synthesizeLegacyEndpoint(decodedWithAliases)),
+            )
         } else {
-            decoded
+            decodedWithAliases
         }
     } catch (_: Exception) {
         null
@@ -289,7 +301,8 @@ private fun parseGenericApiJsonQr(raw: String): HermesPairingPayload? {
             "url",
         ) ?: return null
         val apiKey = firstString(obj, "api_key", "apiKey", "key").orEmpty()
-        payloadFromApiUrl(apiUrl, apiKey)
+        val dashboardUrl = firstString(obj, "dashboard_url", "dashboardUrl")
+        payloadFromApiUrl(apiUrl, apiKey, dashboardUrl)
     } catch (_: Exception) {
         null
     }
@@ -305,7 +318,11 @@ private fun firstString(obj: JsonObject, vararg names: String): String? {
     }
 }
 
-private fun payloadFromApiUrl(apiUrl: String, apiKey: String): HermesPairingPayload? {
+private fun payloadFromApiUrl(
+    apiUrl: String,
+    apiKey: String,
+    dashboardUrl: String? = null,
+): HermesPairingPayload? {
     val uri = runCatching { URI(apiUrl.trim().trimEnd('/')) }.getOrNull() ?: return null
     val scheme = uri.scheme?.lowercase()
     val tls = when (scheme) {
@@ -319,6 +336,7 @@ private fun payloadFromApiUrl(apiUrl: String, apiKey: String): HermesPairingPayl
         port = if (uri.port > 0) uri.port else 8642,
         key = apiKey.trim(),
         tls = tls,
+        dashboardUrl = dashboardUrl?.trim()?.takeIf { it.isNotBlank() },
         relay = null,
     )
     return payload.copy(endpoints = listOf(synthesizeGenericEndpoint(payload)))

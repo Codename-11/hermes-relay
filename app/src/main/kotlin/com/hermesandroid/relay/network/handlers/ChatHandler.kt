@@ -36,6 +36,14 @@ class ChatHandler {
         /** Maximum number of messages kept in memory per session. Oldest are trimmed. */
         internal const val MAX_MESSAGES = 500
 
+        private fun timestampToMillis(timestamp: Double?): Long {
+            val value = timestamp ?: return 0L
+            return if (value > 1e12) value.toLong() else (value * 1000).toLong()
+        }
+
+        private fun firstPositive(vararg values: Long): Long =
+            values.firstOrNull { it > 0L } ?: 0L
+
         // Tool annotation patterns embedded as text markers by Hermes.
         //
         // Hermes /v1/chat/completions injects tool progress as inline markdown:
@@ -1003,17 +1011,19 @@ class ChatHandler {
      */
     fun updateSessions(items: List<SessionItem>) {
         val mapped = items.map { item ->
-            // If > 1e12, already in milliseconds; otherwise convert from seconds
-            val ts = item.startedAt ?: 0.0
-            val timestampMs = if (ts > 1e12) ts.toLong() else (ts * 1000).toLong()
+            val startedAtMs = timestampToMillis(item.startedAt)
+            val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
+            val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
             ChatSession(
                 sessionId = item.id,
                 title = item.title,
                 model = item.model,
                 messageCount = item.messageCount ?: 0,
-                updatedAt = timestampMs
+                updatedAt = activityAtMs,
+                startedAt = startedAtMs,
+                lastActivityAt = lastActivityAtMs,
             )
-        }
+        }.sortedByDescending { it.activityTimestamp }
         // Preserve the active session's optimistic row when the server list
         // doesn't include it yet: a freshly created chat has 0 messages and the
         // drawer's `min_messages=1` query filters it out until its first turn

@@ -111,7 +111,7 @@ export default defineConfig({
           text: 'Features',
           items: [
             { text: 'Overview', link: '/features/' },
-            { text: 'Direct API Connection', link: '/features/direct-api' },
+            { text: 'Standard Chat Transport', link: '/features/direct-api' },
             { text: 'Markdown Rendering', link: '/features/markdown' },
             { text: 'Reasoning Display', link: '/features/reasoning' },
             { text: 'Connections', link: '/features/connections' },
@@ -146,6 +146,7 @@ export default defineConfig({
             { text: 'Hermes API', link: '/reference/api' },
             { text: 'Configuration', link: '/reference/configuration' },
             { text: 'Relay Server', link: '/reference/relay-server' },
+            { text: 'Agent Cleanup Prompt', link: '/reference/agent-cleanup-prompt' },
           ],
         },
       ],

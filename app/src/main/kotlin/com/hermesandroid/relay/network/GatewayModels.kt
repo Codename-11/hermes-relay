@@ -155,6 +155,12 @@ data class GatewayModelOptions(
     val currentProvider: String,
 )
 
+/** Result of the gateway `config.get {key:"reasoning"}` RPC. */
+data class GatewayReasoningSettings(
+    val effort: String,
+    val display: String?,
+)
+
 /**
  * Callback set for one gateway turn. Shapes intentionally mirror the SSE
  * callback lambdas in ChatViewModel.startStream() so the gateway branch can

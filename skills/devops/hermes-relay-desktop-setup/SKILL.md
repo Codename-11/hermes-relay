@@ -15,7 +15,7 @@ metadata:
 
 # Hermes-Relay Desktop CLI Setup
 
-> **Experimental.** The desktop CLI at `desktop/` is a preview-grade thin client. Pairing, chat, shell (PTY pipe to the host), and local tool routing (`desktop_terminal` / `desktop_read_file` / `desktop_write_file` / `desktop_search_files` / `desktop_patch`) all work end-to-end. Daemon mode, multi-client routing, and code-signed binaries are the v1.0 polish — see the [ROADMAP](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track).
+> **Experimental.** The desktop CLI at `desktop/` is a preview-grade thin client. Pairing, chat, shell (PTY pipe to the host), and local tool routing (`desktop_terminal` / `desktop_read_file` / `desktop_write_file` / `desktop_search_files` / `desktop_patch`) all work end-to-end. Daemon mode, multi-client routing, and code-signed binaries are the v1.0 polish — see the [ROADMAP](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental).
 
 The [Hermes-Relay](https://github.com/Codename-11/hermes-relay) desktop CLI (`hermes-relay`) is a thin client that gives you remote access to a Hermes agent running on another machine. It pipes a full PTY shell (with the agent's native Ink TUI), streams structured chat events for scripting, and — uniquely — lets the remote agent execute tools **on your local machine** (read files, run shell commands, search the filesystem) through a round-trip over the same WSS relay the Android client uses. The agent brain stays on the host; your laptop is the hands.
 
@@ -42,7 +42,7 @@ User: "Install the hermes-relay CLI"
 → User upgrades
 → [desktop_terminal] node --version   →  v22.0.1   OK
 → [desktop_terminal] npm install -g @hermes-relay/cli
-→ [desktop_terminal] hermes-relay --version   →  0.2.0   Success
+→ [desktop_terminal] hermes-relay --version   →  0.3.0-alpha.18   Success
 ```
 
 **Never guess the user's state — measure it.** `desktop_terminal` is cheap; one call per check is the right cadence.
@@ -53,7 +53,7 @@ User: "Install the hermes-relay CLI"
    ```bash
    curl -s http://<host>:8767/health
    ```
-   Expect `{"status":"ok","version":"0.6.0"}` or later. If it fails, the user's server is down — stop here and run `/hermes-relay-self-setup` or `/hermes-relay-doctor` on the host instead.
+   Expect `{"status":"ok","version":"1.1.0"}` or later. If it fails, the user's server is down — stop here and run `/hermes-relay-self-setup` or `/hermes-relay-doctor` on the host instead.
 
 2. **One of:**
    - Node.js **≥21** on this machine (for the built-in global `WebSocket`). Verify `node --version` ≥ v21. Older Node refuses to run.
@@ -126,7 +126,7 @@ Run a one-off `--version` check:
 hermes-relay --version
 ```
 
-Expect `0.2.0` or later (depending on which release is current).
+Expect `0.3.0-alpha.18` or later (depending on which release is current).
 
 If the command is not found:
 - **Windows**: open a **new** PowerShell (PATH updates don't apply retroactively), or run `$env:Path += ';C:\Users\<you>\.hermes\bin'` temporarily.
@@ -175,7 +175,7 @@ The CLI prompts for the 6-character code and will:
 On success:
 ```
 ✓ Paired. Token stored in ~/.hermes/remote-sessions.json
-  Server: 0.6.0
+  Server: 1.1.0
   Relay:  ws://<host>:8767
   Route:  lan
 ```
@@ -190,7 +190,7 @@ Quickest sanity check:
 hermes-relay chat "what time is it?"
 ```
 
-The CLI streams back the agent's reply. Stderr gets `Connecting... / Connected via LAN (plain) — server 0.6.0`; stdout gets the answer. Redirecting stdout to a file (`... > out.txt`) captures **only** the reply.
+The CLI streams back the agent's reply. Stderr gets `Connecting... / Connected via LAN (plain) — server 1.1.0`; stdout gets the answer. Redirecting stdout to a file (`... > out.txt`) captures **only** the reply.
 
 ### E. Full Hermes TUI — shell mode
 
@@ -204,7 +204,7 @@ hermes-relay
 
 The CLI:
 1. Connects over WSS.
-2. Prints `Connected via LAN (plain) — server 0.6.0`.
+2. Prints `Connected via LAN (plain) — server 1.1.0`.
 3. Prompts for **one-time local-tool consent** (see §F).
 4. Attaches to the relay's `terminal` channel, which spawns (or re-attaches) a tmux session on the host.
 5. Sends `clear; exec hermes\n` after a 350 ms settle — tmux's login shell replaces itself with `hermes`, which renders its native Ink TUI straight through to your terminal.

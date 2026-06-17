@@ -18,7 +18,7 @@ irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scri
 The script:
 
 1. Detects architecture (x64; ARM64 lands once Bun's cross-compile target stabilizes).
-2. Resolves the **latest** desktop release by querying the GitHub Releases API directly and picking the SemVer-max `desktop-v*` tag — prereleases included, so alpha builds aren't skipped (see CHANGELOG entry on alpha.11 for why this matters).
+2. Resolves the **latest** CLI release by querying the GitHub Releases API directly and picking the SemVer-max `cli-v*` tag, with a migration fallback to historical `desktop-v*` prereleases. Prereleases are included, so alpha builds aren't skipped (see CHANGELOG entry on alpha.11 for why this matters).
 3. Downloads `hermes-relay-win-x64.exe` and verifies SHA256 against the published `SHA256SUMS.txt`.
 4. Reads the existing binary's `--version` (if present) and prints one of:
    - `existing install detected: 0.3.0-alpha.17 — upgrading to 0.3.0-alpha.18`
@@ -49,11 +49,11 @@ Code signing (EV cert) is a v1.0 milestone — the experimental phase doesn't ju
 ### Pin a specific version
 
 ```powershell
-$env:HERMES_RELAY_VERSION = 'desktop-v0.3.0-alpha.18'
+$env:HERMES_RELAY_VERSION = 'cli-v0.3.0-alpha.18'
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
-The version-aware readback compares full SemVer including the prerelease tail, so `desktop-v0.3.0-alpha.17` → `desktop-v0.3.0-alpha.18` is recognized as an upgrade rather than a reinstall.
+The version-aware readback compares full SemVer including the prerelease tail, so `cli-v0.3.0-alpha.17` → `cli-v0.3.0-alpha.18` is recognized as an upgrade rather than a reinstall.
 
 ### Uninstall
 
@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/deskt
 The script:
 
 1. Detects OS/arch (supports `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`).
-2. Resolves the latest `desktop-v*` release via the Releases API + `sort -V` (prerelease-aware, no shell deps beyond `curl` / `sort`).
+2. Resolves the latest `cli-v*` release via the Releases API + `sort -V`, with a migration fallback to historical `desktop-v*` prereleases (prerelease-aware, no shell deps beyond `curl` / `sort`).
 3. Downloads the matching binary + `SHA256SUMS.txt` and verifies SHA256 (`sha256sum` on Linux, `shasum -a 256` on macOS).
 4. Reads the existing binary's `--version` if present and prints `upgrading X → Y` / `reinstalling X` / `installing fresh`.
 5. Installs to `$HOME/.hermes/bin/hermes-relay` (mode 0755).
@@ -107,7 +107,7 @@ Apple Developer ID signing + notarization is a v1.0 milestone.
 ### Pin a specific version
 
 ```bash
-HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.18 \
+HERMES_RELAY_VERSION=cli-v0.3.0-alpha.18 \
   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
 ```
 
@@ -120,7 +120,7 @@ See [Uninstall](#uninstall) below — the curl one-liner reverses install.sh, wi
 Once installed, you don't have to keep re-running the `curl | sh` one-liner. The binary self-updates:
 
 ```bash
-hermes-relay update             # download + verify + swap to latest desktop-v*
+hermes-relay update             # download + verify + swap to latest cli-v*
 hermes-relay update --check     # dry-run: print available version, don't install
 hermes-relay update --yes       # skip confirm prompt
 hermes-relay update --json      # machine-readable status
@@ -128,7 +128,7 @@ hermes-relay update --json      # machine-readable status
 
 The updater:
 
-1. Polls the GitHub Releases API and picks the SemVer-max `desktop-v*` tag (prereleases included). The same resolver as the install scripts — fixed in alpha.11; pre-alpha.11 builds may report "Up to date" when a newer alpha exists, so use the install one-liner once to bootstrap onto alpha.11+ if you're stuck below it.
+1. Polls the GitHub Releases API and picks the SemVer-max `cli-v*` tag, with a migration fallback to historical `desktop-v*` prereleases (prereleases included). The same resolver as the install scripts — fixed in alpha.11; pre-alpha.11 builds may report "Up to date" when a newer alpha exists, so use the install one-liner once to bootstrap onto alpha.11+ if you're stuck below it.
 2. SemVer-compares to your running version (`hermes-relay --version` — embedded at build time, accurate inside Bun-compiled binaries).
 3. Downloads the platform asset and verifies SHA256.
 4. **POSIX (macOS / Linux):** atomic `fs.rename` over the running binary. The running process keeps the old inode open, so `hermes-relay daemon` (if running) keeps serving until restarted; the next `hermes-relay <verb>` invocation picks up the new binary.

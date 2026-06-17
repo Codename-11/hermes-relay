@@ -1,17 +1,30 @@
 .hermes-relay-plugin {
-  --hr-bg: var(--background, #0b0b0c);
-  --hr-surface: color-mix(in srgb, var(--card, #141416) 88%, transparent);
-  --hr-surface-muted: color-mix(in srgb, var(--muted, #27272a) 55%, transparent);
-  --hr-border: var(--border, rgba(255, 255, 255, 0.16));
-  --hr-text: var(--foreground, #f4f4f5);
-  --hr-muted: var(--muted-foreground, rgba(244, 244, 245, 0.68));
-  --hr-danger: var(--destructive, #ef4444);
+  --hr-bg: var(--color-card, color-mix(in srgb, var(--midground-base, #f4f4f5) 4%, var(--background-base, #0b0b0c)));
+  --hr-surface: color-mix(in srgb, var(--color-card, var(--hr-bg)) 90%, transparent);
+  --hr-surface-muted: color-mix(in srgb, var(--color-muted, var(--hr-bg)) 76%, transparent);
+  --hr-border: var(--color-border, color-mix(in srgb, var(--midground-base, #f4f4f5) 16%, transparent));
+  --hr-text: var(--color-foreground, var(--midground, #f4f4f5));
+  --hr-card-text: var(--color-card-foreground, var(--hr-text));
+  --hr-muted: var(--color-muted-foreground, color-mix(in srgb, var(--hr-text) 68%, transparent));
+  --hr-danger: var(--color-destructive, #ef4444);
+  --hr-success: var(--color-success, #22c55e);
+  --hr-warning: var(--color-warning, #f59e0b);
+  --hr-ring: var(--color-ring, var(--hr-text));
+  --hr-popover: var(--color-popover, var(--hr-bg));
+  --hr-popover-text: var(--color-popover-foreground, var(--hr-card-text));
+  --hr-overlay: color-mix(in srgb, var(--background-base, #020617) 78%, transparent);
   color: var(--hr-text);
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  font-size: 14px;
-  line-height: 1.45;
+  font-family: var(
+    --theme-font-sans,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif
+  );
+  font-size: 1rem;
+  line-height: var(--theme-line-height, 1.45);
   max-width: 100%;
 }
 
@@ -45,7 +58,7 @@
 .hermes-relay-plugin pre,
 .hermes-relay-plugin .font-mono {
   font-family:
-    "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    var(--theme-font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
 }
 
 .hermes-relay-plugin pre {
@@ -53,12 +66,27 @@
   overflow-wrap: anywhere;
 }
 
-.hermes-relay-plugin button,
 .hermes-relay-plugin input,
 .hermes-relay-plugin select,
 .hermes-relay-plugin textarea {
   font: inherit;
   color: inherit;
+}
+
+/*
+ * Buttons inherit the font but NOT the colour. The host's Nous DS ``Button``
+ * sets its own contrast text colour via utility classes (``text-background-base``
+ * for the solid fill, ``text-midground`` for outlined, ``text-current`` /
+ * ``text-destructive`` for ghost). A blanket ``color: inherit`` here (specificity
+ * 0,1,1) would outrank those utilities (0,1,0) and repaint every label in the
+ * container foreground — invisible against the light ``bg-midground`` fill
+ * (the blank-white-box symptom, issue #71 generalised). Plain ``<button>``
+ * elements in this plugin (tab strip, the advanced toggle) already set their
+ * colour explicitly via ``text-foreground`` / ``text-muted-foreground``, so they
+ * are unaffected by dropping the inherit.
+ */
+.hermes-relay-plugin button {
+  font: inherit;
 }
 
 .hermes-relay-plugin button {
@@ -67,7 +95,7 @@
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  border-radius: 6px;
+  border-radius: var(--radius-md, 6px);
   white-space: nowrap;
 }
 
@@ -80,14 +108,15 @@
 .hermes-relay-plugin select {
   max-width: 100%;
   border: 1px solid var(--hr-border);
-  border-radius: 6px;
+  border-radius: var(--radius-md, 6px);
   background: var(--hr-bg);
+  color: var(--hr-card-text);
 }
 
 .hermes-relay-plugin input[type="checkbox"] {
   width: 1rem;
   height: 1rem;
-  accent-color: #60a5fa;
+  accent-color: var(--hr-ring);
 }
 
 .hermes-relay-plugin canvas {
@@ -394,11 +423,11 @@
 }
 
 .hermes-relay-plugin .rounded {
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
 }
 
 .hermes-relay-plugin .rounded-md {
-  border-radius: 6px;
+  border-radius: var(--radius-md, 6px);
 }
 
 .hermes-relay-plugin .border,
@@ -438,11 +467,93 @@
 
 .hermes-relay-plugin .bg-background {
   background: var(--hr-bg);
+  color: var(--hr-card-text);
 }
 
 .hermes-relay-plugin .bg-white {
   background: #fff;
   color: #111827;
+}
+
+/*
+ * Defensive contrast for any shadcn-class solid surface that a host's Button
+ * happens to emit (``bg-primary`` / ``bg-secondary``). The primary button path
+ * now goes through the Nous DS ``Button`` via the ui-shims adapter, which
+ * carries its own ``bg-midground`` / ``text-background-base`` utilities; these
+ * rules only matter for hosts whose components differ. Kept as a belt.
+ */
+.hermes-relay-plugin .bg-primary {
+  color: var(--color-primary-foreground, var(--primary-foreground, #0b0b0c));
+}
+
+.hermes-relay-plugin .bg-secondary {
+  color: var(--color-secondary-foreground, var(--secondary-foreground, var(--hr-text)));
+}
+
+/*
+ * Fallback button / badge skins — used ONLY when the host does not expose a
+ * Nous DS ``Button`` / ``Badge`` (see the no-component branch in
+ * lib/ui-shims.jsx). They paint from the plugin's resolved theme tokens so a
+ * component-less host still gets readable, theme-matched controls instead of a
+ * raw white default.
+ */
+.hermes-relay-plugin .hr-btn {
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.hermes-relay-plugin .hr-btn-solid {
+  background: var(--hr-text);
+  color: var(--hr-bg);
+  border-color: var(--hr-text);
+}
+.hermes-relay-plugin .hr-btn-solid:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.hermes-relay-plugin .hr-btn-outline {
+  background: transparent;
+  color: var(--hr-text);
+  border-color: var(--hr-border);
+}
+.hermes-relay-plugin .hr-btn-outline:hover:not(:disabled) {
+  background: var(--hr-surface-muted);
+}
+.hermes-relay-plugin .hr-btn-ghost {
+  background: transparent;
+  color: var(--hr-text);
+  border-color: transparent;
+}
+.hermes-relay-plugin .hr-btn-ghost:hover:not(:disabled) {
+  background: var(--hr-surface-muted);
+}
+.hermes-relay-plugin .hr-btn-destructive {
+  background: var(--hr-danger);
+  color: #fff;
+  border-color: var(--hr-danger);
+}
+.hermes-relay-plugin .hr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.hermes-relay-plugin .hr-badge-secondary {
+  background: var(--hr-surface-muted);
+  color: var(--hr-text);
+  border-color: var(--hr-border);
+}
+.hermes-relay-plugin .hr-badge-outline {
+  background: transparent;
+  color: var(--hr-muted);
+  border-color: var(--hr-border);
+}
+.hermes-relay-plugin .hr-badge-destructive {
+  background: color-mix(in srgb, var(--hr-danger) 16%, transparent);
+  color: var(--hr-danger);
+  border-color: color-mix(in srgb, var(--hr-danger) 40%, transparent);
 }
 
 .hermes-relay-plugin .bg-muted\/20,
@@ -452,7 +563,7 @@
 }
 
 .hermes-relay-plugin .bg-background\/80 {
-  background: rgba(8, 8, 10, 0.78);
+  background: color-mix(in srgb, var(--hr-bg) 82%, transparent);
 }
 
 .hermes-relay-plugin .bg-destructive\/10 {
@@ -465,24 +576,25 @@
 
 .hermes-relay-plugin .bg-amber-500\/10,
 .hermes-relay-plugin .bg-amber-500\/15 {
-  background: rgba(245, 158, 11, 0.14);
+  background: color-mix(in srgb, var(--hr-warning) 16%, transparent);
 }
 
 .hermes-relay-plugin .border-amber-500\/50,
 .hermes-relay-plugin .border-amber-500\/60 {
-  border-color: rgba(245, 158, 11, 0.58);
+  border-color: color-mix(in srgb, var(--hr-warning) 58%, transparent);
 }
 
 .hermes-relay-plugin .bg-emerald-500 {
-  background: #10b981;
+  background: var(--hr-success);
 }
 
 .hermes-relay-plugin .bg-amber-500 {
-  background: #f59e0b;
+  background: var(--hr-warning);
 }
 
 .hermes-relay-plugin .bg-destructive {
   background: var(--hr-danger);
+  color: var(--color-destructive-foreground, var(--destructive-foreground, #fff));
 }
 
 .hermes-relay-plugin .bg-muted-foreground\/40 {
@@ -505,7 +617,7 @@
 }
 
 .hermes-relay-plugin .focus-visible\:ring-1:focus-visible {
-  outline: 1px solid #60a5fa;
+  outline: 1px solid var(--hr-ring);
   outline-offset: 2px;
 }
 
@@ -585,7 +697,7 @@
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  background: rgba(3, 7, 18, 0.72);
+  background: var(--hr-overlay);
   backdrop-filter: blur(2px);
   overflow: auto;
 }
@@ -617,7 +729,7 @@
   width: 100vw !important;
   min-height: 100vh !important;
   padding: clamp(1rem, 3vw, 2rem) !important;
-  background: rgba(2, 6, 16, 0.88) !important;
+  background: var(--hr-overlay) !important;
   backdrop-filter: blur(6px);
   overflow-y: auto;
 }
@@ -626,10 +738,10 @@
   width: min(38rem, calc(100vw - 2rem));
   max-height: min(90vh, 54rem);
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(10, 12, 16, 0.98) !important;
-  color: var(--hr-text);
+  border: 1px solid var(--hr-border);
+  border-radius: var(--radius-lg, 8px);
+  background: var(--hr-popover) !important;
+  color: var(--hr-popover-text);
   box-shadow: 0 28px 96px rgba(0, 0, 0, 0.68);
 }
 
@@ -664,8 +776,8 @@
   max-width: 100%;
   margin: 0 auto;
   padding: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
+  border: 1px solid var(--hr-border);
+  border-radius: var(--radius-lg, 8px);
   background: #fff !important;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
 }

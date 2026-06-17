@@ -4,21 +4,64 @@ The big feature. The remote Hermes agent can read, write, search, execute, captu
 
 ## What the agent can do
 
-Tools are registered in the `desktop` toolset. The agent sees them as normal tools alongside its usual ones — no special syntax needed, just "read my notes" or "run `tsc --noEmit`".
+Tools are registered in the `desktop` toolset. The agent sees them as normal tools alongside its usual ones — no special syntax needed, just "read my notes" or "run `tsc --noEmit`". The shipped toolset is grouped into six families:
+
+**Filesystem**
 
 | Tool | Signature | Example use |
 |------|-----------|-------------|
 | `desktop_read_file` | `(path: string, max_bytes?: number)` | "Read my notes.md and summarize." |
 | `desktop_write_file` | `(path: string, content: string, create_dirs?: boolean)` | "Write a quick-start guide to `~/Desktop/quickstart.md`." |
 | `desktop_patch` | `(path: string, patch: string)` | Apply a unified diff. Strict — no fuzzy matching. Interactive approval prompt in `shell`/`chat` mode. |
-| `desktop_terminal` | `(command: string, cwd?: string, timeout?: number)` | "Run `tsc --noEmit` and tell me what's broken." |
 | `desktop_search_files` | `(pattern: string, cwd?: string, max_results?: number, content?: boolean)` | "Find every file mentioning `DesktopToolRouter`." ripgrep with pure-Node fallback; skips `.git` / `node_modules` / `dist` / `.next` / `.cache`. |
+
+**Shell**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_terminal` | `(command: string, cwd?: string, timeout?: number)` | "Run `tsc --noEmit` and tell me what's broken." `bash -lc` on POSIX, `cmd /c` on Windows. |
+| `desktop_powershell` | `(script: string, cwd?: string, timeout?: number)` | Runs a PowerShell script piped over stdin (`pwsh` preferred, falls back to `powershell`) — no `cmd.exe` quote-mangling. |
+
+**Process management**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_spawn_detached` | `(command: string, cwd?: string)` | Start an unref'd background process; returns its PID and a log path. |
+| `desktop_list_processes` | `()` | Enumerate running processes (`tasklist` / `ps`). |
+| `desktop_kill_process` | `(pid: number)` | Terminate a process by PID. |
+| `desktop_find_pid_by_port` | `(port: number)` | Find which process owns a port (`netstat` / `lsof` / `ss`). |
+
+**Job API** (long-running tasks with persistent logs that survive a daemon restart)
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_job_start` | `(command: string, cwd?: string)` | Launch a long task; logs stream to `~/.hermes/desktop-jobs/<id>/`. |
+| `desktop_job_status` | `(id: string)` | Check whether a job is running, finished, or failed. |
+| `desktop_job_logs` | `(id: string)` | Tail a job's captured stdout/stderr. |
+| `desktop_job_cancel` | `(id: string)` | Stop a running job (`taskkill /T` on Windows so the whole tree dies). |
+| `desktop_job_list` | `()` | List all known jobs and their states. |
+
+**File transfer**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_copy_directory` | `(source: string, dest: string)` | Recursive copy via `fs.cp`. |
+| `desktop_zip` | `(source: string, dest: string)` | Create a zip archive (`tar` → `zip` → PowerShell probe). |
+| `desktop_unzip` | `(source: string, dest: string)` | Extract a zip archive. |
+| `desktop_checksum` | `(path: string, algorithm?: string)` | Streamed `sha256` / `sha1` / `md5` of a file. |
+
+**User-context bridges**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
 | `desktop_clipboard_read` | `()` | Read the user's system clipboard. Windows / macOS / Linux (Wayland-first). |
 | `desktop_clipboard_write` | `(text: string)` | Write text to the system clipboard. |
 | `desktop_screenshot` | `(display?: number \| string, save_to?: string)` | Capture all monitors (default), primary (`'primary'`), or a specific display (`1` / `2` / ...). Returns base64 + dimensions, or saves to `save_to` and returns the path. |
 | `desktop_open_in_editor` | `(path: string, line?: number, col?: number, wait?: boolean)` | Open a file in the user's editor. Detects `$VISUAL` → `$EDITOR` → `code` / `cursor` / `subl` / `nvim` / `vim` on PATH → platform fallback. Injects `-g path:line:col` for GUI editors. |
 
-All run under a **30-second AbortController** ceiling enforced by the router. `desktop_terminal` accepts a per-call `timeout` (seconds, per the wire spec — converted to ms internally) that's clamped to a 10-minute maximum. `desktop_screenshot` has its own 10 s timeout and 50 MB cap. `desktop_clipboard_*` 5 s timeout and 10 MB cap.
+That's the 23 tools the client advertises by default. A further **computer-use** family (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) is registered for full local UI control but ships **experimental and off by default** — it advertises only behind an explicit feature flag (`--experimental-computer-use`), on top of the normal tool consent, and host input still fails closed without a task-scoped grant approved from a visible local prompt.
+
+All tools run under a **30-second AbortController** ceiling enforced by the router. `desktop_terminal` / `desktop_powershell` accept a per-call `timeout` (seconds, per the wire spec — converted to ms internally) that's clamped to a 10-minute maximum. `desktop_screenshot` has its own 10 s timeout and 50 MB cap. `desktop_clipboard_*` 5 s timeout and 10 MB cap.
 
 The router heartbeats `desktop.status` every 30 s, advertising the full handler-name list, so the server's `desktop` channel knows which tools your client can service. Servers ping `/desktop/_ping?tool=<name>` to fail fast when a tool isn't advertised.
 
@@ -29,7 +72,7 @@ The router heartbeats `desktop.status` every 30 s, advertising the full handler-
 3. Hermes's Python-side `desktop_tool.py` handlers register with `tools.registry` (same pattern as `android_tool.py`) — the agent sees `desktop_read_file` as just another tool.
 4. When the agent calls a `desktop_*` tool, the Python handler HTTP-POSTs to `localhost:8767/desktop/<tool_name>` on the host.
 5. The relay's `desktop` channel forwards the call over WSS to the connected CLI.
-6. The CLI's `DesktopToolRouter` dispatches to an in-process handler (`fs.ts`, `terminal.ts`, `search.ts`, `clipboard.ts`, `screenshot.ts`, `editor.ts`).
+6. The CLI's `DesktopToolRouter` dispatches to an in-process handler (`fs.ts`, `terminal.ts`, `powershell.ts`, `process.ts`, `jobs.ts`, `transfer.ts`, `search.ts`, `clipboard.ts`, `screenshot.ts`, `editor.ts`).
 7. The handler runs on **your** machine, returns the result, and the response bubbles back: CLI → relay → Python → Hermes → agent.
 8. Typical round-trip: 60–100 ms for a simple command.
 
@@ -120,20 +163,34 @@ If the agent says "desktop_terminal is not available" or calls time out immediat
 ssh bailey@<host> curl -s "http://127.0.0.1:8767/desktop/_ping?tool=desktop_terminal"
 ```
 
-Expected:
+Expected (the default-advertised set — `desktop_computer_*` appears only when the client runs with `--experimental-computer-use`):
 ```json
 {
   "connected": true,
   "advertised_tools": [
-    "desktop_clipboard_read",
-    "desktop_clipboard_write",
-    "desktop_open_in_editor",
-    "desktop_patch",
     "desktop_read_file",
-    "desktop_screenshot",
+    "desktop_write_file",
+    "desktop_patch",
     "desktop_search_files",
     "desktop_terminal",
-    "desktop_write_file"
+    "desktop_powershell",
+    "desktop_spawn_detached",
+    "desktop_list_processes",
+    "desktop_kill_process",
+    "desktop_find_pid_by_port",
+    "desktop_job_start",
+    "desktop_job_status",
+    "desktop_job_logs",
+    "desktop_job_cancel",
+    "desktop_job_list",
+    "desktop_copy_directory",
+    "desktop_zip",
+    "desktop_unzip",
+    "desktop_checksum",
+    "desktop_clipboard_read",
+    "desktop_clipboard_write",
+    "desktop_screenshot",
+    "desktop_open_in_editor"
   ],
   "client_status": { ... },
   "last_seen_at": 1776964298.02,

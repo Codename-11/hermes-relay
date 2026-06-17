@@ -30,7 +30,7 @@ class AgentDisplayTest {
 
     @Test
     fun effectiveProfile_isNullWithoutAnExplicitPick() {
-        // No fallback to the advertised "default" profile — its verbose SOUL
+        // No fallback to the advertised "default" profile - its verbose SOUL
         // summary must not replace the personality-derived agent name.
         val effective = AgentDisplay.effectiveProfile(
             selectedProfile = null,
@@ -38,6 +38,16 @@ class AgentDisplayTest {
         )
 
         assertEquals(null, effective)
+    }
+
+    @Test
+    fun effectiveDisplayProfile_usesDefaultProfileForDisplayOnly() {
+        val effective = AgentDisplay.effectiveDisplayProfile(
+            selectedProfile = null,
+            profiles = listOf(mizu, defaultProfile),
+        )
+
+        assertEquals(defaultProfile, effective)
     }
 
     @Test
@@ -60,6 +70,54 @@ class AgentDisplayTest {
                 selectedPersonality = "friendly",
                 defaultPersonality = "default-persona",
                 connectionLabel = "Lab",
+            ),
+        )
+    }
+
+    @Test
+    fun agentName_usesConciseDefaultDescriptionNotVerboseSummary() {
+        assertEquals(
+            "Victor",
+            AgentDisplay.agentName(
+                profile = defaultProfile.copy(description = "victor"),
+                selectedPersonality = "default",
+                defaultPersonality = "",
+                connectionLabel = "Lab",
+            ),
+        )
+
+        assertEquals(
+            "Lab",
+            AgentDisplay.agentName(
+                profile = defaultProfile.copy(description = "Builds and maintains the codebase."),
+                selectedPersonality = "default",
+                defaultPersonality = "",
+                connectionLabel = "Lab",
+            ),
+        )
+    }
+
+    @Test
+    fun agentName_usesLocalAliasForDisplayOnly() {
+        assertEquals(
+            "House",
+            AgentDisplay.agentName(
+                profile = defaultProfile.copy(description = "Builds and maintains the codebase."),
+                selectedPersonality = "default",
+                defaultPersonality = "",
+                connectionLabel = "Lab",
+                localDisplayAlias = "  House  ",
+            ),
+        )
+
+        assertEquals(
+            "Code Guide",
+            AgentDisplay.agentName(
+                profile = mizu,
+                selectedPersonality = "default",
+                defaultPersonality = "",
+                connectionLabel = "Lab",
+                localDisplayAlias = "Code\nGuide",
             ),
         )
     }
@@ -110,6 +168,13 @@ class AgentDisplayTest {
         assertNull(AgentDisplay.profileRequestName("  "))
         assertNull(AgentDisplay.profileRequestName(" default "))
         assertEquals("mizu", AgentDisplay.profileRequestName("mizu"))
+    }
+
+    @Test
+    fun displayModelName_hidesGenericApiAlias() {
+        assertNull(AgentDisplay.displayModelName("hermes-agent"))
+        assertNull(AgentDisplay.displayModelName(" Hermes Agent "))
+        assertEquals("gpt-5.5", AgentDisplay.displayModelName(" gpt-5.5 "))
     }
 
     @Test

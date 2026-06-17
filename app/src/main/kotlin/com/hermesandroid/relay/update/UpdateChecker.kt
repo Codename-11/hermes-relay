@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
  * Fetches the latest Android GitHub release for this repo and returns an
  * [UpdateCheckResult]. Callers on `googlePlay` builds should treat this
  * as a no-op — the Play Store handles update delivery and the repo's
- * GitHub Releases also include desktop and server artifacts.
+ * GitHub Releases also include CLI and plugin artifacts.
  *
  * Network + JSON runs on [Dispatchers.IO].
  *

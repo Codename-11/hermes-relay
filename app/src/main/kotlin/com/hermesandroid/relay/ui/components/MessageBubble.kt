@@ -315,13 +315,21 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Markdown for assistant messages (image links stripped
-                        // out — rendered separately below).
+                        // Use a stable lightweight renderer while streaming.
+                        // The full parser/highlighter can rebuild block shapes
+                        // on every partial fence/token and visibly flicker.
                         if (markdownBody.isNotEmpty()) {
-                            MarkdownContent(
-                                content = markdownBody,
-                                textColor = textColor
-                            )
+                            if (message.isStreaming) {
+                                StreamingMarkdownContent(
+                                    content = markdownBody,
+                                    textColor = textColor
+                                )
+                            } else {
+                                MarkdownContent(
+                                    content = markdownBody,
+                                    textColor = textColor
+                                )
+                            }
                         }
                     }
                 }

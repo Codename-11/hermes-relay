@@ -1,18 +1,31 @@
 #!/usr/bin/env bash
-# Hermes-Relay — canonical one-line installer.
+# Hermes-Relay — canonical one-line installer (full relay path).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+#
+# Two ways to install:
+#   - FULL RELAY (this script): sets up the WSS relay server, systemd user
+#     unit, editable pip install, shell shims, skills dir, and the optional
+#     compatibility bootstrap — everything needed for terminal, bridge/phone
+#     control, relay voice, desktop tooling, and remote access.
+#   - TOOLS-ONLY (native): `hermes plugins install Codename-11/hermes-relay/plugin`
+#     uses hermes-agent's built-in plugin installer to discover + enable the
+#     android_*/desktop_* tools and prompt for optional voice-provider keys
+#     (declared in plugin/plugin.yaml `requires_env`). The `/plugin` subdir is
+#     required because the manifest lives there, not at the repo root. This path
+#     does NOT install the relay server, systemd unit, pip-editable, shims, or
+#     bootstrap — use it when you only want the agent-side tools.
 #
 # Installs:
 #   1. The hermes-relay repo to ~/.hermes/hermes-relay (editable, git-backed)
 #   2. The Python package (plugin + relay server + bootstrap injection) via
 #      `pip install -e` into the hermes-agent venv so `python -m plugin.pair`
-#      works from anywhere AND the hermes_relay_bootstrap package is on the
-#      Python path. The bootstrap is also wired up via a `.pth` file dropped
-#      directly into the venv's site-packages so Python's `site` module
-#      auto-loads it at every interpreter startup. The bootstrap monkey-
-#      patches `aiohttp.web.Application` so when the gateway builds its app,
+#      works from anywhere and the plugin-owned compatibility bootstrap is
+#      available. The bootstrap is wired up via a `.pth` file dropped directly
+#      into the venv's site-packages so Python's `site` module auto-loads it at
+#      every interpreter startup. The bootstrap monkey-patches
+#      `aiohttp.web.Application` so when the gateway builds its app,
 #      missing compatibility routes can be injected onto the same router the
 #      gateway is in the middle of populating. Current upstream already serves
 #      `/api/sessions/*` and read-only `/v1/skills` + `/v1/toolsets`; the
@@ -29,7 +42,9 @@
 #   5. Shell shims at:
 #      - ~/.local/bin/hermes-pair          → `<venv>/python -m plugin.pair "$@"`
 #      - ~/.local/bin/hermes-status        → `<venv>/python -m plugin.status "$@"`
+#      - ~/.local/bin/hermes-relay         → `<venv>/python -m plugin.cli "$@"`
 #      - ~/.local/bin/hermes-relay-update  → curl-pipe re-runs install.sh
+#      - ~/.local/bin/hermes-relay-tailscale → `<venv>/python -m plugin.relay.tailscale_cli "$@"`
 #      Current upstream exposes plugin CLI commands, so `hermes pair` should
 #      work when the plugin is enabled. The pair/status shims remain
 #      script-friendly older-build fallbacks. The update shim is just a
@@ -44,9 +59,8 @@
 # Updates:
 #   cd ~/.hermes/hermes-relay && git pull
 #   (No reinstall needed — editable pip install + external_dirs scan mean
-#    changes go live on the next invocation. The bootstrap .pth file is
-#    overwritten on every install.sh re-run, so changes to the bootstrap
-#    package itself need a fresh `bash install.sh` to land in site-packages.)
+#    changes go live on the next invocation. The bootstrap .pth hook is
+#    refreshed through `hermes relay compat install` on every install.sh re-run.)
 #
 # Uninstall:
 #   bash ~/.hermes/hermes-relay/uninstall.sh
@@ -134,7 +148,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         -h|--help)
-            sed -n '3,70p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,97p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -305,37 +319,68 @@ fi
 
 # ── 2/6  Install Python package editable into the hermes venv ──────────────
 step 2 6 "Installing plugin into hermes venv (editable)"
-"$VENV_PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
-# Run the long pip install in the background and spin while we wait — keeps
-# the user oriented during the 5-30s install. spin() falls back to a silent
-# wait when stdout isn't a TTY (curl | bash) so log capture stays clean.
-(
-    "$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" >/dev/null 2>&1
-) &
-spin $! "pip install -e $(basename "$RELAY_HOME")" \
-    || die "pip install -e $RELAY_HOME failed"
-ok "Installed $("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
+# Pick an installer. hermes-agent venvs created by `uv venv` (the upstream
+# default) ship NO pip module — `python -m pip` fails with "No module named
+# pip". Detect that and bootstrap pip via ensurepip, or fall back to `uv pip`,
+# so the editable install works on uv-managed cores instead of dying here.
+_relay_pip_ready=""
+if "$VENV_PY" -m pip --version >/dev/null 2>&1; then
+    _relay_pip_ready="1"
+elif "$VENV_PY" -m ensurepip --upgrade >/dev/null 2>&1 \
+        && "$VENV_PY" -m pip --version >/dev/null 2>&1; then
+    _relay_pip_ready="1"
+    info "venv had no pip — bootstrapped it with ensurepip"
+fi
 
-# Drop the bootstrap .pth into the venv's site-packages so Python loads
-# `hermes_relay_bootstrap` at interpreter startup. This is what allows the
-# plugin to inject missing compatibility routes onto the gateway's aiohttp app
-# at startup. The .pth has to live directly in site-packages —
-# setuptools' editable install does NOT ship data-files there, so we drop
-# it manually here. Idempotent: a second run overwrites the same file.
+if [ -n "$_relay_pip_ready" ]; then
+    "$VENV_PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+    # Run the long install in the background and spin while we wait — keeps the
+    # user oriented during the 5-30s install. spin() falls back to a silent
+    # wait when stdout isn't a TTY (curl | bash) so log capture stays clean.
+    ( "$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" >/dev/null 2>&1 ) &
+    spin $! "pip install -e $(basename "$RELAY_HOME")" \
+        || die "pip install -e $RELAY_HOME failed"
+elif command -v uv >/dev/null 2>&1; then
+    # Pip-less venv and ensurepip unavailable — use uv directly against the
+    # venv interpreter (uv is what created these venvs in the first place).
+    ( uv pip install --quiet --python "$VENV_PY" -e "$RELAY_HOME" >/dev/null 2>&1 ) &
+    spin $! "uv pip install -e $(basename "$RELAY_HOME")" \
+        || die "uv pip install -e $RELAY_HOME failed"
+else
+    die "venv at $VENV_PY has no pip (uv-managed?) and 'uv' is not on PATH — install uv or add pip to the venv, then re-run"
+fi
+
+# Version readback, tolerant of the uv-only path (no pip module to query).
+_relay_ver="$("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
+if [ -z "$_relay_ver" ] && command -v uv >/dev/null 2>&1; then
+    _relay_ver="$(uv pip show --python "$VENV_PY" hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
+fi
+ok "Installed ${_relay_ver:-hermes-relay}"
+
+# Drop the legacy bootstrap .pth into the venv's site-packages so Python loads
+# the plugin-owned compatibility bootstrap at interpreter startup. This is what
+# allows the plugin to inject missing compatibility routes onto the gateway's
+# aiohttp app at startup. The .pth has to live directly in site-packages —
+# setuptools' editable install does NOT ship data-files there, so we drop it
+# manually here. Idempotent: a second run overwrites the same file.
 #
 # Removal: the bootstrap package and its .pth come out together via
 # `bash uninstall.sh`. The bootstrap also feature-detects on route paths,
 # so it cleanly no-ops on hermes-agent builds that already serve the same
 # routes natively — leaving it installed is safe across all versions.
 SITE_PKGS="$("$VENV_PY" -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null || true)"
-PTH_SRC="$RELAY_HOME/hermes_relay_bootstrap.pth"
-if [ -n "$SITE_PKGS" ] && [ -d "$SITE_PKGS" ] && [ -f "$PTH_SRC" ]; then
-    cp "$PTH_SRC" "$SITE_PKGS/hermes_relay_bootstrap.pth"
-    ok "Installed bootstrap .pth → $SITE_PKGS/hermes_relay_bootstrap.pth"
+if [ -n "$SITE_PKGS" ] && [ -d "$SITE_PKGS" ]; then
+    if "$VENV_PY" -m plugin.cli relay compat install --site-packages "$SITE_PKGS" >/dev/null 2>&1; then
+        ok "Installed compat hook via hermes relay compat → $SITE_PKGS/hermes_relay_bootstrap.pth"
+    else
+        warn "Could not install compat hook through plugin CLI"
+        info "  Modern standard chat, Manage, and dashboard voice do not require it."
+        info "  For older Hermes compatibility routes, retry: hermes relay compat install"
+    fi
 else
     info "  Could not determine venv site-packages — bootstrap .pth NOT installed"
     info "  This means older hermes-agent builds won't get relay compatibility"
-    info "  routes. Manually copy $PTH_SRC into your venv's site-packages."
+    info "  routes. Retry later with: hermes relay compat install"
 fi
 
 # ── 3/6  Symlink plugin into Hermes plugin dir ─────────────────────────────

@@ -5,7 +5,7 @@
 #
 # Downloads a prebuilt binary from GitHub Releases — no Node.js required.
 # Pin a specific release:
-#   HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.1 curl -fsSL ... | sh
+#   HERMES_RELAY_VERSION=cli-v0.3.0-alpha.18 curl -fsSL ... | sh
 # Override install dir:
 #   HERMES_RELAY_INSTALL_DIR=/opt/hermes curl -fsSL ... | sh
 # Optional `hermes` alias for Orca/upstream-style workflows:
@@ -44,7 +44,7 @@ read_installed_version() {
   printf '%s' "$line" | awk '{print $2}'
 }
 
-# Strip the `desktop-v` tag prefix to get the bare semver (KEEPS the
+# Strip the `cli-v` tag prefix to get the bare semver (KEEPS the
 # prerelease suffix — `0.3.0-alpha.11`, not `0.3.0`). The binary's
 # `--version` output has reported the full semver since alpha.4 (when
 # `gen:version` started embedding the full string from package.json), so
@@ -56,7 +56,8 @@ normalize_pinned_version() {
   local v="$1"
   # Empty or "latest" → unknown; caller decides.
   [ -z "$v" ] || [ "$v" = "latest" ] && { printf ''; return 0; }
-  # Strip leading `desktop-v` (our release tag convention).
+  # Strip leading `cli-v` (current convention) or historical `desktop-v`.
+  v="${v#cli-v}"
   v="${v#desktop-v}"
   # Strip leading `v` just in case someone pinned `v0.3.0`.
   v="${v#v}"
@@ -98,27 +99,36 @@ esac
 
 # Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL
 # always skips prereleases, which breaks install during any all-alpha window.
-# Walk the releases API (newest first) and pick the first `desktop-v*` tag,
-# prerelease or not. Pinned versions skip this and use the tag directly.
+# Walk the releases API and prefer the SemVer-max `cli-v*` tag. Historical
+# public prereleases used `desktop-v*`, so fall back to that track when no new
+# CLI tag exists. Pinned versions skip this and use the tag directly.
 resolved_version="$VERSION"
 if [ "$VERSION" = "latest" ]; then
-  say "-> resolving latest desktop-v* release..."
+  say "-> resolving latest cli-v* release..."
   api_body=$(curl -fsSL "https://api.github.com/repos/$REPO/releases" 2>/dev/null) \
     || die "could not query GitHub Releases API"
-  # Extract every desktop-v* tag_name and pick the SemVer-max. Don't trust
-  # the API's first-element ordering — GitHub orders by the release row's
-  # created_at which shifts when the row is edited or re-tagged, so a
-  # touched alpha.9 row can outrank a freshly-tagged alpha.10. `sort -V`
-  # handles SemVer-ish ordering well enough for our purposes; we reverse
-  # and take the top. Each "tag_name": entry is on its own line in
-  # GitHub's JSON output, so line-oriented tooling is sufficient and
-  # avoids a jq dependency.
-  resolved_version=$(printf '%s\n' "$api_body" \
-    | grep -E '"tag_name": *"desktop-v' \
-    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' \
+  # Extract every CLI-track tag_name and pick the SemVer-max. Don't trust the
+  # API's first-element ordering — GitHub orders by the release row's created_at
+  # which shifts when the row is edited or re-tagged. Each "tag_name": entry is
+  # on its own line in GitHub's JSON output, so line-oriented tooling is
+  # sufficient and avoids a jq dependency.
+  release_tags=$(printf '%s\n' "$api_body" \
+    | grep -E '"tag_name": *"(cli-v|desktop-v)' \
+    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)
+  resolved_version=$(printf '%s\n' "$release_tags" \
+    | awk '/^cli-v/ { v=$0; sub(/^cli-v/, "", v); print v "\t" $0 }' \
     | sort -V \
-    | tail -1)
-  [ -n "$resolved_version" ] || die "no desktop-v* releases found on $REPO"
+    | tail -1 \
+    | cut -f2)
+  if [ -z "$resolved_version" ]; then
+    say "   no cli-v* releases yet; checking historical desktop-v* prereleases..."
+    resolved_version=$(printf '%s\n' "$release_tags" \
+      | awk '/^desktop-v/ { v=$0; sub(/^desktop-v/, "", v); print v "\t" $0 }' \
+      | sort -V \
+      | tail -1 \
+      | cut -f2)
+  fi
+  [ -n "$resolved_version" ] || die "no cli-v* or historical desktop-v* releases found on $REPO"
   say "   $resolved_version"
 fi
 base="https://github.com/$REPO/releases/download/$resolved_version"

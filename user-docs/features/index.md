@@ -8,7 +8,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 
 | Feature | Description |
 |---------|-------------|
-| [Direct API Connection](/features/direct-api) | HTTP/SSE streaming to Hermes API Server |
+| [Standard Chat Transport](/features/direct-api) | Gateway `/api/ws` (live thinking) preferred, API-server SSE fallback — never the relay |
 | [Voice Mode](/features/voice) | Real-time voice conversation — you talk, the agent answers aloud via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |

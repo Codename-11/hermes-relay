@@ -2,6 +2,8 @@ package com.hermesandroid.relay.network
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -484,7 +486,7 @@ class DashboardApiClientTest {
                 .setBody(
                     """
                     {"sessions":[
-                      {"id":"sess-a","title":"Refactor","model":"claude-opus-4-8","message_count":4,"started_at":1234.5,"source":"tui","profile":"mizu"},
+                      {"id":"sess-a","title":"Refactor","model":"claude-opus-4-8","message_count":4,"started_at":1234.5,"last_active":1250.5,"source":"tui","profile":"mizu"},
                       {"id":"sess-b","title":"Notes","message_count":2,"started_at":1200.0,"source":"tui","profile":"mizu"}
                     ],"total":2,"limit":50,"offset":0}
                     """.trimIndent(),
@@ -506,6 +508,7 @@ class DashboardApiClientTest {
         assertEquals("Refactor", sessions[0].title)
         assertEquals("claude-opus-4-8", sessions[0].model)
         assertEquals(4, sessions[0].messageCount)
+        assertEquals(1250.5, sessions[0].lastActive!!, 0.001)
     }
 
     @Test
@@ -545,5 +548,45 @@ class DashboardApiClientTest {
         assertEquals(2, messages.size)
         assertEquals("user", messages[0].role)
         assertEquals("assistant", messages[1].role)
+    }
+
+    @Test
+    fun parseChatDisplaySettings_readsNestedDisplayConfig() {
+        val root = Json.parseToJsonElement(
+            """
+            {
+              "config": {
+                "display": {
+                  "show_reasoning": false,
+                  "tool_progress": "all"
+                }
+              }
+            }
+            """.trimIndent(),
+        ).jsonObject
+
+        val settings = DashboardApiClient.parseChatDisplaySettings(root)
+
+        assertEquals(false, settings.showReasoning)
+        assertEquals("detailed", settings.toolDisplay)
+    }
+
+    @Test
+    fun parseChatDisplaySettings_mapsToolProgressNoneToOff() {
+        val root = Json.parseToJsonElement(
+            """
+            {
+              "display": {
+                "show_reasoning": true,
+                "tool_progress": "none"
+              }
+            }
+            """.trimIndent(),
+        ).jsonObject
+
+        val settings = DashboardApiClient.parseChatDisplaySettings(root)
+
+        assertEquals(true, settings.showReasoning)
+        assertEquals("off", settings.toolDisplay)
     }
 }

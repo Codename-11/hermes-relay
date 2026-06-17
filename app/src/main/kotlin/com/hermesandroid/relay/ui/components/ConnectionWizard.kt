@@ -537,7 +537,7 @@ fun ConnectionWizard(
                                         reorderedPayload.serverUrl,
                                         reorderedPayload.key,
                                         "",
-                                        "",
+                                        reorderedPayload.dashboardUrl.orEmpty(),
                                         reorderedPayload.endpoints,
                                     )
                                 } else {
@@ -626,6 +626,7 @@ fun ConnectionWizard(
                 if (payload.relay == null) {
                     standardApiUrl = payload.serverUrl
                     standardApiKey = payload.key
+                    standardDashboardUrl = payload.dashboardUrl.orEmpty()
                     standardError = null
                     standardSuccess = null
                 }
@@ -705,7 +706,7 @@ fun ConnectionWizard(
                                         payload.serverUrl,
                                         payload.key,
                                         "",
-                                        "",
+                                        payload.dashboardUrl.orEmpty(),
                                         payload.endpoints,
                                     )
                                 } else {
@@ -2180,7 +2181,10 @@ private fun ConfirmStep(
                 if (relayUrl == null) {
                     LabeledLine(
                         label = "Dashboard",
-                        value = Connection.deriveDefaultDashboardUrl(payload.serverUrl)
+                        value = payload.dashboardUrl
+                            ?.trim()
+                            ?.takeIf { it.isNotBlank() }
+                            ?: Connection.deriveDefaultDashboardUrl(payload.serverUrl)
                             ?: "Derived from API URL",
                         hint = "Manage",
                     )

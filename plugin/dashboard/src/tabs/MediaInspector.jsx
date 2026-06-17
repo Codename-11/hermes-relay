@@ -9,6 +9,8 @@ import {
   AlertTitle,
   AlertDescription,
   CardDescription,
+  Button,
+  Badge,
   Switch,
   Table,
   TableHeader,
@@ -23,8 +25,6 @@ const {
   CardHeader,
   CardTitle,
   CardContent,
-  Button,
-  Badge,
   Label,
 } = SDK.components;
 
