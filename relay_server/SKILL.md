@@ -9,11 +9,11 @@ Setup and run the Hermes-Relay Server for the Hermes-Relay Android app.
 
 ## What It Is
 
-A lightweight Python WSS server that bridges the Hermes-Relay Android app to server-side features that need persistent bidirectional communication: **terminal** (remote shell via tmux) and **bridge** (agent-driven phone control). Chat does not use the relay — it connects directly to the Hermes API Server.
+A lightweight Python WSS server that bridges the Hermes-Relay Android app to server-side features that need persistent bidirectional communication: **terminal** (remote shell via tmux) and **bridge** (agent-driven phone control). Chat does not use the relay — it rides the standard upstream Hermes surfaces (the dashboard `/api/ws` gateway, with API-server SSE as fallback).
 
 ## When You Need It
 
-- **Chat only?** You do NOT need the relay server. The app talks directly to the Hermes API Server (`:8642`).
+- **Chat only?** You do NOT need the relay server. The app uses the standard upstream Hermes surfaces — the dashboard gateway (`:9119`) preferred, the API server (`:8642`) as fallback.
 - **Terminal or Bridge?** You need the relay server running on the same machine as hermes-agent.
 
 ## Quick Setup

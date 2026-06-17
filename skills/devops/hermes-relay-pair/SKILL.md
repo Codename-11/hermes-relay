@@ -15,7 +15,7 @@ metadata:
 
 # Hermes-Relay Pairing
 
-[Hermes-Relay](https://github.com/Codename-11/hermes-relay) is a native Android client for Hermes. Chat goes directly to the Hermes API server over HTTP/SSE; terminal and bridge channels go through a separate WSS relay. This skill generates a single QR code that configures both connections at once, using `plugin.pair` from the Hermes-Relay plugin.
+[Hermes-Relay](https://github.com/Codename-11/hermes-relay) is a native Android client for Hermes. Chat rides the standard upstream Hermes path — the dashboard `/api/ws` gateway transport (live thinking), with API-server SSE as fallback; terminal and bridge channels go through a separate WSS relay. This skill generates a single QR code that configures both connections at once, using `plugin.pair` from the Hermes-Relay plugin.
 
 ## When to Use
 

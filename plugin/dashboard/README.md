@@ -101,12 +101,9 @@ All proxied by `plugin_api.py` under `/api/plugins/hermes-relay/`:
 - `POST /remote-access/tailscale/enable` — enable Tailscale serving
 - `POST /remote-access/tailscale/disable` — disable Tailscale serving
 
-## Hackathon submission / demo
+## Demo screenshots
 
-Submission repo: `Codename-11/hermes-relay`
-Plugin path: `plugin/dashboard/`
-
-Suggested screenshot set after deploying the pushed branch:
+A representative set when showcasing the plugin:
 
 - Management tab with paired Android and desktop sessions
 - Pairing dialog with QR code and endpoint controls
