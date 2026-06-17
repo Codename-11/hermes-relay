@@ -1781,3 +1781,79 @@ command is available, falling back to deleting only the Relay `.pth` file.
 - `plugin/hermes_relay_bootstrap/`
 - `plugin/after-install.md`
 - `docs/upstream-surface-matrix.md`
+
+## ADR 34 — Structural fence between vanilla-upstream and Relay network surfaces
+
+**Status:** Accepted (2026-06-17).
+
+**Context.** The project's load-bearing invariant — *the standard (no-plugin) path
+must work against unmodified upstream hermes-agent* — is enforced only by
+convention and `CLAUDE.md` prose, never by structure or test:
+
+- All network code lives in one flat `network/` package. The client classes are
+  cleanly *named* by surface (`HermesApiClient`, `GatewayChatClient`,
+  `DashboardApiClient` → upstream; `RelayHttpClient`, `RelayVoiceClient`,
+  `ConnectionManager`, `ChannelMultiplexer` → relay), but nothing *prevents* a
+  standard-path file from importing a relay client. The discipline is a code-review
+  rule, not a compiler/lint rule.
+- The standard path has never been exercised against *true* vanilla upstream. The
+  staging server runs a fork with relay routes compiled into `api_server.py`, so
+  "vanilla-only" is an aspiration validated by review, not by CI. When upstream
+  renames or drops a route the app depends on, nothing surfaces it until a user hits
+  it on a server we don't control.
+
+**Decision.** Three net-additive, behavior-preserving changes:
+
+1. **Package fence.** Split `app/.../network/` into `network/upstream/`,
+   `network/relay/`, and `network/shared/`. Upstream/relay client and transport
+   code are physically separated; genuinely-neutral utilities and the routing-seam
+   abstractions live in `shared/`.
+2. **Enforced import rule (Konsist).** A JUnit-level architecture test asserts
+   `upstream` imports nothing from `relay` and vice-versa, and that `shared` imports
+   neither concrete client. The boundary becomes a *failing test*, not a convention.
+3. **Vanilla-upstream contract test.** A CI job clones a pinned, unmodified upstream,
+   boots it with the bootstrap compat hook absent, and asserts the standard-path
+   route surface exists (`404` = fail; `401/400/405` = pass — existence, not agent
+   behavior). A scheduled run against upstream `main` acts as a drift siren.
+
+**Placement calls (decided by reading, not the plan's guess):**
+
+- **`ChatHandler` → `upstream/`** (not `shared/`). Per ADR 3, chat connects directly
+  to the API server / gateway and the relay carries only bridge + terminal. The
+  handler is fed solely by upstream transports, imports only upstream *models*, and
+  has zero relay imports.
+- **`VoiceAudioClient.kt` is split three ways**: the `VoiceAudioClient` interface and
+  the `AutoVoiceAudioClient` router (interface-only deps) → `shared/`;
+  `StandardHermesVoiceClient` → `upstream/`; `RelayVoiceAudioClientAdapter` (imports
+  `RelayVoiceClient`) → `relay/`. Keeping them co-located would force one file to
+  import both worlds.
+
+**Rejected alternatives.**
+
+- **Full `ConnectionViewModel` transport-strategy split now.** The largest clarity
+  win (it's the one true god-object leak — it instantiates both worlds and branches
+  on auth state inline), but also the riskiest change. Deferred until the fence makes
+  the seam obvious; tracked as a follow-up.
+- **Custom ktlint/detekt lint rule** to enforce the boundary at the lint gate.
+  Deferred in favor of a Konsist test: the repo's lint step is a
+  ktlint-or-android-lint fallback chain with no architecture tooling, and a custom
+  rule needs a separate Gradle-plugin / lint-AAR module. The Konsist test reuses the
+  existing JVM unit-test infra for a fraction of the setup. Promote to a lint rule
+  later if lint-gate enforcement is wanted too.
+
+**Consequences.**
+
+- A future file cannot quietly pull a relay client into the standard path — CI fails.
+- `shared/` stays genuinely neutral (`ConnectivityObserver`, `EndpointResolver`,
+  `HermesLanDiscovery`, `ProfileApiUrlResolver`, voice routing seam).
+- The contract test converts the standing "upstream-only path never actually
+  validated" caveat into an automated signal, on our pinning cadence.
+
+**Key files:**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/network/{upstream,relay,shared}/`
+- `app/src/test/kotlin/com/hermesandroid/relay/network/ArchitectureBoundaryTest.kt`
+- `gradle/libs.versions.toml` (Konsist test dependency)
+- `.github/workflows/ci-android.yml` (boundary test in the explicit `--tests` list)
+- `.github/workflows/ci-contract.yml` (vanilla-upstream route-contract job)
+- `docs/plans/upstream-relay-isolation.md`
