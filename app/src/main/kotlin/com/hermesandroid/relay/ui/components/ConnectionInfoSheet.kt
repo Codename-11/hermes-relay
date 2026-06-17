@@ -649,6 +649,9 @@ fun AgentInfoSheet(
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
     LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    // Re-pull server-supplied personalities (list + default + active) on open so
+    // a server-side change shows without an app reload.
+    LaunchedEffect(Unit) { chatViewModel.refreshPersonalities() }
     // Pull the host's agent profiles from the dashboard so they appear in the
     // Profile picker even on a dashboard-only (non-relay) connection.
     LaunchedEffect(Unit) { connectionViewModel.refreshDashboardProfiles() }
@@ -1025,47 +1028,47 @@ fun AgentInfoSheet(
                 modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
             ) {
 
-                // Default row — maps to selectedPersonality == "default" which
-                // the VM resolves to whatever server-side personality is
-                // currently active.
+                // None row — the explicit "no personality overlay" state
+                // (upstream `/personality none`). On the gateway this is
+                // server-applied; on SSE it just sends no persona prompt. There
+                // is intentionally no synthetic client "Default" row — upstream's
+                // active value is `none` or a named personality, and the server's
+                // configured default (if any) shows below as the row tagged
+                // "(default)", highlighted whenever it's the active one.
                 ProfileRadioRow(
-                    primary = if (defaultPersonality.isNotBlank()) {
-                        "${defaultPersonality.replaceFirstChar { it.uppercase() }} (default)"
-                    } else {
-                        "Default"
-                    },
-                    secondary = null,
-                    selected = selectedPersonality == "default",
+                    primary = "None",
+                    secondary = "No personality overlay",
+                    selected = selectedPersonality == "none" || selectedPersonality == "neutral",
                     enabled = !isStreaming,
                     onSelect = {
-                        if (selectedPersonality != "default") {
-                            chatViewModel.selectPersonality("default")
+                        if (selectedPersonality != "none") {
+                            chatViewModel.selectPersonality("none")
                             if (!profileOverridesPersonality) {
-                                toast("Using default personality")
+                                toast("Personality cleared")
                             }
                         }
                     },
                 )
 
-                personalityNames
-                    .filter { it != defaultPersonality }
-                    .forEach { name ->
-                        ProfileRadioRow(
-                            primary = name.replaceFirstChar { it.uppercase() },
-                            secondary = null,
-                            selected = selectedPersonality == name,
-                            enabled = !isStreaming,
-                            onSelect = {
-                                if (selectedPersonality != name) {
-                                    chatViewModel.selectPersonality(name)
-                                    if (!profileOverridesPersonality) {
-                                        val display = name.replaceFirstChar { it.uppercase() }
-                                        toast("Personality: $display")
-                                    }
+                personalityNames.forEach { name ->
+                    val isServerDefault = name.equals(defaultPersonality, ignoreCase = true)
+                    ProfileRadioRow(
+                        primary = name.replaceFirstChar { it.uppercase() } +
+                            if (isServerDefault) " (default)" else "",
+                        secondary = null,
+                        selected = selectedPersonality == name,
+                        enabled = !isStreaming,
+                        onSelect = {
+                            if (selectedPersonality != name) {
+                                chatViewModel.selectPersonality(name)
+                                if (!profileOverridesPersonality) {
+                                    val display = name.replaceFirstChar { it.uppercase() }
+                                    toast("Personality: $display")
                                 }
-                            },
-                        )
-                    }
+                            }
+                        },
+                    )
+                }
 
                 // When a profile SOUL is active AND the user has picked a
                 // non-default personality, make the precedence explicit
@@ -1073,7 +1076,9 @@ fun AgentInfoSheet(
                 // The mirror caption in the Profile section tells the same
                 // story from the other direction — both are kept because a
                 // user scanning either section should see the constraint.
-                if (profileOverridesPersonality && selectedPersonality != "default") {
+                if (profileOverridesPersonality &&
+                    selectedPersonality != "default" && selectedPersonality != "none"
+                ) {
                     Text(
                         text = "Profile SOUL overrides personality while active.",
                         style = MaterialTheme.typography.labelSmall,

@@ -845,7 +845,12 @@ class ChatHandler {
         val preservedVoiceTraces = _messages.value.filter {
             it.id.startsWith("voice-intent-") ||
                 it.id.startsWith("steer-") ||
-                it.id.startsWith("ask-")
+                it.id.startsWith("ask-") ||
+                // Slash-command result bubbles (addSystemNotice) are local-only —
+                // the server never persists them, so a wholesale reload would wipe
+                // a just-shown `/personality`, `/status`, … result the moment the
+                // next turn reconciles. Preserve them like the other client bubbles.
+                it.id.startsWith("system-notice-")
         }
         val merged = if (preservedVoiceTraces.isEmpty()) {
             loaded

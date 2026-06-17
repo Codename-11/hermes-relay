@@ -188,6 +188,30 @@ class GatewayChatClient(
     private val _connectionState = MutableStateFlow(GatewayConnectionState.Idle)
     val connectionState: StateFlow<GatewayConnectionState> = _connectionState.asStateFlow()
 
+    /**
+     * Active personality the gateway is applying, as a config value ("none" when
+     * the overlay is cleared, otherwise the personality name). Tracks the
+     * upstream `display.personality` the way the desktop/TUI do: updated from the
+     * [setPersonality] / [getPersonality] round-trips AND from connection-level
+     * `session.info` events, so a change made via `/personality`, the desktop, or
+     * the TUI reflects in the app. Null until first observed.
+     */
+    private val _serverPersonality = MutableStateFlow<String?>(null)
+    val serverPersonality: StateFlow<String?> = _serverPersonality.asStateFlow()
+
+    /**
+     * Active model / provider the gateway reports for our session, tracked off
+     * `session.info` the same way as [serverPersonality]. Lets a `/model` switch
+     * made on the desktop/TUI (or our own dispatch) reflect in the app's model
+     * pill without an app reload. Null until first observed; only ever set to a
+     * non-blank value.
+     */
+    private val _serverModel = MutableStateFlow<String?>(null)
+    val serverModel: StateFlow<String?> = _serverModel.asStateFlow()
+
+    private val _serverProvider = MutableStateFlow<String?>(null)
+    val serverProvider: StateFlow<String?> = _serverProvider.asStateFlow()
+
     /** Serializes connect / session-establish so concurrent sends share one socket. */
     private val connectMutex = Mutex()
 
@@ -566,6 +590,57 @@ class GatewayChatClient(
         )
 
     /**
+     * Read the active personality (`config.get {key:"personality"}`). Returns the
+     * upstream config value — `"none"` when the overlay is cleared, otherwise the
+     * personality name. Connects on demand. Used to seed [serverPersonality] when
+     * a gateway connection comes up so the app reflects whatever the server
+     * (config / desktop / TUI) currently has active.
+     */
+    suspend fun getPersonality(): Result<String> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        return rpc("config.get", buildJsonObject { put("key", "personality") })
+            .map { result ->
+                (result.stringField("value") ?: "none").ifBlank { "none" }
+                    .also { _serverPersonality.value = it }
+            }
+    }
+
+    /**
+     * Set the personality the way the desktop + TUI do (`config.set
+     * {key:"personality"}`). The gateway persists `display.personality` +
+     * `agent.system_prompt` to the active profile's config AND applies the
+     * overlay live to the current session (no history reset). Pass `"none"`
+     * (or `"default"`/`"neutral"`) to clear the overlay. Returns the resolved
+     * active value (`"none"` or the name); also updates [serverPersonality]
+     * directly so observers don't have to wait on the `session.info` echo (which
+     * only fires when a live session exists).
+     */
+    suspend fun setPersonality(value: String): Result<String> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val params = buildJsonObject {
+            put("key", "personality")
+            put("value", value)
+            liveSessionId?.let { put("session_id", it) }
+        }
+        return rpc("config.set", params).map { result ->
+            (result.stringField("value") ?: value).ifBlank { "none" }
+                .also { _serverPersonality.value = it }
+        }
+    }
+
+    /**
      * Fetch the curated provider/model list (`model.options`) — the same RPC
      * the upstream desktop + TUI model picker uses (grok / kimi / gpt-5.5 …,
      * grouped by authenticated provider), NOT the api_server `/v1/models`
@@ -905,6 +980,24 @@ class GatewayChatClient(
         if (type == "gateway.ready") {
             ready.complete(Unit)
             return
+        }
+
+        // `session.info` is connection-level (personality / model / context
+        // usage), emitted on a config change even with no turn in flight. Capture
+        // the active personality here — for our own session only — so a
+        // `/personality`, desktop, or TUI change keeps the app in sync. Falls
+        // through to the turn dispatch below so an in-flight turn still sees it.
+        if (type == "session.info" &&
+            (eventSessionId == null || liveSessionId == null || eventSessionId == liveSessionId)
+        ) {
+            payload?.let { p ->
+                if (p.containsKey("personality")) {
+                    _serverPersonality.value =
+                        (p.stringField("personality") ?: "").ifBlank { "none" }
+                }
+                p.stringField("model")?.takeIf { it.isNotBlank() }?.let { _serverModel.value = it }
+                p.stringField("provider")?.takeIf { it.isNotBlank() }?.let { _serverProvider.value = it }
+            }
         }
 
         val turn = activeTurn ?: return

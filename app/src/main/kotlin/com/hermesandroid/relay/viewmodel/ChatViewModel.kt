@@ -73,6 +73,18 @@ import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
+/**
+ * Absolute per-session context-window usage in tokens — the data behind the
+ * desktop-style "used / max" context bar. [fraction] is the fill 0..1.
+ */
+data class ContextWindowUsage(
+    val usedTokens: Int,
+    val maxTokens: Int,
+) {
+    val fraction: Float
+        get() = if (maxTokens > 0) (usedTokens.toFloat() / maxTokens).coerceIn(0f, 1f) else 0f
+}
+
 class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
@@ -516,6 +528,13 @@ class ChatViewModel : ViewModel() {
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
+        // (Re)bind the session.info state sync to the live client so server-side
+        // personality/model changes drive the UI. Cancelled when the client drops.
+        if (changed) {
+            gatewayStateSyncJob?.cancel()
+            gatewayStateSyncJob = null
+            client?.let { startGatewayStateSync(it) }
+        }
         when {
             client == null -> {
                 _serverCommands.value = emptyList()
@@ -533,6 +552,9 @@ class ChatViewModel : ViewModel() {
                 fetchServerCommands(client)
                 refreshModelOptions()
                 refreshReasoningSettings()
+                // Seed the active personality over the already-ready socket so the
+                // picker reflects server truth without waiting for the first turn.
+                seedServerPersonality(client)
             }
             changed -> {
                 _serverCommands.value = emptyList()
@@ -542,6 +564,15 @@ class ChatViewModel : ViewModel() {
                 _selectedReasoningEffort.value = DEFAULT_REASONING_EFFORT
                 _reasoningDisplay.value = null
             }
+        }
+    }
+
+    /** One-shot `config.get personality` over a ready socket → drives the collector. */
+    private fun seedServerPersonality(client: GatewayChatClient) {
+        viewModelScope.launch {
+            // getPersonality() updates serverPersonality, which startGatewayStateSync
+            // observes — so no need to apply the result here directly.
+            client.getPersonality()
         }
     }
 
@@ -579,6 +610,17 @@ class ChatViewModel : ViewModel() {
     private val _contextUsage = MutableStateFlow<Float?>(null)
     val contextUsage: StateFlow<Float?> = _contextUsage.asStateFlow()
 
+    /**
+     * Absolute per-session context-window tokens (`used` / `max`) from the same
+     * gateway usage events that drive [contextUsage] — exposed so the context
+     * bar can show real token counts (`31k / 200k`) like the desktop, not just
+     * a percent. Null until the server reports a `context_used` + `context_max`
+     * for the active session; reset on every session switch / new / clear so it
+     * is strictly per-session.
+     */
+    private val _contextWindow = MutableStateFlow<ContextWindowUsage?>(null)
+    val contextWindow: StateFlow<ContextWindowUsage?> = _contextWindow.asStateFlow()
+
     /** Server slash-command catalog (`commands.catalog`) — 4th allCommands source. */
     private val _serverCommands = MutableStateFlow<List<SlashCommand>>(emptyList())
     val serverCommands: StateFlow<List<SlashCommand>> = _serverCommands.asStateFlow()
@@ -609,6 +651,32 @@ class ChatViewModel : ViewModel() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val composerPrefill: SharedFlow<String> = _composerPrefill.asSharedFlow()
+
+    /**
+     * One-shot request to open the personality picker — emitted when a bare
+     * `/personality` (no argument) is sent. Picker commands aren't raw-forwarded
+     * on mobile (there's no inline arg-expansion popover like the desktop's), so
+     * the bare command opens the agent sheet's personality section instead.
+     * ChatScreen collects this and shows the sheet.
+     */
+    private val _openPersonalityPicker = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val openPersonalityPicker: SharedFlow<Unit> = _openPersonalityPicker.asSharedFlow()
+
+    /**
+     * One-shot request to open the model picker — emitted for a bare `/model`
+     * (the sibling picker command). `/model <args>` stays a real switch the
+     * gateway applies. ChatScreen collects this and shows the model sheet.
+     */
+    private val _openModelPicker = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val openModelPicker: SharedFlow<Unit> = _openModelPicker.asSharedFlow()
 
     /**
      * "Notify when Hermes finishes" setting — mirrored from
@@ -717,16 +785,95 @@ class ChatViewModel : ViewModel() {
         return apiClient?.getMessages(sessionId) ?: emptyList()
     }
 
+    /**
+     * Pick a personality. On the gateway this is server-owned the way the
+     * desktop + TUI do it: the value is pushed via `config.set` (which persists
+     * `display.personality` + applies the overlay live to the session), and the
+     * picker selection is then reconciled from the server's `session.info` /
+     * `config.get` truth by [startGatewayStateSync]. On the SSE fallbacks there is
+     * no server-side session personality, so the pick only drives the per-turn
+     * system-prompt injection in [startStream]. Pass "none" (or "default") to
+     * clear the overlay.
+     */
     fun selectPersonality(name: String) {
+        val previous = _selectedPersonality.value
         _selectedPersonality.value = name
         refreshActiveAgentName()
+        if (streamingEndpoint == "gateway") {
+            val gateway = gatewayClient ?: return
+            viewModelScope.launch {
+                gateway.setPersonality(personalityConfigValue(name)).onFailure { e ->
+                    // Server rejected it (e.g. unknown personality) — roll the
+                    // optimistic pick back and surface why. The notice now
+                    // survives the post-turn reconcile (system-notice preserve).
+                    _selectedPersonality.value = previous
+                    refreshActiveAgentName()
+                    chatHandler?.addSystemNotice(
+                        "Couldn't set personality: ${e.message ?: "gateway error"}"
+                    )
+                }
+                // On success the session.info echo + collector confirm the value.
+            }
+        }
+    }
+
+    /** App selection → upstream `config.set` value. default/none/neutral all clear. */
+    private fun personalityConfigValue(name: String): String =
+        if (AgentDisplay.isClearedPersonality(name)) "none" else name.trim().lowercase()
+
+    /**
+     * Mirror the gateway's active personality (`session.info` / `config.get`) into
+     * the picker selection so a change made via `/personality`, the desktop, or
+     * the TUI is reflected — and so the app stops injecting a stale overlay.
+     */
+    private fun applyServerPersonality(value: String) {
+        val mapped = if (AgentDisplay.isClearedPersonality(value)) "none" else value.trim().lowercase()
+        if (_selectedPersonality.value != mapped) {
+            _selectedPersonality.value = mapped
+            refreshActiveAgentName()
+        }
+    }
+
+    private var gatewayStateSyncJob: Job? = null
+
+    /**
+     * Track the active client's `session.info`-derived state (personality +
+     * model + provider) so a change made via `/personality` / `/model`, the
+     * desktop, or the TUI reflects in the app without an app reload. The
+     * collectors only observe flows (never cold-open the socket); the one-shot
+     * seed in [updateGatewayClient] is gated on a ready socket.
+     */
+    private fun startGatewayStateSync(client: GatewayChatClient) {
+        gatewayStateSyncJob?.cancel()
+        gatewayStateSyncJob = viewModelScope.launch {
+            launch {
+                client.serverPersonality.collect { value ->
+                    if (gatewayClient !== client || value == null) return@collect
+                    applyServerPersonality(value)
+                }
+            }
+            launch {
+                client.serverModel.collect { value ->
+                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
+                    if (_gatewayCurrentModel.value != value) _gatewayCurrentModel.value = value
+                }
+            }
+            launch {
+                client.serverProvider.collect { value ->
+                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
+                    if (_gatewayCurrentProvider.value != value) _gatewayCurrentProvider.value = value
+                }
+            }
+        }
     }
 
     /** The display name of the currently active personality (for chat bubbles). */
     val activePersonalityName: String
         get() {
             val selected = _selectedPersonality.value
-            return if (selected == "default") _defaultPersonality.value else selected
+            // "none"/"neutral" are cleared-overlay aliases — fall to the base
+            // identity, not the literal word.
+            return if (AgentDisplay.isClearedPersonality(selected)) _defaultPersonality.value else selected
         }
 
     private val _isLoadingHistory = MutableStateFlow(false)
@@ -945,6 +1092,7 @@ class ChatViewModel : ViewModel() {
                 _steerNotice.value = null
                 _pendingAsk.value = null
                 _contextUsage.value = null
+                _contextWindow.value = null
                 pendingTruncateOrdinal = null
                 chatHandler?.let { handler ->
                     handler.clearMessages()
@@ -996,6 +1144,7 @@ class ChatViewModel : ViewModel() {
         _steerNotice.value = null
         _pendingAsk.value = null
         _contextUsage.value = null
+        _contextWindow.value = null
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
@@ -1041,6 +1190,24 @@ class ChatViewModel : ViewModel() {
             personalityPrompts = config.prompts
             _serverModelName.value = config.modelName
             refreshActiveAgentName(relabelGenericMessages = true)
+        }
+    }
+
+    /**
+     * Re-pull server-supplied personality data — the list + configured default
+     * (`/api/config`) and, on the gateway, the active value (`config.get`). Safe
+     * to call whenever the personality UI becomes visible (agent sheet open) so a
+     * personality added/removed/changed server-side shows up without an app
+     * reload. The active selection also tracks live via `session.info`
+     * ([startGatewayStateSync]); this covers the LIST + cross-session changes.
+     */
+    fun refreshPersonalities() {
+        fetchPersonalities()
+        if (streamingEndpoint == "gateway") {
+            val client = gatewayClient
+            if (client != null && client.connectionState.value == GatewayConnectionState.Ready) {
+                viewModelScope.launch { client.getPersonality() }
+            }
         }
     }
 
@@ -1125,6 +1292,7 @@ class ChatViewModel : ViewModel() {
                         handler.setSessionId(session.id)
                         handler.clearMessages()
                         _contextUsage.value = null
+                        _contextWindow.value = null
                         _pendingAsk.value = null
                         onSessionChanged?.invoke(session.id)
                         AppAnalytics.onSessionCreated()
@@ -1152,6 +1320,7 @@ class ChatViewModel : ViewModel() {
         handler.setSessionId(sessionId)
         handler.clearMessages()
         _contextUsage.value = null
+        _contextWindow.value = null
         _pendingAsk.value = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
@@ -1636,6 +1805,36 @@ class ChatViewModel : ViewModel() {
         val rawName = text.removePrefix("/").substringBefore(' ').trim()
         val normalizedName = normalizeSlashCommandName(rawName) ?: return false
         val handler = chatHandler ?: return true
+
+        // `/personality` is a picker command upstream (model/skin/personality) —
+        // the desktop + TUI never raw-forward it: a bare command opens the picker
+        // and `/personality <name>` applies via config.set. Mirror that here
+        // instead of slash.exec (which on mobile dead-ends and only leaves a
+        // fragile notice). Handled before the gateway-route gate so it also
+        // works on the SSE fallbacks via the per-turn injection path.
+        if (normalizedName == "personality") {
+            val arg = text.substringAfter(' ', "").trim()
+            if (arg.isBlank()) {
+                _openPersonalityPicker.tryEmit(Unit)
+            } else if (AgentDisplay.isClearedPersonality(arg)) {
+                selectPersonality("none")
+                handler.addSystemNotice("Personality cleared — no overlay.")
+            } else {
+                selectPersonality(arg.lowercase())
+                handler.addSystemNotice(
+                    "Personality → ${arg.trim().replaceFirstChar { it.uppercase() }}"
+                )
+            }
+            return true
+        }
+
+        // `/model` is the sibling picker command: a bare `/model` opens the model
+        // picker (like the desktop), while `/model <args>` stays a real switch the
+        // gateway applies via slash.exec below.
+        if (normalizedName == "model" && text.substringAfter(' ', "").isBlank()) {
+            _openModelPicker.tryEmit(Unit)
+            return true
+        }
 
         if (streamingEndpoint != "gateway") {
             handler.addSystemNotice("Slash commands are available when chat is using the Hermes gateway route.")
@@ -2271,6 +2470,11 @@ class ChatViewModel : ViewModel() {
      *
      * **System-message precedence (Pass 3, 2026-04-18):**
      *
+     *  0. **Gateway transport** — the server owns the persona end-to-end: the
+     *     session is bound to the selected profile (SOUL applied server-side) and
+     *     the personality overlay rides `config.set`/`ephemeral_system_prompt`.
+     *     The phone sends NO persona/profile prompt (only the phone-status block)
+     *     so it can't double-apply. Cases 1–3 are the SSE-fallback rules.
      *  1. **Selected profile with a non-blank [Profile.systemMessage]** —
      *     profile wins outright. Profile is a richer, newer concept than
      *     personality: it bundles model + persona (from the profile's
@@ -2310,8 +2514,17 @@ class ChatViewModel : ViewModel() {
             ?.systemMessage
             ?.takeIf { !useIsolatedProfileApi && it.isNotBlank() }
         val personaPrompt: String? = when {
+            // On the gateway the server owns BOTH the profile SOUL (session.create
+            // is bound to the selected profile via sessionProfileProvider, so the
+            // backend builds the agent from its SOUL) AND the personality overlay
+            // (config.set → ephemeral_system_prompt). Re-sending either as a
+            // per-turn system message double-applies it, so send neither — the SSE
+            // fallbacks, which have no server-side profile/personality state, keep
+            // the injection paths below. The phone-status block is still appended.
+            streamingEndpoint == "gateway" -> null
             profileSystemMessage != null -> profileSystemMessage
-            selected != "default" && selected != _defaultPersonality.value ->
+            selected != "default" && !AgentDisplay.isClearedPersonality(selected) &&
+                selected != _defaultPersonality.value ->
                 // Non-default personality selected — send its system prompt
                 // to override the server default.
                 personalityPrompts[selected]
@@ -2495,6 +2708,12 @@ class ChatViewModel : ViewModel() {
                         used != null -> (used.toFloat() / ctxMax).coerceIn(0f, 1f)
                         percent != null -> (percent / 100f).coerceIn(0f, 1f)
                         else -> _contextUsage.value
+                    }
+                    // Keep the absolute token window in lockstep so the bar can
+                    // render `used / max` — only when the server gave a real
+                    // `context_used` (percent-only servers stay token-less).
+                    if (used != null) {
+                        _contextWindow.value = ContextWindowUsage(usedTokens = used, maxTokens = ctxMax)
                     }
                 }
             }
