@@ -88,7 +88,7 @@ import kotlinx.coroutines.launch
 /**
  * Inline rich-card render for a [HermesCard] extracted from an assistant
  * message via the `CARD:{json}` marker pipeline in
- * [com.hermesandroid.relay.network.handlers.ChatHandler].
+ * [com.hermesandroid.relay.network.upstream.ChatHandler].
  *
  * Layout (top → bottom):
  *  - Accent stripe (leading 3dp bar, colored by [HermesCard.accent])

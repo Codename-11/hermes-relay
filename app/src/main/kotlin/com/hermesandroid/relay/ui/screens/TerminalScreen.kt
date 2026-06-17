@@ -52,7 +52,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.ExtraKeysToolbar
 import com.hermesandroid.relay.ui.components.TerminalSearchBar

@@ -62,7 +62,7 @@ import kotlinx.serialization.json.putJsonObject
  * Pure function — does NOT mutate input. Caller
  * ([com.hermesandroid.relay.viewmodel.ChatViewModel.startStream]) is
  * responsible for calling
- * [com.hermesandroid.relay.network.handlers.ChatHandler.markCardDispatchesSynced]
+ * [com.hermesandroid.relay.network.upstream.ChatHandler.markCardDispatchesSynced]
  * after the API client accepts the request. That timing mirrors the
  * voice-intent path exactly — commit-after-handoff so a thrown
  * request-building exception leaves the dispatches unsynced for the

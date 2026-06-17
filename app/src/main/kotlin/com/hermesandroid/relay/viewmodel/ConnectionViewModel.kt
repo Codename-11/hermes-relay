@@ -34,38 +34,38 @@ import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.util.TailscaleDetector
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.ConnectivityObserver
-import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.ConnectionManager
-import com.hermesandroid.relay.network.ConnectionState
-import com.hermesandroid.relay.network.DashboardApiClient
-import com.hermesandroid.relay.network.DashboardChatDisplaySettings
-import com.hermesandroid.relay.network.models.MessageItem
-import com.hermesandroid.relay.network.models.SessionItem
-import com.hermesandroid.relay.network.DashboardAuthSession
-import com.hermesandroid.relay.network.DashboardCookieStore
-import com.hermesandroid.relay.network.DashboardStatus
-import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
-import com.hermesandroid.relay.network.EndpointResolver
-import com.hermesandroid.relay.network.GatewayAvailability
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.shared.ConnectivityObserver
+import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.relay.ConnectionManager
+import com.hermesandroid.relay.network.relay.ConnectionState
+import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardChatDisplaySettings
+import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.DashboardAuthSession
+import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
+import com.hermesandroid.relay.network.shared.EndpointResolver
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
-import com.hermesandroid.relay.network.GatewayChatClient
-import com.hermesandroid.relay.network.GatewayKeepAliveService
-import com.hermesandroid.relay.network.HermesApiClient
-import com.hermesandroid.relay.network.resolveStreamingEndpointPreference
-import com.hermesandroid.relay.network.RouteProbeOutcome
-import com.hermesandroid.relay.network.ProfileApiUrlResolver
-import com.hermesandroid.relay.network.ServerCapabilities
-import com.hermesandroid.relay.network.RelayHttpClient
-import com.hermesandroid.relay.network.RelayUrlDeriver
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.VoiceHandoffEvent
-import com.hermesandroid.relay.network.handlers.ChatHandler
+import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayKeepAliveService
+import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreference
+import com.hermesandroid.relay.network.shared.RouteProbeOutcome
+import com.hermesandroid.relay.network.shared.ProfileApiUrlResolver
+import com.hermesandroid.relay.network.upstream.ServerCapabilities
+import com.hermesandroid.relay.network.relay.RelayHttpClient
+import com.hermesandroid.relay.network.relay.RelayUrlDeriver
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.VoiceHandoffEvent
+import com.hermesandroid.relay.network.upstream.ChatHandler
 // === PHASE3-accessibility: bridge channel wiring ===
 import com.hermesandroid.relay.accessibility.BridgeStatusReporter
 import com.hermesandroid.relay.accessibility.ScreenCapture
-import com.hermesandroid.relay.network.handlers.BridgeCommandHandler
+import com.hermesandroid.relay.network.relay.BridgeCommandHandler
 // === END PHASE3-accessibility ===
 import com.hermesandroid.relay.util.MediaCacheWriter
 import okhttp3.OkHttpClient
@@ -2584,7 +2584,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             com.hermesandroid.relay.bridge.BridgeRunTracker.registerAutoReturnCallback {
                 viewModelScope.launch {
                     runCatching {
-                        val envelope = com.hermesandroid.relay.network.models.Envelope(
+                        val envelope = com.hermesandroid.relay.network.relay.models.Envelope(
                             channel = "bridge",
                             type = "bridge.command",
                             payload = kotlinx.serialization.json.buildJsonObject {
@@ -3471,7 +3471,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             baseUrl = dashboardUrl,
             okHttpClient = DashboardApiClient.defaultClient(
                 cookieStore = activeDashboardCookieStore()
-                    ?: com.hermesandroid.relay.network.InMemoryDashboardCookieStore(),
+                    ?: com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore(),
             ),
         )
         try {
@@ -4095,7 +4095,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             )
 
             val health = client.checkHealthDetailed()
-            if (health is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy) {
+            if (health is com.hermesandroid.relay.network.upstream.HealthCheckResult.Unhealthy) {
                 _apiServerReachable.value = false
                 _apiServerHealth.value = HealthStatus.Unreachable
                 DiagnosticsLog.record(
@@ -4117,7 +4117,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             val sessions = client.checkSessionsAuthDetailed()
-            val reachable = sessions is com.hermesandroid.relay.network.HealthCheckResult.Healthy
+            val reachable = sessions is com.hermesandroid.relay.network.upstream.HealthCheckResult.Healthy
             _apiServerReachable.value = reachable
             _apiServerHealth.value = if (reachable) HealthStatus.Reachable else HealthStatus.Unreachable
             var dashboardSignInRequired = false
@@ -4173,14 +4173,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
             val message = when (sessions) {
-                is com.hermesandroid.relay.network.HealthCheckResult.Healthy -> {
+                is com.hermesandroid.relay.network.upstream.HealthCheckResult.Healthy -> {
                     if (dashboardSignInRequired) {
                         "Connected to Hermes API. Dashboard sign-in required for Manage."
                     } else {
                         "Connected to Hermes API and sessions"
                     }
                 }
-                is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy ->
+                is com.hermesandroid.relay.network.upstream.HealthCheckResult.Unhealthy ->
                     sessions.message
             }
             DiagnosticsLog.record(
@@ -4377,7 +4377,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 url = effectiveApiServerUrlSnapshot(),
             )
             val health = client.checkHealthDetailed()
-            if (health is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy) {
+            if (health is com.hermesandroid.relay.network.upstream.HealthCheckResult.Unhealthy) {
                 _apiServerReachable.value = false
                 _apiServerHealth.value = HealthStatus.Unreachable
                 DiagnosticsLog.record(
@@ -4392,13 +4392,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             val sessions = client.checkSessionsAuthDetailed()
-            val reachable = sessions is com.hermesandroid.relay.network.HealthCheckResult.Healthy
+            val reachable = sessions is com.hermesandroid.relay.network.upstream.HealthCheckResult.Healthy
             _apiServerReachable.value = reachable
             _apiServerHealth.value = if (reachable) HealthStatus.Reachable else HealthStatus.Unreachable
             val message = when (sessions) {
-                is com.hermesandroid.relay.network.HealthCheckResult.Healthy ->
+                is com.hermesandroid.relay.network.upstream.HealthCheckResult.Healthy ->
                     "Connection OK - health and sessions auth passed"
-                is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy ->
+                is com.hermesandroid.relay.network.upstream.HealthCheckResult.Unhealthy ->
                     sessions.message
             }
             DiagnosticsLog.record(

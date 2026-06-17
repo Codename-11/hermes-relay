@@ -8,9 +8,9 @@ import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.TerminalTabNameStore
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.ConnectionState
-import com.hermesandroid.relay.network.models.Envelope
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.relay.ConnectionState
+import com.hermesandroid.relay.network.relay.models.Envelope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow

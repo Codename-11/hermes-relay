@@ -70,8 +70,8 @@ import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
-import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel

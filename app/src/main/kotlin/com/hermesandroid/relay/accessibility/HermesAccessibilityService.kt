@@ -68,7 +68,7 @@ class HermesAccessibilityService : AccessibilityService() {
          * service is not running. Written on [onServiceConnected],
          * cleared on [onUnbind] / [onDestroy].
          *
-         * Read by [com.hermesandroid.relay.network.handlers.BridgeCommandHandler]
+         * Read by [com.hermesandroid.relay.network.relay.BridgeCommandHandler]
          * and by the Bridge UI screen (bridge-ui) to check live status.
          */
         @Volatile

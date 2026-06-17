@@ -136,7 +136,7 @@ jobs:
       - name: Run focused Android unit tests
         run: |
           ./gradlew :app:testSideloadDebugUnitTest \
-            --tests com.hermesandroid.relay.network.RelayUrlDeriverTest \
+            --tests com.hermesandroid.relay.network.relay.RelayUrlDeriverTest \
             --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
             --console=plain
 

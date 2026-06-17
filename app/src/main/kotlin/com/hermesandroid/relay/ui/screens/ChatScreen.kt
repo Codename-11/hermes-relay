@@ -98,11 +98,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
-import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.GatewayAvailability
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.RealtimeVoiceConfig
-import com.hermesandroid.relay.network.VoiceOutputConfig
+import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode

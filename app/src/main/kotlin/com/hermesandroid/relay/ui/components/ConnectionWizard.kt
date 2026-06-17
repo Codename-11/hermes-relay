@@ -88,8 +88,8 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
-import com.hermesandroid.relay.network.HermesLanDiscovery
-import com.hermesandroid.relay.network.HermesLanDiscoveryResult
+import com.hermesandroid.relay.network.shared.HermesLanDiscovery
+import com.hermesandroid.relay.network.shared.HermesLanDiscoveryResult
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import kotlinx.coroutines.TimeoutCancellationException
@@ -2748,7 +2748,7 @@ private fun SoftPill(
  * Reorder the endpoints array so the chosen role lands at priority 0.
  * Priority values are renumbered to match the new order — this matters at
  * persist time because `setDeviceEndpoints` stores the list verbatim and
- * downstream [com.hermesandroid.relay.network.EndpointResolver] trusts the
+ * downstream [com.hermesandroid.relay.network.shared.EndpointResolver] trusts the
  * `priority` field (see ADR 24 "strict priority").
  *
  * No-op when the preferred role is already at index 0, or when the role

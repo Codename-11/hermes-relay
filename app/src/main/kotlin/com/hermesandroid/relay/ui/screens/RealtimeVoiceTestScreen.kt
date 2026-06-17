@@ -57,11 +57,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.audio.RealtimePcmRecorder
-import com.hermesandroid.relay.network.RealtimeAgentSessionControl
-import com.hermesandroid.relay.network.RealtimeVoiceConfig
-import com.hermesandroid.relay.network.RealtimeVoiceEvent
-import com.hermesandroid.relay.network.RealtimeVoiceSummary
-import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.RealtimeAgentSessionControl
+import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
+import com.hermesandroid.relay.network.relay.RealtimeVoiceSummary
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

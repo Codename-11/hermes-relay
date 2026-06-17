@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 /**
  * A rich content card emitted inline in an assistant message via the
  * `CARD:{json}` line marker. Parsed by
- * [com.hermesandroid.relay.network.handlers.ChatHandler] and rendered by
+ * [com.hermesandroid.relay.network.upstream.ChatHandler] and rendered by
  * [com.hermesandroid.relay.ui.components.HermesCardBubble].
  *
  * The marker lives in the text stream alongside `MEDIA:...` for the same
@@ -226,7 +226,7 @@ data class HermesCardAction(
  * (with structured `tool_calls`) + `tool` message pairs under a synthetic
  * `hermes_card_action` tool name, splicing them into the session history
  * the LLM sees. After the API client takes ownership of the request,
- * [com.hermesandroid.relay.network.handlers.ChatHandler.markCardDispatchesSynced]
+ * [com.hermesandroid.relay.network.upstream.ChatHandler.markCardDispatchesSynced]
  * flips [syncedToServer] so subsequent turns don't re-send the same
  * trace.
  */
@@ -238,7 +238,7 @@ data class HermesCardDispatch(
     /**
      * Idempotency guard for the server-side session sync path.
      * Flipped to true by
-     * [com.hermesandroid.relay.network.handlers.ChatHandler.markCardDispatchesSynced]
+     * [com.hermesandroid.relay.network.upstream.ChatHandler.markCardDispatchesSynced]
      * once the API client has accepted the request that carried this
      * dispatch's synthetic message pair. Once true, the dispatch is
      * excluded from future

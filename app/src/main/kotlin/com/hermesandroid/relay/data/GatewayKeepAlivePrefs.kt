@@ -11,7 +11,7 @@ import androidx.datastore.preferences.core.edit
  * Shared by [com.hermesandroid.relay.viewmodel.ConnectionViewModel] (the
  * StateFlow + setter that drive the foreground service and the client's
  * no-background-close flag) and
- * [com.hermesandroid.relay.network.GatewayKeepAliveService]'s Stop notification
+ * [com.hermesandroid.relay.network.upstream.GatewayKeepAliveService]'s Stop notification
  * action, so both read/write the same key.
  */
 val KEY_GATEWAY_KEEP_ALIVE = booleanPreferencesKey("gateway_keep_alive_background")
