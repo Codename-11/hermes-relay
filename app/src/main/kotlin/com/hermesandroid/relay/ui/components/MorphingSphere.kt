@@ -1,12 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -14,8 +9,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -37,8 +36,20 @@ import androidx.compose.ui.unit.dp
  * renderer (Compose Desktop, terminal TUI).
  *
  * This file is the Android/Compose renderer only — it owns animation state
- * (`animateFloatAsState`, `rememberInfiniteTransition`) and text drawing.
+ * (`animateFloatAsState` for state transitions, a throttled per-frame loop for
+ * the continuous drift) and text drawing.
  */
+
+// Continuous-drift speeds, matched to the legacy infinite-transition tweens so
+// the orb moves at exactly the same pace as before:
+//   time:  0..1000 over the old 1_000_000ms loop == 1.0 unit/sec
+//   color: 0..2π   over the old 8_000ms loop      == 0.7854 rad/sec
+private const val SPHERE_TIME_UNITS_PER_SEC = 1f
+private const val SPHERE_TWO_PI = 6.2832f
+private const val SPHERE_COLOR_RADIANS_PER_SEC = 0.7854f
+
+// Idle cadence: this delay plus the next frame wait nets a ~33ms period (~30fps).
+private const val SPHERE_IDLE_FRAME_INTERVAL_MS = 25L
 
 @Composable
 fun MorphingSphere(
@@ -80,28 +91,38 @@ fun MorphingSphere(
     val cg2 by animateFloatAsState(targetC.g2, spec, label = "cg2")
     val cb2 by animateFloatAsState(targetC.b2, spec, label = "cb2")
 
-    val transition = rememberInfiniteTransition(label = "sphere")
-    val animatedTime by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1000f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1_000_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "time"
-    )
-    val animatedColorPhase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.2832f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 8000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "colorPulse"
-    )
+    // Continuous motion is driven by a manual frame loop rather than
+    // rememberInfiniteTransition so the redraw rate can follow the orb's
+    // activity. An infinite transition pins the Canvas at the display refresh
+    // (120Hz) forever — even when Idle — which needlessly drains battery and,
+    // on Android 15, makes the platform log `setRequestedFrameRate` on every
+    // frame. Here we advance every frame while ACTIVE (full-smoothness
+    // thinking/streaming/voice pulse) and throttle to ~30fps while Idle, where
+    // the slower cadence is imperceptible for the chunky ASCII glyphs.
+    // dt-based accumulation keeps the animation speed identical at either rate.
+    val animatedTime = remember { mutableFloatStateOf(0f) }
+    val animatedColorPhase = remember { mutableFloatStateOf(0f) }
+    val driveAnimation = fixedTime == null || fixedColorPhase == null
+    val fullFrameRate = state != SphereState.Idle || voiceMode
+    if (driveAnimation) {
+        LaunchedEffect(fullFrameRate) {
+            var lastNanos = withFrameNanos { it }
+            while (true) {
+                val now = withFrameNanos { it }
+                val dtSec = (now - lastNanos).coerceAtLeast(0L) / 1_000_000_000f
+                lastNanos = now
+                animatedTime.floatValue =
+                    (animatedTime.floatValue + dtSec * SPHERE_TIME_UNITS_PER_SEC) % 1000f
+                animatedColorPhase.floatValue =
+                    (animatedColorPhase.floatValue + dtSec * SPHERE_COLOR_RADIANS_PER_SEC) %
+                    SPHERE_TWO_PI
+                if (!fullFrameRate) delay(SPHERE_IDLE_FRAME_INTERVAL_MS)
+            }
+        }
+    }
 
-    val time = fixedTime ?: animatedTime
-    val colorPhase = fixedColorPhase ?: animatedColorPhase
+    val time = fixedTime ?: animatedTime.floatValue
+    val colorPhase = fixedColorPhase ?: animatedColorPhase.floatValue
 
     val cols = 58
     val rows = 34

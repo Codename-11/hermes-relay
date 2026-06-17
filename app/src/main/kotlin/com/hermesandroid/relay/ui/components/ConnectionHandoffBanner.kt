@@ -1,10 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -392,16 +388,11 @@ fun ConnectionStatusToast(
 
 @Composable
 private fun PulsingSyncIcon(color: androidx.compose.ui.graphics.Color) {
-    val infinite = rememberInfiniteTransition(label = "connection-handoff-pulse")
-    val alpha by infinite.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "connection-handoff-alpha",
-    )
+    // Throttled to ~30fps. Reverse ping-pong over 0.9s each way → a 1.8s linear
+    // phase folded into a 0→1→0 triangle. See [rememberAmbientPhase].
+    val phase = rememberAmbientPhase(periodMillis = 1800)
+    val triangle = 1f - kotlin.math.abs(2f * phase - 1f)
+    val alpha = 0.45f + 0.55f * triangle
     Icon(
         imageVector = Icons.Filled.Sync,
         contentDescription = null,

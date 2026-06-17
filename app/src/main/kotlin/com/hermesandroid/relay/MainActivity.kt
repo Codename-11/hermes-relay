@@ -21,7 +21,6 @@ import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.ui.RelayApp
-import com.hermesandroid.relay.util.ComposeArrWorkaround
 import com.hermesandroid.relay.util.NavRouteRequest
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -117,9 +116,6 @@ class MainActivity : ComponentActivity() {
         // === END PHASE3-safety-rails-followup ===
         setContent {
             RelayApp()
-        }
-        window.decorView.post {
-            ComposeArrWorkaround.disableForViewTree(window.decorView)
         }
     }
 
