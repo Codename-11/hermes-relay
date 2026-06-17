@@ -1099,11 +1099,17 @@ class GatewayChatClient(
                 // yolo / fast: effective booleans (approval bypass + priority tier).
                 (p["yolo"] as? JsonPrimitive)?.booleanOrNull?.let { _serverYolo.value = it }
                 (p["fast"] as? JsonPrimitive)?.booleanOrNull?.let { _serverFast.value = it }
-                // Context-window usage — paints the context bar on resume.
+                // Context-window usage. Require used > 0: on a COLD resume the
+                // agent's token counters + compressor are reset, so _get_usage
+                // reports context_used=0 until the first turn rebuilds the
+                // prompt. Painting that 0 would show a misleading "0%" on a
+                // session that actually has history — so we only adopt a real,
+                // non-zero figure (warm resume, or post-turn echo). Cold resumes
+                // fill on the first exchange via the usage callback.
                 (p["usage"] as? JsonObject)?.let { usage ->
                     val used = (usage["context_used"] as? JsonPrimitive)?.intOrNull
                     val max = (usage["context_max"] as? JsonPrimitive)?.intOrNull
-                    if (used != null && max != null && max > 0) {
+                    if (used != null && used > 0 && max != null && max > 0) {
                         _serverContext.value = used to max
                     }
                 }

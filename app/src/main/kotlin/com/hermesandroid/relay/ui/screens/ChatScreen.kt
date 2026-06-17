@@ -858,24 +858,29 @@ fun ChatScreen(
         }
     }
 
-    // Watch the user's scroll state. Any drag/fling that ends with the list
-    // not at the bottom flips userScrolledAway = true. Returning to the
-    // bottom (manually or via the FAB) resets it to false.
+    // Decide "is the user reading history" from GENUINE scroll gestures only.
+    // A bare isAtBottom flip — the streaming bubble grew and pushed content
+    // below the fold — must NOT count as the user scrolling away. That false
+    // signal was the bounce: it popped the scroll-to-bottom FAB and (worse)
+    // aborted auto-follow even though the user never touched the screen.
+    // Content growth never sets isScrollInProgress, so keying off the scroll's
+    // falling edge ignores it; only a real drag/fling that ENDS above the
+    // bottom flips userScrolledAway. (Programmatic animated scrolls also set
+    // isScrollInProgress, so they're excluded via programmaticBottomScroll.)
     LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress to isAtBottom }
-            .distinctUntilChanged()
-            .collectLatest { (scrolling, atBottom) ->
-                if (programmaticBottomScroll) {
-                    if (atBottom) userScrolledAway = false
-                    return@collectLatest
+        var wasScrolling = false
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (wasScrolling && !scrolling && !programmaticBottomScroll) {
+                    userScrolledAway = !isAtBottom
                 }
-                if (atBottom) {
-                    userScrolledAway = false
-                } else if (!scrolling) {
-                    // Scroll gesture ended above the bottom — user is reading.
-                    userScrolledAway = true
-                }
+                wasScrolling = scrolling
             }
+    }
+    // Reaching the bottom by any means (user, follow-pin, content shrank)
+    // always re-arms auto-follow.
+    LaunchedEffect(isAtBottom) {
+        if (isAtBottom) userScrolledAway = false
     }
 
     // Scroll-to-bottom FAB visibility. The button means "you've scrolled up —
@@ -1119,12 +1124,24 @@ fun ChatScreen(
                 val isSameTurnGrowth = prev != null
                     && snapshot.messageCount == prev.messageCount
 
-                // scrollOffset = Int.MAX_VALUE → Compose clamps to the
-                // deepest valid offset. The helper waits for LazyColumn
-                // layout and retries across a few frames so a history load
-                // or late markdown/code-block measurement cannot leave us
-                // anchored above the real bottom.
-                scrollConversationToBottom(animated = !(isListRebuild || isSameTurnGrowth))
+                if (isSameTurnGrowth) {
+                    // Tail-follow: a single atomic pin to the clamped bottom.
+                    // The helper's multi-frame settle loop gets cancelled by
+                    // collectLatest on the very next token (streaming arrives
+                    // ~every frame), stranding the viewport mid-settle → the
+                    // bounce. One withFrameNanos to let the grown content lay
+                    // out, then one scrollToItem — instant and cancellation-safe.
+                    withFrameNanos { }
+                    val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                    if (lastIndex >= 0) listState.scrollToItem(lastIndex, Int.MAX_VALUE)
+                } else {
+                    // Discrete events (new bubble, list rebuild, history load):
+                    // scrollOffset = Int.MAX_VALUE clamps to the deepest offset;
+                    // the helper retries across frames so late markdown/code
+                    // measurement can't leave us anchored above the real bottom.
+                    // Instant for a rebuild (avoids fighting animateItem()).
+                    scrollConversationToBottom(animated = !isListRebuild)
+                }
             }
     }
 
