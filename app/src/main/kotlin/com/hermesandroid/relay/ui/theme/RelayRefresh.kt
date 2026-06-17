@@ -33,7 +33,11 @@ object RelayRefresh {
     val Navy3 = Color(0xFF22243C)
     val Relay = Color(0xFFAEBFFF)
     val Purple = Color(0xFF8C5CFF)
-    val Electric = Color(0xFF111DFF)
+    // Brand blue. Deepened from the original neon 0xFF111DFF (2026-06-16
+    // feedback: the default blue read too bright next to the calmer tab
+    // chrome) to a richer cobalt that sits closer to the chat/manage/bridge
+    // mode-strip accent.
+    val Electric = Color(0xFF0E18D6)
 
     /**
      * Softened Electric for large filled surfaces (e.g. the active

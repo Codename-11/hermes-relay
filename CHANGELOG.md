@@ -15,12 +15,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Release names normalized by surface.** Future GitHub Releases are named `Hermes-Relay-Android`, `Hermes-Relay-Plugin`, and `Hermes-Relay-CLI`, with future tags on `android-v*`, `plugin-v*`, and `cli-v*`. The CLI installer and updater still understand historical `desktop-v*` prereleases during the migration.
 - **Per-surface release notes.** Plugin and CLI GitHub Releases now use hand-written `PLUGIN_RELEASE_NOTES.md` / `CLI_RELEASE_NOTES.md` files (Summary + Added/Changed/Fixed + Install/Verify) — the same format as Android's `RELEASE_NOTES.md` — instead of static boilerplate baked into the workflow. The release workflows substitute the version into the install commands automatically.
+- **Settings screen overhaul (Android).** Status pills are now exception-only — they appear only when a surface needs attention and stay quiet when healthy. The Power tools section shows a single state-aware **Plugin active / required / offline** badge instead of an identical "Relay paired" chip on every card. Connections moved to the top (above the Hermes section), Diagnostics + Developer options moved into the App section, the status chips were restyled to match the app's translucent-bordered language, and the brand blue was deepened.
 
 ### Fixed
 
 - **Force-close on connect when the stored credential keyset was corrupt.** A corrupt encrypted token store (which can happen after an app upgrade or device restore) threw during construction and crashed the app right after a successful pair, on both standard and relay connections. The token store now heals a corrupt keyset on the spot, and credential storage degrades to a re-pair instead of crashing if the device keystore is unusable.
 - **Dashboard plugin: unreadable button labels.** Solid buttons in the relay dashboard panel inherited the container text colour, which matched their background. Solid button variants now keep their proper contrast colour.
 - **Installer failed on uv-managed Hermes hosts.** `install.sh` assumed `pip` lived in the hermes-agent virtualenv, but environments created by `uv` (the upstream default) ship no `pip` module, so the editable install aborted at step 2. The installer now bootstraps `pip` via `ensurepip`, or falls back to `uv pip`, so the plugin installs cleanly on uv-managed cores.
+- **Chat settings (Android).** The streaming-endpoint picker no longer wraps "Gateway"/"Sessions" onto a second line, and the system-prompt preview now reflects the enabled context toggles (foreground app, battery, safety rails) with representative placeholder values instead of looking inert.
+- **Dashboard plugin: buttons rendered as blank boxes.** The host dashboard's Nous design-system `Button`/`Badge` use boolean variant flags (`outlined`/`ghost`/`invert`) and a `tone` prop — not the shadcn-style `variant` prop the plugin passed — so every button collapsed to a solid near-white fill with an invisible label. The plugin now translates its props to the design-system contract via an adapter, and drops a label-hiding CSS reset.
 
 ## [1.0.0] - 2026-06-14
 
