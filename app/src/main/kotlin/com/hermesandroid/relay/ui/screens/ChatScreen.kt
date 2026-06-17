@@ -1672,7 +1672,15 @@ fun ChatScreen(
                                     ) {
                                         suggestions.forEach { suggestion ->
                                             AssistChip(
-                                                onClick = { inputText = suggestion },
+                                                onClick = {
+                                                    // Send on tap — a casual user expects a
+                                                    // suggestion to start the conversation, not
+                                                    // prefill the composer for a second tap.
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    chatViewModel.sendMessage(suggestion)
+                                                    inputText = ""
+                                                    finishSuccessfulSend()
+                                                },
                                                 label = {
                                                     Text(
                                                         text = suggestion,
@@ -2256,7 +2264,19 @@ fun ChatScreen(
                         ).show()
                     }
                 },
-                onStop = { chatViewModel.cancelStream() },
+                onStop = {
+                    chatViewModel.cancelStream()
+                    // Acknowledge the cancel — a long tool run can keep its
+                    // spinner for a beat after the tap, so a momentary "Stopped"
+                    // confirms the tap landed.
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Stopped",
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                },
                 onAttach = { filePickerLauncher.launch(arrayOf("*/*")) },
                 onLongPressAttach = { showCommandPalette = true },
                 charLimit = charLimit,

@@ -47,8 +47,8 @@ import androidx.compose.ui.unit.dp
  *
  * Shows the agent's exact requested action + the flagged verb so the
  * user isn't guessing what they're allowing. Two buttons:
- *  - Deny (primary-tonal, safe default) — caller maps to false
- *  - Allow (tonal with a warning tint) — caller maps to true
+ *  - Deny (filled primary, the dominant safe default) — caller maps to false
+ *  - Allow (low-emphasis amber outline) — caller maps to true
  *
  * Kept UI-layer stateless: both `onAllow` and `onDeny` return directly.
  * The callers in [BridgeStatusOverlay] update the overlay registry and
@@ -178,24 +178,25 @@ fun DestructiveVerbConfirmDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    OutlinedButton(
+                    // Deny is the dominant, safe default. Denying never writes
+                    // trust — even if the user ticked the checkbox first.
+                    Button(
                         modifier = Modifier.weight(1f),
-                        // Deny never writes trust — denying a command isn't
-                        // consent to anything, even if the user happened to
-                        // tick the checkbox before changing their mind.
                         onClick = onDeny,
                     ) {
                         Text("Deny")
                     }
-                    Button(
+                    // Allow is intentionally lower-emphasis (amber caution, not a
+                    // loud red CTA) so proceeding with a risky action never reads
+                    // as the default tap. Weight comes from the wording.
+                    OutlinedButton(
                         modifier = Modifier.weight(1f),
                         onClick = { onAllow(trustVerb && canTrust) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFE53935),
-                            contentColor = Color.White,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = Color(0xFFE65100),
                         ),
                     ) {
-                        Text("Allow")
+                        Text("Allow this action")
                     }
                 }
             }

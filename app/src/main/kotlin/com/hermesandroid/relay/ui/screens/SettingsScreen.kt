@@ -210,6 +210,10 @@ fun SettingsScreen(
             label = "Relay stale",
             tone = SettingsStatusTone.Warning,
         )
+        RelayUiState.Expired -> SettingsStatusPillModel(
+            label = "Pairing expired",
+            tone = SettingsStatusTone.Warning,
+        )
         RelayUiState.Disconnected -> SettingsStatusPillModel(
             label = if (relayPaired) "Relay offline" else "Requires pairing",
             tone = SettingsStatusTone.Warning,
