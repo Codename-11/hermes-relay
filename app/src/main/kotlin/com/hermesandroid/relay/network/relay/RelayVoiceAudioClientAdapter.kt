@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.network.relay
 
+import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.network.shared.VoiceAudioClient
 import java.io.File
@@ -11,6 +12,7 @@ import java.io.File
  */
 class RelayVoiceAudioClientAdapter(
     private val relayVoiceClient: RelayVoiceClient,
+    private val enhancedOverridesProvider: () -> EnhancedVoiceOverrides? = { null },
 ) : VoiceAudioClient {
     override val route: VoiceAudioRoute = VoiceAudioRoute.Relay
 
@@ -18,5 +20,5 @@ class RelayVoiceAudioClientAdapter(
         relayVoiceClient.transcribe(audioFile)
 
     override suspend fun synthesize(text: String): Result<File> =
-        relayVoiceClient.synthesize(text)
+        relayVoiceClient.synthesize(text, enhancedOverridesProvider())
 }

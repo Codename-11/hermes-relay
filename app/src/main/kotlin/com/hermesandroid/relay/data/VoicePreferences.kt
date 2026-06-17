@@ -37,7 +37,59 @@ data class VoiceSettings(
      * docs/plans/2026-05-24-realtime-persistent-session.md.
      */
     val realtimePersistentSession: Boolean = true,
+    /**
+     * Enhanced-voice overrides for the relay TTS path, mapped onto the active
+     * provider (Gemini / xAI). Empty string / false means "use the server's
+     * saved config" — the relay only applies a field when it is set. Surfaced
+     * in Voice Settings only when the relay advertises an enhanced provider
+     * (`/voice/config` `tts.enhanced.supported`). Field meaning is generic:
+     * `enhancedVoice` → Gemini voice / xAI voice_id; `enhancedAudioTags` →
+     * Gemini audio_tags / xAI auto_speech_tags; `enhancedPersona` is Gemini-only
+     * and `enhancedLanguage` is xAI-only.
+     */
+    val enhancedVoice: String = "",
+    val enhancedModel: String = "",
+    val enhancedAudioTags: Boolean = false,
+    val enhancedPersona: String = "",
+    val enhancedLanguage: String = "",
 )
+
+/**
+ * Per-request enhanced-voice overrides forwarded to the relay's
+ * `/voice/synthesize`. Mirrors the generic fields recognized by
+ * `plugin/relay/voice.py:_extract_voice_overrides`; the relay maps them onto
+ * the active provider's config.
+ */
+data class EnhancedVoiceOverrides(
+    val voice: String? = null,
+    val model: String? = null,
+    val audioTags: Boolean? = null,
+    val personaPrompt: String? = null,
+    val language: String? = null,
+) {
+    val isEmpty: Boolean
+        get() = voice == null && model == null && audioTags == null &&
+            personaPrompt == null && language == null
+
+    companion object {
+        /**
+         * Build overrides from persisted settings, or null when nothing is set
+         * (so the relay falls back to the server's saved config). The audio-tags
+         * toggle only sends `true` — leaving it off defers to the server default
+         * rather than forcing it off.
+         */
+        fun fromSettings(s: VoiceSettings): EnhancedVoiceOverrides? {
+            val overrides = EnhancedVoiceOverrides(
+                voice = s.enhancedVoice.takeIf { it.isNotBlank() },
+                model = s.enhancedModel.takeIf { it.isNotBlank() },
+                audioTags = true.takeIf { s.enhancedAudioTags },
+                personaPrompt = s.enhancedPersona.takeIf { it.isNotBlank() },
+                language = s.enhancedLanguage.takeIf { it.isNotBlank() },
+            )
+            return overrides.takeUnless { it.isEmpty }
+        }
+    }
+}
 
 enum class VoiceEngineMode(val storageValue: String) {
     HermesVoiceOutput("hermes_voice_output"),
@@ -74,6 +126,11 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         private val KEY_REALTIME_TRACE_DETAILS = booleanPreferencesKey("voice_realtime_trace_details")
         private val KEY_REALTIME_PERSISTENT_SESSION =
             booleanPreferencesKey("voice_realtime_persistent_session")
+        private val KEY_ENH_VOICE = stringPreferencesKey("voice_enh_voice")
+        private val KEY_ENH_MODEL = stringPreferencesKey("voice_enh_model")
+        private val KEY_ENH_AUDIO_TAGS = booleanPreferencesKey("voice_enh_audio_tags")
+        private val KEY_ENH_PERSONA = stringPreferencesKey("voice_enh_persona")
+        private val KEY_ENH_LANGUAGE = stringPreferencesKey("voice_enh_language")
 
         const val DEFAULT_ENGINE_MODE = "hermes_voice_output"
         const val DEFAULT_AUDIO_ROUTE = "auto"
@@ -102,6 +159,11 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
                     ?: DEFAULT_REALTIME_TRACE_DETAILS,
                 realtimePersistentSession = prefs[KEY_REALTIME_PERSISTENT_SESSION]
                     ?: DEFAULT_REALTIME_PERSISTENT_SESSION,
+                enhancedVoice = prefs[KEY_ENH_VOICE] ?: "",
+                enhancedModel = prefs[KEY_ENH_MODEL] ?: "",
+                enhancedAudioTags = prefs[KEY_ENH_AUDIO_TAGS] ?: false,
+                enhancedPersona = prefs[KEY_ENH_PERSONA] ?: "",
+                enhancedLanguage = prefs[KEY_ENH_LANGUAGE] ?: "",
             )
         }
         .distinctUntilChanged()
@@ -136,5 +198,29 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setRealtimePersistentSession(enabled: Boolean) {
         dataStore.edit { it[KEY_REALTIME_PERSISTENT_SESSION] = enabled }
+    }
+
+    /** "" clears the override (relay falls back to the server's saved voice). */
+    suspend fun setEnhancedVoice(voice: String) {
+        dataStore.edit { it[KEY_ENH_VOICE] = voice.trim() }
+    }
+
+    /** "" clears the override (relay falls back to the server's saved model). */
+    suspend fun setEnhancedModel(model: String) {
+        dataStore.edit { it[KEY_ENH_MODEL] = model.trim() }
+    }
+
+    suspend fun setEnhancedAudioTags(enabled: Boolean) {
+        dataStore.edit { it[KEY_ENH_AUDIO_TAGS] = enabled }
+    }
+
+    /** "" clears the inline persona/style direction (Gemini). */
+    suspend fun setEnhancedPersona(persona: String) {
+        dataStore.edit { it[KEY_ENH_PERSONA] = persona }
+    }
+
+    /** "" clears the language override (xAI). */
+    suspend fun setEnhancedLanguage(language: String) {
+        dataStore.edit { it[KEY_ENH_LANGUAGE] = language.trim() }
     }
 }

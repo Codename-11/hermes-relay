@@ -291,7 +291,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 "- Active route: Android mic -> selected Hermes STT route -> " +
                 "normal Hermes chat stream -> selected Hermes TTS route playback.\n" +
                 "- This is not Realtime Agent mode. If the user asks which " +
-                "interface, path, or mode is active, answer from this context."
+                "interface, path, or mode is active, answer from this context.\n" +
+                "- Your reply will be spoken aloud by text-to-speech, so format " +
+                "for the ear, not the eye: write short, conversational sentences; " +
+                "avoid markdown (headings, bullet lists, tables, code blocks), " +
+                "emoji, and raw URLs; describe structure in prose instead of " +
+                "lists; and keep answers concise unless the user asks for detail."
 
         /**
          * Idle interval after which the chunker will force-flush whatever
@@ -2929,13 +2934,33 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         if (voiceOutputAvailable == null) {
             val config = client.getVoiceOutputConfig()
-            voiceOutputAvailable = config.getOrNull()?.enabled == true
+            val cfg = config.getOrNull()
+            voiceOutputAvailable = cfg?.enabled == true
             if (voiceOutputAvailable != true) {
                 Log.i(TAG, "Voice output unavailable; using basic /voice/synthesize fallback")
+                // Surface the active render path for troubleshooting — otherwise
+                // the streaming-vs-synthesize choice is invisible (e.g. why the
+                // streaming "Expressive speech tags" toggle has no effect here).
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Voice,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Voice render path: basic synthesize",
+                    detail = "Streaming /voice/output is disabled or unavailable — rendering via " +
+                        "the /voice/synthesize fallback. Per-request enhanced voice applies here; " +
+                        "the streaming renderer's speech-tags setting does not.",
+                )
                 pendingInTtsQueue.decrementAndGet()
                 enqueueSentenceForLegacyTts(sentence)
                 return
             }
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Voice,
+                severity = DiagnosticSeverity.Info,
+                title = "Voice render path: streaming output",
+                detail = "Streaming /voice/output renderer active" +
+                    (cfg?.default_provider?.takeIf { it.isNotBlank() }?.let { " (provider $it)" }.orEmpty()) +
+                    (if (cfg?.auto_speech_tags == true) "; expressive speech tags on" else "") + ".",
+            )
         }
 
         val audioSeen = AtomicBoolean(false)

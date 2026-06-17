@@ -796,6 +796,54 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
         finally:
             await ws.close()
 
+    async def test_non_native_loop_accepts_control_and_ack_messages(self) -> None:
+        """Regression + contract for the non-native (render-after-Hermes) loop.
+
+        playback.drained is sent at the end of every turn; the non-native loop
+        previously lacked that branch, so the ack fell through to the
+        unsupported-message error. The client treats voice.error as fatal, so a
+        normal end-of-turn tore the session down whenever a non-native provider
+        was configured. These messages now route through the shared
+        ``_handle_common_client_message`` dispatcher used by both loops, so the
+        native and non-native paths can no longer drift on them.
+        """
+        token = await self._make_session()
+        self._server().realtime_agent.hermes = FakeHermesToolBroker()
+        resp = await self.client.post(
+            "/voice/realtime-agent/session",
+            json={"provider": "stub", "model": "local-tone", "voice": "sine"},
+            headers=self._bearer(token),
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+
+        ws = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        try:
+            ready = await self._next_ws_event(ws)
+            self.assertEqual(ready["type"], "voice.session.ready")
+
+            # Acks that produce no reply on the non-native path. Before the fix,
+            # playback.drained and input_audio.clear hit the else→voice.error
+            # branch instead of being accepted.
+            await ws.send_json({"type": "playback.drained", "call_id": "call-1"})
+            await ws.send_json({"type": "input_audio.clear"})
+            await ws.send_json({"type": "client.ack", "event_id": ready["event_id"]})
+
+            # hermes.confirm has a deterministic reply. If any ack above had
+            # errored, voice.error would arrive before the forwarded event.
+            await ws.send_json(
+                {"type": "hermes.confirm", "confirmation_id": "conf-1", "answer": "yes"}
+            )
+            event = await self._next_ws_event(ws)
+            self.assertEqual(event["type"], "hermes.confirmation.forwarded")
+            self.assertEqual(event["confirmation_id"], "conf-1")
+            self.assertEqual(event["answer"], "yes")
+        finally:
+            await ws.close()
+
     async def test_provider_native_xai_streams_audio_without_client_transcript(self) -> None:
         token = await self._make_session()
         fake_provider = FakeNativeProvider()

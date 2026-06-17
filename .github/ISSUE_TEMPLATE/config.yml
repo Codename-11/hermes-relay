@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security guidance
+    url: https://github.com/Codename-11/hermes-relay/blob/main/docs/security.md
+    about: Review the security model before posting sensitive vulnerability details publicly.
+  - name: User documentation
+    url: https://codename-11.github.io/hermes-relay/
+    about: Read setup, pairing, remote access, and troubleshooting docs.
+  - name: Contributing guide
+    url: https://github.com/Codename-11/hermes-relay/blob/main/CONTRIBUTING.md
+    about: Review local setup, branch, commit, changelog, and test conventions.

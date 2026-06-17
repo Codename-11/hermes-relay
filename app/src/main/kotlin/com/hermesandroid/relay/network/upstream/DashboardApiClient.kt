@@ -520,15 +520,23 @@ class DashboardApiClient(
      * an auth-gated 401/403 also proves the route is registered.
      */
     suspend fun audioRoutesPresent(): Boolean = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("$baseUrl/api/audio/transcribe")
-            .head()
-            .build()
-        try {
-            okHttpClient.newCall(request).execute().use { it.code != 404 }
-        } catch (_: Exception) {
-            false
+        // Route exists if HEAD returns anything but a clean 404:
+        //  - 405 Method Not Allowed: path registered, POST-only (FastAPI/Starlette)
+        //  - 401/403: registered but auth-gated
+        //  - 2xx: handled
+        // A reverse proxy fronting the dashboard can rewrite a 405 into a 404,
+        // which would read as absent. To cut that false-negative, probe BOTH
+        // audio routes and treat the surface as present if EITHER answers
+        // non-404 (they ship together upstream, so one reachable implies both).
+        fun probe(path: String): Boolean {
+            val request = Request.Builder().url("$baseUrl$path").head().build()
+            return try {
+                okHttpClient.newCall(request).execute().use { it.code != 404 }
+            } catch (_: Exception) {
+                false
+            }
         }
+        probe("/api/audio/transcribe") || probe("/api/audio/speak")
     }
 
     suspend fun requestWsTicket(): Result<DashboardWsTicket> = withContext(Dispatchers.IO) {
