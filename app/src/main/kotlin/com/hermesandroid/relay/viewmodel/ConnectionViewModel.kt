@@ -46,14 +46,12 @@ import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
-import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayKeepAliveService
 import com.hermesandroid.relay.network.upstream.HermesApiClient
-import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreference
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.network.shared.ProfileApiUrlResolver
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
@@ -69,6 +67,7 @@ import com.hermesandroid.relay.network.relay.BridgeCommandHandler
 // === END PHASE3-accessibility ===
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.viewmodel.connection.PairingController
+import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -376,6 +375,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         relayHttpClient = relayHttpClient,
     )
 
+    // Upstream dashboard/gateway transport collaborator — owns the per-connection
+    // dashboard cookie stores, the consolidated DashboardApiClient factory, the
+    // cached GatewayChatClient + its availability tier, and the capability-driven
+    // streaming-endpoint resolution. The providers read live ViewModel state
+    // lazily so resolution follows the active LAN/Tailscale route.
+    private val upstreamTransport = UpstreamTransportController(
+        context = application,
+        activeConnectionIdProvider = { connectionStore.activeConnectionId.value },
+        dashboardUrlProvider = { activeDashboardUrl() },
+        gatewayKeepAliveProvider = { gatewayKeepAlive.value },
+    )
+
     // --- Relay connection state ---
     val relayConnectionState: StateFlow<ConnectionState> = connectionManager.connectionState
 
@@ -557,15 +568,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private var profileChatApiClientUrl: String? = null
     private var profileChatApiClientKey: String? = null
 
-    private val _chatMode = MutableStateFlow(ChatMode.DISCONNECTED)
-    val chatMode: StateFlow<ChatMode> = _chatMode.asStateFlow()
+    // Chat mode + per-endpoint capability snapshot — owned by
+    // [upstreamTransport]; getters delegate. `rebuildApiClient()` pushes the
+    // freshly-probed snapshot via `setCapabilitiesAndMode`.
+    val chatMode: StateFlow<ChatMode> get() = upstreamTransport.chatMode
 
-    // Per-endpoint capability snapshot from the most recent probe. Used by
-    // ChatViewModel to resolve `streamingEndpoint = "auto"` to a concrete
-    // sessions/runs choice without round-tripping to the network on every
-    // send. Refreshed inside `rebuildApiClient()`.
-    private val _serverCapabilities = MutableStateFlow(ServerCapabilities.DISCONNECTED)
-    val serverCapabilities: StateFlow<ServerCapabilities> = _serverCapabilities.asStateFlow()
+    val serverCapabilities: StateFlow<ServerCapabilities> get() = upstreamTransport.serverCapabilities
 
     /**
      * Standard (no-plugin) voice rides the upstream **dashboard web server**
@@ -592,85 +600,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * absence is only discovered (and made sticky) at WS-upgrade time via
      * [markGatewayUnsupported].
      */
-    private val _gatewayAvailability = MutableStateFlow(GatewayAvailability.Unknown)
-    val gatewayAvailability: StateFlow<GatewayAvailability> = _gatewayAvailability.asStateFlow()
+    // Gateway availability + cached gateway client + per-connection dashboard
+    // cookie stores are owned by [upstreamTransport]; these getters/functions
+    // preserve the public surface and the private-call sites unchanged.
+    val gatewayAvailability: StateFlow<GatewayAvailability> get() = upstreamTransport.gatewayAvailability
 
-    /**
-     * Sticky downgrade fired by [GatewayChatClient] when the WS upgrade is
-     * rejected outright (404/403 — dashboard build without `/api/ws`). Stops
-     * auto-resolution from re-picking gateway until a connection switch
-     * resets it.
-     */
-    fun markGatewayUnsupported() {
-        _gatewayAvailability.value = GatewayAvailability.Unsupported
-    }
+    fun markGatewayUnsupported() = upstreamTransport.markGatewayUnsupported()
 
-    /** Probe-driven update that respects the sticky [markGatewayUnsupported] verdict. */
-    private fun updateGatewayAvailability(probed: GatewayAvailability) {
-        val current = _gatewayAvailability.value
-        if (current == GatewayAvailability.Unsupported && probed == GatewayAvailability.Ready) return
-        _gatewayAvailability.value = probed
-    }
+    private fun updateGatewayAvailability(probed: GatewayAvailability) =
+        upstreamTransport.updateGatewayAvailability(probed)
 
-    /** Cached gateway client, keyed by connection + resolved dashboard URL. */
-    private var gatewayClientCache: Triple<String, String, GatewayChatClient>? = null
-
-    /**
-     * Gateway chat client for the active connection — built lazily, rebuilt
-     * when the connection or its resolved dashboard URL changes (LAN ↔
-     * Tailscale handoff), sharing the Manage tab's encrypted cookie store so
-     * a dashboard sign-in there authenticates chat here.
-     */
-    @Synchronized
-    fun activeGatewayChatClient(): GatewayChatClient? {
-        val connectionId = connectionStore.activeConnectionId.value ?: return null
-        val dashboardUrl = activeDashboardUrl() ?: return null
-        gatewayClientCache?.let { (cachedConnection, cachedUrl, client) ->
-            if (cachedConnection == connectionId && cachedUrl == dashboardUrl) return client
-            // Same connection, the resolved dashboard URL moved (a LAN⇄Tailscale
-            // route change) WHILE a turn is in flight: RETARGET the live client
-            // to the new route so the turn FOLLOWS it (reconnect + keep the live
-            // session id — the session is server-side and the same shared
-            // gateway sits behind both routes), instead of tearing the client
-            // down (which would call activeTurn.cancel()) or stranding the turn
-            // on the dead route until the watchdog.
-            if (cachedConnection == connectionId && client.hasActiveTurn()) {
-                android.util.Log.i(
-                    "ConnectionViewModel",
-                    "gateway route changed mid-turn — retargeting active client to follow the route",
-                )
-                client.retarget(
-                    DashboardApiClient(
-                        baseUrl = dashboardUrl,
-                        okHttpClient = DashboardApiClient.defaultClient(
-                            cookieStore = dashboardCookieStoreFor(connectionId),
-                        ),
-                    ),
-                )
-                gatewayClientCache = Triple(connectionId, dashboardUrl, client)
-                return client
-            }
-        }
-        gatewayClientCache?.third?.shutdown()
-        val client = GatewayChatClient(
-            initialDashboardClient = DashboardApiClient(
-                baseUrl = dashboardUrl,
-                okHttpClient = DashboardApiClient.defaultClient(
-                    cookieStore = dashboardCookieStoreFor(connectionId),
-                ),
-            ),
-            onGatewayUnsupported = { markGatewayUnsupported() },
-        )
-        // Carry the current keep-alive preference onto the fresh client so a
-        // connection/route switch doesn't lose the no-background-close flag.
-        client.setKeepAliveInBackground(gatewayKeepAlive.value)
-        gatewayClientCache = Triple(connectionId, dashboardUrl, client)
-        return client
-    }
-
-    /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
-    private val dashboardCookieStores =
-        java.util.concurrent.ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+    fun activeGatewayChatClient(): GatewayChatClient? = upstreamTransport.activeGatewayChatClient()
 
     /**
      * Dashboard URL for the active connection **on the currently-resolved
@@ -694,22 +634,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * multi-second lock holds instead of one.
      */
     fun dashboardCookieStoreFor(connectionId: String): DashboardCookieStore =
-        dashboardCookieStores.getOrPut(connectionId) {
-            EncryptedDashboardCookieStore(
-                context = getApplication(),
-                connectionId = connectionId,
-            )
-        }
+        upstreamTransport.dashboardCookieStoreFor(connectionId)
 
     /**
      * Cookie store for the active connection — the same encrypted store the
      * Manage tab's sign-in flow writes, so a dashboard session established
      * there authenticates voice (and any other dashboard-surface client).
      */
-    fun activeDashboardCookieStore(): DashboardCookieStore? {
-        val connectionId = connectionStore.activeConnectionId.value ?: return null
-        return dashboardCookieStoreFor(connectionId)
-    }
+    fun activeDashboardCookieStore(): DashboardCookieStore? =
+        upstreamTransport.activeDashboardCookieStore()
 
     // Chat is ready when a chat-routed API client exists and the base server is reachable.
     val chatReady: StateFlow<Boolean> = combine(_chatApiClient, _apiServerReachable) { client, reachable ->
@@ -1018,14 +951,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val connectionId = connectionStore.activeConnectionId.value ?: return
         val dashboardUrl = activeDashboardUrl() ?: return
         viewModelScope.launch {
-            DashboardApiClient(
-                baseUrl = dashboardUrl,
-                okHttpClient = DashboardApiClient.defaultClient(
-                    cookieStore = dashboardCookieStoreFor(connectionId),
-                ),
-            ).listProfiles().onSuccess { profiles ->
-                _dashboardProfiles.value = profiles
-            }
+            upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
+                .listProfiles().onSuccess { profiles ->
+                    _dashboardProfiles.value = profiles
+                }
         }
     }
 
@@ -1046,12 +975,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val connectionId = connectionStore.activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrl() ?: return null
         val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
-        return DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = dashboardCookieStoreFor(connectionId),
-            ),
-        ).listSessions(profile = profileName, limit = limit)
+        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
+            .listSessions(profile = profileName, limit = limit)
     }
 
     /**
@@ -1066,12 +991,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val connectionId = connectionStore.activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrl() ?: return null
         val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
-        return DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = dashboardCookieStoreFor(connectionId),
-            ),
-        ).getSessionMessages(sessionId, profileName)
+        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
+            .getSessionMessages(sessionId, profileName)
     }
 
     /**
@@ -1200,7 +1121,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private fun activeSessionTransport(): SessionTransport? {
         val preference = streamingEndpoint.value
         if (preference != "auto") return SessionTransport.forEndpoint(preference)
-        return when (_gatewayAvailability.value) {
+        return when (upstreamTransport.gatewayAvailability.value) {
             GatewayAvailability.Ready -> SessionTransport.GATEWAY
             GatewayAvailability.Unknown -> null
             else -> SessionTransport.SSE
@@ -1467,7 +1388,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // BridgeViewModel's masterToggle → BridgeForegroundService driver.
         viewModelScope.launch {
             gatewayKeepAlive.collect { enabled ->
-                gatewayClientCache?.third?.setKeepAliveInBackground(enabled)
+                upstreamTransport.applyGatewayKeepAlive(enabled)
                 val ctx = getApplication<Application>()
                 if (enabled) runCatching { GatewayKeepAliveService.start(ctx) }
                 else runCatching { GatewayKeepAliveService.stop(ctx) }
@@ -1484,18 +1405,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
      */
     fun resolveStreamingEndpoint(preference: String): String =
-        resolveStreamingEndpointPreference(
-            preference = preference,
-            gateway = _gatewayAvailability.value,
-            capabilities = _serverCapabilities.value,
-        )
+        upstreamTransport.resolveStreamingEndpoint(preference)
 
     /**
      * Capability-resolved SSE endpoint, ignoring the gateway tier — wired to
      * [ChatViewModel.sseFallbackEndpoint] for per-turn gateway fallbacks.
      */
-    fun resolveSseStreamingEndpoint(): String =
-        _serverCapabilities.value.preferredChatEndpoint()
+    fun resolveSseStreamingEndpoint(): String = upstreamTransport.resolveSseStreamingEndpoint()
 
     // Parse tool annotations from text markers toggle
     val parseToolAnnotations: StateFlow<Boolean> = application.relayDataStore.data
@@ -3296,11 +3212,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // Gateway state is per-connection: drop the sticky
                 // Unsupported verdict and tear down the old socket so the
                 // next probe/send evaluates the new connection fresh.
-                _gatewayAvailability.value = GatewayAvailability.Unknown
-                synchronized(this@ConnectionViewModel) {
-                    gatewayClientCache?.third?.shutdown()
-                    gatewayClientCache = null
-                }
+                upstreamTransport.resetGatewayForConnectionSwitch()
             }
         }
 
@@ -3361,7 +3273,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // nothing has been restored or started yet, so we never yank a session
         // the user is already in.
         viewModelScope.launch {
-            _gatewayAvailability.collect { availability ->
+            upstreamTransport.gatewayAvailability.collect { availability ->
                 if (availability == GatewayAvailability.Unknown) return@collect
                 if (_lastSessionId.value != null) return@collect
                 val connectionId = activeConnectionId.value ?: return@collect
@@ -3473,13 +3385,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             updateGatewayAvailability(GatewayAvailability.Unknown)
             return
         }
-        val client = DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = activeDashboardCookieStore()
-                    ?: com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore(),
-            ),
-        )
+        val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
         try {
             val status = client.getStatus().getOrNull()
             if (status == null) {
@@ -4139,12 +4045,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         ?.takeIf { it.isNotBlank() }
                 }
                 if (connectionId != null && dashboardUrlForProbe != null) {
-                    val dashboardClient = DashboardApiClient(
-                        baseUrl = dashboardUrlForProbe,
-                        okHttpClient = DashboardApiClient.defaultClient(
-                            cookieStore = dashboardCookieStoreFor(connectionId),
-                        ),
-                    )
+                    val dashboardClient =
+                        upstreamTransport.dashboardClientFor(connectionId, dashboardUrlForProbe)
                     try {
                         val status = dashboardClient.getStatus().getOrNull()
                         val session = if (status?.authRequired == true) {
@@ -4439,16 +4341,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // Probe per-endpoint capabilities. The result drives both the
             // legacy chatMode flow and the auto-resolver in ChatViewModel.
             val caps = client.probeCapabilities()
-            _serverCapabilities.value = caps
-            _chatMode.value = caps.toChatMode()
+            upstreamTransport.setCapabilitiesAndMode(caps)
             probeStandardVoice()
         } else {
             _apiClient.value = null
             shutdownClientOffMain(oldClient)
             _apiServerReachable.value = false
             _apiServerHealth.value = HealthStatus.Unknown
-            _chatMode.value = ChatMode.DISCONNECTED
-            _serverCapabilities.value = ServerCapabilities.DISCONNECTED
+            upstreamTransport.resetCapabilitiesAndMode()
             probeStandardVoice()
         }
         rebuildChatApiClient()
