@@ -144,6 +144,7 @@ import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
+import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
@@ -562,6 +563,7 @@ fun ChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
+    var showModelSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
 
     // Server command dispatch can ask the composer to prefill (e.g. /undo).
@@ -2161,15 +2163,29 @@ fun ChatScreen(
                             ),
                         )
                         if (modelProviders.any { it.models.isNotEmpty() }) {
-                            modelProviders.forEach { provider ->
+                            // Current provider first — matches the desktop picker,
+                            // which defaults the selection to is_current, so the
+                            // user's authenticated/current provider leads.
+                            modelProviders.sortedByDescending { it.isCurrent }.forEach { provider ->
                                 provider.models.distinct().forEach { model ->
+                                    // Respect upstream's per-provider availability:
+                                    // unavailable_models are paid models the account
+                                    // can't pick (free-tier / no credits) — disable
+                                    // them so a switch can't 400 / credits-fail.
+                                    val unavailable = model in provider.unavailableModels
                                     add(
                                         ChatInputPickerOption(
                                             label = model,
                                             value = model,
                                             provider = provider.slug,
                                             group = provider.name,
+                                            secondary = when {
+                                                unavailable -> "Not on your plan"
+                                                !provider.authenticated -> provider.warning ?: "Needs setup"
+                                                else -> null
+                                            },
                                             selected = selectedModelOverride == model,
+                                            enabled = !unavailable,
                                         ),
                                     )
                                 }
@@ -2296,7 +2312,19 @@ fun ChatScreen(
                     option.value?.let { chatViewModel.selectReasoningEffort(it) }
                 },
                 enabled = chatReady,
+                onModelPickerClick = { showModelSheet = true },
             )
+
+            if (showModelSheet) {
+                ModelPickerSheet(
+                    options = modelPickerOptions,
+                    onSelect = { option ->
+                        showModelSheet = false
+                        chatViewModel.selectModel(option.value, option.provider)
+                    },
+                    onDismiss = { showModelSheet = false },
+                )
+            }
         } // end Column
 
         // Mic permission denied banner — title + body + Open Settings action.
