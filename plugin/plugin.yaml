@@ -3,7 +3,24 @@ manifest_version: 1
 version: 1.1.0
 description: "Hermes-Relay plugin for QR pairing, relay sessions, dashboard management, remote desktop/phone tooling, and optional legacy compatibility diagnostics. Standard chat, Manage, and dashboard voice remain vanilla upstream Hermes surfaces."
 author: Axiom Labs
-requires_env: []
+# All three are OPTIONAL — only needed if you use the relay's extra /
+# provider-native voice engines. The standard (no-plugin) chat, Manage, and
+# dashboard voice path needs none of these. `hermes plugins install` prompts
+# for each; skip any you don't use (press Enter) and set it later in
+# ~/.hermes/.env. Keys are also accepted under VOICE_TOOLS_*_KEY aliases.
+requires_env:
+  - name: XAI_API_KEY
+    description: "Optional — xAI/Grok voice (TTS + realtime). Leave blank unless using Grok relay voice."
+    url: "https://console.x.ai/"
+    secret: true
+  - name: OPENAI_API_KEY
+    description: "Optional — OpenAI voice (TTS + realtime). Leave blank unless using OpenAI relay voice."
+    url: "https://platform.openai.com/api-keys"
+    secret: true
+  - name: ELEVENLABS_API_KEY
+    description: "Optional — ElevenLabs TTS. Leave blank unless using ElevenLabs relay voice."
+    url: "https://elevenlabs.io/app/settings/api-keys"
+    secret: true
 provides_tools:
   - android_ping
   - android_read_screen
