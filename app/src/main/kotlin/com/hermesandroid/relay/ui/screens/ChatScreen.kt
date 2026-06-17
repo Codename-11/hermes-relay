@@ -99,6 +99,7 @@ import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
+import com.hermesandroid.relay.network.GatewayAvailability
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.VoiceOutputConfig
@@ -485,6 +486,7 @@ fun ChatScreen(
     // === Gateway desktop-parity state ===
     val serverCommands by chatViewModel.serverCommands.collectAsState()
     val contextUsage by chatViewModel.contextUsage.collectAsState()
+    val contextWindow by chatViewModel.contextWindow.collectAsState()
     val steerableTurn by chatViewModel.steerableTurn.collectAsState()
     val steerNotice by chatViewModel.steerNotice.collectAsState()
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
@@ -512,6 +514,27 @@ fun ChatScreen(
             chatViewModel.prewarmGateway()
             chatViewModel.refreshModelOptions()
             chatViewModel.refreshReasoningSettings()
+        }
+    }
+
+    // Cold-open recovery: the dashboard probe that flips gatewayAvailability to
+    // Ready (and with it isGatewayTransport, which gates the model + reasoning-
+    // effort controls) is otherwise only retried on the 30s periodic health
+    // tick. So a freshly-opened chat — especially when the dashboard route
+    // resolves a beat after the API client is built — can sit up to ~30s
+    // showing the model pill but no effort chip. Nudge a few quick probes
+    // until the verdict settles, then fall back to the slow cadence. Cheap
+    // (a public GET /api/status), bounded, and self-disarming.
+    LaunchedEffect(appForeground, chatReady) {
+        if (!appForeground || !chatReady) return@LaunchedEffect
+        var tries = 0
+        while (
+            tries < 5 &&
+            connectionViewModel.gatewayAvailability.value == GatewayAvailability.Unknown
+        ) {
+            connectionViewModel.refreshStandardVoice()
+            tries++
+            delay(1_500)
         }
     }
 
@@ -571,6 +594,21 @@ fun ChatScreen(
         chatViewModel.composerPrefill.collect { text ->
             editingMessage = null
             inputText = text.take(charLimit)
+        }
+    }
+
+    // A bare `/personality` opens the agent sheet (its Personality section is the
+    // mobile equivalent of the desktop's inline arg-picker for picker commands).
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.openPersonalityPicker.collect {
+            showAgentInfo = true
+        }
+    }
+
+    // A bare `/model` opens the model picker — the sibling picker command.
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.openModelPicker.collect {
+            showModelSheet = true
         }
     }
 
@@ -870,8 +908,15 @@ fun ChatScreen(
                 SlashCommand("/profile", "Show active profile", "info"),
             )
 
-            // Dynamic personality commands from server
-            val personalities = personalityNames.map { name ->
+            // Dynamic personality commands from server, plus the upstream
+            // "none" (clear the overlay) option that completions list first.
+            val personalities = listOf(
+                SlashCommand(
+                    command = "/personality none",
+                    description = "Clear the personality overlay",
+                    category = "personality"
+                )
+            ) + personalityNames.map { name ->
                 SlashCommand(
                     command = "/personality $name",
                     description = name.replaceFirstChar { it.uppercase() } + " personality",
@@ -1327,28 +1372,12 @@ fun ChatScreen(
                                             maxLines = 1,
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
-                                        // Context escalation: >=85% the subtitle
-                                        // gains a context suffix in the caution
-                                        // ladder color. The ambient strip below
-                                        // the app bar covers the 50-85% range.
-                                        val ctxFraction = contextUsage
+                                        // Context % now lives in the dedicated
+                                        // per-session ContextMeterBar just below
+                                        // the app bar, so the subtitle stays clean
+                                        // (no redundant "NN% ctx" suffix here).
                                         val subtitleAnnotated = buildAnnotatedString {
                                             append(subtitleText)
-                                            if (headerApiReachable &&
-                                                ctxFraction != null &&
-                                                ctxFraction >= 0.85f
-                                            ) {
-                                                val ctxColor = if (ctxFraction >= 0.9f) {
-                                                    RelayRefresh.Danger
-                                                } else {
-                                                    RelayRefresh.Amber
-                                                }
-                                                withStyle(SpanStyle(color = ctxColor)) {
-                                                    append(
-                                                        " · ${(ctxFraction * 100).roundToInt()}% ctx"
-                                                    )
-                                                }
-                                            }
                                         }
                                         Text(
                                             text = subtitleAnnotated,
@@ -1420,9 +1449,15 @@ fun ChatScreen(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
-            // Ambient context-window meter — 2dp strip at the seam between
-            // the app bar and the mode strip; composes to nothing below 50%.
-            ContextMeterBar(usedFraction = contextUsage)
+            // Per-session context-window gauge at the seam between the app bar
+            // and the mode strip — slim bar + `NN% · used/max` token readout,
+            // color-graded by fullness. Composes to nothing until the server
+            // reports a context_max for the session.
+            ContextMeterBar(
+                usedFraction = contextUsage,
+                usedTokens = contextWindow?.usedTokens,
+                maxTokens = contextWindow?.maxTokens,
+            )
             RelayModeStrip(
                 selected = RelayPrimaryMode.Chat,
                 onModeSelected = { mode ->
