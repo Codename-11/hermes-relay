@@ -223,6 +223,13 @@
             try { term.focus(); } catch (_) {}
         };
 
+        // Current xterm selection as plain text ('' when nothing selected).
+        // Read back via WebView.evaluateJavascript for the toolbar Copy key,
+        // since long-press copy is unreliable inside an Android WebView.
+        window.getSelectionText = function () {
+            try { return term.getSelection() || ''; } catch (_) { return ''; }
+        };
+
         window.clearTerminal = function () {
             try { term.clear(); } catch (_) {}
         };
