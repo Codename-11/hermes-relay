@@ -480,6 +480,7 @@ fun ChatScreen(
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
     val recentPrompts by chatViewModel.recentPrompts.collectAsState()
+    val recentPromptsEnabled by connectionViewModel.chatRecentPromptsEnabled.collectAsState()
     val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
@@ -640,6 +641,15 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Ephemeral notices from the VM (model-switch warnings/errors, etc.) →
+    // transient snackbar, never a chat bubble.
+    LaunchedEffect(Unit) {
+        chatViewModel.transientNotice.collect { msg ->
+            snackbarHostState.showSnackbar(message = msg, duration = SnackbarDuration.Short)
+        }
+    }
+
     val realtimeAgentActive = voiceStats.voiceEngineMode == "realtime_agent"
     val activeVoiceProvider = if (realtimeAgentActive) {
         realtimeAgentConfig?.default_provider
@@ -2006,7 +2016,7 @@ fun ChatScreen(
             // Tapping prefills (not auto-sends) so you can tweak before resending;
             // the row vanishes the moment you type or a queue/fresh-chat shows.
             AnimatedVisibility(
-                visible = messages.isNotEmpty() && inputText.isBlank() &&
+                visible = recentPromptsEnabled && messages.isNotEmpty() && inputText.isBlank() &&
                     queuedMessages.isEmpty() && recentPrompts.isNotEmpty(),
             ) {
                 FlowRow(

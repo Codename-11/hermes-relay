@@ -198,6 +198,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Animation
         private val KEY_ANIMATION_ENABLED = booleanPreferencesKey("animation_enabled")
         private val KEY_ANIMATION_BEHIND_CHAT = booleanPreferencesKey("animation_behind_chat")
+        private val KEY_CHAT_RECENT_PROMPTS = booleanPreferencesKey("chat_recent_prompts")
 
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
@@ -1516,6 +1517,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_ANIMATION_ENABLED] = enabled
+            }
+        }
+    }
+
+    /**
+     * Show recent-prompt recall chips above the composer. OFF by default —
+     * it's an opt-in convenience, not something to surface unprompted.
+     */
+    val chatRecentPromptsEnabled: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_CHAT_RECENT_PROMPTS] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setChatRecentPromptsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_CHAT_RECENT_PROMPTS] = enabled
             }
         }
     }

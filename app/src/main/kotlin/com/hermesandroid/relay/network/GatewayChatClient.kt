@@ -241,6 +241,15 @@ class GatewayChatClient(
     private val _serverFast = MutableStateFlow<Boolean?>(null)
     val serverFast: StateFlow<Boolean?> = _serverFast.asStateFlow()
 
+    /**
+     * Context-window usage `(used, max)` from `session.info`'s `usage` block
+     * (upstream `_get_usage`). `session.info` is emitted on session resume, so
+     * this lets the context bar paint immediately on resume instead of waiting
+     * for the first turn's usage event. Null until observed / when omitted.
+     */
+    private val _serverContext = MutableStateFlow<Pair<Int, Int>?>(null)
+    val serverContext: StateFlow<Pair<Int, Int>?> = _serverContext.asStateFlow()
+
     /** Serializes connect / session-establish so concurrent sends share one socket. */
     private val connectMutex = Mutex()
 
@@ -1090,6 +1099,14 @@ class GatewayChatClient(
                 // yolo / fast: effective booleans (approval bypass + priority tier).
                 (p["yolo"] as? JsonPrimitive)?.booleanOrNull?.let { _serverYolo.value = it }
                 (p["fast"] as? JsonPrimitive)?.booleanOrNull?.let { _serverFast.value = it }
+                // Context-window usage — paints the context bar on resume.
+                (p["usage"] as? JsonObject)?.let { usage ->
+                    val used = (usage["context_used"] as? JsonPrimitive)?.intOrNull
+                    val max = (usage["context_max"] as? JsonPrimitive)?.intOrNull
+                    if (used != null && max != null && max > 0) {
+                        _serverContext.value = used to max
+                    }
+                }
             }
         }
 
