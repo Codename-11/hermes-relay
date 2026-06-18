@@ -8,7 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -160,7 +160,7 @@ fun MessageBubble(
     val locale = LocalLocale.current.platformLocale
     val timeFormat = remember(locale) { SimpleDateFormat("h:mm a", locale) }
     val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     // Pull generated/inline image links (`![alt](src)`) out of assistant
     // content so they render as real images (remote URLs via Coil) or a

@@ -11,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
@@ -170,6 +171,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         // Shared
         private val KEY_THEME = stringPreferencesKey("theme")
+        // Selected app theme id (palette/personality). Orthogonal to KEY_THEME,
+        // which is the light/dark/auto mode axis honored by BOTH-mode themes.
+        private val KEY_APP_THEME = stringPreferencesKey("app_theme")
+        // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
+        // active theme's preferred skin; any other id pins a specific skin.
+        private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
         const val DEFAULT_FONT_SCALE: Float = 1.0f
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
@@ -896,10 +903,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     @Deprecated("Use relayConnectionState", replaceWith = ReplaceWith("relayConnectionState"))
     val connectionState: StateFlow<ConnectionState> = relayConnectionState
 
-    // Theme preference
+    // Theme preference — light/dark/auto mode axis.
     val theme: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
             preferences[KEY_THEME] ?: "auto"
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
+    // Selected app theme id (palette identity). Defaults to the Hermes Relay
+    // brand. Resolved against AppThemes.byId at the Compose theme root.
+    val appTheme: StateFlow<String> = application.relayDataStore.data
+        .map { preferences ->
+            preferences[KEY_APP_THEME] ?: AppThemes.DEFAULT_ID
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
+
+    // Selected sphere skin id ("auto" follows the theme). Resolved against
+    // SphereRegistry + loaded user skins at the Compose root.
+    val sphereSkin: StateFlow<String> = application.relayDataStore.data
+        .map { preferences ->
+            preferences[KEY_SPHERE_SKIN] ?: "auto"
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
@@ -4896,6 +4919,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_THEME] = theme
+            }
+        }
+    }
+
+    fun setAppTheme(themeId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_APP_THEME] = themeId
+            }
+        }
+    }
+
+    fun setSphereSkin(skinId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_SPHERE_SKIN] = skinId
             }
         }
     }

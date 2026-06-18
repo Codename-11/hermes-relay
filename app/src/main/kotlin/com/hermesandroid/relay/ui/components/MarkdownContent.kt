@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,7 +36,7 @@ fun MarkdownContent(
     textColor: Color,
     modifier: Modifier = Modifier
 ) {
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
     val highlightsBuilder = remember(isDarkTheme) {
         Highlights.Builder().theme(SyntaxThemes.atom(darkMode = isDarkTheme))
     }

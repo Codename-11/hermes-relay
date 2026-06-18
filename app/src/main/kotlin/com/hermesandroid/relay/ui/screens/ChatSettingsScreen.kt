@@ -6,7 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,7 +75,7 @@ fun ChatSettingsScreen(
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val maxMessageLength by connectionViewModel.maxMessageLength.collectAsState()
 
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     Scaffold(
         topBar = {

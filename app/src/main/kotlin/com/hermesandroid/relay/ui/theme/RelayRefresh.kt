@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -22,37 +23,47 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/**
+ * Brand token façade. Every color is now a getter over [activePalette], which
+ * `HermesRelayTheme` swaps to match the active [AppTheme] + light/dark mode.
+ * Because [activePalette] is snapshot-backed, every `RelayRefresh.X` read —
+ * whether in composition or in a draw lambda — subscribes to it and recomposes
+ * (or re-draws) when the theme changes. This is how the 150+ pre-existing call
+ * sites became theme-reactive without edits, fixing the formerly hardcoded-dark
+ * chat and Manage surfaces.
+ *
+ * New code should prefer [LocalBrand] for composition-correct scoping; this
+ * façade is kept for the legacy `RelayRefresh.X` call sites.
+ */
 object RelayRefresh {
-    val Ink = Color(0xFFF7F6F0)
-    val Paper = Color(0xFFF7F3EA)
-    val Muted = Color(0xFFA7A4B7)
-    val Dim = Color(0xFF68647D)
-    val Background = Color(0xFF08090D)
-    val Navy = Color(0xFF121426)
-    val Navy2 = Color(0xFF191B31)
-    val Navy3 = Color(0xFF22243C)
-    val Relay = Color(0xFFAEBFFF)
-    val Purple = Color(0xFF8C5CFF)
-    // Brand blue. Deepened from the original neon 0xFF111DFF (2026-06-16
-    // feedback: the default blue read too bright next to the calmer tab
-    // chrome) to a richer cobalt that sits closer to the chat/manage/bridge
-    // mode-strip accent.
-    val Electric = Color(0xFF0E18D6)
+    // Snapshot-backed so reads track theme changes. Set only by HermesRelayTheme.
+    private val activePaletteState = mutableStateOf(BrandPalettes.HermesDark)
+    var activePalette: BrandPalette
+        get() = activePaletteState.value
+        set(value) { activePaletteState.value = value }
 
-    /**
-     * Softened Electric for large filled surfaces (e.g. the active
-     * connection card). Full-strength Electric stays for small accents and
-     * the alpha-blended selected panels, where the saturation reads as brand
-     * rather than glare — 2026-06-10/11 feedback: the blue was right
-     * everywhere except as a full-card fill against body text.
-     */
-    val ElectricMuted = Color(0xFF4F5BD5)
-    val Cyan = Color(0xFF6BDCFF)
-    val Green = Color(0xFF58D36F)
-    val Amber = Color(0xFFF2B14B)
-    val Danger = Color(0xFFFF6B78)
-    val Line = Color(0x24F7F6F0)
-    val LineStrong = Color(0x47F7F6F0)
+    val Ink: Color get() = activePalette.ink
+    val Paper: Color get() = activePalette.paper
+    val Muted: Color get() = activePalette.muted
+    val Dim: Color get() = activePalette.dim
+    val Background: Color get() = activePalette.background
+    val Navy: Color get() = activePalette.navy
+    val Navy2: Color get() = activePalette.navy2
+    val Navy3: Color get() = activePalette.navy3
+    val Relay: Color get() = activePalette.relay
+    val Purple: Color get() = activePalette.purple
+    val Electric: Color get() = activePalette.electric
+
+    /** Softened Electric for large filled surfaces (e.g. the active connection card). */
+    val ElectricMuted: Color get() = activePalette.electricMuted
+    val Cyan: Color get() = activePalette.cyan
+    val Green: Color get() = activePalette.green
+    val Amber: Color get() = activePalette.amber
+    val Danger: Color get() = activePalette.danger
+    val Line: Color get() = activePalette.line
+    val LineStrong: Color get() = activePalette.lineStrong
+
+    // Non-color layout tokens are theme-independent (for now).
     val CardRadius = 8.dp
     val Mono = FontFamily.Monospace
 }

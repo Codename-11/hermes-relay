@@ -6,7 +6,7 @@ import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,7 +78,7 @@ fun AboutScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     // Tap-7x unlock state (mirrors the old SettingsScreen locals)
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context).collectAsState(initial = FeatureFlags.isDevBuild)

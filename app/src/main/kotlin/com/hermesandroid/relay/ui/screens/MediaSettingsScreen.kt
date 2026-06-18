@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.ui.screens
 
 import android.widget.Toast
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -60,7 +60,7 @@ fun MediaSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
 ) {
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = connectionViewModel.mediaSettingsRepo

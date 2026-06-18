@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -126,7 +126,7 @@ fun ConnectionsSettingsScreen(
     connectionViewModel: ConnectionViewModel? = null,
 ) {
     val context = LocalContext.current
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     // Feature flag for the entire relay surface (WSS, voice, bridge).
     // When off, Status section hides the Relay + Session rows and the
