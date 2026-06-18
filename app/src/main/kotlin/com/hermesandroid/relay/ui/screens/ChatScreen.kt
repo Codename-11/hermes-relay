@@ -150,6 +150,7 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
+import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
@@ -493,6 +494,8 @@ fun ChatScreen(
     val serverCommands by chatViewModel.serverCommands.collectAsState()
     val contextUsage by chatViewModel.contextUsage.collectAsState()
     val contextWindow by chatViewModel.contextWindow.collectAsState()
+    // Injected-context audit sheet (opened by tapping the context meter).
+    var showContextSheet by remember { mutableStateOf(false) }
     val steerableTurn by chatViewModel.steerableTurn.collectAsState()
     val steerNotice by chatViewModel.steerNotice.collectAsState()
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
@@ -1514,7 +1517,18 @@ fun ChatScreen(
                 usedFraction = contextUsage,
                 usedTokens = contextWindow?.usedTokens,
                 maxTokens = contextWindow?.maxTokens,
+                onClick = { showContextSheet = true },
             )
+            if (showContextSheet) {
+                // Live audit of the exact extra context the agent will be
+                // injected with on the next turn (transparency / auditability).
+                InjectedContextSheet(
+                    context = remember(showContextSheet) {
+                        chatViewModel.previewInjectedContext()
+                    },
+                    onDismiss = { showContextSheet = false },
+                )
+            }
             RelayModeStrip(
                 selected = RelayPrimaryMode.Chat,
                 onModeSelected = { mode ->
