@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -963,6 +965,11 @@ fun AgentInfoSheet(
                         ProfileRadioRow(
                             primary = primaryLabel,
                             secondary = secondaryLine,
+                            // Long descriptions (e.g. "Sentinel —
+                            // Infrastructure / Security / Reliability ·
+                            // gpt-5.5") truncate to two lines + tap-to-expand
+                            // so they never crunch the badge FlowRow below.
+                            secondaryExpandable = true,
                             // Cleaner card: drop the verbose "profile: … ·
                             // compatibility overlay · active" caption now that
                             // the name is the headline.
@@ -1675,7 +1682,20 @@ private fun DisplayAliasSection(
  * Radio-style row used by both Profile and Personality sections. Whole row
  * is a tap target (and selectable() for a11y). Disabled when [enabled] is
  * false — look and behaviour both propagate the gate.
+ *
+ * Layout hierarchy inside the text column:
+ *   1. [primary]   — the name, on its own line.
+ *   2. [secondary] — a metadata/description line. When [secondaryExpandable]
+ *      is set it truncates to [SECONDARY_COLLAPSED_LINES] with an ellipsis and
+ *      becomes tap-to-expand, so a long description (e.g. "Sentinel —
+ *      Infrastructure / Security / Reliability · gpt-5.5") can never push the
+ *      badges off-screen or crunch them.
+ *   3. [secondaryTrailing] badges — rendered in a FlowRow on their OWN line
+ *      below the description, so WHOLE pills wrap to the next line rather than
+ *      the badge text wrapping internally ("141\nskills" / vertical "S O U L").
+ *   4. [tertiary]  — an optional caption.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileRadioRow(
     primary: String,
@@ -1705,13 +1725,31 @@ private fun ProfileRadioRow(
      */
     leadingDotContentDescription: String? = null,
     /**
-     * Optional trailing chip/badge row rendered next to the [secondary]
-     * line (same baseline as the model-name text for the Profile section
-     * entries). Slot-based so each call site composes its own badges.
+     * When true the [secondary] line is treated as a potentially-long
+     * description: it truncates to [SECONDARY_COLLAPSED_LINES] with an
+     * ellipsis and gains a tap-to-expand affordance (progressive disclosure)
+     * so the full text is reachable without crunching the badges. Default
+     * false keeps the short single-line caption behaviour every other caller
+     * relies on.
+     */
+    secondaryExpandable: Boolean = false,
+    /**
+     * Optional trailing chip/badge slot. Rendered in a FlowRow on its own
+     * line BELOW the [secondary] description (not inline with it), so whole
+     * badges wrap gracefully and never compete with the description for
+     * width. Slot-based so each call site composes its own badges.
      */
     secondaryTrailing: (@Composable () -> Unit)? = null,
 ) {
     val rowAlpha = (if (enabled) 1f else 0.5f) * contentAlpha
+    // Local expand state for a long [secondary] description. Only consulted
+    // when [secondaryExpandable]; tapping the description toggles it. Scoped
+    // to this row's identity so a list re-order doesn't carry the flag across.
+    var descriptionExpanded by remember(primary, secondary) { mutableStateOf(false) }
+    // Whether the collapsed description is actually being clipped — drives the
+    // "More" affordance so a short description that fits doesn't get a pointless
+    // expand link. Reported by the Text's onTextLayout below.
+    var descriptionOverflows by remember(primary, secondary) { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1750,26 +1788,64 @@ private fun ProfileRadioRow(
             )
         }
         Spacer(modifier = Modifier.size(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(
                 text = primary,
                 style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (secondary != null || secondaryTrailing != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+            // Description line on its own row. When expandable, truncate +
+            // make the text a tap-to-toggle target so the full description is
+            // reachable without pushing the badges off-screen. The whole-row
+            // selectable() still drives selection; this inner clickable only
+            // toggles disclosure, so a tap on the description text expands it
+            // rather than selecting the row.
+            if (secondary != null) {
+                val collapsed = secondaryExpandable && !descriptionExpanded
+                Text(
+                    text = secondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (collapsed) SECONDARY_COLLAPSED_LINES else Int.MAX_VALUE,
+                    overflow = if (collapsed) TextOverflow.Ellipsis else TextOverflow.Clip,
+                    // Only flag overflow from the COLLAPSED measure — once
+                    // expanded the text fits by definition, so don't clobber
+                    // the flag (the "Show less" affordance still wants it true).
+                    onTextLayout = { layout ->
+                        if (collapsed) descriptionOverflows = layout.hasVisualOverflow
+                    },
+                    modifier = if (secondaryExpandable && enabled) {
+                        Modifier.clickable { descriptionExpanded = !descriptionExpanded }
+                    } else {
+                        Modifier
+                    },
+                )
+                // "More" / "Show less" affordance — only when the collapsed
+                // description is actually clipped (or already expanded), so a
+                // short description that fits gets no pointless expand link.
+                if (secondaryExpandable && enabled && (descriptionOverflows || descriptionExpanded)) {
+                    Text(
+                        text = if (descriptionExpanded) "Show less" else "More",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable {
+                            descriptionExpanded = !descriptionExpanded
+                        },
+                    )
+                }
+            }
+            // Badges get their OWN line in a FlowRow so whole pills wrap to the
+            // next line on a narrow row — never crunched, never split internally.
+            if (secondaryTrailing != null) {
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    if (secondary != null) {
-                        Text(
-                            text = secondary,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (secondaryTrailing != null) {
-                        secondaryTrailing()
-                    }
+                    secondaryTrailing()
                 }
             }
             if (tertiary != null) {
@@ -1790,6 +1866,11 @@ private fun ProfileRadioRow(
     }
 }
 
+/** Lines a collapsed (truncated) [ProfileRadioRow] description shows before its
+ *  tap-to-expand affordance reveals the rest. Two keeps the badge FlowRow on
+ *  screen even when the description is long. */
+private const val SECONDARY_COLLAPSED_LINES = 2
+
 /**
  * Tiny pill rendered inline with a profile row's secondary line. Used for
  * "N skills" and "SOUL" indicators. Kept compact and visually subordinate
@@ -1805,6 +1886,13 @@ private fun ProfileMetadataBadge(
         text = text,
         style = MaterialTheme.typography.labelSmall,
         color = contentColor,
+        // A badge must read as one whole pill. maxLines=1 + softWrap=false keeps
+        // "141 skills" / "SOUL" on a single line so a width crunch can never break
+        // it into "141\nskills" or vertical "S O U L" — the FlowRow in
+        // ProfileRadioRow wraps WHOLE pills to the next line instead.
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(background)
