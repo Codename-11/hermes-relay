@@ -1258,6 +1258,10 @@ fun AgentInfoSheet(
                     else -> null
                 }
                 val gatewayControlsAvailable = gatewayUnavailableReason == null
+                // Ready (socket up) → a null value is just "unconfirmed for this
+                // draft, settles on the next message". Unknown (still probing)
+                // keeps the "Checking…" spinner.
+                val gatewayReady = gatewayAvailability == GatewayAvailability.Ready
 
                 HorizontalDivider()
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1291,6 +1295,7 @@ fun AgentInfoSheet(
                         }
                         GatewayToggleControl(
                             available = gatewayControlsAvailable,
+                            gatewayReady = gatewayReady,
                             value = yoloEnabled,
                             enabled = !isStreaming,
                             label = "agentSheetYolo",
@@ -1336,6 +1341,7 @@ fun AgentInfoSheet(
                         }
                         GatewayToggleControl(
                             available = gatewayControlsAvailable,
+                            gatewayReady = gatewayReady,
                             value = fastEnabled,
                             enabled = !isStreaming,
                             label = "agentSheetFast",
@@ -1926,12 +1932,17 @@ private fun PickerLoadingRow(text: String) {
  * NEVER hidden:
  *  - not [available] (gateway unreachable / needs sign-in) → a cleanly disabled
  *    switch; the reason is shown once at the section level;
- *  - [available] but [value] still unknown (null) → a "Checking…" pose;
+ *  - [available] but [value] still unknown (null):
+ *     - [gatewayReady] → the value re-confirms from `session.info` on the user's
+ *       NEXT message (it's reset on a new chat / profile switch), so instead of
+ *       an indefinite spinner the placeholder says so honestly;
+ *     - still probing (Unknown) → the "Checking…" spinner pose;
  *  - [available] with a confirmed [value] → the live switch.
  */
 @Composable
 private fun GatewayToggleControl(
     available: Boolean,
+    gatewayReady: Boolean,
     value: Boolean?,
     enabled: Boolean,
     label: String,
@@ -1945,19 +1956,30 @@ private fun GatewayToggleControl(
         value = value,
         label = label,
         placeholder = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                )
+            if (gatewayReady) {
+                // Socket is up; the value is just unconfirmed for THIS draft.
+                // Honest + subtle: tell the user it settles on their next turn
+                // rather than spinning forever.
                 Text(
-                    text = "Checking…",
+                    text = "Confirms on your next message",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        text = "Checking…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
     ) { enabledValue ->
