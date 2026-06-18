@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-18 — Android onboarding permissions review surface
+
+**Why.** Android onboarding already kept the standard path clean, but permissions were scattered between feature-specific prompts, Bridge, and Android Settings. A central review page makes the model explicit: standard Chat and Manage do not need phone-control permissions, while voice, camera, notifications, and sideload Device Control remain opt-in.
+
+- **Shared permission snapshot.** Added `AppPermissionStatusProbe` so Bridge and Settings read the same runtime grants and special-access switches: notifications, microphone, camera, notification listener, accessibility, screen capture, overlay, contacts, SMS, phone, and location.
+- **Permissions screen.** Added `PermissionsStatusScreen` with Standard Hermes, On demand, and flavor-aware Device Control sections. Rows show required/optional/session status and link to the relevant Android Settings surface or Bridge session grant.
+- **Onboarding and Settings entry points.** The Power Tools onboarding page now has a "Review permissions" action, and Settings -> App includes a Permissions row. Google Play builds show the sideload Device Control section as unavailable rather than implying hidden phone-control permissions.
+- **Verification.** `:app:compileGooglePlayDebugKotlin`, `:app:compileGooglePlayDebugAndroidTestKotlin`, and `:app:compileSideloadDebugKotlin` pass with `ANDROID_HOME` pointed at the local SDK.
+
 ## 2026-06-17 — ConnectionViewModel decomposition: extract transport/pairing/profile collaborators (ADR 34 follow-up)
 
 **Why.** `ConnectionViewModel` was the one god-object the ADR 34 fence deferred — ~5,531 lines reaching across both sides of the upstream/relay package boundary (the `HermesApiClient`/`GatewayChatClient`/`DashboardApiClient` zoo *and* the relay `ConnectionManager` *and* pairing *and* profiles). Goal: move cohesive concerns into named, testable collaborators in a new `viewmodel/connection/` package, behind the ViewModel's existing public surface, so the standard-vs-relay wiring lives in explicit seams. Pure mechanical, behavior-preserving extraction — the whole-module compile (production + every test source unchanged) is the public-API-preservation guard. Continues the `ConnectionSwitchCoordinator` precedent.

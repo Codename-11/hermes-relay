@@ -129,6 +129,7 @@ fun SettingsScreen(
     onNavigateToAnalytics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
+    onNavigateToPermissions: () -> Unit,
     // === PHASE3-safety-rails: bridge safety entry-point ===
     onNavigateToBridgeSafety: () -> Unit,
     // === END PHASE3-safety-rails ===
@@ -444,6 +445,14 @@ fun SettingsScreen(
             }
 
             SettingsSectionHeader("App")
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Security,
+                title = "Permissions",
+                subtitle = "Android grants, optional features, and sideload capability status",
+                onClick = onNavigateToPermissions,
+                isDarkTheme = isDarkTheme,
+            )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Palette,

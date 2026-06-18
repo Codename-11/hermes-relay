@@ -25,6 +25,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Terminal
@@ -100,6 +101,7 @@ fun OnboardingScreen(
     connectionViewModel: ConnectionViewModel,
     onComplete: () -> Unit,
     onManageSignIn: () -> Unit = onComplete,
+    onOpenPermissions: () -> Unit = {},
 ) {
     val pages = remember {
         buildList {
@@ -182,7 +184,9 @@ fun OnboardingScreen(
                         OnboardingPage.Welcome -> WelcomePage()
                         OnboardingPage.Chat -> ChatPage()
                         OnboardingPage.Manage -> ManagePage()
-                        OnboardingPage.Power -> PowerToolsPage()
+                        OnboardingPage.Power -> PowerToolsPage(
+                            onOpenPermissions = onOpenPermissions,
+                        )
                         OnboardingPage.Connect -> ConnectPage(
                             connectionViewModel = connectionViewModel,
                             onComplete = onComplete,
@@ -469,7 +473,9 @@ private fun ManagePage() {
 }
 
 @Composable
-private fun PowerToolsPage() {
+private fun PowerToolsPage(
+    onOpenPermissions: () -> Unit,
+) {
     OnboardingPage(
         icon = Icons.Outlined.Terminal,
         title = "Power tools",
@@ -491,6 +497,18 @@ private fun PowerToolsPage() {
                 label = "Realtime",
                 description = "Provider-native realtime voice agent and profile-aware voice providers.",
             )
+            OutlinedButton(
+                onClick = onOpenPermissions,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Security,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Review permissions")
+            }
         }
     }
 }

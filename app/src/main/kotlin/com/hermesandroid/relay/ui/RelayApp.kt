@@ -107,6 +107,7 @@ import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
+import com.hermesandroid.relay.ui.screens.PermissionsStatusScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
@@ -234,6 +235,7 @@ sealed class Screen(
     data object NotificationCompanionSettings :
         Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
     // === END PHASE3-notif-listener-followup ===
+    data object PermissionsSettings : Screen("settings/permissions", "Permissions", Icons.Filled.Settings)
     // === PHASE3-safety-rails: bridge safety route ===
     data object BridgeSafetySettings :
         Screen("settings/bridge_safety", "Bridge safety", Icons.Filled.Settings)
@@ -1318,7 +1320,10 @@ fun RelayApp() {
                         onManageSignIn = {
                             postOnboardingRoute = Screen.Manage.route
                             connectionViewModel.completeOnboarding()
-                        }
+                        },
+                        onOpenPermissions = {
+                            navController.navigate(Screen.PermissionsSettings.route)
+                        },
                     )
                 }
                 composable(
@@ -1620,6 +1625,9 @@ fun RelayApp() {
                         onNavigateToNotificationCompanion = {
                             navController.navigate(Screen.NotificationCompanionSettings.route)
                         },
+                        onNavigateToPermissions = {
+                            navController.navigate(Screen.PermissionsSettings.route)
+                        },
                         // === PHASE3-safety-rails: bridge safety route ===
                         onNavigateToBridgeSafety = {
                             navController.navigate(Screen.BridgeSafetySettings.route)
@@ -1670,6 +1678,16 @@ fun RelayApp() {
                     )
                 }
                 // === END PHASE3-notif-listener-followup ===
+                composable(Screen.PermissionsSettings.route) {
+                    PermissionsStatusScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenBridge = {
+                            navController.navigate(Screen.Bridge.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                    )
+                }
                 // === PHASE3-safety-rails: bridge safety route ===
                 composable(Screen.BridgeSafetySettings.route) {
                     if (BuildFlavor.isSideload) {

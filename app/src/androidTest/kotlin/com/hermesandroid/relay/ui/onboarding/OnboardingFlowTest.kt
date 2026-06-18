@@ -173,6 +173,17 @@ class OnboardingFlowTest {
     }
 
     @Test
+    fun powerPage_linksToPermissionReview() {
+        setOnboardingContent()
+        navigateToPage(3)
+
+        composeTestRule
+            .onNodeWithText("Review permissions")
+            .assertIsDisplayed()
+            .assertIsEnabled()
+    }
+
+    @Test
     fun skipButton_visibleOnIntroPages_andWizardSkipOnConnectPage() {
         setOnboardingContent()
 
