@@ -594,6 +594,49 @@ class GatewayChatClientTest {
         assertEquals(null, create["profile"])
     }
 
+    // --- Model-bound sessions (upstream tui_gateway: session.create honors
+    // `model`/`provider` → the new session's model_override). Without this a
+    // fresh chat ignores the in-chat picker and runs on the global default. ---
+
+    @Test
+    fun `session create binds the picked model and provider`() {
+        val r = Recorder()
+        client.sessionModelProvider = { GatewaySessionModel("grok-4.3", "xai") }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals("grok-4.3", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("xai", (create["provider"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `session create binds model without provider when provider is null`() {
+        val r = Recorder()
+        client.sessionModelProvider = { GatewaySessionModel("gpt-5.5", null) }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals("gpt-5.5", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(null, create["provider"])
+    }
+
+    @Test
+    fun `session create omits model when no pick`() {
+        val r = Recorder()
+        // Default provider returns null → no model bound (profile/server default).
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals(null, create["model"])
+        assertEquals(null, create["provider"])
+    }
+
     // --- Attachments (image / pdf / file routing) ---
 
     @Test

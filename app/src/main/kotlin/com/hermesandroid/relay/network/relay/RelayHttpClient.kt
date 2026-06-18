@@ -54,6 +54,16 @@ class RelayHttpClient(
     }
 
     /**
+     * True when this connection has a relay route configured (a non-blank relay
+     * URL), so the relay media routes are reachable. Synchronous (URL-only) —
+     * the bearer token is resolved per request and may lag pairing; callers that
+     * only need a coarse "relay media is available" gate (e.g. the agent
+     * media-capability hint) use this. The actual fetch still fails closed if the
+     * token is missing.
+     */
+    fun mediaUrlConfigured(): Boolean = !relayUrlProvider().isNullOrBlank()
+
+    /**
      * The result of a successful [fetchMedia] call.
      *
      * @property contentType MIME type parsed from the `Content-Type` header,

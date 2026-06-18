@@ -285,6 +285,21 @@ class GatewayChatClient(
     private fun currentSessionProfile(): String? =
         sessionProfileProvider().takeIf { !it.isNullOrBlank() }
 
+    /**
+     * Supplies the explicit in-chat model pick to bind onto each fresh
+     * `session.create` (upstream honors `model`/`provider` → the new session's
+     * `model_override`). Pulled live so it always reflects the current picker;
+     * null = no explicit pick, so the new session inherits the profile / server
+     * default. Wired by ChatViewModel from the selected-model override. A live
+     * session keeps its agent's model, so this only affects session creation —
+     * mid-session switches go through [setModel] (`config.set`).
+     */
+    @Volatile
+    var sessionModelProvider: () -> GatewaySessionModel? = { null }
+
+    private fun currentSessionModel(): GatewaySessionModel? =
+        sessionModelProvider()?.takeIf { it.model.isNotBlank() }
+
     @Volatile
     private var activeTurn: GatewayTurn? = null
 
@@ -972,6 +987,17 @@ class GatewayChatClient(
                 put("cols", DEFAULT_COLS)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
                 currentSessionProfile()?.let { put("profile", it) }
+                // Bind the in-chat model pick to the new session as its
+                // model_override. Upstream tui_gateway session.create reads
+                // `model`/`provider`; without this a fresh chat ignores the
+                // picker and builds the agent from the global default (the
+                // "picker shows Grok but the agent answers as the default
+                // model" bug). A live session keeps its own model — this is
+                // create-only; mid-session switches use config.set (setModel).
+                currentSessionModel()?.let { sm ->
+                    put("model", sm.model)
+                    sm.provider?.takeIf { it.isNotBlank() }?.let { put("provider", it) }
+                }
             },
         ).getOrElse { e ->
             throw GatewayPreflightException("session.create failed: ${e.message}")

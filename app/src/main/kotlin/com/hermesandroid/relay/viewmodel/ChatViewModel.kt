@@ -28,6 +28,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewaySessionModel
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
@@ -150,6 +151,22 @@ class ChatViewModel : ViewModel() {
 
         /** Upper bound on the rolling tool-call history flow. */
         const val TOOL_CALL_HISTORY_LIMIT = 10
+
+        /**
+         * One-line capability nudge appended to the SSE `system_message` when a
+         * relay route is configured, so the agent knows it can surface images/
+         * files by absolute server path (the client fetches them over the relay
+         * `/media/by-path` channel and renders them inline). SSE-only: the
+         * gateway transport has no per-turn system slot, so this can't ride a
+         * gateway turn — there the upstream prompt_builder's own `MEDIA:`
+         * instruction plus the client-side render fallback cover it.
+         */
+        const val RELAY_MEDIA_HINT =
+            "Media display: this client can render images and files you reference by " +
+                "absolute server path. To show one to the user, put its absolute path on " +
+                "its own line as `MEDIA:/absolute/path`, or use a markdown image " +
+                "`![description](/absolute/path)`. The client fetches it over the secure " +
+                "relay channel and shows it inline."
     }
 
     /** Callback to persist session ID — set by RelayApp */
@@ -331,6 +348,16 @@ class ChatViewModel : ViewModel() {
     private val _selectedModelOverride = MutableStateFlow<String?>(null)
     val selectedModelOverride: StateFlow<String?> = _selectedModelOverride.asStateFlow()
 
+    /**
+     * Authenticated provider slug (e.g. `xai`) that pairs with
+     * [_selectedModelOverride] on the gateway. Needed so a fresh chat's
+     * `session.create` can carry `provider` alongside `model` (see
+     * [GatewayChatClient.sessionModelProvider]); SSE turns resolve the provider
+     * server-side from the model, so they don't read this. Cleared whenever the
+     * model override is cleared.
+     */
+    private val _selectedProviderOverride = MutableStateFlow<String?>(null)
+
     fun fetchModels() {
         val client = apiClient ?: return
         viewModelScope.launch { _availableModels.value = client.getModels() }
@@ -346,6 +373,12 @@ class ChatViewModel : ViewModel() {
      */
     fun selectModel(model: String?, provider: String? = null) {
         _selectedModelOverride.value = AgentDisplay.requestModelName(model)
+        // Keep the provider paired with the model pick so a fresh chat's
+        // session.create can bind both (gateway needs the provider to resolve
+        // the authenticated account; e.g. grok-4.3 via `xai`). Cleared when the
+        // model is cleared so the next new session falls back to the default.
+        _selectedProviderOverride.value =
+            provider?.takeIf { it.isNotBlank() && !model.isNullOrBlank() }
         val gateway = gatewayClient
         val handler = chatHandler
         if (model.isNullOrBlank()) {
@@ -551,6 +584,21 @@ class ChatViewModel : ViewModel() {
         // null them so a stale flag can't show until the new session.info re-seeds.
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        // A profile defines its own model, so switching profiles retires any
+        // explicit in-chat model pick — otherwise the old pick would leak onto
+        // the new profile's sessions and the picker pill would disagree with
+        // what the agent actually runs. The next session.create then binds the
+        // profile's own model.
+        _selectedModelOverride.value = null
+        _selectedProviderOverride.value = null
+        // Optimistically seed the picker "current" from the profile's own model
+        // so the header/status strip switch instantly instead of showing the
+        // previous profile's model until the modelOptions round-trip lands; the
+        // round-trip below confirms/corrects it with server truth.
+        profile?.model?.takeIf { it.isNotBlank() }?.let {
+            _gatewayCurrentModel.value = it
+            _gatewayCurrentProvider.value = ""
+        }
         // The profile brings its own model — refresh the picker's "current".
         viewModelScope.launch {
             gateway.modelOptions().onSuccess {
@@ -614,6 +662,16 @@ class ChatViewModel : ViewModel() {
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
+        // Bind the in-chat model pick onto each fresh session.create so a
+        // brand-new chat actually runs on the picked model/provider (not the
+        // global default). Pulled live; null when no explicit pick, so the
+        // profile/server default wins. Mid-session switches still go through
+        // setModel (config.set) in selectModel.
+        client?.sessionModelProvider = {
+            _selectedModelOverride.value?.takeIf { it.isNotBlank() }?.let { m ->
+                GatewaySessionModel(m, _selectedProviderOverride.value?.takeIf { it.isNotBlank() })
+            }
+        }
         // (Re)bind the session.info state sync to the live client so server-side
         // personality/model changes drive the UI. Cancelled when the client drops.
         if (changed) {
@@ -1308,27 +1366,46 @@ class ChatViewModel : ViewModel() {
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
-        handler.clearMessages()
         if (sessionId != null) {
             onSessionChanged?.invoke(sessionId)
         }
 
         if (sessionId == null || client == null) {
+            // Fresh draft (or no client to load from) — there's nothing to hold
+            // for, so clear the previous transcript now and show the empty state.
+            handler.clearMessages()
             _isLoadingHistory.value = false
             _initialChatSettled.value = true
             return
         }
 
+        // Hold the previous transcript on screen while the new profile/session
+        // history loads, then swap it atomically with loadMessageHistory(). The
+        // old synchronous clearMessages() above is what made a switch read as a
+        // "rebuild": the list blanked to an empty/"Loading messages…" state and
+        // then repopulated. Holding it means the LazyColumn's per-item
+        // animateItem() cross-fades the old bubbles out as the new ones come in.
+        // The generation guard still drops a superseded load.
         _isLoadingHistory.value = true
         viewModelScope.launch {
-            try {
-                val messages = loadSessionHistory(sessionId)
-                if (
-                    historyLoadGeneration.get() == loadGeneration &&
+            val stillCurrent = {
+                historyLoadGeneration.get() == loadGeneration &&
                     activeProfileContextKey == contextKey &&
                     handler.currentSessionId.value == sessionId
-                ) {
+            }
+            try {
+                val messages = loadSessionHistory(sessionId)
+                if (stillCurrent()) {
                     handler.loadMessageHistory(messages)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Don't strand the previous profile's transcript under the new
+                // session id if the load throws — clear it (still guarded so a
+                // superseded switch can't wipe a newer one's content).
+                if (stillCurrent()) {
+                    handler.clearMessages()
                 }
             } finally {
                 // finally (not tail code) so a throwing fetch can't strand
@@ -2706,6 +2783,12 @@ class ChatViewModel : ViewModel() {
         val personaPrompt: String?,
         val appContext: String?,
         val interfaceContext: String?,
+        /**
+         * Relay media-capability hint — tells the agent it can surface images/
+         * files by absolute server path. Non-null only on SSE turns when a relay
+         * route is configured (the gateway has no system slot to carry it).
+         */
+        val mediaCapability: String?,
         val combinedSystemMessage: String?,
         val transport: String,
         /**
@@ -2745,16 +2828,23 @@ class ChatViewModel : ViewModel() {
             else -> null
         }
         val appContextRaw = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
-        // combinedSystemMessage MUST match the legacy build byte-for-byte:
-        // listOfNotNull over the RAW appContext + interface strings, joined and
-        // blanked. The per-block fields below null out blanks only for display.
-        val combined = listOfNotNull(personaPrompt, appContextRaw, interfaceContextPrompt)
+        // Tell the agent it can surface images/files by absolute server path —
+        // but only on SSE (the gateway carries no system_message) and only when
+        // a relay route is configured (otherwise the client can't fetch them).
+        val mediaCapability: String? =
+            RELAY_MEDIA_HINT.takeIf { !gateway && relayHttpClient?.mediaUrlConfigured() == true }
+        // combinedSystemMessage appends the media hint after the phone-status
+        // block (a stable environment fact, like phone status) and before the
+        // per-turn interface context. The per-block fields below null out blanks
+        // only for display.
+        val combined = listOfNotNull(personaPrompt, appContextRaw, mediaCapability, interfaceContextPrompt)
             .joinToString("\n\n")
             .ifBlank { null }
         return InjectedContext(
             personaPrompt = personaPrompt,
             appContext = appContextRaw?.takeIf { it.isNotBlank() },
             interfaceContext = interfaceContextPrompt?.takeIf { it.isNotBlank() },
+            mediaCapability = mediaCapability,
             combinedSystemMessage = combined,
             transport = streamingEndpoint,
             personaOwnedServerSide = gateway,
@@ -3521,6 +3611,21 @@ class ChatViewModel : ViewModel() {
      *  4. On success → cache + flip to LOADED. On failure → FAILED with a
      *     user-facing message from [RelayHttpClient].
      */
+    /**
+     * Resolve a server-local image path — as emitted in an assistant markdown
+     * image `![alt](/abs/path)` — to raw bytes via the relay's bearer-auth'd
+     * `/media/by-path` route, so an inline image renders instead of degrading to
+     * the "this image is on the server" notice. Returns null when no relay is
+     * paired/configured (a standard no-plugin connection) or the fetch fails, so
+     * the caller can fall back to that notice. Same relay route + path sandbox
+     * the `MEDIA:` marker path uses ([onMediaBarePathRequested]); this just wires
+     * it into the markdown-image renderer, which previously ignored the relay.
+     */
+    suspend fun resolveServerImage(serverPath: String): ByteArray? {
+        val relay = relayHttpClient ?: return null
+        return relay.fetchMediaByPath(serverPath).getOrNull()?.bytes
+    }
+
     fun onMediaBarePathRequested(messageId: String, originalPath: String) {
         val handler = chatHandler ?: return
         val relay = relayHttpClient

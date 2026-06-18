@@ -64,6 +64,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -140,6 +141,8 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
+import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
@@ -1566,8 +1569,12 @@ fun ChatScreen(
                 }
             }
 
-            // Loading history indicator
-            if (isLoadingHistory && !isChatConnecting) {
+            // Loading history indicator — only when there's nothing already on
+            // screen. During a profile/session switch the previous transcript is
+            // held visible while the new history loads (see
+            // ChatViewModel.switchProfileContext), so a spinner over real
+            // content would read as noise; the list cross-fades instead.
+            if (isLoadingHistory && !isChatConnecting && messages.isEmpty()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1840,6 +1847,17 @@ fun ChatScreen(
                         )
                     }
 
+                    // Let assistant markdown images that point at server-local
+                    // paths (`![](/abs/path)`) render through the relay's
+                    // /media/by-path route when a relay session is paired,
+                    // instead of degrading to the "image is on the server"
+                    // notice. Null when no relay (standard no-plugin) → notice.
+                    val relayServerImageResolver = remember(chatViewModel) {
+                        RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
+                    }
+                    CompositionLocalProvider(
+                        LocalRelayServerImageResolver provides relayServerImageResolver,
+                    ) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -2007,6 +2025,7 @@ fun ChatScreen(
                         // placement animation.
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
+                    } // CompositionLocalProvider(LocalRelayServerImageResolver)
 
                     ChatScrollTicker(
                         listState = listState,

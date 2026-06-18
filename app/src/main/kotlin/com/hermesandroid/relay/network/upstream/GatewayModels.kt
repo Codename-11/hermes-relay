@@ -163,6 +163,17 @@ data class GatewayModelOptions(
     val currentProvider: String,
 )
 
+/**
+ * The explicit in-chat model pick to bind onto a gateway `session.create` as
+ * that session's `model_override`. Matches the upstream desktop client, whose
+ * `session.create` carries `model`/`provider` params (tui_gateway honors them →
+ * `session_model_override`). Supplied live by ChatViewModel from the picker;
+ * null = no explicit pick, so the fresh session inherits the profile / server
+ * default instead of the picker being silently dropped. [provider] is the
+ * authenticated provider slug (e.g. `xai`) and may be null.
+ */
+data class GatewaySessionModel(val model: String, val provider: String?)
+
 /** Result of the gateway `config.get {key:"reasoning"}` RPC. */
 data class GatewayReasoningSettings(
     val effort: String,
