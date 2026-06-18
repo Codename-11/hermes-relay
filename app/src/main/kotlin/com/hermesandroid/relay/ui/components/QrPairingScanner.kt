@@ -61,6 +61,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.hermesandroid.relay.data.ApiEndpoint
+import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import kotlinx.serialization.SerialName
@@ -358,6 +359,7 @@ private fun synthesizeGenericEndpoint(payload: HermesPairingPayload): EndpointCa
             tls = payload.tls,
         ),
         relay = RelayEndpoint(url = "", transportHint = null),
+        dashboard = payload.dashboardUrl?.let { DashboardEndpoint(url = it) },
     )
 }
 
@@ -404,6 +406,7 @@ private fun synthesizeLegacyEndpoint(payload: HermesPairingPayload): EndpointCan
             url = payload.relay?.url ?: "",
             transportHint = payload.relay?.transportHint,
         ),
+        dashboard = payload.dashboardUrl?.let { DashboardEndpoint(url = it) },
     )
 }
 

@@ -40,6 +40,10 @@ data class EndpointCandidate(
     val priority: Int = 0,
     val api: ApiEndpoint,
     val relay: RelayEndpoint,
+    val dashboard: DashboardEndpoint? = null,
+    val proxy: ProxyEndpoint? = null,
+    val security: String? = null,
+    val recommended: Boolean = false,
 )
 
 /**
@@ -62,6 +66,17 @@ data class ApiEndpoint(
 }
 
 /**
+ * Dashboard/admin surface for an [EndpointCandidate]. This is optional so
+ * older v3 payloads that only carried API + Relay endpoints keep
+ * deserializing; when absent, Android derives the conventional same-host
+ * `:9119` dashboard URL from [ApiEndpoint].
+ */
+@Serializable
+data class DashboardEndpoint(
+    val url: String,
+)
+
+/**
  * The relay-server half of an [EndpointCandidate] — the WSS URL the phone
  * opens for the bridge + terminal channels.
  *
@@ -79,6 +94,22 @@ data class RelayEndpoint(
 )
 
 /**
+ * Optional plugin-owned secure proxy route. Unlike [api], [dashboard], and
+ * [relay], this is one app-facing base that can cover all Hermes-Relay
+ * supported traffic after pairing. It is deliberately optional so plugin
+ * proxy support can be advertised by newer payloads without changing the
+ * standard upstream connection model.
+ */
+@Serializable
+data class ProxyEndpoint(
+    val url: String,
+    @SerialName("transport_hint")
+    val transportHint: String? = null,
+    @SerialName("pin_sha256")
+    val pinSha256: String? = null,
+)
+
+/**
  * Returns true when [EndpointCandidate.role] is one of the built-in, styled
  * roles: `lan`, `tailscale`, or `public`. Case-insensitive match — but the
  * role string itself is still preserved verbatim for HMAC canonicalization.
@@ -89,7 +120,7 @@ data class RelayEndpoint(
  */
 fun EndpointCandidate.isKnownRole(): Boolean {
     return when (role.lowercase()) {
-        "lan", "tailscale", "public" -> true
+        "lan", "tailscale", "public", "plugin_proxy", "plugin-proxy", "https" -> true
         else -> false
     }
 }
@@ -106,7 +137,15 @@ fun EndpointCandidate.displayLabel(): String {
     return when (role.lowercase()) {
         "lan" -> "LAN"
         "tailscale" -> "Tailscale"
-        "public" -> "Public"
+        "public" -> if (api.tls) "HTTPS" else "Public"
+        "https" -> "HTTPS"
+        "plugin_proxy", "plugin-proxy" -> "Plugin proxy"
         else -> "Custom VPN ($role)"
     }
 }
+
+fun EndpointCandidate.hasSecureProxy(): Boolean =
+    proxy?.url?.startsWith("https://", ignoreCase = true) == true ||
+        proxy?.url?.startsWith("wss://", ignoreCase = true) == true ||
+        role.equals("plugin_proxy", ignoreCase = true) ||
+        role.equals("plugin-proxy", ignoreCase = true)

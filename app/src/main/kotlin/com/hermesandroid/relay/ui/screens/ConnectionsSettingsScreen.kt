@@ -55,9 +55,8 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
+import com.hermesandroid.relay.ui.components.ActiveCardFeaturesSection
 import com.hermesandroid.relay.ui.components.ActiveCardSecurityPosture
-import com.hermesandroid.relay.ui.components.ActiveCardRelayStatusSection
-import com.hermesandroid.relay.ui.components.ActiveCardStandardStatusSection
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.EndpointsCard
 import com.hermesandroid.relay.ui.components.RouteEditorDialog
@@ -68,6 +67,7 @@ import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.statusText
 import java.util.concurrent.TimeUnit
 
@@ -519,31 +519,20 @@ private fun ConnectionCard(
             if (isActive && activeConnectionViewModel != null) {
                 HorizontalDivider()
 
-                // ── Standard section ─────────────────────────────────────
-                SectionHeader(text = "API + Dashboard")
+                // ── Features section ────────────────────────────────────
+                SectionHeader(text = "Features")
                 SectionCaption(
-                    text = "Standard Hermes setup for Chat, Manage, sessions, and dashboard voice.",
+                    text = "What this connection can do. Routes only choose how the phone reaches Hermes.",
                 )
 
-                ActiveCardStandardStatusSection(
+                ActiveCardFeaturesSection(
                     connectionViewModel = activeConnectionViewModel,
+                    relayEnabled = relayEnabled,
                     onOpenApiInfo = onOpenApiInfo,
                     onOpenDashboard = onOpenDashboard,
+                    onOpenRelayInfo = onOpenRelayInfo,
+                    onOpenSessionInfo = onOpenSessionInfo,
                 )
-
-                if (relayEnabled) {
-                    HorizontalDivider()
-                    SectionHeader(text = "Relay pairing")
-                    SectionCaption(
-                        text = "Optional power tools: Terminal, Bridge, relay sessions, " +
-                            "media, notifications, and grants.",
-                    )
-                    ActiveCardRelayStatusSection(
-                        connectionViewModel = activeConnectionViewModel,
-                        onOpenRelayInfo = onOpenRelayInfo,
-                        onOpenSessionInfo = onOpenSessionInfo,
-                    )
-                }
 
                 // ── Routes section (conditional on having endpoints) ─────
                 // ADR 24 behavior preserved verbatim from pre-refactor;
@@ -551,10 +540,9 @@ private fun ConnectionCard(
                 // "Endpoints" per the shared-vocabulary pass.
                 if (endpoints.isNotEmpty()) {
                     HorizontalDivider()
-                    SectionHeader(text = "Routes (${endpoints.size})")
+                    SectionHeader(text = "Route")
                     SectionCaption(
-                        text = "The app uses the highest-priority reachable route " +
-                            "and switches when Android reports a network change.",
+                        text = "Choose how this phone reaches Hermes. Features stay separate from the selected route.",
                     )
 
                     var preferredRole by remember(connection.id) {
@@ -771,8 +759,8 @@ private fun ConnectionCard(
                             .padding(vertical = 4.dp),
                     ) {
                         Text(
-                            text = if (endpointsExpanded) "Hide routes"
-                            else "Show routes",
+                            text = if (endpointsExpanded) "Hide available routes"
+                            else "Show available routes (${endpoints.size})",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f),
@@ -975,6 +963,19 @@ private fun ConnectionSurfaceSummary(
     } else {
         null
     }
+    val activeVoiceReady: Boolean? = if (activeConnectionViewModel != null) {
+        val ready by activeConnectionViewModel.voiceReady.collectAsState()
+        ready
+    } else {
+        null
+    }
+    val standardVoiceAvailability: StandardVoiceAvailability? =
+        if (activeConnectionViewModel != null) {
+            val availability by activeConnectionViewModel.standardVoiceAvailability.collectAsState()
+            availability
+        } else {
+            null
+        }
     val dashboardStatus = (activeConnection ?: connection).dashboardLastStatus
     val dashboardSignInRequired =
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
@@ -1021,29 +1022,56 @@ private fun ConnectionSurfaceSummary(
         else -> SummaryTone.Info
     }
 
-    Row(
+    val voiceText = when {
+        activeVoiceReady == true -> "Ready"
+        standardVoiceAvailability == StandardVoiceAvailability.SignInRequired -> "Sign in"
+        standardVoiceAvailability == StandardVoiceAvailability.Unsupported -> "Unsupported"
+        standardVoiceAvailability == StandardVoiceAvailability.Unreachable -> "Offline"
+        standardVoiceAvailability == StandardVoiceAvailability.Unknown && isActive -> "Checking"
+        relayConfigured -> "Relay"
+        else -> "Optional"
+    }
+    val voiceTone = when (voiceText) {
+        "Ready" -> SummaryTone.Good
+        "Sign in", "Relay" -> SummaryTone.Info
+        "Unsupported", "Offline" -> SummaryTone.Warning
+        else -> SummaryTone.Neutral
+    }
+
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ConnectionSurfacePill(
-            label = "API",
-            value = apiText,
-            tone = apiTone,
-            modifier = Modifier.weight(1f),
-        )
-        ConnectionSurfacePill(
-            label = "Dashboard",
-            value = dashboardText,
-            tone = dashboardTone,
-            modifier = Modifier.weight(1f),
-            onClick = if (dashboardSignInRequired) onOpenDashboard else null,
-        )
-        ConnectionSurfacePill(
-            label = "Relay",
-            value = relayText,
-            tone = relayTone,
-            modifier = Modifier.weight(1f),
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ConnectionSurfacePill(
+                label = "API",
+                value = apiText,
+                tone = apiTone,
+                modifier = Modifier.weight(1f),
+            )
+            ConnectionSurfacePill(
+                label = "Dashboard",
+                value = dashboardText,
+                tone = dashboardTone,
+                modifier = Modifier.weight(1f),
+                onClick = if (dashboardSignInRequired) onOpenDashboard else null,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ConnectionSurfacePill(
+                label = "Voice",
+                value = voiceText,
+                tone = voiceTone,
+                modifier = Modifier.weight(1f),
+                onClick = if (voiceText == "Sign in") onOpenDashboard else null,
+            )
+            ConnectionSurfacePill(
+                label = "Relay",
+                value = relayText,
+                tone = relayTone,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 

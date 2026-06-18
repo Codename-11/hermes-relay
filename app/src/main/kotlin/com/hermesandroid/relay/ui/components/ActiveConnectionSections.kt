@@ -56,8 +56,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -65,6 +68,7 @@ import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.asBadgeState
 import com.hermesandroid.relay.viewmodel.statusText
 import kotlinx.coroutines.flow.first
@@ -209,6 +213,219 @@ fun ActiveCardRelayStatusSection(
         onClick = onOpenSessionInfo,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/**
+ * Capability overview for the active connection. Features are intentionally
+ * separate from routes: users can see what Hermes can do without reading the
+ * selected network path as the feature boundary.
+ */
+@Composable
+fun ActiveCardFeaturesSection(
+    connectionViewModel: ConnectionViewModel,
+    relayEnabled: Boolean,
+    onOpenApiInfo: () -> Unit,
+    onOpenDashboard: () -> Unit,
+    onOpenRelayInfo: () -> Unit,
+    onOpenSessionInfo: () -> Unit,
+) {
+    val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
+    val standardVoiceAvailability by
+        connectionViewModel.standardVoiceAvailability.collectAsState()
+    val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
+    val relayReady by connectionViewModel.relayReady.collectAsState()
+    val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val authState by connectionViewModel.authState.collectAsState()
+
+    val dashboardStatus = activeConnection?.dashboardLastStatus
+    val dashboardSignInRequired =
+        dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+    val secureProxyAdvertised =
+        activeConnection?.routeCandidates.orEmpty().any { it.hasSecureProxy() }
+
+    val apiValue = when {
+        apiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking"
+        apiReachable -> "Ready"
+        activeConnection?.apiServerUrl.isNullOrBlank() -> "Missing"
+        else -> "Offline"
+    }
+    val apiTone = when (apiValue) {
+        "Ready" -> CapabilityTone.Good
+        "Offline", "Missing" -> CapabilityTone.Warning
+        else -> CapabilityTone.Neutral
+    }
+
+    val dashboardValue = when {
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> "Missing"
+        dashboardStatus == null -> "Unchecked"
+        !dashboardStatus.reachable -> "Offline"
+        dashboardSignInRequired -> "Sign in"
+        dashboardStatus.authenticated == true -> "Signed in"
+        else -> "Available"
+    }
+    val dashboardTone = when (dashboardValue) {
+        "Signed in", "Available" -> CapabilityTone.Good
+        "Sign in" -> CapabilityTone.Info
+        "Offline", "Missing" -> CapabilityTone.Warning
+        else -> CapabilityTone.Neutral
+    }
+
+    val voiceValue = when (standardVoiceAvailability) {
+        StandardVoiceAvailability.Ready -> "Ready"
+        StandardVoiceAvailability.SignInRequired -> "Sign in"
+        StandardVoiceAvailability.Unsupported -> "Unsupported"
+        StandardVoiceAvailability.Unreachable -> "Offline"
+        StandardVoiceAvailability.Unknown -> "Checking"
+    }
+    val voiceTone = when (standardVoiceAvailability) {
+        StandardVoiceAvailability.Ready -> CapabilityTone.Good
+        StandardVoiceAvailability.SignInRequired -> CapabilityTone.Info
+        StandardVoiceAvailability.Unsupported,
+        StandardVoiceAvailability.Unreachable -> CapabilityTone.Warning
+        StandardVoiceAvailability.Unknown -> CapabilityTone.Neutral
+    }
+
+    val relayValue = when {
+        !relayEnabled -> "Disabled"
+        !relayConfigured -> "Optional"
+        relayReady -> "Ready"
+        relayUiState == RelayUiState.Stale -> "Reconnect"
+        else -> "Configured"
+    }
+    val relayTone = when {
+        !relayEnabled || !relayConfigured -> CapabilityTone.Neutral
+        relayReady -> CapabilityTone.Good
+        relayUiState == RelayUiState.Stale -> CapabilityTone.Warning
+        else -> CapabilityTone.Info
+    }
+
+    val terminalValue = when {
+        !relayEnabled -> "Disabled"
+        authState is AuthState.Paired -> "Ready"
+        relayConfigured -> "Pair Relay"
+        else -> "Optional"
+    }
+    val terminalTone = when (terminalValue) {
+        "Ready" -> CapabilityTone.Good
+        "Pair Relay" -> CapabilityTone.Info
+        else -> CapabilityTone.Neutral
+    }
+
+    val proxyValue = if (secureProxyAdvertised) "Available" else "Not advertised"
+    val proxyTone = if (secureProxyAdvertised) CapabilityTone.Good else CapabilityTone.Neutral
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CapabilityChip(
+                label = "Standard API",
+                value = apiValue,
+                tone = apiTone,
+                onClick = onOpenApiInfo,
+                modifier = Modifier.weight(1f),
+            )
+            CapabilityChip(
+                label = "Dashboard",
+                value = dashboardValue,
+                tone = dashboardTone,
+                onClick = onOpenDashboard,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CapabilityChip(
+                label = "Standard voice",
+                value = voiceValue,
+                tone = voiceTone,
+                onClick = if (standardVoiceAvailability ==
+                    StandardVoiceAvailability.SignInRequired
+                ) {
+                    onOpenDashboard
+                } else {
+                    null
+                },
+                modifier = Modifier.weight(1f),
+            )
+            CapabilityChip(
+                label = "Relay tools",
+                value = relayValue,
+                tone = relayTone,
+                onClick = onOpenRelayInfo,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CapabilityChip(
+                label = "Terminal",
+                value = terminalValue,
+                tone = terminalTone,
+                onClick = onOpenSessionInfo,
+                modifier = Modifier.weight(1f),
+            )
+            CapabilityChip(
+                label = "Secure proxy",
+                value = proxyValue,
+                tone = proxyTone,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+private enum class CapabilityTone { Neutral, Good, Info, Warning }
+
+@Composable
+private fun CapabilityChip(
+    label: String,
+    value: String,
+    tone: CapabilityTone,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
+    val container = when (tone) {
+        CapabilityTone.Good -> MaterialTheme.colorScheme.primaryContainer
+        CapabilityTone.Info -> MaterialTheme.colorScheme.tertiaryContainer
+        CapabilityTone.Warning -> MaterialTheme.colorScheme.errorContainer
+        CapabilityTone.Neutral -> MaterialTheme.colorScheme.surface
+    }
+    val content = when (tone) {
+        CapabilityTone.Good -> MaterialTheme.colorScheme.onPrimaryContainer
+        CapabilityTone.Info -> MaterialTheme.colorScheme.onTertiaryContainer
+        CapabilityTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
+        CapabilityTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clickable(onClick = onClick)
+            } else {
+                Modifier
+            },
+        ),
+        color = container,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = content,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = content,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 /**
@@ -862,6 +1079,10 @@ fun ActiveCardSecurityPosture(
     onNavigateToPairedDevices: () -> Unit,
 ) {
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val effectiveApiServerUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val effectiveRelayUrl by connectionViewModel.effectiveRelayUrl.collectAsState()
+    val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
     val insecureReason by connectionViewModel.insecureReason.collectAsState()
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
@@ -870,14 +1091,43 @@ fun ActiveCardSecurityPosture(
     // say "Plain (on LAN)" instead of "Insecure (network unknown)" when
     // the resolver already knows which candidate we're on.
     val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+    val selectedRouteUrls = buildList {
+        effectiveApiServerUrl.trim().takeIf { it.isNotBlank() }?.let(::add)
+        effectiveDashboardUrl.trim().takeIf { it.isNotBlank() }?.let(::add)
+        val selectedRelayUrl = effectiveRelayUrl.ifBlank { relayUrl }
+        if (relayConfigured || selectedRelayUrl.isNotBlank()) {
+            selectedRelayUrl.trim().takeIf { it.isNotBlank() }?.let(::add)
+        }
+    }
+    val secureUrlCount = selectedRouteUrls.count { url ->
+        isSelectedRouteUrlSecure(
+            url = url,
+            activeEndpoint = activeEndpoint,
+            isTailscaleDetected = isTailscaleDetected,
+        )
+    }
+    val transportState = when {
+        selectedRouteUrls.isEmpty() -> null
+        secureUrlCount == selectedRouteUrls.size -> TransportSecurityState.AllSecure
+        secureUrlCount > 0 -> TransportSecurityState.Mixed
+        else -> TransportSecurityState.AllInsecure
+    }
 
-    TransportSecurityBadge(
-        isSecure = isUrlSecure(relayUrl),
-        reason = insecureReason.ifBlank { null },
-        size = TransportSecuritySize.Row,
-        modifier = Modifier.fillMaxWidth(),
-        activeRole = activeEndpoint?.role,
-    )
+    if (transportState != null) {
+        TransportSecurityBadge(
+            state = transportState,
+            size = TransportSecuritySize.Row,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    } else {
+        TransportSecurityBadge(
+            isSecure = isUrlSecure(relayUrl),
+            reason = insecureReason.ifBlank { null },
+            size = TransportSecuritySize.Row,
+            modifier = Modifier.fillMaxWidth(),
+            activeRole = activeEndpoint?.role,
+        )
+    }
 
     if (isTailscaleDetected) {
         Row(
@@ -946,6 +1196,29 @@ fun ActiveCardSecurityPosture(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+private fun isSelectedRouteUrlSecure(
+    url: String,
+    activeEndpoint: EndpointCandidate?,
+    isTailscaleDetected: Boolean,
+): Boolean {
+    if (isUrlSecure(url)) return true
+    return activeEndpoint.isEncryptedOverlayRoute(isTailscaleDetected)
+}
+
+private fun EndpointCandidate?.isEncryptedOverlayRoute(isTailscaleDetected: Boolean): Boolean {
+    if (this == null) return false
+    val role = role.lowercase()
+    val securityHint = security.orEmpty().lowercase()
+    return role == "tailscale" ||
+        (isTailscaleDetected && securityHint.contains("tailscale")) ||
+        role == "plugin_proxy" ||
+        role == "plugin-proxy" ||
+        hasSecureProxy() ||
+        securityHint.contains("wireguard") ||
+        securityHint.contains("https") ||
+        securityHint.contains("tls")
 }
 
 /**
