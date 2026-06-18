@@ -34,6 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Terminal paste no longer auto-runs multi-line text.** The key-bar PASTE now uses bracketed paste, so multi-line content lands intact in shells and editors instead of executing line by line.
 - **Terminal on-screen arrows behave inside TUIs.** Arrow/Home/End keys follow the running app's cursor-key mode (application vs. normal), so they work correctly in vim, less, and fzf.
 - **Terminal footer spacing.** A small gap now keeps the last terminal row clear of the key bar (it could previously look like the footer overlapped it), and a redundant navigation-bar inset that left empty space below the keys was removed.
+- **In-chat model picker now actually applies on a new chat.** Picking a model and provider in the chat composer (e.g. Grok 4.3 via your xAI subscription) is bound to the new conversation, so the agent runs on the picked model instead of silently falling back to the account's global default. Switching profiles retires an explicit pick so the profile's own model takes over, and the picker label updates immediately instead of lagging a round-trip.
+- **Server-generated images render in chat when paired to the relay.** An assistant image that points at a server-side file path is now fetched through the relay's media route and shown inline (tap to zoom), instead of degrading to an "image is on the server" notice. On the SSE chat path the agent is also told it can surface images and files by path when a relay route is configured (visible in the chat "What the agent sees" sheet). Standard (no-plugin) connections are unchanged.
+- **Smoother profile switching.** Switching profiles no longer blanks the conversation to an empty/"Loading…" state before the new history loads; the previous transcript is held and cross-fades to the new one.
 
 ## [1.1.0] - 2026-06-16
 

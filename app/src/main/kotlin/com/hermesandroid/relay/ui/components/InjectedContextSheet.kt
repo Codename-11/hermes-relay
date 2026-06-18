@@ -75,6 +75,12 @@ fun InjectedContextSheet(
                 emptyNote = "No phone-status block — enable it in App Context settings.",
             )
             ContextSection(
+                title = "Media capability",
+                body = context.mediaCapability,
+                emptyNote = "Not sent. Added only on the SSE path when a relay " +
+                    "route is configured — the gateway transport has no slot for it.",
+            )
+            ContextSection(
                 title = "This turn",
                 body = context.interfaceContext,
                 emptyNote = "Nothing extra for a typed turn. Voice turns add a " +
