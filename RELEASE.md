@@ -540,6 +540,12 @@ Release named `Hermes-Relay-Plugin v<version>` for the plugin package.
 > Production **draft** — skip to the Play Console, confirm the draft, and click
 > **Start rollout**. The manual path below is the fallback when the secret is
 > unset (or for staging on a non-production track).
+>
+> This automated tag path is intentionally bundle-only. It uploads the
+> `googlePlayRelease` AAB and release-scoped "What's new" notes, but it does
+> not republish static listing assets such as screenshots, title, description,
+> icon, or feature graphic. Use the Play Store Listing workflow when those
+> assets change.
 
 **Pick the track first.** The AAB is track-agnostic — the same
 `-googlePlay-release.aab` goes to whichever track you publish on. Choose by intent,

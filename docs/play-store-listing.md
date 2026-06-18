@@ -106,6 +106,27 @@ Not designed for children.
 
 ai, agent, hermes, developer tools, chat, voice, self-hosted, remote, open source
 
+## Graphics and screenshots
+
+Store graphics are versioned in the repo and exported to the Gradle Play
+Publisher metadata tree with:
+
+```bash
+python scripts/screenshots.py export --target play
+python scripts/screenshots.py validate
+```
+
+The capture/export plan is `docs/media/screenshots.json`. The exported Play
+assets live under `app/src/googlePlay/play/listings/en-US/graphics/`.
+Android tag releases intentionally run the bundle-only
+`publishGooglePlayReleaseBundle` task so static listing graphics are not
+republished on every release. When listing copy or screenshots change, run the
+path-filtered Play Store Listing workflow or publish locally with:
+
+```bash
+./gradlew publishGooglePlayReleaseListing
+```
+
 ## Play Console Declarations
 
 Submission-time declarations the Play Console requires — keep in sync with the merged `googlePlay` manifest.

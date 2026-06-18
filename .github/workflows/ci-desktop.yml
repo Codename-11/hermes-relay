@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
 jobs:
   typecheck-and-build:
     name: Type-check + build
@@ -47,16 +51,8 @@ jobs:
         # prebuilt dist/ that references a source file that moved.
         run: node bin/hermes-relay.js --version
 
-      - name: Upload dist/
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-dist
-          path: desktop/dist
-          retention-days: 7
-
   smoke-help:
     name: Smoke — --help + --version work on every target OS
-    needs: typecheck-and-build
     strategy:
       fail-fast: false
       matrix:

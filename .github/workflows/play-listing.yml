@@ -1,0 +1,92 @@
+name: Play Store Listing
+
+on:
+  pull_request:
+    paths:
+      - "assets/screenshots/**"
+      - "assets/play-store-icon-512.png"
+      - "assets/play-store-feature-1024x500.png"
+      - "docs/media/screenshots.json"
+      - "app/src/googlePlay/play/default-language.txt"
+      - "app/src/googlePlay/play/listings/**"
+      - "scripts/screenshots.py"
+      - ".github/workflows/play-listing.yml"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "assets/screenshots/**"
+      - "assets/play-store-icon-512.png"
+      - "assets/play-store-feature-1024x500.png"
+      - "docs/media/screenshots.json"
+      - "app/src/googlePlay/play/default-language.txt"
+      - "app/src/googlePlay/play/listings/**"
+      - "scripts/screenshots.py"
+      - ".github/workflows/play-listing.yml"
+  workflow_dispatch:
+    inputs:
+      publish_listing:
+        description: "Publish Play Store listing metadata after validation"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Listing Assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install image tooling
+        run: python -m pip install --upgrade rich Pillow
+
+      - name: Validate screenshots and listing metadata
+        run: python scripts/screenshots.py validate
+
+  publish-listing:
+    name: Publish Listing Metadata
+    needs: validate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_listing }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: Write Play service account
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not configured."
+            exit 1
+          fi
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > play-service-account.json
+
+      - name: Publish Play Store listing
+        run: ./gradlew publishGooglePlayReleaseListing
+
+      - name: Remove Play service account
+        if: always()
+        run: rm -f play-service-account.json
