@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-18 — Native secure routes: split connection Features from Routes (Android)
+
+**Why.** Connection setup conflated two separate questions — what a Hermes connection can *do* (features) and how this phone *reaches* it (route) — which coupled Relay features to a single transport. Modeling them separately lets a user enable Relay tools over any route (LAN, Tailscale, public HTTPS, VPN, or a plugin-provided secure proxy) and sets up a plugin-assisted native encrypted route that does not require Tailscale. The standard path stays direct-to-upstream and plugin-free. (Backfilled log entry — the work landed in PR #88; full design in `docs/plans/2026-06-18-native-secure-routes.md`.)
+
+- **Split connection model.** `ConnectionsSettingsScreen` / `ActiveConnectionSections` now render distinct **Features** and **Route** sections; `Endpoint.kt` + `ConnectionData.kt` carry the route/role model and `QrPairingScanner` threads it through pairing.
+- **Plugin secure proxy route.** A `plugin_proxy` route role surfaces as a "Secure proxy" option with encrypted / pinned-TLS treatment (recommended, not forced) alongside the existing LAN / Tailscale / public / custom roles.
+- **Docs.** Added the `2026-06-18-native-secure-routes` plan and a connections split-model mockup; fixed the docs-site hero sphere to keep its canvas backing store synced to the CSS box (`HeroDemo.vue`).
+- **Verification.** CI green on PR #88 (Android Build + Lint + Test).
+
 ## 2026-06-18 — Android onboarding permissions review surface
 
 **Why.** Android onboarding already kept the standard path clean, but permissions were scattered between feature-specific prompts, Bridge, and Android Settings. A central review page makes the model explicit: standard Chat and Manage do not need phone-control permissions, while voice, camera, notifications, and sideload Device Control remain opt-in.
