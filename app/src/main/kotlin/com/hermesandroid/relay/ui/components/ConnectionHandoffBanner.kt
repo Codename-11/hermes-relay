@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -233,13 +234,18 @@ fun ConnectionStatusToast(
     onDismiss: (() -> Unit)? = null,
 ) {
     val current = status ?: return
+    val surface = MaterialTheme.colorScheme.surface
+    // This toast floats OVER arbitrary content, so a translucent container would
+    // let the UI bleed through and hurt legibility. Composite any alpha over the
+    // opaque surface: the result is always opaque while each tone keeps its
+    // intended tint (e.g. Warning stays a lighter error than Error).
     val containerColor = when {
         current.tone == ConnectionStatusTone.Error -> MaterialTheme.colorScheme.errorContainer
         current.tone == ConnectionStatusTone.Warning -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.82f)
         current.success -> MaterialTheme.colorScheme.tertiaryContainer
         current.active -> MaterialTheme.colorScheme.secondaryContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
-    }
+    }.compositeOver(surface)
     val contentColor = when {
         current.tone == ConnectionStatusTone.Error ||
             current.tone == ConnectionStatusTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
