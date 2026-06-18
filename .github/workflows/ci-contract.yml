@@ -49,9 +49,10 @@ jobs:
       - name: Resolve upstream ref
         id: ref
         run: |
-          # PIN this to a known-good NousResearch/hermes-agent commit to keep
-          # PR/push runs non-flaky. Until pinned it tracks main (drift-exposed).
-          DEFAULT_REF="main"
+          # PR/push runs use a known-good NousResearch/hermes-agent commit so
+          # normal CI is stable. The weekly schedule below intentionally tracks
+          # main as the upstream-drift siren.
+          DEFAULT_REF="ef4b897a1843cd32c4f141f55db60f0f0602cc98"
           if [ "${{ github.event_name }}" = "schedule" ]; then
             REF="main"                                   # weekly drift siren
           elif [ -n "${{ github.event.inputs.upstream_ref }}" ]; then

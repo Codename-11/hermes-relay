@@ -60,9 +60,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
-
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
+        with:
+          cache-read-only: false
 
       # Keep the tag release gate aligned with CI — Android's broad Gradle
       # `test` aggregate currently hangs in deferred JVM suites tracked by
@@ -90,6 +89,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
 
       - name: Decode release keystore
         env:

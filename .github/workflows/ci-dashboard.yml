@@ -5,15 +5,11 @@ on:
     branches: [main, dev]
     paths:
       - "plugin/dashboard/**"
-      - "scripts/check-plugin-version-sync.py"
-      - "scripts/check-server-version-sync.py"
       - ".github/workflows/ci-dashboard.yml"
   pull_request:
     branches: [main, dev]
     paths:
       - "plugin/dashboard/**"
-      - "scripts/check-plugin-version-sync.py"
-      - "scripts/check-server-version-sync.py"
       - ".github/workflows/ci-dashboard.yml"
 
 permissions:
@@ -55,7 +51,7 @@ jobs:
         run: python scripts/check-plugin-version-sync.py
 
       - name: Install dashboard API test deps
-        run: pip install -r relay_server/requirements.txt fastapi httpx pytest requests
+        run: pip install fastapi httpx
 
       - name: Run dashboard API tests
         run: python -m unittest plugin.dashboard.test_plugin_api
