@@ -637,6 +637,80 @@ class GatewayChatClientTest {
         assertEquals(null, create["provider"])
     }
 
+    // --- Per-session reasoning_effort / fast binding (upstream tui_gateway:
+    // session.create honors `reasoning_effort` → create_reasoning_override and
+    // `fast` → priority service tier; server.py:4181-4191). Setting these before
+    // a new chat's first message must ride session.create — NOT a sessionless
+    // config.set, which upstream applies as a GLOBAL write. ---
+
+    @Test
+    fun `session create binds reasoning_effort and fast`() {
+        val r = Recorder()
+        client.sessionModelProvider = {
+            GatewaySessionModel(model = "grok-4.3", provider = "xai", reasoningEffort = "high", fast = true)
+        }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals("grok-4.3", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("high", (create["reasoning_effort"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(true, (create["fast"] as? JsonPrimitive)?.booleanOrNull)
+    }
+
+    @Test
+    fun `session create binds reasoning_effort and fast without a model pick`() {
+        val r = Recorder()
+        // No model, but the user set effort/fast before the first message — they
+        // still ride session.create (the whole object is no longer model-gated).
+        client.sessionModelProvider = {
+            GatewaySessionModel(model = null, provider = null, reasoningEffort = "low", fast = true)
+        }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals(null, create["model"])
+        assertEquals("low", (create["reasoning_effort"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(true, (create["fast"] as? JsonPrimitive)?.booleanOrNull)
+    }
+
+    @Test
+    fun `session create omits reasoning_effort and fast when unset`() {
+        val r = Recorder()
+        // Model pick only → no per-session effort/fast override, so the new
+        // session inherits the profile's own reasoning + service tier.
+        client.sessionModelProvider = { GatewaySessionModel(model = "gpt-5.5", provider = null) }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals("gpt-5.5", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(create.containsKey("reasoning_effort"))
+        assertFalse(create.containsKey("fast"))
+    }
+
+    @Test
+    fun `session create with all overrides null binds nothing`() {
+        val r = Recorder()
+        // A model object whose fields are all null is treated as "no override"
+        // (currentSessionModel filters it out) → a clean profile-default create.
+        client.sessionModelProvider = {
+            GatewaySessionModel(model = null, provider = null, reasoningEffort = null, fast = null)
+        }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals(null, create["model"])
+        assertFalse(create.containsKey("reasoning_effort"))
+        assertFalse(create.containsKey("fast"))
+    }
+
     // --- Attachments (image / pdf / file routing) ---
 
     @Test
