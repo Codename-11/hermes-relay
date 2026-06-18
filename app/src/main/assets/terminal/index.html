@@ -26,7 +26,9 @@
             left: 0;
             right: 0;
             bottom: 0;
-            padding: 8px 6px 0 8px;
+            /* Bottom gap so xterm's last row clears the extra-keys footer
+               instead of butting flush against it (read as an overlap). */
+            padding: 8px 6px 8px 8px;
             box-sizing: border-box;
         }
         .xterm .xterm-viewport {
@@ -255,6 +257,36 @@
                 if (window.AndroidBridge && window.AndroidBridge.onInput) {
                     window.AndroidBridge.onInput(text);
                 }
+            }
+        };
+
+        // Mode-aware encoder for the on-screen toolbar's special keys
+        // (arrows / Home / End / Page). Arrows must follow xterm's current
+        // DECCKM (application cursor keys) mode: when an app like vim, less,
+        // or readline has requested it, an arrow is SS3-encoded (\eOA) rather
+        // than CSI (\e[A). The old path always sent CSI from Kotlin, which the
+        // running TUI could misread. We read term.modes here (where the mode
+        // actually lives) and route bytes back through onInput so sticky
+        // modifiers still apply. Page keys are mode-independent.
+        window.termSendKey = function (name) {
+            var appCursor = false;
+            try {
+                appCursor = !!(term.modes && term.modes.applicationCursorKeysMode);
+            } catch (_) {}
+            var p = appCursor ? 'O' : '[';
+            var map = {
+                ArrowUp: p + 'A',
+                ArrowDown: p + 'B',
+                ArrowRight: p + 'C',
+                ArrowLeft: p + 'D',
+                Home: p + 'H',
+                End: p + 'F',
+                PageUp: '[5~',
+                PageDown: '[6~',
+            };
+            var seq = map[name];
+            if (seq && window.AndroidBridge && window.AndroidBridge.onInput) {
+                window.AndroidBridge.onInput(seq);
             }
         };
 

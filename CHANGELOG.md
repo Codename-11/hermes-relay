@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Voice replies are formatted for listening.** In voice mode the assistant is now guided to answer in short, conversational sentences without markdown, emoji, or raw URLs — without changing what is stored in chat history.
+- **Leaner terminal screen (Android).** The extra-keys bar scrolls horizontally with compact, fully-legible keys (no more clipped "CTRL"), the header is a single compact row showing one inline connection-status dot plus state, and the tab strip is hidden for single-tab sessions — the new-tab "+" moves into the header — reclaiming vertical space for the terminal.
+- **Relay terminals run on an isolated, TUI-tuned tmux.** Sessions now use a dedicated tmux server/socket with its own config — instant ESC (`escape-time 0`), truecolor `$TERM`, mouse and focus events on, and no status bar — so editors and full-screen tools behave correctly, without touching the user's personal tmux.
 
 ### Fixed
 
@@ -29,6 +31,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Realtime voice no longer drops the conversation mid-session with some providers.** A normal end-of-turn signal was being rejected on certain voice providers, ending the session every turn.
 - **Relay voice synthesis no longer leaves temporary audio files behind** on the server.
 - **Clearer voice errors and an oversize-recording guard.** Standard voice now rejects an over-long recording before uploading it and shows a helpful message for audio the server can't read, instead of a generic HTTP error.
+- **Terminal paste no longer auto-runs multi-line text.** The key-bar PASTE now uses bracketed paste, so multi-line content lands intact in shells and editors instead of executing line by line.
+- **Terminal on-screen arrows behave inside TUIs.** Arrow/Home/End keys follow the running app's cursor-key mode (application vs. normal), so they work correctly in vim, less, and fzf.
+- **Terminal footer spacing.** A small gap now keeps the last terminal row clear of the key bar (it could previously look like the footer overlapped it), and a redundant navigation-bar inset that left empty space below the keys was removed.
 
 ## [1.1.0] - 2026-06-16
 
