@@ -26,6 +26,10 @@ then `docs/spec.md` and `docs/decisions.md`.
   `--no-ff` merges, version bumps at release-prep on `dev`, tags cut from `main`.
 - **Android:** Jetpack Compose only (no XML), kotlinx.serialization (no Gson),
   OkHttp (no Ktor), `wss://` only. Run `./gradlew lint` before pushing Kotlin.
+- **Plugin (Python 3.11+):** aiohttp + asyncio (no threading), type hints
+  everywhere, structured `logging` (no `print`). **Desktop CLI (Node ≥21):**
+  zero runtime deps, strict TS + ES modules, ship compiled `dist/`. Full
+  per-language style and the dev loop live in CLAUDE.md → "Code Style".
 
 ## Public-repo writing hygiene
 
