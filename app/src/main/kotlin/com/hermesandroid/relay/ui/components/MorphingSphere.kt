@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.ui.theme.LocalBrand
 
 /**
  * ASCII morphing sphere — the visual embodiment of the AI agent.
@@ -59,16 +60,26 @@ fun MorphingSphere(
     toolCallBurst: Float = 0f,
     voiceAmplitude: Float = 0f,
     voiceMode: Boolean = false,
+    skin: SphereSkin = LocalSphereSkin.current,
     fixedTime: Float? = null,
     fixedColorPhase: Float? = null
 ) {
-    val amp = voiceAmplitude.coerceIn(0f, 1f)
-    val targetP = remember(state) { paramsFor(state) }
-    val targetC = remember(state) { colorsFor(state) }
+    val brand = LocalBrand.current
+    // Gate reactive inputs on what the skin declares it honors — this is the
+    // "optional + detectable" reactivity contract. A skin that opts out of an
+    // input renders as if that input were neutral, and the same flags drive the
+    // capability badges in the picker.
+    val effIntensity = if (skin.reactivity.intensity) intensity else 0f
+    val effToolBurst = if (skin.reactivity.tools) toolCallBurst else 0f
+    val effVoiceMode = voiceMode && skin.reactivity.voice
+    val amp = (if (skin.reactivity.voice) voiceAmplitude else 0f).coerceIn(0f, 1f)
+
+    val targetP = remember(state, skin) { skin.paramsForState(state) }
+    val targetC = remember(state, skin, brand) { skin.colorsFor(state, brand) }
     val spec = tween<Float>(800, easing = FastOutSlowInEasing)
 
     val voiceRadiusScale by animateFloatAsState(
-        targetValue = if (voiceMode) 1.08f else 1.0f,
+        targetValue = if (effVoiceMode) 1.08f else 1.0f,
         animationSpec = tween(600, easing = FastOutSlowInEasing),
         label = "voiceExpand"
     )
@@ -103,7 +114,7 @@ fun MorphingSphere(
     val animatedTime = remember { mutableFloatStateOf(0f) }
     val animatedColorPhase = remember { mutableFloatStateOf(0f) }
     val driveAnimation = fixedTime == null || fixedColorPhase == null
-    val fullFrameRate = state != SphereState.Idle || voiceMode
+    val fullFrameRate = state != SphereState.Idle || effVoiceMode
     if (driveAnimation) {
         LaunchedEffect(fullFrameRate) {
             var lastNanos = withFrameNanos { it }
@@ -153,8 +164,8 @@ fun MorphingSphere(
             heartbeatSpeed = heartbeatSpeed, radialFlowSpeed = radialFlowSpeed,
             cr1 = cr1, cg1 = cg1, cb1 = cb1,
             cr2 = cr2, cg2 = cg2, cb2 = cb2,
-            intensity = intensity, toolCallBurst = toolCallBurst,
-            voiceAmplitude = amp, voiceMode = voiceMode,
+            intensity = effIntensity, toolCallBurst = effToolBurst,
+            voiceAmplitude = amp, voiceMode = effVoiceMode,
             voiceRadiusScale = voiceRadiusScale
         )
 

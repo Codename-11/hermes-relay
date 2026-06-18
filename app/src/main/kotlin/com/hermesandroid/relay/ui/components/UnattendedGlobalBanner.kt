@@ -2,7 +2,7 @@ package com.hermesandroid.relay.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,7 +76,7 @@ fun UnattendedGlobalBanner(
     // background in both themes:
     //  - Dark: #FFD180 on #2A1F0A ≈ 10.3:1
     //  - Light: #7A3E00 on #FFF3E0 ≈ 9.2:1
-    val isDark = isSystemInDarkTheme()
+    val isDark = LocalBrand.current.isDark
     val amberBg = if (isDark) Color(0xFF2A1F0A) else Color(0xFFFFF3E0)
     val amberOn = if (isDark) Color(0xFFFFD180) else Color(0xFF7A3E00)
     val amberFill = if (isDark) Color(0xFFFFA000) else Color(0xFFE65100)

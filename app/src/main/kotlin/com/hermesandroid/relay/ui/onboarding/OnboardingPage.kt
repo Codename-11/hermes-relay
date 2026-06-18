@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.ui.onboarding
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -50,7 +50,7 @@ fun OnboardingPage(
     },
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
     val heroShape = RoundedCornerShape(30.dp)
     val bodyShape = RoundedCornerShape(26.dp)
     val heroBrush = Brush.radialGradient(
@@ -139,7 +139,7 @@ private fun FeatureHero(
     icon: ImageVector,
     title: String,
 ) {
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center

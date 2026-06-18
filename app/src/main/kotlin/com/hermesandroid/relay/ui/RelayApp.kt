@@ -43,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,7 +67,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
+import com.hermesandroid.relay.ui.components.LocalSphereSkin
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.SphereRegistry
+import com.hermesandroid.relay.ui.components.SphereSkinLoader
 import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
@@ -86,9 +91,11 @@ import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.data.displayLabel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
@@ -115,6 +122,7 @@ import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
+import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
@@ -741,9 +749,39 @@ fun RelayApp() {
 
     // Observe theme preference
     val themePreference by connectionViewModel.theme.collectAsState()
+    val appThemeId by connectionViewModel.appTheme.collectAsState()
     val fontScale by connectionViewModel.fontScale.collectAsState()
 
-    HermesRelayTheme(themePreference = themePreference, fontScale = fontScale) {
+    // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
+    // publish it + the full available set so every MorphingSphere picks it up
+    // via LocalSphereSkin without per-call-site threading. Adaptive skins read
+    // the brand lazily inside MorphingSphere, so this can sit outside the theme.
+    val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+    val sphereContext = LocalContext.current
+    val availableSphereSkins by produceState(
+        initialValue = SphereRegistry.builtIns,
+        key1 = sphereContext,
+    ) {
+        value = SphereRegistry.builtIns +
+            withContext(Dispatchers.IO) { SphereSkinLoader.loadUserSkins(sphereContext) }
+    }
+    val activeSphereSkin = remember(sphereSkinId, appThemeId, availableSphereSkins) {
+        SphereRegistry.resolve(
+            selectedId = sphereSkinId,
+            themeDefaultSkinId = AppThemes.byId(appThemeId).defaultSphereSkinId,
+            available = availableSphereSkins,
+        )
+    }
+
+    CompositionLocalProvider(
+        LocalSphereSkin provides activeSphereSkin,
+        LocalAvailableSphereSkins provides availableSphereSkins,
+    ) {
+    HermesRelayTheme(
+        appThemeId = appThemeId,
+        themePreference = themePreference,
+        fontScale = fontScale,
+    ) {
         val navController = rememberNavController()
         var postOnboardingRoute by remember { mutableStateOf<String?>(null) }
 
@@ -2185,6 +2223,7 @@ fun RelayApp() {
         }
         } // end Box
     }
+    } // end CompositionLocalProvider (sphere skin)
 }
 
 /** One line of the startup sphere's progress narration. */

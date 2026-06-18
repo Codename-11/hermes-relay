@@ -4,7 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -1256,7 +1256,7 @@ fun ChatScreen(
             )
         }
     ) {
-        val isDarkTheme = isSystemInDarkTheme()
+        val isDarkTheme = LocalBrand.current.isDark
 
         Box(modifier = Modifier.fillMaxSize()) {
         Column(

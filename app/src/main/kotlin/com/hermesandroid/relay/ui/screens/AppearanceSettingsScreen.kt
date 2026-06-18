@@ -1,17 +1,28 @@
 package com.hermesandroid.relay.ui.screens
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,7 +44,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
+import com.hermesandroid.relay.ui.components.SphereRegistry
+import com.hermesandroid.relay.ui.components.SphereSkin
+import com.hermesandroid.relay.ui.components.SphereSkinSource
+import com.hermesandroid.relay.ui.theme.AppTheme
+import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.BrandPalette
+import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -42,14 +63,16 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
  * font-scale preference, and animation toggles (sphere background, idle
  * animation, etc.).
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AppearanceSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
 ) {
     val theme by connectionViewModel.theme.collectAsState()
-    val isDarkTheme = isSystemInDarkTheme()
+    val appThemeId by connectionViewModel.appTheme.collectAsState()
+    val selectedTheme = AppThemes.byId(appThemeId)
+    val isDarkTheme = LocalBrand.current.isDark
 
     Scaffold(
         topBar = {
@@ -77,7 +100,52 @@ fun AppearanceSettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Theme section
+            // Theme gallery section
+            Text(
+                text = "Theme",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Pick a look. The brand chrome, accents, and chat " +
+                            "background all follow your choice.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        AppThemes.ALL.forEach { appTheme ->
+                            ThemeSwatchChip(
+                                appTheme = appTheme,
+                                selected = appTheme.id == selectedTheme.id,
+                                onClick = { connectionViewModel.setAppTheme(appTheme.id) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Appearance (mode + font) section
             Text(
                 text = "Appearance",
                 style = MaterialTheme.typography.titleMedium,
@@ -100,7 +168,7 @@ fun AppearanceSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Theme",
+                        text = "Light / Dark",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -108,6 +176,10 @@ fun AppearanceSettingsScreen(
                     val themeOptions = listOf("auto", "light", "dark")
                     val themeLabels = listOf("Auto", "Light", "Dark")
                     val selectedIndex = themeOptions.indexOf(theme).coerceAtLeast(0)
+                    // The mode toggle only applies to themes that ship both a
+                    // light and dark palette (Hermes Relay). Fixed-mode themes
+                    // are their own complete look, so we disable + explain.
+                    val modeApplies = selectedTheme.mode == ThemeMode.BOTH
 
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                         themeOptions.forEachIndexed { index, option ->
@@ -117,11 +189,26 @@ fun AppearanceSettingsScreen(
                                     count = themeOptions.size
                                 ),
                                 onClick = { connectionViewModel.setTheme(option) },
-                                selected = index == selectedIndex
+                                selected = index == selectedIndex,
+                                enabled = modeApplies
                             ) {
                                 Text(themeLabels[index])
                             }
                         }
+                    }
+
+                    if (!modeApplies) {
+                        Text(
+                            text = when (selectedTheme.mode) {
+                                ThemeMode.LIGHT_ONLY ->
+                                    "${selectedTheme.label} is a fixed light theme."
+                                else ->
+                                    "${selectedTheme.label} is a fixed dark theme. " +
+                                        "Switch to Hermes Relay for light/dark control."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
                     // ── Font size ──────────────────────────────────────────
@@ -265,6 +352,230 @@ fun AppearanceSettingsScreen(
                     }
                 }
             }
+
+            // Agent sphere skin section
+            Text(
+                text = "Agent sphere",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                val brand = LocalBrand.current
+                val availableSkins = LocalAvailableSphereSkins.current
+                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+                val effectiveSkinId = SphereRegistry.resolve(
+                    selectedId = sphereSkinId,
+                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
+                    available = availableSkins,
+                ).id
+
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Choose the orb's look. Each skin shows which live " +
+                            "signals it reacts to.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        availableSkins.forEach { skin ->
+                            SphereSkinChip(
+                                skin = skin,
+                                brand = brand,
+                                selected = skin.id == effectiveSkinId,
+                                onClick = { connectionViewModel.setSphereSkin(skin.id) },
+                            )
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    Text(
+                        text = "Add your own: drop a sphere JSON spec into the app's " +
+                            "private spheres/ folder, then reopen this screen. See " +
+                            "docs/sphere-spec.md for the format.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
+    }
+}
+
+/**
+ * Compact theme picker chip — a swatch preview of the theme's three signature
+ * colors (background fill + two accent dots) with its label, a selected border,
+ * and a check badge. Reads from [AppTheme.swatch] so it stays correct as themes
+ * are added.
+ */
+@Composable
+private fun ThemeSwatchChip(
+    appTheme: AppTheme,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = appTheme.swatch.getOrElse(0) { MaterialTheme.colorScheme.surface }
+    val accents = appTheme.swatch.drop(1)
+    Column(
+        modifier = Modifier
+            .width(96.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = RoundedCornerShape(12.dp),
+            )
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(background),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                accents.forEach { accent ->
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(accent),
+                    )
+                }
+            }
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(11.dp),
+                    )
+                }
+            }
+        }
+        Text(
+            text = appTheme.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * Sphere skin chip — a two-pole gradient preview of the skin's idle colors, its
+ * label, and a one-line capability summary (which live signals it reacts to,
+ * plus a "Custom" tag for user-loaded skins). Adaptive skins preview against the
+ * active [BrandPalette].
+ */
+@Composable
+private fun SphereSkinChip(
+    skin: SphereSkin,
+    brand: BrandPalette,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val swatch = skin.swatch(brand)
+    val poleA = swatch.getOrElse(0) { MaterialTheme.colorScheme.primary }
+    val poleB = swatch.getOrElse(1) { poleA }
+    val capability = buildString {
+        append(skin.reactivity.summary())
+        if (skin.source == SphereSkinSource.USER) append(" · Custom")
+    }
+    Column(
+        modifier = Modifier
+            .width(110.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = RoundedCornerShape(12.dp),
+            )
+            .padding(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Brush.horizontalGradient(listOf(poleA, poleB))),
+            contentAlignment = Alignment.TopEnd,
+        ) {
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .padding(3.dp)
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(11.dp),
+                    )
+                }
+            }
+        }
+        Text(
+            text = skin.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+        Text(
+            text = capability,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
     }
 }

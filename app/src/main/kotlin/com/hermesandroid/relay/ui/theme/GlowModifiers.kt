@@ -1,7 +1,6 @@
 package com.hermesandroid.relay.ui.theme
 
 import androidx.compose.foundation.border
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -111,27 +110,29 @@ fun Modifier.leftEdgeGlow(
 }
 
 /**
- * Composable helper to check dark theme and apply glow modifiers.
- * Use this in @Composable contexts where isSystemInDarkTheme() is available.
+ * Composable helpers that gate the glow flourishes on the *active palette's*
+ * darkness ([LocalBrand]) rather than the system setting — so a fixed dark
+ * theme (e.g. Cyberpunk) keeps its glows on a light-mode phone, and a light
+ * theme (Hermes Light / Nous Blue) correctly drops them on a dark-mode phone.
  */
 @Composable
 fun Modifier.purpleGlowAuto(
     radius: Dp = 20.dp,
     alpha: Float = 0.3f
-): Modifier = purpleGlow(radius = radius, alpha = alpha, isDarkTheme = isSystemInDarkTheme())
+): Modifier = purpleGlow(radius = radius, alpha = alpha, isDarkTheme = LocalBrand.current.isDark)
 
 @Composable
 fun Modifier.gradientBorderAuto(
     width: Dp = 1.dp,
     shape: Shape = RoundedCornerShape(16.dp),
     colors: List<Color> = listOf(GlowPurple, GlowPurpleDark)
-): Modifier = gradientBorder(width = width, shape = shape, colors = colors, isDarkTheme = isSystemInDarkTheme())
+): Modifier = gradientBorder(width = width, shape = shape, colors = colors, isDarkTheme = LocalBrand.current.isDark)
 
 @Composable
-fun Modifier.radialNavyBackgroundAuto(): Modifier = radialNavyBackground(isDarkTheme = isSystemInDarkTheme())
+fun Modifier.radialNavyBackgroundAuto(): Modifier = radialNavyBackground(isDarkTheme = LocalBrand.current.isDark)
 
 @Composable
 fun Modifier.leftEdgeGlowAuto(
     alpha: Float = 0.15f,
     width: Dp = 24.dp
-): Modifier = leftEdgeGlow(alpha = alpha, width = width, isDarkTheme = isSystemInDarkTheme())
+): Modifier = leftEdgeGlow(alpha = alpha, width = width, isDarkTheme = LocalBrand.current.isDark)
