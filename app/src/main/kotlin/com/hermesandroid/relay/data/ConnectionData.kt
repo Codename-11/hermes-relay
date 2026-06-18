@@ -290,6 +290,8 @@ data class Connection(
                 role = role.ifBlank { inferRouteRole(apiServerUrl) },
                 priority = priority,
                 api = ApiEndpoint(host = host, port = port, tls = tls),
+                dashboard = deriveDefaultDashboardUrl(apiServerUrl)
+                    ?.let { DashboardEndpoint(url = it) },
                 relay = RelayEndpoint(url = resolvedRelayUrl, transportHint = transportHint),
             )
         }

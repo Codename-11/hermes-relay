@@ -779,7 +779,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             connection == null -> ""
             endpoint != null &&
                 Connection.isAutoManagedDashboardUrl(connection.dashboardUrl, connection.apiServerUrl) ->
-                Connection.deriveDefaultDashboardUrl(endpoint.api.url).orEmpty()
+                endpoint.dashboard?.url
+                    ?: Connection.deriveDefaultDashboardUrl(endpoint.api.url).orEmpty()
             else -> connection.resolvedDashboardUrl
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
