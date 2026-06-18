@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Injected-context audit (chat).** Tap the context-usage meter in chat to open a "What the agent sees" sheet showing the exact extra context prepended to your next turn — persona/profile, phone status, and any per-turn (voice) hint. On the gateway path it notes the persona is applied server-side, so the audit is honest about what the phone does and doesn't send.
+- **Spoken-turn badges (chat).** Voice-mode replies now carry a "Voice" chip and realtime replies a "Realtime Agent" chip — both with a speaker glyph — so spoken turns are distinguishable from typed ones in the scrollback.
 - **Enhanced voice control (Gemini & xAI).** When the relay uses a Gemini or xAI voice provider, Voice Settings can now steer it: pick a Gemini voice and model and turn on expressive tone tags (with optional natural-language voice direction), or set an xAI voice with expressive speech tags. Expressive tags also apply to xAI on the streaming voice-output renderer. Standard (no-plugin) voice stays configured server-side.
 - **Voice render-path visibility.** Voice Settings shows which path is rendering speech (streaming vs. basic), and Diagnostics records it each session, making voice issues easier to troubleshoot.
 
@@ -17,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Clearer error when a feature needs a newer relay.** Toggling a setting an older relay plugin doesn't recognize (e.g. xAI expressive speech tags) now shows "Relay update needed" instead of a generic HTTP 400 with a dead Retry button. Genuine input errors are unaffected.
+- **Connection status toast is no longer see-through.** The floating connection-lost/switching toast renders fully opaque so content behind it no longer bleeds through and hurts legibility.
+- **Provenance badges survive the post-turn history reload.** "Voice", "Realtime Agent", "Stopped", and "Error" chips are now preserved when the conversation reloads after a turn, instead of silently vanishing.
 - **Realtime voice no longer drops the conversation mid-session with some providers.** A normal end-of-turn signal was being rejected on certain voice providers, ending the session every turn.
 - **Relay voice synthesis no longer leaves temporary audio files behind** on the server.
 - **Clearer voice errors and an oversize-recording guard.** Standard voice now rejects an over-long recording before uploading it and shows a helpful message for audio the server can't read, instead of a generic HTTP error.

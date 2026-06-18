@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -11,8 +12,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +51,7 @@ fun ContextMeterBar(
     usedTokens: Int? = null,
     maxTokens: Int? = null,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     if (usedFraction == null) return
 
@@ -72,6 +78,7 @@ fun ContextMeterBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .semantics {
                 contentDescription = "Context $percent% used" +
@@ -101,6 +108,16 @@ fun ContextMeterBar(
             style = MaterialTheme.typography.labelSmall,
             color = if (fill >= 0.50f) color else MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (onClick != null) {
+            // Subtle affordance that the meter is tappable → injected-context audit.
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = "View injected context",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(13.dp),
+            )
+        }
     }
 }
 

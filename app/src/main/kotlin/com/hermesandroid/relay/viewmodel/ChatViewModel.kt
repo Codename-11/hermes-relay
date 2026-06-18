@@ -2695,6 +2695,86 @@ class ChatViewModel : ViewModel() {
      * of the above wins (or sent alone in case 3), so the LLM always sees
      * phone state regardless of persona source.
      */
+    /**
+     * The exact `system_message` (`ephemeral_system_prompt`) injected for a
+     * turn, split into labeled blocks. Single source of truth shared by
+     * [startStream] (which sends [combinedSystemMessage]) and
+     * [previewInjectedContext] (which renders it in the chat audit sheet) so
+     * the preview can never drift from what is actually sent.
+     */
+    data class InjectedContext(
+        val personaPrompt: String?,
+        val appContext: String?,
+        val interfaceContext: String?,
+        val combinedSystemMessage: String?,
+        val transport: String,
+        /**
+         * True on the gateway path: the profile SOUL + personality overlay are
+         * injected server-side (session.create + config.set), not in this
+         * device's payload — so [personaPrompt] is intentionally null and the
+         * audit UI labels that block "added server-side".
+         */
+        val personaOwnedServerSide: Boolean,
+    )
+
+    /**
+     * Build the injected context for a turn. [selectedProfile] /
+     * [useIsolatedProfileApi] are passed in (not re-resolved) so a caller can
+     * pin one profile snapshot across systemMessage + modelOverride.
+     */
+    private fun composeInjectedContext(
+        interfaceContextPrompt: String?,
+        selectedProfile: Profile?,
+        useIsolatedProfileApi: Boolean,
+    ): InjectedContext {
+        val selected = _selectedPersonality.value
+        val profileSystemMessage = selectedProfile
+            ?.systemMessage
+            ?.takeIf { !useIsolatedProfileApi && it.isNotBlank() }
+        // On the gateway the server owns BOTH the profile SOUL and the
+        // personality overlay (config.set → ephemeral_system_prompt), so the
+        // phone resends neither (double-apply). SSE fallbacks have no
+        // server-side persona state, so they carry it. Precedence otherwise:
+        // profile systemMessage → selected non-default personality → none.
+        val gateway = streamingEndpoint == "gateway"
+        val personaPrompt: String? = when {
+            gateway -> null
+            profileSystemMessage != null -> profileSystemMessage
+            selected != "default" && !AgentDisplay.isClearedPersonality(selected) &&
+                selected != _defaultPersonality.value -> personalityPrompts[selected]
+            else -> null
+        }
+        val appContextRaw = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
+        // combinedSystemMessage MUST match the legacy build byte-for-byte:
+        // listOfNotNull over the RAW appContext + interface strings, joined and
+        // blanked. The per-block fields below null out blanks only for display.
+        val combined = listOfNotNull(personaPrompt, appContextRaw, interfaceContextPrompt)
+            .joinToString("\n\n")
+            .ifBlank { null }
+        return InjectedContext(
+            personaPrompt = personaPrompt,
+            appContext = appContextRaw?.takeIf { it.isNotBlank() },
+            interfaceContext = interfaceContextPrompt?.takeIf { it.isNotBlank() },
+            combinedSystemMessage = combined,
+            transport = streamingEndpoint,
+            personaOwnedServerSide = gateway,
+        )
+    }
+
+    /**
+     * Live audit snapshot of what the agent will be injected with on the next
+     * turn — rendered by the chat context sheet. Per-turn voice context is null
+     * here (it's set only on a spoken turn); the UI notes that.
+     */
+    fun previewInjectedContext(): InjectedContext {
+        val profile = selectedProfileProvider()
+        return composeInjectedContext(
+            interfaceContextPrompt = null,
+            selectedProfile = profile,
+            useIsolatedProfileApi = profile?.hasIsolatedApi == true,
+        )
+    }
+
     private fun startStream(
         client: HermesApiClient,
         handler: ChatHandler,
@@ -2709,36 +2789,16 @@ class ChatViewModel : ViewModel() {
         val selectedProfile = selectedProfileProvider()
         val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
 
-        // Build persona prompt following the precedence rule documented on
-        // this function's KDoc. A profile's systemMessage wins over a
-        // selected personality when both are set.
-        val selected = _selectedPersonality.value
-        val profileSystemMessage = selectedProfile
-            ?.systemMessage
-            ?.takeIf { !useIsolatedProfileApi && it.isNotBlank() }
-        val personaPrompt: String? = when {
-            // On the gateway the server owns BOTH the profile SOUL (session.create
-            // is bound to the selected profile via sessionProfileProvider, so the
-            // backend builds the agent from its SOUL) AND the personality overlay
-            // (config.set → ephemeral_system_prompt). Re-sending either as a
-            // per-turn system message double-applies it, so send neither — the SSE
-            // fallbacks, which have no server-side profile/personality state, keep
-            // the injection paths below. The phone-status block is still appended.
-            streamingEndpoint == "gateway" -> null
-            profileSystemMessage != null -> profileSystemMessage
-            selected != "default" && !AgentDisplay.isClearedPersonality(selected) &&
-                selected != _defaultPersonality.value ->
-                // Non-default personality selected — send its system prompt
-                // to override the server default.
-                personalityPrompts[selected]
-            else -> null
-        }
-        // === PHASE3-status: dynamic phone-status block ===
-        val appContext = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
-        val systemMsg = listOfNotNull(personaPrompt, appContext, interfaceContextPrompt)
-            .joinToString("\n\n")
-            .ifBlank { null }
-        // === END PHASE3-status ===
+        // The injected system_message (persona + phone-status + per-turn
+        // context) is built by composeInjectedContext so the chat-screen audit
+        // sheet (previewInjectedContext) renders EXACTLY what we send here.
+        // Pass the already-resolved profile so a rapid switch can't pair this
+        // turn's systemMessage with another profile's model (see modelOverride).
+        val systemMsg = composeInjectedContext(
+            interfaceContextPrompt,
+            selectedProfile,
+            useIsolatedProfileApi,
+        ).combinedSystemMessage
 
         // Set agent name for display on chat bubbles. The selected/effective
         // Hermes profile is the active agent identity; personality is only a
@@ -2767,7 +2827,14 @@ class ChatViewModel : ViewModel() {
                 content = "",
                 timestamp = System.currentTimeMillis(),
                 isStreaming = true,
-                agentName = handler.activeAgentName
+                agentName = handler.activeAgentName,
+                // Voice-mode turns carry a per-turn interface context (the
+                // spoken-output hint) — the only thing that sets
+                // interfaceContextPrompt today, so it marks this turn as spoken.
+                // Tag the reply with a "Voice" chip (parity with "Realtime
+                // Agent"); ChatHandler.loadMessageHistory preserves it across
+                // the post-turn history reload.
+                badges = if (interfaceContextPrompt != null) listOf("Voice") else emptyList(),
             )
         )
 

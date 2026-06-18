@@ -759,6 +759,17 @@ class ChatHandler {
         // mutateMessage lookups find the newly-loaded messages.
         val pendingMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
 
+        // Preserve provenance badges ("Voice", "Realtime Agent", "Stopped",
+        // "Error") across a wholesale reload. The messages reconstructed below
+        // come from server data and carry no badges, so without this the
+        // post-turn history reload would silently wipe them. Keyed by message
+        // id — the live assistant message has already had its id swapped to the
+        // server id via replaceMessageId, so it matches the reloaded item id.
+        val priorBadges = _messages.value
+            .asSequence()
+            .filter { it.role == MessageRole.ASSISTANT && it.badges.isNotEmpty() }
+            .associate { it.id to it.badges }
+
         val loaded = items.mapNotNull { item ->
             val role = when (item.role) {
                 "user" -> MessageRole.USER
@@ -817,6 +828,11 @@ class ChatHandler {
                     item.resolvedReasoning?.trim() ?: ""
                 } else {
                     ""
+                },
+                badges = if (role == MessageRole.ASSISTANT) {
+                    priorBadges[messageId].orEmpty()
+                } else {
+                    emptyList()
                 },
             )
         }
