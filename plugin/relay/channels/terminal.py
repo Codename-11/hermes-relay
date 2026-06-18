@@ -61,6 +61,42 @@ _TMUX_PREFIX = "hermes-"
 _TMUX_REPLAY_LINES = 200
 _TMUX_REPLAY_MAX_BYTES = 64 * 1024
 
+# Dedicated tmux socket + config so the relay's sessions run on their own tmux
+# *server*, fully isolated from the user's personal tmux (their ~/.tmux.conf
+# and default socket). This is the only safe way to set server-global options
+# like `escape-time` without altering the user's environment, and it keeps our
+# sessions out of their `tmux ls`. The persistence model is unchanged — the
+# tmux server on this socket outlives the relay process, so reconnects still
+# re-attach the same shells.
+_TMUX_SOCKET = "hermes-relay"
+
+# Tuned for clean TUI behavior over a remote/mobile terminal. Applied only when
+# the `-L hermes-relay` server first starts (tmux loads config at server boot;
+# changes here take effect on the next fresh server, not a live one).
+#   escape-time 0       — kill the 500ms ESC delay (snappy vim / Alt-combos)
+#   default-terminal    — keep a 256color/truecolor-capable $TERM inside panes
+#   terminal-features   — advertise RGB truecolor (tmux ≥3.2)
+#   terminal-overrides  — Tc truecolor fallback for older tmux
+#   mouse on            — wheel→scroll / click→pane (pairs with our SGR wheel)
+#   focus-events on     — forward CSI ?1004 focus in/out to TUIs
+#   set-clipboard on    — let apps set the clipboard via OSC 52
+#   aggressive-resize   — size to the smallest *attached* client (phone + CLI)
+#   status off          — we render our own chrome; reclaim the bottom row
+# If colors look wrong, the host is likely missing the `tmux-256color` terminfo
+# entry (install ncurses-term) — `screen-256color` is the universal fallback.
+_TMUX_CONF = """\
+set -s escape-time 0
+set -g  default-terminal "tmux-256color"
+set -ga terminal-features ",*:RGB"
+set -ga terminal-overrides ",*:Tc"
+set -g  mouse on
+set -g  focus-events on
+set -g  set-clipboard on
+setw -g aggressive-resize on
+set -g  history-limit 10000
+set -g  status off
+"""
+
 
 def _make_envelope(
     msg_type: str,
@@ -140,6 +176,9 @@ class TerminalHandler:
         else:
             self._tmux_path = shutil.which("tmux") if force_tmux else None
             self.tmux_available = force_tmux
+        # Written lazily on first tmux use (see _ensure_tmux_conf).
+        self._tmux_conf_path: str | None = None
+        self._tmux_conf_written = False
 
     # ── Envelope dispatch ────────────────────────────────────────────────
 
@@ -277,8 +316,11 @@ class TerminalHandler:
             tmux_binary = self._tmux_path or "tmux"
             tmux_session_name = _tmux_session_name(session_name)
             exec_path = tmux_binary
+            # `_tmux_base_args()` adds `-L hermes-relay -f <conf>` and writes the
+            # config first, so the dedicated server boots with our hardening.
             exec_argv = [
                 tmux_binary,
+                *self._tmux_base_args(),
                 "-u",
                 "new-session",
                 "-A",
@@ -667,6 +709,42 @@ class TerminalHandler:
             for session in client_live.values()
         ]
 
+    def _ensure_tmux_conf(self) -> str | None:
+        """Write the isolated tmux config once; return its path (or None).
+
+        Best-effort and idempotent: if ``~/.hermes`` isn't writable we fall back
+        to no ``-f`` (tmux defaults), which still works — just without the
+        escape-time/truecolor hardening. Written lazily so unit tests that only
+        exercise the pure helpers never touch the filesystem.
+        """
+        if self._tmux_conf_written:
+            return self._tmux_conf_path
+        self._tmux_conf_written = True
+        try:
+            conf_dir = os.path.expanduser("~/.hermes")
+            os.makedirs(conf_dir, exist_ok=True)
+            path = os.path.join(conf_dir, "hermes-relay-tmux.conf")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_TMUX_CONF)
+            self._tmux_conf_path = path
+            logger.info("Wrote isolated tmux config: %s", path)
+        except OSError as exc:  # noqa: BLE001 — degrade to tmux defaults
+            logger.warning(
+                "Could not write tmux config (%s); using tmux defaults", exc
+            )
+            self._tmux_conf_path = None
+        return self._tmux_conf_path
+
+    def _tmux_base_args(self) -> list[str]:
+        """Global tmux flags every invocation must share: dedicated socket +
+        (when available) our config file. Ensures the config exists before any
+        command that might start the server."""
+        conf = self._ensure_tmux_conf()
+        args = ["-L", _TMUX_SOCKET]
+        if conf:
+            args += ["-f", conf]
+        return args
+
     async def _run_tmux(
         self,
         *args: str,
@@ -676,6 +754,7 @@ class TerminalHandler:
         stdout = asyncio.subprocess.PIPE if capture else asyncio.subprocess.DEVNULL
         proc = await asyncio.create_subprocess_exec(
             tmux_binary,
+            *self._tmux_base_args(),
             *args,
             stdout=stdout,
             stderr=asyncio.subprocess.DEVNULL,
