@@ -41,6 +41,12 @@ class StandardHermesVoiceClient(
     private val context: Context,
     private val okHttpClient: OkHttpClient,
     private val dashboardUrlProvider: () -> String?,
+    // Active chat profile name (null = default/launch). Sent DEFENSIVELY on
+    // /api/audio/speak: upstream `TTSSpeakRequest` is text-only and Pydantic
+    // ignores extra fields, so this is harmless today and forward-compatible if
+    // upstream ever adds profile-aware TTS. Until then, standard voice remains
+    // the host's global TTS (see VoiceViewModel's standard-voice profile notice).
+    private val profileProvider: () -> String? = { null },
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -99,7 +105,12 @@ class StandardHermesVoiceClient(
             return@withContext Result.failure(IllegalArgumentException("Cannot synthesize blank text"))
         }
 
-        val payload = buildJsonObject { put("text", cleanText) }
+        val payload = buildJsonObject {
+            put("text", cleanText)
+            // Defensive only — upstream /api/audio/speak ignores it (text-only
+            // TTSSpeakRequest). Omitted for the default profile.
+            profileProvider()?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
+        }
         val request = Request.Builder()
             .url("$baseUrl/api/audio/speak")
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))

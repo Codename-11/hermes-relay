@@ -447,6 +447,12 @@ fun RelayApp() {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
+            // Live read (null for the default profile) — sent defensively on
+            // /api/audio/speak; upstream ignores it, so standard voice stays the
+            // host's global TTS. Same live source the relay voice client uses.
+            profileProvider = {
+                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
+            },
         )
     }
     val voiceAudioClient = remember {
