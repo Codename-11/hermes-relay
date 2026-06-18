@@ -757,7 +757,7 @@ fun RelayApp() {
     // via LocalSphereSkin without per-call-site threading. Adaptive skins read
     // the brand lazily inside MorphingSphere, so this can sit outside the theme.
     val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
-    val sphereContext = LocalContext.current
+    val sphereContext = androidx.compose.ui.platform.LocalContext.current
     val availableSphereSkins by produceState(
         initialValue = SphereRegistry.builtIns,
         key1 = sphereContext,
