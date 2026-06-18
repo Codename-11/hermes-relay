@@ -286,19 +286,22 @@ class GatewayChatClient(
         sessionProfileProvider().takeIf { !it.isNullOrBlank() }
 
     /**
-     * Supplies the explicit in-chat model pick to bind onto each fresh
-     * `session.create` (upstream honors `model`/`provider` → the new session's
-     * `model_override`). Pulled live so it always reflects the current picker;
-     * null = no explicit pick, so the new session inherits the profile / server
-     * default. Wired by ChatViewModel from the selected-model override. A live
-     * session keeps its agent's model, so this only affects session creation —
-     * mid-session switches go through [setModel] (`config.set`).
+     * Supplies the explicit in-chat overrides to bind onto each fresh
+     * `session.create` (upstream honors `model`/`provider`/`reasoning_effort`/
+     * `fast` → the new session's per-session overrides). Pulled live so it
+     * always reflects the current picker + safety/speed controls; null (or all
+     * fields null) = no explicit override, so the new session inherits the
+     * profile / server default. Wired by ChatViewModel. A live session keeps its
+     * agent config, so this only affects session creation — mid-session switches
+     * go through [setModel]/[setReasoning]/[setFast] (`config.set`).
      */
     @Volatile
     var sessionModelProvider: () -> GatewaySessionModel? = { null }
 
     private fun currentSessionModel(): GatewaySessionModel? =
-        sessionModelProvider()?.takeIf { it.model.isNotBlank() }
+        sessionModelProvider()?.takeIf {
+            !it.model.isNullOrBlank() || !it.reasoningEffort.isNullOrBlank() || it.fast != null
+        }
 
     @Volatile
     private var activeTurn: GatewayTurn? = null
@@ -987,16 +990,22 @@ class GatewayChatClient(
                 put("cols", DEFAULT_COLS)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
                 currentSessionProfile()?.let { put("profile", it) }
-                // Bind the in-chat model pick to the new session as its
-                // model_override. Upstream tui_gateway session.create reads
-                // `model`/`provider`; without this a fresh chat ignores the
-                // picker and builds the agent from the global default (the
-                // "picker shows Grok but the agent answers as the default
-                // model" bug). A live session keeps its own model — this is
-                // create-only; mid-session switches use config.set (setModel).
+                // Bind the in-chat overrides to the new session as its
+                // per-session overrides. Upstream tui_gateway session.create
+                // reads `model`/`provider` (→ model_override), `reasoning_effort`
+                // (→ create_reasoning_override) and `fast` (→ priority service
+                // tier) — verified server.py:4175-4191. Without this a fresh
+                // chat ignores the picker/safety controls and builds the agent
+                // from the global default, and worse, setting effort/fast before
+                // the first message runs a SESSIONLESS config.set that upstream
+                // applies as a GLOBAL config write. A live session keeps its own
+                // config — this is create-only; mid-session switches use
+                // config.set (setModel/setReasoning/setFast).
                 currentSessionModel()?.let { sm ->
-                    put("model", sm.model)
+                    sm.model?.takeIf { it.isNotBlank() }?.let { put("model", it) }
                     sm.provider?.takeIf { it.isNotBlank() }?.let { put("provider", it) }
+                    sm.reasoningEffort?.takeIf { it.isNotBlank() }?.let { put("reasoning_effort", it) }
+                    sm.fast?.let { put("fast", it) }
                 }
             },
         ).getOrElse { e ->

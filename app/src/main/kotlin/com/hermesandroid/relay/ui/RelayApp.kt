@@ -447,6 +447,12 @@ fun RelayApp() {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
+            // Live read (null for the default profile) — sent defensively on
+            // /api/audio/speak; upstream ignores it, so standard voice stays the
+            // host's global TTS. Same live source the relay voice client uses.
+            profileProvider = {
+                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
+            },
         )
     }
     val voiceAudioClient = remember {
@@ -1310,6 +1316,14 @@ fun RelayApp() {
                         leading = "$leading / $routeLabel",
                         trailing = "$modelLabel / $safetyLabel",
                         leadingColor = leadingColor,
+                        // Tap the persistent status/route readout to open
+                        // Connections — preserves the affordance the dropped
+                        // header endpoint chip used to provide.
+                        onClick = {
+                            navController.navigate(Screen.ConnectionsSettings.route) {
+                                launchSingleTop = true
+                            }
+                        },
                     )
                 }
             }

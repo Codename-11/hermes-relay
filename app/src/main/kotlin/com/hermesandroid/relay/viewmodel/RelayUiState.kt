@@ -107,9 +107,22 @@ data class ConnectionHandoffStatus(
     val updatedAtMs: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Per-step status for the connection toast's live stepper. Mirrors the
+ * cold-start sphere's check vocabulary (pending · spinner · ✓ · ✕) so the two
+ * surfaces read as one family.
+ *
+ * Null on a [ConnectionHandoffTraceEntry] means "let the renderer infer it"
+ * from list position + the parent snapshot (last entry follows the snapshot's
+ * active/success/error; earlier entries are Done). Producers that know a
+ * surface's real verdict — e.g. the probe-entry builder — stamp it explicitly.
+ */
+enum class ConnectionStepState { Pending, Active, Done, Failed }
+
 data class ConnectionHandoffTraceEntry(
     val label: String,
     val detail: String? = null,
+    val state: ConnectionStepState? = null,
 )
 
 enum class ConnectionStatusTone {

@@ -77,8 +77,18 @@ fun InjectedContextSheet(
             ContextSection(
                 title = "Media capability",
                 body = context.mediaCapability,
-                emptyNote = "Not sent. Added only on the SSE path when a relay " +
-                    "route is configured — the gateway transport has no slot for it.",
+                emptyNote = if (context.relayMediaAvailable) {
+                    // Gateway path: media WORKS (client renders server-local images
+                    // via the relay) — just no injected hint, since the gateway has
+                    // no per-turn system slot. Say so, rather than "not set".
+                    "Relay route active — server-local images and files render " +
+                        "in-app via the relay (client-side). The gateway transport " +
+                        "has no system slot, so no hint is injected here, but media " +
+                        "still works."
+                } else {
+                    "No relay route configured — the agent can't fetch server-local " +
+                        "images or files by path."
+                },
             )
             ContextSection(
                 title = "This turn",

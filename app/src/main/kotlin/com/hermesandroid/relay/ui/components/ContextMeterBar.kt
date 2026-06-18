@@ -1,7 +1,12 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +27,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,8 +61,45 @@ fun ContextMeterBar(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
-    if (usedFraction == null) return
+    // The meter's first appearance (null → reported) used to hard-pop the row
+    // into the layout, and a session switch (reported → null) made it vanish.
+    // Fade + expand it in/out instead. The last CONFIRMED values are retained
+    // only so the exit animation has real numbers to render while the source
+    // flow is already null — we never invent or guess a value.
+    var lastFraction by remember { mutableStateOf<Float?>(null) }
+    var lastUsed by remember { mutableStateOf<Int?>(null) }
+    var lastMax by remember { mutableStateOf<Int?>(null) }
+    if (usedFraction != null) {
+        lastFraction = usedFraction
+        lastUsed = usedTokens
+        lastMax = maxTokens
+    }
 
+    AnimatedVisibility(
+        visible = usedFraction != null,
+        enter = fadeIn(tween(220)) + expandVertically(tween(220)),
+        exit = fadeOut(tween(160)) + shrinkVertically(tween(160)),
+    ) {
+        lastFraction?.let { frac ->
+            ContextMeterBarContent(
+                usedFraction = frac,
+                usedTokens = lastUsed,
+                maxTokens = lastMax,
+                modifier = modifier,
+                onClick = onClick,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ContextMeterBarContent(
+    usedFraction: Float,
+    usedTokens: Int?,
+    maxTokens: Int?,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
     val target = usedFraction.coerceIn(0f, 1f)
     val fill by animateFloatAsState(
         targetValue = target,

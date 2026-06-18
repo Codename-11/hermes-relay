@@ -12,6 +12,17 @@ import java.io.File
  */
 interface VoiceAudioClient {
     val route: VoiceAudioRoute
+
+    /**
+     * The route a call would ACTUALLY use right now. For a concrete backend this
+     * equals [route]; for the [AutoVoiceAudioClient] router it resolves `Auto`
+     * against live readiness (relay-first). Callers that need to reason about
+     * the backend's capabilities (e.g. "is standard global-TTS in play?") must
+     * use this, not the configured preference.
+     */
+    val effectiveRoute: VoiceAudioRoute
+        get() = route
+
     suspend fun transcribe(audioFile: File): Result<String>
     suspend fun synthesize(text: String): Result<File>
 }
@@ -38,6 +49,20 @@ class AutoVoiceAudioClient(
 ) : VoiceAudioClient {
     override val route: VoiceAudioRoute
         get() = routeProvider()
+
+    /**
+     * Resolve the configured preference to the backend a call would land on:
+     * `Standard`/`Relay` are honored verbatim; `Auto` prefers Relay when it's
+     * ready (matching [runAuto]) and falls back to Standard otherwise. Used to
+     * decide whether standard-only limitations (global TTS) currently apply.
+     */
+    override val effectiveRoute: VoiceAudioRoute
+        get() = when (routeProvider()) {
+            VoiceAudioRoute.Standard -> VoiceAudioRoute.Standard
+            VoiceAudioRoute.Relay -> VoiceAudioRoute.Relay
+            VoiceAudioRoute.Auto ->
+                if (relayReadyProvider()) VoiceAudioRoute.Relay else VoiceAudioRoute.Standard
+        }
 
     override suspend fun transcribe(audioFile: File): Result<String> =
         runWithSelectedRoute { it.transcribe(audioFile) }

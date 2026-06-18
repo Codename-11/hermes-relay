@@ -1061,6 +1061,32 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceOutputProfileName = normalized
         voiceOutputAvailable = null
         resetRealtimeSpeechCoalescer()
+        maybeNoteStandardVoiceProfileLimitation(normalized)
+    }
+
+    /**
+     * Standard (no-plugin dashboard) voice rides upstream `POST /api/audio/speak`,
+     * which is text-only GLOBAL TTS: `TTSSpeakRequest` has no profile field and
+     * `text_to_speech_tool` has no profile scope (web_server.py) — so switching
+     * the chat profile does NOT change the spoken voice on standard-only installs.
+     * The RELAY voice path IS profile-aware, so this notice is scoped strictly to
+     * the EFFECTIVE Standard route + a non-default profile (the [profileName] arg
+     * is already null for the default/launch profile). Quiet by design: a Voice
+     * diagnostics line, not an interrupting toast.
+     */
+    private fun maybeNoteStandardVoiceProfileLimitation(profileName: String?) {
+        val profile = profileName ?: return
+        // Only when standard voice is what a call would actually use — never
+        // claim the relay path has this limitation.
+        if (voiceAudioClient?.effectiveRoute != VoiceAudioRoute.Standard) return
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Voice,
+            severity = DiagnosticSeverity.Info,
+            title = "Standard voice uses the host's global TTS",
+            detail = "Profile \"$profile\" changes the chat agent, but standard " +
+                "(no-plugin) voice speaks with the host's global TTS config, not " +
+                "the profile's voice. Pair the Relay plugin for profile-aware voice.",
+        )
     }
 
     // ---------------------------------------------------------------------

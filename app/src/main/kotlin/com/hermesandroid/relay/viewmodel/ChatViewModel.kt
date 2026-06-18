@@ -277,9 +277,17 @@ class ChatViewModel : ViewModel() {
     private val _gatewayCurrentProvider = MutableStateFlow("")
     val gatewayCurrentProvider: StateFlow<String> = _gatewayCurrentProvider.asStateFlow()
 
-    /** Gateway reasoning effort for this session/global agent config. */
-    private val _selectedReasoningEffort = MutableStateFlow(DEFAULT_REASONING_EFFORT)
-    val selectedReasoningEffort: StateFlow<String> = _selectedReasoningEffort.asStateFlow()
+    /**
+     * Gateway reasoning effort for this session's agent config; null = UNKNOWN
+     * (not yet confirmed by `session.info`, or reset on a profile/connection
+     * switch). Honesty contract, same as [_yoloEnabled]/[_fastEnabled]: the chip
+     * shows a default while null and `session.create` OMITS `reasoning_effort`
+     * when null so the new profile's own default wins (rather than the previous
+     * profile's effort leaking in). A non-null value is an explicit/confirmed
+     * pick that rides the next `session.create` as a per-session override.
+     */
+    private val _selectedReasoningEffort = MutableStateFlow<String?>(null)
+    val selectedReasoningEffort: StateFlow<String?> = _selectedReasoningEffort.asStateFlow()
 
     private val _reasoningDisplay = MutableStateFlow<String?>(null)
 
@@ -290,6 +298,18 @@ class ChatViewModel : ViewModel() {
     /** Fast-mode (priority tier) state for the active gateway session; null = unknown. */
     private val _fastEnabled = MutableStateFlow<Boolean?>(null)
     val fastEnabled: StateFlow<Boolean?> = _fastEnabled.asStateFlow()
+
+    /**
+     * Pending YOLO pick made BEFORE a live session exists (brand-new chat).
+     * Upstream `session.create` does NOT accept yolo as a per-session override,
+     * and a sessionless `config.set yolo` writes `os.environ["HERMES_YOLO_MODE"]`
+     * PROCESS-GLOBALLY (server.py:7562-7569) — leaking approval-bypass to every
+     * other session. So the pick is stashed here, the global write is skipped,
+     * and it is applied session-scoped once the first send creates the session
+     * (see [applyPendingYoloAfterSessionCreate]). Main-thread only. Cleared on
+     * consume + every profile/connection/chat switch alongside [_yoloEnabled].
+     */
+    private var pendingYolo: Boolean? = null
 
     /**
      * Refresh the gateway's curated provider/model list (`model.options`).
@@ -465,6 +485,14 @@ class ChatViewModel : ViewModel() {
     /**
      * Switch the gateway reasoning effort for this session through `config.set`.
      * The chip owns optimistic UI; failures are surfaced in chat.
+     *
+     * For a brand-new chat (no live session yet) the `config.set` is SKIPPED:
+     * upstream applies a sessionless reasoning write to GLOBAL config
+     * (`_write_config_key`, server.py:7619). The optimistic value set here
+     * instead rides the next `session.create` as a per-session
+     * `reasoning_effort` override (see [updateGatewayClient]'s
+     * sessionModelProvider) — mirroring how [selectModel] defers to
+     * `session.create` for a fresh chat.
      */
     fun selectReasoningEffort(value: String) {
         val normalized = normalizeReasoningEffort(value)
@@ -472,6 +500,7 @@ class ChatViewModel : ViewModel() {
         val gateway = gatewayClient ?: return
         val handler = chatHandler
         if (streamingEndpoint != "gateway" || handler == null) return
+        if (!hasLiveGatewaySession()) return
         viewModelScope.launch {
             gateway.prewarm(handler.currentSessionId.value)
             gateway.setReasoning(normalized).fold(
@@ -505,6 +534,17 @@ class ChatViewModel : ViewModel() {
             _yoloEnabled.value = previous
             return
         }
+        if (!hasLiveGatewaySession()) {
+            // Brand-new chat: a sessionless `config.set yolo` writes
+            // os.environ["HERMES_YOLO_MODE"] PROCESS-GLOBALLY (server.py:7562),
+            // leaking approval-bypass into every other session. Upstream
+            // session.create can't carry yolo either, so keep the optimistic UI
+            // value, stash the pick, and apply it session-scoped once the first
+            // send creates the session.
+            pendingYolo = enabled
+            return
+        }
+        pendingYolo = null
         viewModelScope.launch {
             // The session-scoped flag needs a live session — warm it first.
             gateway.prewarm(handler.currentSessionId.value)
@@ -539,6 +579,13 @@ class ChatViewModel : ViewModel() {
             _fastEnabled.value = previous
             return
         }
+        if (!hasLiveGatewaySession()) {
+            // Brand-new chat: a sessionless `config.set fast` is a GLOBAL write
+            // upstream (_write_config_key, server.py:7446). Keep the optimistic
+            // value — it rides the next session.create as a per-session `fast`
+            // override (priority service tier), not a global mutation.
+            return
+        }
         viewModelScope.launch {
             gateway.prewarm(handler.currentSessionId.value)
             if (gatewayClient !== gateway) return@launch
@@ -548,6 +595,43 @@ class ChatViewModel : ViewModel() {
                     if (_fastEnabled.value == enabled) _fastEnabled.value = previous
                     handler.addSystemNotice(
                         "Couldn't switch fast mode: ${e.message ?: "gateway error"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * True when there is a live (or resumable) gateway session that a
+     * `config.set` would target. A brand-new chat has no session id yet, so a
+     * `config.set` there runs SESSIONLESS — which upstream applies as a GLOBAL
+     * write (reasoning/fast → `_write_config_key`; yolo → process-global
+     * `os.environ`). Callers defer such writes to the next `session.create`
+     * (reasoning/fast) or to [applyPendingYoloAfterSessionCreate] (yolo).
+     */
+    private fun hasLiveGatewaySession(): Boolean =
+        !chatHandler?.currentSessionId?.value.isNullOrBlank()
+
+    /**
+     * Apply a YOLO pick that was made before this chat had a session. Fired from
+     * the gateway turn's `onSessionId` (the first send just created the
+     * session), so the `config.set yolo` is now SESSION-SCOPED — never the
+     * global env leak the brand-new-chat path deliberately skipped. Best-effort:
+     * it races the turn's first tool, but it can no longer cross into other
+     * sessions, which is the bug being fixed.
+     */
+    private fun applyPendingYoloAfterSessionCreate() {
+        val pending = pendingYolo ?: return
+        pendingYolo = null
+        val gateway = gatewayClient ?: return
+        if (streamingEndpoint != "gateway") return
+        viewModelScope.launch {
+            if (gatewayClient !== gateway) return@launch
+            gateway.setYolo(pending).fold(
+                onSuccess = { _yoloEnabled.value = it },
+                onFailure = { e ->
+                    chatHandler?.addSystemNotice(
+                        "Couldn't apply YOLO to the new chat: ${e.message ?: "gateway error"}",
                     )
                 },
             )
@@ -580,10 +664,26 @@ class ChatViewModel : ViewModel() {
         // the agent to the new profile (pulled live via sessionProfileProvider),
         // like the desktop spawning the profile's backend lazily on the next send.
         gateway.clearSession()
-        // Session-scoped YOLO/Fast don't carry across the profile's fresh session —
-        // null them so a stale flag can't show until the new session.info re-seeds.
+        // Session-scoped YOLO/Fast/reasoning + the personality overlay don't
+        // carry across the profile's fresh session — null them so a stale flag
+        // or persona can't show (or be injected) until the new session.info
+        // re-seeds. Same discipline for all four; the collectors reconcile on
+        // the first turn.
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        pendingYolo = null
+        // Reset the reasoning chip to UNKNOWN rather than optimistically fetching
+        // it: a sessionless config.get right after clearSession reads the
+        // LAUNCH/global profile's effort, not the newly-selected profile's. Let
+        // session.info confirm it on the first turn (see the dropped
+        // getReasoningSettings below).
+        _selectedReasoningEffort.value = null
+        _reasoningDisplay.value = null
+        // The personality overlay is per-profile. On SSE, leaving a stale pick
+        // here would inject the previous profile's overlay onto the new
+        // profile's first turn (composeInjectedContext); reset to default and let
+        // applyServerPersonality / the serverPersonality collector re-seed.
+        _selectedPersonality.value = "default"
         // A profile defines its own model, so switching profiles retires any
         // explicit in-chat model pick — otherwise the old pick would leak onto
         // the new profile's sessions and the picker pill would disagree with
@@ -600,15 +700,15 @@ class ChatViewModel : ViewModel() {
             _gatewayCurrentProvider.value = ""
         }
         // The profile brings its own model — refresh the picker's "current".
+        // Reasoning effort is intentionally NOT fetched here: a sessionless
+        // config.get would read the launch/global profile's effort (wrong
+        // scope). It's left unknown above and confirmed by session.info on the
+        // first turn — the same honesty discipline yolo/fast use.
         viewModelScope.launch {
             gateway.modelOptions().onSuccess {
                 _modelProviders.value = it.providers
                 _gatewayCurrentModel.value = it.currentModel
                 _gatewayCurrentProvider.value = it.currentProvider
-            }
-            gateway.getReasoningSettings().onSuccess {
-                _selectedReasoningEffort.value = normalizeReasoningEffort(it.effort)
-                _reasoningDisplay.value = it.display
             }
         }
         refreshActiveAgentName()
@@ -662,14 +762,32 @@ class ChatViewModel : ViewModel() {
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
-        // Bind the in-chat model pick onto each fresh session.create so a
-        // brand-new chat actually runs on the picked model/provider (not the
-        // global default). Pulled live; null when no explicit pick, so the
-        // profile/server default wins. Mid-session switches still go through
-        // setModel (config.set) in selectModel.
+        // Bind the in-chat picks onto each fresh session.create so a brand-new
+        // chat actually runs on the picked model/provider AND the chosen
+        // reasoning effort / fast tier (not the global default) — and so setting
+        // effort/fast before the first message rides session.create instead of a
+        // sessionless config.set (a GLOBAL write upstream). Pulled live; each
+        // field null when not explicitly set, so the profile/server default
+        // wins. Mid-session switches still go through setModel/setReasoning/
+        // setFast (config.set). yolo is intentionally absent — upstream
+        // session.create doesn't accept it (applied post-create instead).
         client?.sessionModelProvider = {
-            _selectedModelOverride.value?.takeIf { it.isNotBlank() }?.let { m ->
-                GatewaySessionModel(m, _selectedProviderOverride.value?.takeIf { it.isNotBlank() })
+            val model = _selectedModelOverride.value?.takeIf { it.isNotBlank() }
+            val provider = _selectedProviderOverride.value?.takeIf { it.isNotBlank() }
+            val effort = _selectedReasoningEffort.value?.takeIf { it.isNotBlank() }
+            // Only pin fast when explicitly ON (upstream treats fast=false the
+            // same as omitting → profile default tier), so a null/false leaves
+            // the profile's own service tier intact.
+            val fast = _fastEnabled.value?.takeIf { it }
+            if (model != null || effort != null || fast != null) {
+                GatewaySessionModel(
+                    model = model,
+                    provider = provider,
+                    reasoningEffort = effort,
+                    fast = fast,
+                )
+            } else {
+                null
             }
         }
         // (Re)bind the session.info state sync to the live client so server-side
@@ -685,7 +803,9 @@ class ChatViewModel : ViewModel() {
                 _modelProviders.value = emptyList()
                 _gatewayCurrentModel.value = ""
                 _gatewayCurrentProvider.value = ""
-                _selectedReasoningEffort.value = DEFAULT_REASONING_EFFORT
+                // null = unknown (honest); refreshReasoningSettings/session.info
+                // re-seed it. Never a stale default that could ride session.create.
+                _selectedReasoningEffort.value = null
                 _reasoningDisplay.value = null
             }
             // Catalog fetch must never cold-open /api/ws — only fetch over an
@@ -705,7 +825,9 @@ class ChatViewModel : ViewModel() {
                 _modelProviders.value = emptyList()
                 _gatewayCurrentModel.value = ""
                 _gatewayCurrentProvider.value = ""
-                _selectedReasoningEffort.value = DEFAULT_REASONING_EFFORT
+                // null = unknown (honest); refreshReasoningSettings/session.info
+                // re-seed it. Never a stale default that could ride session.create.
+                _selectedReasoningEffort.value = null
                 _reasoningDisplay.value = null
             }
         }
@@ -1309,6 +1431,13 @@ class ChatViewModel : ViewModel() {
                 _contextWindow.value = null
                 _yoloEnabled.value = null
                 _fastEnabled.value = null
+                pendingYolo = null
+                // Effort + personality belong to the old connection's agent —
+                // reset to unknown/default so neither a stale chip nor a stale
+                // SSE persona overlay carries into the new connection.
+                _selectedReasoningEffort.value = null
+                _reasoningDisplay.value = null
+                _selectedPersonality.value = "default"
                 pendingTruncateOrdinal = null
                 chatHandler?.let { handler ->
                     handler.clearMessages()
@@ -1363,6 +1492,20 @@ class ChatViewModel : ViewModel() {
         _contextWindow.value = null
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        pendingYolo = null
+        // SSE profile switch: reset the reasoning chip to unknown (a sessionless
+        // config.get reads the wrong profile's effort) and the personality to
+        // default so composeInjectedContext can't inject the previous profile's
+        // overlay onto this profile's first SSE turn. The serverReasoningEffort /
+        // serverPersonality collectors (gateway) and session.info reconcile after
+        // the first turn; on pure SSE the new profile's own SOUL carries instead.
+        _selectedReasoningEffort.value = null
+        _reasoningDisplay.value = null
+        _selectedPersonality.value = "default"
+        // The agent display name was stamped above with the pre-reset persona —
+        // recompute it now that the overlay is cleared so the header/bubbles read
+        // the new profile's base identity, not the old persona.
+        handler.activeAgentName = currentAgentDisplayName()
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
@@ -1551,6 +1694,9 @@ class ChatViewModel : ViewModel() {
                         _pendingAsk.value = null
                         _yoloEnabled.value = null
                         _fastEnabled.value = null
+                        // Drop any YOLO stashed for the previous draft so it
+                        // can't apply to this fresh chat's session.
+                        pendingYolo = null
                         onSessionChanged?.invoke(session.id)
                         AppAnalytics.onSessionCreated()
                     }
@@ -1581,6 +1727,9 @@ class ChatViewModel : ViewModel() {
         _pendingAsk.value = null
         _yoloEnabled.value = null
         _fastEnabled.value = null
+        // The switched-to session owns its own YOLO state (session.info
+        // reconciles) — drop any pick stashed for a different draft.
+        pendingYolo = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
 
@@ -2789,6 +2938,14 @@ class ChatViewModel : ViewModel() {
          * route is configured (the gateway has no system slot to carry it).
          */
         val mediaCapability: String?,
+        /**
+         * True when a relay route is configured, so the relay `/media/by-path`
+         * route can fetch server-local images/files. On the GATEWAY this is how
+         * media works (the client renders them inline) even though
+         * [mediaCapability] — the SSE-only injected hint — is null. Carried so the
+         * audit UI doesn't read "media unavailable" on the gateway when it isn't.
+         */
+        val relayMediaAvailable: Boolean,
         val combinedSystemMessage: String?,
         val transport: String,
         /**
@@ -2831,8 +2988,9 @@ class ChatViewModel : ViewModel() {
         // Tell the agent it can surface images/files by absolute server path —
         // but only on SSE (the gateway carries no system_message) and only when
         // a relay route is configured (otherwise the client can't fetch them).
+        val relayMediaAvailable = relayHttpClient?.mediaUrlConfigured() == true
         val mediaCapability: String? =
-            RELAY_MEDIA_HINT.takeIf { !gateway && relayHttpClient?.mediaUrlConfigured() == true }
+            RELAY_MEDIA_HINT.takeIf { !gateway && relayMediaAvailable }
         // combinedSystemMessage appends the media hint after the phone-status
         // block (a stable environment fact, like phone status) and before the
         // per-turn interface context. The per-block fields below null out blanks
@@ -2845,6 +3003,7 @@ class ChatViewModel : ViewModel() {
             appContext = appContextRaw?.takeIf { it.isNotBlank() },
             interfaceContext = interfaceContextPrompt?.takeIf { it.isNotBlank() },
             mediaCapability = mediaCapability,
+            relayMediaAvailable = relayMediaAvailable,
             combinedSystemMessage = combined,
             transport = streamingEndpoint,
             personaOwnedServerSide = gateway,
@@ -3340,6 +3499,11 @@ class ChatViewModel : ViewModel() {
                             )
                             handler.setSessionId(sid)
                             onSessionChanged?.invoke(sid)
+                            // The brand-new chat now has a session — apply any
+                            // YOLO toggled before the first send as a SESSION-
+                            // scoped write (the no-session path deliberately
+                            // skipped the global env leak).
+                            applyPendingYoloAfterSessionCreate()
                         },
                         onTextDelta = onTextDeltaCb,
                         onThinkingDelta = onThinkingDeltaCb,

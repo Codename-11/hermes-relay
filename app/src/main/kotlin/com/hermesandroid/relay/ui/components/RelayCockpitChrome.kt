@@ -97,11 +97,17 @@ fun RelayStatusStrip(
     trailing: String,
     modifier: Modifier = Modifier,
     leadingColor: Color = RelayRefresh.Green,
+    onClick: (() -> Unit)? = null,
 ) {
     // Floating capsule, not an edge-to-edge bar: a full-width bordered
     // rectangle clashes with rounded display corners and reads as a hard
     // shelf. Insets are applied BEFORE the margins so the pill floats above
     // the gesture area with the app background showing around it.
+    //
+    // When [onClick] is set the whole pill is tappable — it's the app's
+    // persistent "<status> / <route>" readout, so tapping it opens Connections
+    // (this replaced the now-removed header endpoint chip's affordance). The
+    // clickable sits after the clip so the ripple is bounded to the pill.
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -112,6 +118,7 @@ fun RelayStatusStrip(
             )
             .padding(start = 14.dp, end = 14.dp, top = 3.dp, bottom = 4.dp)
             .clip(RoundedCornerShape(999.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .relayPanel(
                 shape = RoundedCornerShape(999.dp),
                 background = RelayRefresh.Navy2.copy(alpha = 0.88f),
@@ -417,18 +424,20 @@ fun RelayChromeIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    tint: Color = RelayRefresh.Paper,
+    borderColor: Color = RelayRefresh.LineStrong,
 ) {
     Surface(
         modifier = modifier.size(38.dp),
         shape = RoundedCornerShape(RelayRefresh.CardRadius),
         color = RelayRefresh.Background.copy(alpha = 0.52f),
-        border = BorderStroke(1.dp, RelayRefresh.LineStrong),
+        border = BorderStroke(1.dp, borderColor),
     ) {
         IconButton(onClick = onClick) {
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
-                tint = RelayRefresh.Paper,
+                tint = tint,
                 modifier = Modifier.size(19.dp),
             )
         }

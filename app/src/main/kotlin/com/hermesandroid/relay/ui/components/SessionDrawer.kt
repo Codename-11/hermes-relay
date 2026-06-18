@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -202,7 +204,14 @@ fun SessionDrawerContent(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        if (isLoading && sessions.isEmpty()) {
+        // Crossfade the loading→content transition so the list fades in rather
+        // than the spinner snapping straight to rows.
+        Crossfade(
+            targetState = isLoading && sessions.isEmpty(),
+            animationSpec = tween(220),
+            label = "drawerSessions",
+        ) { loading ->
+        if (loading) {
             // First load (or a profile switch) — show a quiet spinner instead of
             // flashing "No sessions yet" before the list arrives.
             Column(
@@ -268,6 +277,7 @@ fun SessionDrawerContent(
                     )
                 }
             }
+        }
         }
     }
 

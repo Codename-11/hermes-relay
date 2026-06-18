@@ -7,6 +7,7 @@ import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -1133,7 +1134,16 @@ fun DashboardManagementScreen(
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                         Box(modifier = Modifier.weight(1f)) {
-                            when (val state = payloadState) {
+                            // Crossfade Loading→Loaded (and →Error) so the body
+                            // fades in rather than snapping. Keyed on the payload
+                            // state, so a stale-while-revalidate refresh also
+                            // cross-dissolves instead of flashing.
+                            Crossfade(
+                                targetState = payloadState,
+                                animationSpec = tween(200),
+                                label = "managePayload",
+                            ) { state ->
+                            when (state) {
                                 DashboardPayloadState.Idle,
                                 DashboardPayloadState.Loading -> LoadingBody(section.label)
                                 is DashboardPayloadState.Error -> ErrorBody(
@@ -1192,6 +1202,7 @@ fun DashboardManagementScreen(
                                         }
                                     },
                                 )
+                            }
                             }
                         }
                     }

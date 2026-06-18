@@ -164,15 +164,31 @@ data class GatewayModelOptions(
 )
 
 /**
- * The explicit in-chat model pick to bind onto a gateway `session.create` as
- * that session's `model_override`. Matches the upstream desktop client, whose
- * `session.create` carries `model`/`provider` params (tui_gateway honors them →
- * `session_model_override`). Supplied live by ChatViewModel from the picker;
- * null = no explicit pick, so the fresh session inherits the profile / server
- * default instead of the picker being silently dropped. [provider] is the
- * authenticated provider slug (e.g. `xai`) and may be null.
+ * The explicit in-chat overrides to bind onto a gateway `session.create` as the
+ * new session's PER-SESSION overrides. Matches the upstream desktop client,
+ * whose `session.create` carries `model`/`provider`/`reasoning_effort`/`fast`
+ * (tui_gateway honors them → `session_model_override` / `create_reasoning_override`
+ * / `create_service_tier_override`; verified `tui_gateway/server.py:4175-4191`).
+ * Supplied live by ChatViewModel from the picker + safety/speed controls.
+ *
+ * Every field is nullable = "no explicit override for this new chat", so the
+ * fresh session inherits the profile / server default rather than the picker
+ * (or a stale local value) silently clobbering it. Crucially this keeps these
+ * picks OFF the sessionless `config.set` path, which upstream applies as GLOBAL
+ * writes (and `yolo` even leaks to other sessions via `os.environ`).
+ *
+ * [model] is the model id (e.g. `grok-4.3`); [provider] is the authenticated
+ * provider slug (e.g. `xai`). [reasoningEffort] is the upstream effort string
+ * (`low`/`medium`/`high`/…). [fast] pins the priority service tier when true.
+ * Note `yolo` is intentionally absent — upstream `session.create` does NOT
+ * accept it as a per-session override, so it is applied post-create instead.
  */
-data class GatewaySessionModel(val model: String, val provider: String?)
+data class GatewaySessionModel(
+    val model: String?,
+    val provider: String?,
+    val reasoningEffort: String? = null,
+    val fast: Boolean? = null,
+)
 
 /** Result of the gateway `config.get {key:"reasoning"}` RPC. */
 data class GatewayReasoningSettings(
