@@ -1,14 +1,10 @@
 package com.hermesandroid.relay.viewmodel
 
 import android.app.Application
-import android.content.ComponentName
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.BatteryManager
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.data.BridgeActivityEntry
@@ -27,6 +23,8 @@ import com.hermesandroid.relay.accessibility.MediaProjectionHolder
 // === PHASE3-bridge-ui-followup: screen capture consent flow ===
 import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 // === END PHASE3-bridge-ui-followup ===
+import com.hermesandroid.relay.permissions.AppPermissionStatus
+import com.hermesandroid.relay.permissions.AppPermissionStatusProbe
 import com.hermesandroid.relay.util.AppForegroundTracker
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,12 +62,9 @@ import kotlinx.coroutines.launch
  *    shape — accessibility is welcome to move it into `accessibility/` and have us import
  *    from there.
  *
- * 2. **`permissionStatus`** — we probe
- *    [Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES] to detect whether the
- *    a11y service is enabled, which is the standard pattern and doesn't
- *    require accessibility's code to exist yet. BUT the string-match uses a placeholder
- *    service class name (`HermesAccessibilityService`). accessibility confirms the final
- *    fully-qualified class name; if it differs, update [A11Y_SERVICE_CLASS].
+ * 2. **`permissionStatus`** — we read the centralized [AppPermissionStatusProbe]
+ *    snapshot so Bridge and Settings report the same Android grants and
+ *    special-access state.
  *
  * 3. **`recordActivity` / `updateActivity`** — bridge-ui writes activity log entries
  *    to [BridgePreferencesRepository]. accessibility's `HermesAccessibilityService`
@@ -88,16 +83,6 @@ import kotlinx.coroutines.launch
  * Kept deliberately thin — this is a UI-presentation layer, not a mediator.
  */
 class BridgeViewModel(application: Application) : AndroidViewModel(application) {
-
-    companion object {
-        /**
-         * Fully-qualified class name of the accessibility service Agent accessibility will
-         * register in the manifest. TODO(accessibility-handoff): confirm this matches accessibility's
-         * final class; update if different.
-         */
-        const val A11Y_SERVICE_CLASS =
-            "com.hermesandroid.relay.accessibility.HermesAccessibilityService"
-    }
 
     private val prefsRepo = BridgePreferencesRepository(application)
 
@@ -512,7 +497,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun testNotificationListener() {
         val ctx = getApplication<Application>()
-        val granted = isNotificationListenerEnabled(ctx)
+        val granted = AppPermissionStatusProbe.snapshot(ctx).notificationListenerPermitted
         val msg = if (granted) {
             "OK — Hermes can read posted notifications."
         } else {
@@ -528,68 +513,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun refreshPermissionStatus() {
         val ctx = getApplication<Application>()
-
-        val a11yEnabled = isAccessibilityServiceEnabled(ctx)
-        // MediaProjection permission is **per-session** on Android. We can,
-        // however, observe whether MediaProjectionHolder is currently
-        // holding a live grant — that's the green-check signal we want
-        // on the row. "No active grant" is the normal state until the
-        // user taps the row (or the agent calls /screenshot).
-        val screenCaptureGranted = MediaProjectionHolder.projection != null
-        // Overlay permission (SYSTEM_ALERT_WINDOW) — standard API. Safe even
-        // though safety-rails owns the actual overlay composer; we just surface the state.
-        val overlayGranted = Settings.canDrawOverlays(ctx)
-        // Notification listener permission — notif-listener owns the listener code but the
-        // status check is a plain Settings.Secure lookup, no code dependency.
-        val notifListenerGranted = isNotificationListenerEnabled(ctx)
-        val notificationsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                ctx, android.Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-        // === v0.4.1 tiered checklist ============================================
-        // Standard runtime dangerous permissions. The checks are cheap and the
-        // values feed BridgePermissionChecklist's tiered rendering. Camera +
-        // microphone are declared in the main manifest (both flavors). Contacts/
-        // SMS/phone/location are sideload-only — on googlePlay the manifest does
-        // not declare them, so checkSelfPermission returns DENIED by design and
-        // the rows render as "Not granted" but the rows themselves are hidden
-        // by the BuildFlavor.isSideload gate in BridgePermissionChecklist.
-        val microphoneGranted = ContextCompat.checkSelfPermission(
-            ctx, android.Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-        val cameraGranted = ContextCompat.checkSelfPermission(
-            ctx, android.Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-        val contactsGranted = ContextCompat.checkSelfPermission(
-            ctx, android.Manifest.permission.READ_CONTACTS
-        ) == PackageManager.PERMISSION_GRANTED
-        val smsGranted = ContextCompat.checkSelfPermission(
-            ctx, android.Manifest.permission.SEND_SMS
-        ) == PackageManager.PERMISSION_GRANTED
-        val phoneGranted = ContextCompat.checkSelfPermission(
-            ctx, android.Manifest.permission.CALL_PHONE
-        ) == PackageManager.PERMISSION_GRANTED
-        val locationGranted = ContextCompat.checkSelfPermission(
-            ctx, android.Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        // === END v0.4.1 tiered checklist =========================================
-
-        _permissionStatus.value = BridgePermissionStatus(
-            accessibilityServiceEnabled = a11yEnabled,
-            screenCapturePermitted = screenCaptureGranted,
-            overlayPermitted = overlayGranted,
-            notificationListenerPermitted = notifListenerGranted,
-            notificationsPermitted = notificationsGranted,
-            microphonePermitted = microphoneGranted,
-            cameraPermitted = cameraGranted,
-            contactsPermitted = contactsGranted,
-            smsPermitted = smsGranted,
-            phonePermitted = phoneGranted,
-            locationPermitted = locationGranted,
-        )
+        _permissionStatus.value = AppPermissionStatusProbe.snapshot(ctx).toBridgePermissionStatus()
     }
 
     /**
@@ -617,30 +541,22 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    private fun isAccessibilityServiceEnabled(ctx: Context): Boolean {
-        val enabled = Settings.Secure.getString(
-            ctx.contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: return false
-        // The setting is a colon-separated list of ComponentName.flattenToString().
-        // We match on our package + expected class name; exact component name
-        // TBD by Agent accessibility (see [A11Y_SERVICE_CLASS]).
-        val expected = ComponentName(ctx.packageName, A11Y_SERVICE_CLASS).flattenToString()
-        return enabled.split(':').any { it.equals(expected, ignoreCase = true) } ||
-                // Fallback: if accessibility's class lives elsewhere, still match any service
-                // in our package so the checklist doesn't falsely show red while
-                // the user has in fact granted the permission.
-                enabled.contains(ctx.packageName)
-    }
-
-    private fun isNotificationListenerEnabled(ctx: Context): Boolean {
-        val enabled = Settings.Secure.getString(
-            ctx.contentResolver,
-            "enabled_notification_listeners"
-        ) ?: return false
-        return enabled.contains(ctx.packageName)
-    }
 }
+
+private fun AppPermissionStatus.toBridgePermissionStatus(): BridgePermissionStatus =
+    BridgePermissionStatus(
+        accessibilityServiceEnabled = accessibilityServiceEnabled,
+        screenCapturePermitted = screenCapturePermitted,
+        overlayPermitted = overlayPermitted,
+        notificationListenerPermitted = notificationListenerPermitted,
+        notificationsPermitted = notificationsPermitted,
+        microphonePermitted = microphonePermitted,
+        cameraPermitted = cameraPermitted,
+        contactsPermitted = contactsPermitted,
+        smsPermitted = smsPermitted,
+        phonePermitted = phonePermitted,
+        locationPermitted = locationPermitted,
+    )
 
 /**
  * Internal tuple for the chip-visibility combine — carries the four
