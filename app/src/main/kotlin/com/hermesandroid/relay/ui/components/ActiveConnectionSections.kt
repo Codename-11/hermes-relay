@@ -2,8 +2,10 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.ClipData
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -48,6 +50,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -316,25 +319,31 @@ fun ActiveCardFeaturesSection(
     val proxyValue = if (secureProxyAdvertised) "Available" else "Not advertised"
     val proxyTone = if (secureProxyAdvertised) CapabilityTone.Good else CapabilityTone.Neutral
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CapabilityChip(
+    // Lighter than the old six-filled-tile grid: one subtle grouped surface
+    // with a status dot + value per capability, dividers between rows. The
+    // header/glance pills used to duplicate API/Dashboard/Voice/Relay state;
+    // this list is now the single place those facts live on the active card.
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+            CapabilityRow(
                 label = "Standard API",
                 value = apiValue,
                 tone = apiTone,
                 onClick = onOpenApiInfo,
-                modifier = Modifier.weight(1f),
             )
-            CapabilityChip(
+            CapabilityDivider()
+            CapabilityRow(
                 label = "Dashboard",
                 value = dashboardValue,
                 tone = dashboardTone,
                 onClick = onOpenDashboard,
-                modifier = Modifier.weight(1f),
             )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CapabilityChip(
+            CapabilityDivider()
+            CapabilityRow(
                 label = "Standard voice",
                 value = voiceValue,
                 tone = voiceTone,
@@ -345,29 +354,26 @@ fun ActiveCardFeaturesSection(
                 } else {
                     null
                 },
-                modifier = Modifier.weight(1f),
             )
-            CapabilityChip(
+            CapabilityDivider()
+            CapabilityRow(
                 label = "Relay tools",
                 value = relayValue,
                 tone = relayTone,
                 onClick = onOpenRelayInfo,
-                modifier = Modifier.weight(1f),
             )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CapabilityChip(
+            CapabilityDivider()
+            CapabilityRow(
                 label = "Terminal",
                 value = terminalValue,
                 tone = terminalTone,
                 onClick = onOpenSessionInfo,
-                modifier = Modifier.weight(1f),
             )
-            CapabilityChip(
+            CapabilityDivider()
+            CapabilityRow(
                 label = "Secure proxy",
                 value = proxyValue,
                 tone = proxyTone,
-                modifier = Modifier.weight(1f),
             )
         }
     }
@@ -375,54 +381,80 @@ fun ActiveCardFeaturesSection(
 
 private enum class CapabilityTone { Neutral, Good, Info, Warning }
 
+/** Hairline divider between capability rows — inset so it reads as a list. */
 @Composable
-private fun CapabilityChip(
+private fun CapabilityDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 12.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+    )
+}
+
+/**
+ * One capability line: a status dot, the feature name, and its current
+ * value (right-aligned, colored by tone). Replaces the old filled
+ * [CapabilityChip] tile — status now reads as a dot + value, so the row
+ * stays light and the six features chunk as a scannable list rather than a
+ * dense grid of dark-blue blocks. Honesty principle: every feature is shown
+ * even when unavailable, with its short reason (e.g. "Not advertised") as
+ * the value rather than being hidden.
+ */
+@Composable
+private fun CapabilityRow(
     label: String,
     value: String,
     tone: CapabilityTone,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
-    val container = when (tone) {
-        CapabilityTone.Good -> MaterialTheme.colorScheme.primaryContainer
-        CapabilityTone.Info -> MaterialTheme.colorScheme.tertiaryContainer
-        CapabilityTone.Warning -> MaterialTheme.colorScheme.errorContainer
-        CapabilityTone.Neutral -> MaterialTheme.colorScheme.surface
+    val dotColor = when (tone) {
+        CapabilityTone.Good -> Color(0xFF4CAF50)
+        CapabilityTone.Info -> MaterialTheme.colorScheme.primary
+        CapabilityTone.Warning -> MaterialTheme.colorScheme.error
+        CapabilityTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
     }
-    val content = when (tone) {
-        CapabilityTone.Good -> MaterialTheme.colorScheme.onPrimaryContainer
-        CapabilityTone.Info -> MaterialTheme.colorScheme.onTertiaryContainer
-        CapabilityTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
+    val valueColor = when (tone) {
+        CapabilityTone.Good -> Color(0xFF4CAF50)
+        CapabilityTone.Info -> MaterialTheme.colorScheme.primary
+        CapabilityTone.Warning -> MaterialTheme.colorScheme.error
         CapabilityTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Surface(
-        modifier = modifier.then(
-            if (onClick != null) {
-                Modifier.clickable(onClick = onClick)
-            } else {
-                Modifier
-            },
-        ),
-        color = container,
-        shape = RoundedCornerShape(8.dp),
+    val rowModifier = modifier
+        .fillMaxWidth()
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+        .padding(horizontal = 8.dp, vertical = 10.dp)
+    Row(
+        modifier = rowModifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = content,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodySmall,
-                color = content,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(dotColor),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (onClick != null) {
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp),
             )
         }
     }

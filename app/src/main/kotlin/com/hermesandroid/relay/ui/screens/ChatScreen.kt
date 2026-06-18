@@ -39,10 +39,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
@@ -52,6 +54,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -139,7 +143,6 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.MessageRole
-import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
 import com.hermesandroid.relay.ui.components.RelayServerImageResolver
@@ -155,6 +158,7 @@ import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
+import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
@@ -172,10 +176,7 @@ import com.hermesandroid.relay.ui.theme.RelayRefresh
 import kotlin.math.abs
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import kotlin.math.roundToInt
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ChatConnectState
@@ -1300,29 +1301,32 @@ fun ChatScreen(
                     // Model priority: profile.model (explicit or default
                     // profile pick) trumps /api/config's `serverModelName`.
                     // The profile picker is the more specific intent.
-                    val personalityLabel = AgentDisplay.personalityLabel(
-                        selectedPersonality = selectedPersonality,
-                        defaultPersonality = defaultPersonality,
-                    )
                     val modelName = AgentDisplay.displayModelName(effectiveProfile?.model)
                         ?: AgentDisplay.displayModelName(serverModelName)
                     // Subtext: a NON-default personality shown BEFORE the model
-                    // (e.g. "Catgirl \u00B7 gpt-5.5"); the default personality is
-                    // implied, so it's just the model. Falls back to the
-                    // personality label when there's no model name yet.
+                    // (e.g. "Catgirl \u00B7 gpt-5.5"). A CLEARED overlay (default /
+                    // none / neutral / blank) \u2014 or one that just matches the
+                    // server default \u2014 contributes NOTHING; the active identity
+                    // already lives in the agent name above, so the subtitle is
+                    // just the model. Using isClearedPersonality (not a bare
+                    // `!= "default"`) is what keeps "none"/"neutral" from leaking
+                    // through as a literal "None" token.
                     val nonDefaultPersonality = selectedPersonality
                         .takeIf {
-                            it.isNotBlank() &&
-                                it != "default" &&
+                            !AgentDisplay.isClearedPersonality(it) &&
                                 !it.equals(defaultPersonality, ignoreCase = true)
                         }
                         ?.replaceFirstChar { it.uppercase() }
+                    // When neither a real personality nor a model name is known
+                    // yet (server config still loading), fall back to the plain
+                    // connection status \u2014 never the literal "None"/"Default"
+                    // personality label.
                     val subtitleText = when {
                         !headerApiReachable -> statusText
                         else -> listOfNotNull(
                             nonDefaultPersonality,
                             modelName?.takeIf { it.isNotBlank() },
-                        ).joinToString(" \u00B7 ").ifBlank { personalityLabel }
+                        ).joinToString(" \u00B7 ").ifBlank { statusText }
                     }
                     val subtitleColor = if (headerApiReachable) {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -1424,31 +1428,35 @@ fun ChatScreen(
                                             maxLines = 1,
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
-                                        // Context % now lives in the dedicated
-                                        // per-session ContextMeterBar just below
-                                        // the app bar, so the subtitle stays clean.
-                                        // The one thing it does still carry is a
-                                        // subtle approval-bypass marker: when the
-                                        // server reports approvals effectively off
-                                        // (YOLO / --yolo / global approvals.mode=off)
-                                        // a quiet amber "⚡ approvals off" rides the
-                                        // subtitle so the risk is visible without
-                                        // opening the agent drawer.
-                                        val subtitleAnnotated = buildAnnotatedString {
-                                            append(subtitleText)
-                                            if (yoloEnabled == true) {
-                                                withStyle(SpanStyle(color = RelayRefresh.Amber)) {
-                                                    append(" · ⚡ approvals off")
-                                                }
-                                            }
+                                        // Context % lives in the per-session
+                                        // ContextMeterBar, and the approval-bypass
+                                        // marker now rides a compact ⚡ icon in the
+                                        // app bar actions (full detail in the agent
+                                        // sheet) instead of being appended here —
+                                        // so the subtitle stays a clean single line
+                                        // (`personality · model`) and no longer gets
+                                        // squeezed out by the trailing action icons.
+                                        // Fade the subtitle whenever it changes
+                                        // — most importantly the honest
+                                        // "Connected" → confirmed-model reveal
+                                        // once /api/config lands (the model
+                                        // arrives later than the identity, and
+                                        // used to pop in). AnimatedContent doesn't
+                                        // animate its initial state, so this only
+                                        // smooths real changes, not first paint.
+                                        AnimatedContent(
+                                            targetState = subtitleText,
+                                            transitionSpec = { loadedContentTransform() },
+                                            label = "chatHeaderSubtitle",
+                                        ) { line ->
+                                            Text(
+                                                text = line,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = subtitleColor,
+                                                maxLines = 1,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            )
                                         }
-                                        Text(
-                                            text = subtitleAnnotated,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = subtitleColor,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        )
                                     }
                                 }
                             }
@@ -1456,41 +1464,30 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    // ADR 24 — compact chip surfacing which endpoint role is
-                    // currently serving the relay (LAN / Tailscale / Public /
-                    // Custom). Only rendered when the active connection
-                    // actually has a resolved endpoint; invisible for single-
-                    // endpoint legacy pairings where the Settings row already
-                    // spells the host out. Tap → Connections CRUD so the
-                    // user can re-probe / pin / re-pair without leaving chat.
-                    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
-                    activeEndpoint?.let { ep ->
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = RelayRefresh.Navy3.copy(alpha = 0.78f),
-                            modifier = Modifier
-                                .padding(end = 4.dp)
-                                .clickable { onNavigateToConnections() },
-                        ) {
-                            Text(
-                                text = ep.displayLabel(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = RelayRefresh.Relay,
-                                modifier = Modifier.padding(
-                                    horizontal = 8.dp,
-                                    vertical = 4.dp,
-                                ),
-                            )
-                        }
-                    }
-                    if (messages.isNotEmpty()) {
+                    // Approval-bypass marker, demoted from the subtitle to a
+                    // single amber ⚡ icon: present only when approvals are
+                    // effectively off, tapping into the agent sheet where the
+                    // full explanation (global mode / --yolo / per-session)
+                    // lives. Keeps the risk visible without eating subtitle
+                    // width on every turn.
+                    if (yoloEnabled == true) {
                         RelayChromeIconButton(
-                            icon = Icons.Filled.Share,
-                            contentDescription = "Share conversation",
-                            onClick = { shareConversation(context, messages) },
+                            icon = Icons.Filled.Bolt,
+                            contentDescription = "Approvals off — tap for details",
+                            onClick = { showAgentInfo = true },
+                            tint = RelayRefresh.Amber,
+                            borderColor = RelayRefresh.Amber.copy(alpha = 0.5f),
                             modifier = Modifier.padding(end = 4.dp),
                         )
                     }
+                    // (The ADR-24 LAN/Tailscale/Public endpoint-role chip that
+                    // used to live here was redundant with the global footer
+                    // status strip, which already renders "<status> / <route>"
+                    // from the same activeEndpoint.displayLabel() — and shows it
+                    // on every screen, not just chat. The footer strip is now
+                    // tappable → Connections, so the affordance moved with the
+                    // info. Dropping it here declutters the actions row and frees
+                    // width for the title subtitle.)
                     RelayChromeIconButton(
                         icon = Icons.Filled.Code,
                         contentDescription = "Terminal",
@@ -1503,6 +1500,40 @@ fun ChatScreen(
                         onClick = onNavigateToSettings,
                         modifier = Modifier.padding(end = 4.dp),
                     )
+                    // Share is the least-used trailing action (and only valid
+                    // once there's a conversation), so it folds into a ⋮
+                    // overflow instead of competing for width with Terminal +
+                    // Settings — which is what was squeezing the title subtitle.
+                    // The overflow only appears when there's something to share.
+                    if (messages.isNotEmpty()) {
+                        var showOverflowMenu by remember { mutableStateOf(false) }
+                        Box {
+                            RelayChromeIconButton(
+                                icon = Icons.Filled.MoreVert,
+                                contentDescription = "More actions",
+                                onClick = { showOverflowMenu = true },
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                            DropdownMenu(
+                                expanded = showOverflowMenu,
+                                onDismissRequest = { showOverflowMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Share conversation") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Filled.Share,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        shareConversation(context, messages)
+                                    },
+                                )
+                            }
+                        }
+                    }
                     // Ambient mode (fullscreen sphere) has no top-bar toggle —
                     // it's a quiet gesture: long-press the conversation
                     // background to enter, tap anywhere to return. A hint pill
@@ -2417,12 +2448,21 @@ fun ChatScreen(
                     )
                 }
             }
-            val effortControl = if (isGatewayTransport) {
+            // Show the effort chip as soon as the gateway IS the transport or is
+            // still being probed (Unknown) — so it appears alongside the model
+            // pill instead of popping in seconds later when the dashboard
+            // /api/status verdict flips to Ready (see the cold-open-recovery note
+            // above). Interactive only once the gateway is confirmed Ready
+            // (config.set reasoning needs a live gateway), so during the probe it
+            // shows the current effort but disabled. Hidden only when the gateway
+            // is definitively unreachable (SSE-only) — the agent sheet carries the
+            // disabled-with-reason version there.
+            val effortControl = if (chatGatewayAvailability != GatewayAvailability.Unreachable) {
                 ChatInputPickerControl(
                     value = reasoningEffortChipLabel(normalizedEffort),
                     contentDescription = "Select reasoning effort",
                     options = effortPickerOptions,
-                    enabled = chatReady && !isStreaming,
+                    enabled = isGatewayTransport && chatReady && !isStreaming,
                 )
             } else {
                 null

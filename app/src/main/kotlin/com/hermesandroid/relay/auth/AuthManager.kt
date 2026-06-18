@@ -92,6 +92,19 @@ class AuthManager(
      * legacy connection intentionally keeps [Connection.LEGACY_TOKEN_STORE_KEY].
      */
     private val tokenStoreKey: String? = null,
+    /**
+     * When false, [init] skips the eager session-token hydration (and the
+     * keyset decrypt it forces). Used for the throwaway LEGACY SENTINEL manager
+     * that `ConnectionViewModel` builds at field-init and replaces as soon as
+     * the active connection hydrates — decrypting its keyset only to discard it
+     * is a measured ~600 ms of wasted startup keystore work, and on a device
+     * whose active connection isn't connection 0 the sentinel's file has no
+     * token anyway. The real per-connection manager (created via the active
+     * connection, [eagerHydrate] = true) hydrates normally; the
+     * `restorePersistedActiveConnectionContext` path even awaits its
+     * Paired/Failed state. Channel handlers are still registered either way.
+     */
+    private val eagerHydrate: Boolean = true,
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
@@ -102,6 +115,10 @@ class AuthManager(
         private const val KEY_API_KEY = "api_server_key"
         private const val HINT_API_KEY_PRESENT = "api_key_present"
         private const val KEY_PAIRED_META = "paired_session_meta_json"
+        // Marker (in the connection-0 token store) recording that the one-shot
+        // pre-StrongBox `hermes_companion_auth` → `hermes_companion_auth_hw`
+        // migration has run, so we never rebuild the legacy keyset to re-check.
+        private const val KEY_LEGACY_MIGRATED = "legacy_migrated"
         private const val PAIRING_CODE_LENGTH = 6
         private val PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')
 
@@ -329,31 +346,29 @@ class AuthManager(
         _store?.let { return it }
         return storeMutex.withLock {
             _store?.let { return it }
-            withContext(Dispatchers.IO) {
-                // Multi-connection: [tokenPrefsName] picks the
-                // EncryptedSharedPreferences filename for the bound
-                // connection. The legacy sentinel keeps the pre-multi-
-                // connection install on its original file so the existing
-                // paired device keeps working with no migration.
-                // Both encrypted backends decrypt their Tink keyset eagerly on
-                // construction, so a corrupt file can throw AEADBadTagException
-                // here. KeystoreTokenStore.tryCreate already degrades to null;
-                // the legacy store self-heals its file in its constructor. If
-                // even that rebuild fails (a fundamentally broken keystore),
-                // fall back to a non-persistent store rather than force-close —
-                // the user re-pairs, but the app stays up.
-                val picked: SessionTokenStore =
-                    KeystoreTokenStore.tryCreate(context, tokenPrefsName)
-                        ?: runCatching {
-                            LegacyEncryptedPrefsTokenStore(context, tokenPrefsName)
-                        }.getOrElse { e ->
-                            Log.w(TAG, "Legacy token store unavailable (${e.message}) — using in-memory fallback; re-pair required")
-                            InMemoryTokenStore()
-                        }
-                migrateFromLegacyIfNeeded(picked)
-                _store = picked
-                picked
+            val picked = withContext(Dispatchers.IO) {
+                // One keyset build per file, process-wide (see [SecureStoreCache]).
+                // The legacy sentinel is deferred (eagerHydrate=false) and the
+                // dashboard cookie store now shares this same file, so the active
+                // connection's token keyset is the ONLY one built on the cold-
+                // start critical path. [tokenPrefsName] picks the file.
+                //
+                // The build decrypts its Tink keyset eagerly, so a corrupt file
+                // can throw AEADBadTagException — KeystoreTokenStore.tryCreate
+                // degrades to null, the legacy store self-heals in its ctor, and
+                // a fundamentally broken keystore falls back to InMemory (the app
+                // stays up; the user re-pairs). See [buildRawTokenStore].
+                val s = SecureStoreCache.getOrBuild(tokenPrefsName) {
+                    buildRawTokenStore(context, tokenPrefsName)
+                }
+                // Migration runs AFTER the (shared) build so the cookie store can
+                // trigger the build without needing token-migration logic; a
+                // marker makes it read the legacy file at most once ever.
+                migrateFromLegacyIfNeeded(s)
+                s
             }
+            _store = picked
+            picked
         }
     }
 
@@ -365,14 +380,33 @@ class AuthManager(
      */
     private fun migrateFromLegacyIfNeeded(picked: SessionTokenStore) {
         if (picked is LegacyEncryptedPrefsTokenStore) return
-        // Multi-connection: only the legacy connection inherits from the pre-
-        // multi-connection `hermes_companion_auth` file. A freshly-minted
-        // per-connection store must NOT be seeded from the legacy file or
+        // Gate on the FILE, not the connection id. Only the legacy connection-0
+        // file (`hermes_companion_auth_hw`) inherits from the pre-multi-
+        // connection `hermes_companion_auth` file; a freshly-minted per-
+        // connection store (`hermes_auth_<id>`) must NOT be seeded from it or
         // we'd copy connection 0's token into every new connection.
-        if (connectionId != CONNECTION_ID_LEGACY) return
+        //
+        // Why file-gated rather than `connectionId == CONNECTION_ID_LEGACY`:
+        // the store build is now cached/deduped across the legacy sentinel and
+        // the real connection-0 manager, so whichever one builds the file first
+        // runs this migration. Both share `tokenPrefsName == LEGACY_TOKEN_STORE_KEY`
+        // but only the sentinel had `connectionId == CONNECTION_ID_LEGACY`, so
+        // the old id-based gate would skip migration whenever the real manager
+        // won the race — dropping a pre-StrongBox user's token. The file name is
+        // the same for both, so gating on it is race-proof.
+        if (tokenPrefsName != Connection.LEGACY_TOKEN_STORE_KEY) return
+        // Read the legacy file at most ONCE ever. The build is now cache-shared
+        // (and the cookie store can trigger it without migrating), so without
+        // this marker every freshly-rebuilt connection-0 AuthManager would
+        // re-build the legacy `hermes_companion_auth` keyset just to find it
+        // already drained — re-introducing the startup cost we just removed.
+        if (picked.contains(KEY_LEGACY_MIGRATED)) return
         val legacy = try {
             LegacyEncryptedPrefsTokenStore(context)
         } catch (_: Exception) {
+            // Legacy file unreadable/corrupt — nothing to inherit. Still mark
+            // done so its keyset isn't rebuilt on every launch.
+            picked.putString(KEY_LEGACY_MIGRATED, "1")
             return
         }
 
@@ -396,6 +430,7 @@ class AuthManager(
             // backup copies of the session token lying around.
             legacy.clearAll()
         }
+        picked.putString(KEY_LEGACY_MIGRATED, "1")
     }
 
     /** Cert pin store — shared across all relay connections. */
@@ -524,24 +559,28 @@ class AuthManager(
         // one-line change in [onMessage].
         multiplexer.registerHandler("pairing", this)
 
-        // Check for existing session token off main thread
-        scope.launch {
-            val s = store()
-            val existingToken = s.getString(KEY_SESSION_TOKEN)
-            if (existingToken != null) {
-                _authState.value = AuthState.Paired(existingToken)
-                _currentPairedSession.value = loadStoredMetadata(existingToken)
-                Log.i(
-                    TAG,
-                    "init: hydrated existing session_token=${existingToken.take(8)}… " +
-                        "→ authState=Paired (stale-at-startup unless this is a real continuous session)"
-                )
-            } else {
-                Log.i(TAG, "init: no stored session_token → authState stays Unpaired")
+        // Check for existing session token off main thread. Skipped for the
+        // throwaway sentinel (eagerHydrate=false) so it never pays the keyset
+        // decrypt for a store that's about to be replaced (see [eagerHydrate]).
+        if (eagerHydrate) {
+            scope.launch {
+                val s = store()
+                val existingToken = s.getString(KEY_SESSION_TOKEN)
+                if (existingToken != null) {
+                    _authState.value = AuthState.Paired(existingToken)
+                    _currentPairedSession.value = loadStoredMetadata(existingToken)
+                    Log.i(
+                        TAG,
+                        "init: hydrated existing session_token=${existingToken.take(8)}… " +
+                            "→ authState=Paired (stale-at-startup unless this is a real continuous session)"
+                    )
+                } else {
+                    Log.i(TAG, "init: no stored session_token → authState stays Unpaired")
+                }
+                // Converge the plain api-key-present hint with the decrypted
+                // truth (also repairs a hint that predates legacy migration).
+                recordApiKeyHint(!s.getString(KEY_API_KEY).isNullOrBlank())
             }
-            // Converge the plain api-key-present hint with the decrypted
-            // truth (also repairs a hint that predates legacy migration).
-            recordApiKeyHint(!s.getString(KEY_API_KEY).isNullOrBlank())
         }
     }
 

@@ -36,6 +36,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -69,8 +70,10 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.ChatViewModel
@@ -648,6 +651,11 @@ fun AgentInfoSheet(
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
     val fastEnabled by chatViewModel.fastEnabled.collectAsState()
+    // YOLO / Fast are gateway-only. This says whether the gateway is present (or
+    // still being probed) so we can SHOW those controls — present-but-loading
+    // reads as "checking", not "you don't have this". Only a definitively
+    // unreachable gateway (SSE-only connection) hides them.
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
 
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
@@ -664,6 +672,18 @@ fun AgentInfoSheet(
     // Profile picker even on a dashboard-only (non-relay) connection.
     LaunchedEffect(Unit) { connectionViewModel.refreshDashboardProfiles() }
 
+    // "Still settling" window for the picker LISTS (models / personalities). The
+    // refreshes above fire on open; show a brief loading cue while a list is
+    // empty — but BOUND it, because a server that genuinely has none (very common
+    // for named personalities) must not spin forever. After this window an empty
+    // list honestly reads as "none", while the section itself (Server default /
+    // None) is always present so the capability never looks absent.
+    var pickerListsSettling by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(5000)
+        pickerListsSettling = false
+    }
+
     // Connection summary state.
     val authState by connectionViewModel.authState.collectAsState()
     val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
@@ -674,6 +694,15 @@ fun AgentInfoSheet(
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
     val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
+
+    // Session-path state — drives the glanceable transport/route summary +
+    // capability chips at the top of the Connection section. The resolver
+    // turns the user's preference into the concrete transport actually in use
+    // ("gateway" / "sessions" / "completions" / "runs"); `activeEndpoint`
+    // gives the friendly route label (LAN / Tailscale / Public / custom).
+    val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
+    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+    val voiceReady by connectionViewModel.voiceReady.collectAsState()
 
     // Multi-connection switcher state — folded into this sheet in place of
     // the separate top-bar ConnectionChip (see 2026-04-20 DEVLOG). Read
@@ -702,7 +731,6 @@ fun AgentInfoSheet(
 
     val profileOverridesPersonality =
         selectedProfile?.systemMessage?.isNotBlank() == true
-    var endpointsExpanded by remember { mutableStateOf(false) }
     val effectiveDisplayProfile = AgentDisplay.effectiveDisplayProfile(
         selectedProfile = selectedProfile,
         profiles = agentProfiles,
@@ -1022,6 +1050,19 @@ fun AgentInfoSheet(
                 }
 
                 HorizontalDivider()
+            } else if (pickerListsSettling) {
+                // Profiles are optional host config — a server may legitimately
+                // have none. Show the section while they might still be loading so
+                // it doesn't feel absent; once settled with none it cleanly
+                // disappears (the user is simply on the server default).
+                CollapsiblePickerSection(
+                    title = "Profile",
+                    hint = "Host-side Hermes contexts",
+                    currentValue = "Server default",
+                ) {
+                    PickerLoadingRow("Loading profiles…")
+                }
+                HorizontalDivider()
             }
 
             // ---- Personality section ----
@@ -1057,6 +1098,12 @@ fun AgentInfoSheet(
                         }
                     },
                 )
+
+                if (personalityNames.isEmpty() && pickerListsSettling) {
+                    // Named personalities still loading — bounded so a server with
+                    // none (common) doesn't spin forever; "None" above is always valid.
+                    PickerLoadingRow("Loading personalities…")
+                }
 
                 personalityNames.forEach { name ->
                     val isServerDefault = name.equals(defaultPersonality, ignoreCase = true)
@@ -1111,7 +1158,11 @@ fun AgentInfoSheet(
                     listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
                     .distinct()
             }
-            if (modelProviders.isNotEmpty() || sseModelOptions.isNotEmpty()) {
+            // Always show the Model picker — choosing a model is always possible
+            // (Server default at minimum). While the provider/model list is still
+            // being fetched we show a "loading" row rather than hiding the whole
+            // section (an absent section read as "no model control at all").
+            run {
                 HorizontalDivider()
                 CollapsiblePickerSection(
                     title = "Model",
@@ -1130,6 +1181,11 @@ fun AgentInfoSheet(
                             }
                         },
                     )
+                    if (modelProviders.isEmpty() && sseModelOptions.isEmpty() && pickerListsSettling) {
+                        // List still loading — honest, BOUNDED "more coming" cue
+                        // (settles to nothing if the server exposes no extra models).
+                        PickerLoadingRow("Loading available models…")
+                    }
                     if (modelProviders.isNotEmpty()) {
                         // Gateway: the curated provider→model groups the desktop
                         // picker uses (grok / kimi / gpt-5.5 …). Each provider's
@@ -1178,14 +1234,35 @@ fun AgentInfoSheet(
                 }
             }
 
-            // ---- Safety & speed section (gateway only) ----
-            // YOLO (approval bypass) + Fast (priority tier) mirror the desktop
-            // config.set yolo/fast. Gated on a live gateway (model.options groups
-            // present); both are session-scoped and track live via session.info.
-            if (modelProviders.isNotEmpty()) {
+            // ---- Safety & speed section ----
+            // YOLO (approval bypass) + Fast (priority tier) are standard upstream
+            // gateway features (they mirror the desktop config.set yolo/fast,
+            // session-scoped, tracked live via session.info). NEVER hidden: live
+            // controls when the gateway is usable, "Checking…" while a value
+            // loads, or cleanly disabled WITH the reason when the gateway isn't
+            // reachable / needs sign-in — so the capability is always visible.
+            run {
+                val gatewayUnavailableReason: String? = when (gatewayAvailability) {
+                    GatewayAvailability.Unreachable ->
+                        "Available over the gateway transport — this connection uses the API server."
+                    GatewayAvailability.SignInRequired ->
+                        "Sign in under Manage to control these."
+                    // Ready, or Unknown (still probing) → available / loading.
+                    else -> null
+                }
+                val gatewayControlsAvailable = gatewayUnavailableReason == null
+
                 HorizontalDivider()
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SectionLabel(title = "Safety & speed", hint = null)
+                    if (gatewayUnavailableReason != null) {
+                        Text(
+                            text = gatewayUnavailableReason,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
 
                     // YOLO — bypasses command approvals. On-state is loud.
                     Row(
@@ -1205,10 +1282,12 @@ fun AgentInfoSheet(
                                 },
                             )
                         }
-                        Switch(
-                            checked = yoloEnabled == true,
+                        GatewayToggleControl(
+                            available = gatewayControlsAvailable,
+                            value = yoloEnabled,
                             enabled = !isStreaming,
-                            onCheckedChange = { chatViewModel.setYolo(it) },
+                            label = "agentSheetYolo",
+                            onChange = { chatViewModel.setYolo(it) },
                         )
                     }
                     if (yoloEnabled == true) {
@@ -1248,10 +1327,12 @@ fun AgentInfoSheet(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
-                            checked = fastEnabled == true,
+                        GatewayToggleControl(
+                            available = gatewayControlsAvailable,
+                            value = fastEnabled,
                             enabled = !isStreaming,
-                            onCheckedChange = { chatViewModel.setFast(it) },
+                            label = "agentSheetFast",
+                            onChange = { chatViewModel.setFast(it) },
                         )
                     }
                 }
@@ -1302,6 +1383,34 @@ fun AgentInfoSheet(
                 SectionLabel(
                     title = "Connection",
                     hint = if (allConnections.size >= 2) "Switch between paired servers" else null,
+                )
+
+                // ---- Session-path summary (always-visible, top of section) ----
+                // Glanceable "which transport/route is this session on" line +
+                // honest capability chips. Replaces the buried raw-enum readout
+                // that used to live only inside the routes expander. The
+                // resolved transport, route, and capability gating are computed
+                // from live state below; the richer technical detail folds into
+                // SessionPathDetails (the single expander further down).
+                val sessionTransport = sessionPathTransport(
+                    connectionViewModel.resolveStreamingEndpoint(streamingEndpoint),
+                )
+                val routeLabel = activeEndpoint?.displayLabel()
+                    ?: com.hermesandroid.relay.data.Connection
+                        .extractDefaultLabel(apiServerUrl)
+                        .takeIf { it.isNotBlank() }
+                val relayConnected = relayConnectionState == ConnectionState.Connected
+                val sessionCaps = sessionCapabilities(
+                    transport = sessionTransport,
+                    gatewayAvailability = gatewayAvailability,
+                    relayConnected = relayConnected,
+                    relayConfigured = relayUrl.isNotBlank(),
+                    voiceReady = voiceReady,
+                )
+                SessionPathSummary(
+                    transport = sessionTransport,
+                    routeLabel = routeLabel,
+                    capabilities = sessionCaps,
                 )
 
                 // Multi-connection switcher. Renders inline as a radio list
@@ -1400,41 +1509,19 @@ fun AgentInfoSheet(
                     }
                 }
 
-                // Collapsible endpoint block — keeps the default view tidy.
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { endpointsExpanded = !endpointsExpanded }
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (endpointsExpanded) "Hide routes" else "Show routes",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Icon(
-                        imageVector = if (endpointsExpanded) {
-                            Icons.Filled.KeyboardArrowUp
-                        } else {
-                            Icons.Filled.KeyboardArrowDown
-                        },
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-
-                if (endpointsExpanded) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        InfoRow(label = "API", value = apiServerUrl, monospace = true)
-                        InfoRow(label = "Relay", value = relayUrl, monospace = true)
-                        ChipRow(label = "Relay state") {
-                            connectionChip(relayConnectionState)
-                        }
-                        InfoRow(label = "Streaming", value = chatMode.toString())
-                    }
-                }
+                // Session details — the single progressive-disclosure expander
+                // that ABSORBS the old "Show routes" block. Shows the friendly
+                // transport + route, relay state, the full honest capability
+                // list (✓ / — with a reason), and the technical API/Relay URLs.
+                // There is intentionally one expander here, not two.
+                SessionPathDetails(
+                    transport = sessionTransport,
+                    routeLabel = routeLabel,
+                    relayConnectionState = relayConnectionState,
+                    capabilities = sessionCaps,
+                    apiServerUrl = apiServerUrl,
+                    relayUrl = relayUrl,
+                )
             }
 
             HorizontalDivider()
@@ -1725,6 +1812,75 @@ private fun ProfileMetadataBadge(
     )
 }
 
+/** A small spinner + label row used as a BOUNDED "list still loading" cue under
+ *  a picker section whose section header is always present. */
+@Composable
+private fun PickerLoadingRow(text: String) {
+    Row(
+        modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 2.dp,
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Trailing control for a standard upstream gateway toggle (YOLO / Fast) that is
+ * NEVER hidden:
+ *  - not [available] (gateway unreachable / needs sign-in) → a cleanly disabled
+ *    switch; the reason is shown once at the section level;
+ *  - [available] but [value] still unknown (null) → a "Checking…" pose;
+ *  - [available] with a confirmed [value] → the live switch.
+ */
+@Composable
+private fun GatewayToggleControl(
+    available: Boolean,
+    value: Boolean?,
+    enabled: Boolean,
+    label: String,
+    onChange: (Boolean) -> Unit,
+) {
+    if (!available) {
+        Switch(checked = value == true, enabled = false, onCheckedChange = {})
+        return
+    }
+    LoadedFadeIn(
+        value = value,
+        label = label,
+        placeholder = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                )
+                Text(
+                    text = "Checking…",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    ) { enabledValue ->
+        Switch(
+            checked = enabledValue,
+            enabled = enabled,
+            onCheckedChange = onChange,
+        )
+    }
+}
+
 @Composable
 private fun AgentSheetHeader(
     profile: Profile?,
@@ -1796,7 +1952,19 @@ private fun AgentSheetHeader(
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
             )
-            modelLabel?.takeIf { it.isNotBlank() }?.let { label ->
+            // Fade the model in when it's CONFIRMED (from /api/config), rather
+            // than popping. While still connecting we show a skeleton (honest
+            // "loading"); once connected with no model reported we render
+            // nothing rather than claim a model we don't have.
+            LoadedFadeIn(
+                value = modelLabel?.takeIf { it.isNotBlank() },
+                label = "agentSheetModel",
+                placeholder = {
+                    // Never collapse the model line — show a loading pose, not an
+                    // empty slot (which reads as "no model").
+                    RelaySkeletonLine(width = 104.dp, height = 12.dp)
+                },
+            ) { label ->
                 Text(
                     text = modelProviderLabel?.takeIf { it.isNotBlank() }
                         ?.let { "$label · $it" } ?: label,

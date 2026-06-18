@@ -1310,6 +1310,14 @@ fun RelayApp() {
                         leading = "$leading / $routeLabel",
                         trailing = "$modelLabel / $safetyLabel",
                         leadingColor = leadingColor,
+                        // Tap the persistent status/route readout to open
+                        // Connections — preserves the affordance the dropped
+                        // header endpoint chip used to provide.
+                        onClick = {
+                            navController.navigate(Screen.ConnectionsSettings.route) {
+                                launchSingleTop = true
+                            }
+                        },
                     )
                 }
             }

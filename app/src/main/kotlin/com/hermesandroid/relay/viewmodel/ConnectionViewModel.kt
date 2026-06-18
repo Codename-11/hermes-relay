@@ -261,6 +261,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         multiplexer = multiplexer,
         scope = viewModelScope,
         connectionId = AuthManager.CONNECTION_ID_LEGACY,
+        // Sentinel: replaced the moment the active connection hydrates
+        // (restorePersistedActiveConnectionContext), so skip the eager keyset
+        // decrypt it would otherwise do just to be thrown away.
+        eagerHydrate = false,
     )
         private set
 
@@ -388,6 +392,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         activeConnectionIdProvider = { connectionStore.activeConnectionId.value },
         dashboardUrlProvider = { activeDashboardUrl() },
         gatewayKeepAliveProvider = { gatewayKeepAlive.value },
+        // Lets the dashboard cookie store ride the connection's token keyset
+        // (one keyset build instead of two on cold start).
+        tokenStoreKeyProvider = { cid ->
+            connectionStore.connections.value.firstOrNull { it.id == cid }?.tokenStoreKey
+        },
     )
 
     // Agent-profiles collaborator — owns the merged profile list, the
@@ -1784,34 +1793,70 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         route: String?,
     ): List<ConnectionHandoffTraceEntry> = buildList {
         route?.let {
-            add(ConnectionHandoffTraceEntry(label = "Route", detail = it))
+            add(
+                ConnectionHandoffTraceEntry(
+                    label = "Route",
+                    detail = it,
+                    state = ConnectionStepState.Done,
+                )
+            )
         }
         when (apiHealth) {
             HealthStatus.Probing -> add(
-                ConnectionHandoffTraceEntry(label = "API", detail = "Checking Hermes health")
+                ConnectionHandoffTraceEntry(
+                    label = "API",
+                    detail = "Checking Hermes health",
+                    state = ConnectionStepState.Active,
+                )
             )
             HealthStatus.Unreachable -> add(
-                ConnectionHandoffTraceEntry(label = "API", detail = "Health check failed")
+                ConnectionHandoffTraceEntry(
+                    label = "API",
+                    detail = "Health check failed",
+                    state = ConnectionStepState.Failed,
+                )
             )
             HealthStatus.Reachable -> add(
-                ConnectionHandoffTraceEntry(label = "API", detail = "Ready")
+                ConnectionHandoffTraceEntry(
+                    label = "API",
+                    detail = "Ready",
+                    state = ConnectionStepState.Done,
+                )
             )
             HealthStatus.Unknown -> Unit
         }
         when (relayHealth) {
             HealthStatus.Probing -> add(
-                ConnectionHandoffTraceEntry(label = "Relay", detail = "Checking relay health")
+                ConnectionHandoffTraceEntry(
+                    label = "Relay",
+                    detail = "Checking relay health",
+                    state = ConnectionStepState.Active,
+                )
             )
             HealthStatus.Unreachable -> add(
-                ConnectionHandoffTraceEntry(label = "Relay", detail = "Health check failed")
+                ConnectionHandoffTraceEntry(
+                    label = "Relay",
+                    detail = "Health check failed",
+                    state = ConnectionStepState.Failed,
+                )
             )
             HealthStatus.Reachable -> add(
-                ConnectionHandoffTraceEntry(label = "Relay", detail = "Ready")
+                ConnectionHandoffTraceEntry(
+                    label = "Relay",
+                    detail = "Ready",
+                    state = ConnectionStepState.Done,
+                )
             )
             HealthStatus.Unknown -> Unit
         }
         if (relayRow.phase == RelayUiState.Connecting) {
-            add(ConnectionHandoffTraceEntry(label = "Session", detail = "Opening relay socket"))
+            add(
+                ConnectionHandoffTraceEntry(
+                    label = "Session",
+                    detail = "Opening relay socket",
+                    state = ConnectionStepState.Active,
+                )
+            )
         }
     }.takeLast(3)
 

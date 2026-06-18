@@ -147,6 +147,7 @@ class DataManager(
                 dashboardCookies = EncryptedDashboardCookieStore(
                     context = context,
                     connectionId = connection.id,
+                    tokenStoreKey = connection.tokenStoreKey,
                 ).load().map { it.toBackup() },
             )
         }
@@ -185,6 +186,7 @@ class DataManager(
             EncryptedDashboardCookieStore(
                 context = context,
                 connectionId = connection.id,
+                tokenStoreKey = connection.tokenStoreKey,
             ).save(secret.dashboardCookies.map { it.toStoredCookie() })
         }
     }

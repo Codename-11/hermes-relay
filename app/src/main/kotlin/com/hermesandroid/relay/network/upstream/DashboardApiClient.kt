@@ -6,9 +6,9 @@ import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.MessageListResponse
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SessionListResponse
-import com.hermesandroid.relay.auth.KeystoreTokenStore
-import com.hermesandroid.relay.auth.LegacyEncryptedPrefsTokenStore
+import com.hermesandroid.relay.auth.SecureStoreCache
 import com.hermesandroid.relay.auth.SessionTokenStore
+import com.hermesandroid.relay.auth.buildRawTokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -816,22 +816,56 @@ class InMemoryDashboardCookieStore : DashboardCookieStore {
 class EncryptedDashboardCookieStore(
     context: Context,
     connectionId: String,
+    /**
+     * The connection's TOKEN-store file key. When non-null the dashboard cookies
+     * ride that already-built keyset (so there is NO second keyset build on cold
+     * start), and any cookies in this connection's old stand-alone
+     * `hermes_dashboard_<id>` file are migrated across once. Null preserves the
+     * original stand-alone-file behavior for callers that can't resolve the key.
+     */
+    tokenStoreKey: String? = null,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : DashboardCookieStore {
     private val serializer = ListSerializer(StoredDashboardCookie.serializer())
     private val appContext = context.applicationContext
-    private val prefsName = prefsName(connectionId)
+    private val standaloneCookiePrefsName = prefsName(connectionId)
+    // Unify onto the connection's token file when we know it; else stand alone.
+    // (Explicit type + distinct name avoids a type-inference cycle with the
+    // companion `prefsName(connectionId)` function above.)
+    private val storePrefsName: String = tokenStoreKey ?: standaloneCookiePrefsName
+    private val unified = tokenStoreKey != null && tokenStoreKey != standaloneCookiePrefsName
 
-    // DEFERRED on purpose. Building the Keystore-backed prefs takes 1-4s
-    // on StrongBox devices and serializes through a process-GLOBAL Tink
-    // lock (AndroidKeysetManager.Builder.build) — eager construction here
-    // froze the main thread for ~11s at app start when several stores were
-    // built concurrently (frozen-sphere incident, 2026-06-11). Construction
-    // is now free on any thread; the expensive build happens on the first
-    // actual cookie access, which is always an OkHttp/IO thread.
+    // DEFERRED on purpose. Building the Keystore-backed prefs takes 1-4s on
+    // StrongBox devices and serializes through a process-GLOBAL Tink lock
+    // (AndroidKeysetManager.Builder.build) — eager construction here froze the
+    // main thread for ~11s at app start (frozen-sphere incident, 2026-06-11).
+    // Construction is free on any thread; the expensive build happens on the
+    // first actual cookie access, always an OkHttp/IO thread. Going through
+    // SecureStoreCache means that build is SHARED with the connection's token
+    // store — so when unified there is NO second keyset build at all.
     private val store: SessionTokenStore by lazy {
-        KeystoreTokenStore.tryCreate(appContext, prefsName)
-            ?: LegacyEncryptedPrefsTokenStore(appContext, prefsName)
+        val s = SecureStoreCache.getOrBuild(storePrefsName) {
+            buildRawTokenStore(appContext, storePrefsName)
+        }
+        if (unified) migrateCookiesFromStandaloneFile(s)
+        s
+    }
+
+    /**
+     * One-shot copy of this connection's cookies from the old stand-alone
+     * `hermes_dashboard_<id>` file into the unified token file, marker-gated so
+     * the old file's keyset is built at most once ever. On failure (corrupt old
+     * file) the user simply re-signs-in to Manage — cookies are re-obtainable,
+     * unlike the relay session token.
+     */
+    private fun migrateCookiesFromStandaloneFile(target: SessionTokenStore) {
+        if (target.contains(KEY_COOKIES_MIGRATED)) return
+        runCatching {
+            val old = buildRawTokenStore(appContext, standaloneCookiePrefsName)
+            old.getString(KEY_COOKIES)?.let { target.putString(KEY_COOKIES, it) }
+            old.clearAll()
+        }
+        target.putString(KEY_COOKIES_MIGRATED, "1")
     }
 
     override fun load(): List<StoredDashboardCookie> {
@@ -850,6 +884,7 @@ class EncryptedDashboardCookieStore(
 
     companion object {
         private const val KEY_COOKIES = "dashboard_cookies_json"
+        private const val KEY_COOKIES_MIGRATED = "dashboard_cookies_migrated"
 
         fun prefsName(connectionId: String): String =
             "hermes_dashboard_${connectionId.take(8)}"
@@ -872,8 +907,11 @@ class DashboardCookieJar(
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         val now = clockMillis()
-        val stored = store.load().filterNot { it.isExpired(now) }
-        if (stored.size != store.load().size) {
+        // Load once (each load() is a decrypt + JSON decode); prune expired
+        // entries back to disk only when something actually expired.
+        val all = store.load()
+        val stored = all.filterNot { it.isExpired(now) }
+        if (stored.size != all.size) {
             store.save(stored)
         }
         return stored.mapNotNull { it.toCookie() }

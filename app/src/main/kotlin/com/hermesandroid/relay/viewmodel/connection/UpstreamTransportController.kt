@@ -63,6 +63,14 @@ class UpstreamTransportController(
     private val dashboardUrlProvider: () -> String?,
     /** Current keep-alive-in-background preference, read per gateway-client build. */
     private val gatewayKeepAliveProvider: () -> Boolean,
+    /**
+     * Resolves a connection id to its TOKEN-store file key so the dashboard
+     * cookie store can ride the connection's already-built token keyset instead
+     * of building a second one on cold start. Returns null when the connection
+     * isn't known yet — the cookie store then falls back to its own stand-alone
+     * `hermes_dashboard_<id>` file (original behavior).
+     */
+    private val tokenStoreKeyProvider: (String) -> String? = { null },
 ) {
 
     // --- Per-connection dashboard cookie stores ----------------------------
@@ -85,6 +93,7 @@ class UpstreamTransportController(
             EncryptedDashboardCookieStore(
                 context = context,
                 connectionId = connectionId,
+                tokenStoreKey = tokenStoreKeyProvider(connectionId),
             )
         }
 

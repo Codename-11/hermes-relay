@@ -2789,6 +2789,14 @@ class ChatViewModel : ViewModel() {
          * route is configured (the gateway has no system slot to carry it).
          */
         val mediaCapability: String?,
+        /**
+         * True when a relay route is configured, so the relay `/media/by-path`
+         * route can fetch server-local images/files. On the GATEWAY this is how
+         * media works (the client renders them inline) even though
+         * [mediaCapability] — the SSE-only injected hint — is null. Carried so the
+         * audit UI doesn't read "media unavailable" on the gateway when it isn't.
+         */
+        val relayMediaAvailable: Boolean,
         val combinedSystemMessage: String?,
         val transport: String,
         /**
@@ -2831,8 +2839,9 @@ class ChatViewModel : ViewModel() {
         // Tell the agent it can surface images/files by absolute server path —
         // but only on SSE (the gateway carries no system_message) and only when
         // a relay route is configured (otherwise the client can't fetch them).
+        val relayMediaAvailable = relayHttpClient?.mediaUrlConfigured() == true
         val mediaCapability: String? =
-            RELAY_MEDIA_HINT.takeIf { !gateway && relayHttpClient?.mediaUrlConfigured() == true }
+            RELAY_MEDIA_HINT.takeIf { !gateway && relayMediaAvailable }
         // combinedSystemMessage appends the media hint after the phone-status
         // block (a stable environment fact, like phone status) and before the
         // per-turn interface context. The per-block fields below null out blanks
@@ -2845,6 +2854,7 @@ class ChatViewModel : ViewModel() {
             appContext = appContextRaw?.takeIf { it.isNotBlank() },
             interfaceContext = interfaceContextPrompt?.takeIf { it.isNotBlank() },
             mediaCapability = mediaCapability,
+            relayMediaAvailable = relayMediaAvailable,
             combinedSystemMessage = combined,
             transport = streamingEndpoint,
             personaOwnedServerSide = gateway,
