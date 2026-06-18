@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-18 — Android onboarding permissions review surface
+
+**Why.** Android onboarding already kept the standard path clean, but permissions were scattered between feature-specific prompts, Bridge, and Android Settings. A central review page makes the model explicit: standard Chat and Manage do not need phone-control permissions, while voice, camera, notifications, and sideload Device Control remain opt-in.
+
+- **Shared permission snapshot.** Added `AppPermissionStatusProbe` so Bridge and Settings read the same runtime grants and special-access switches: notifications, microphone, camera, notification listener, accessibility, screen capture, overlay, contacts, SMS, phone, and location.
+- **Permissions screen.** Added `PermissionsStatusScreen` with Standard Hermes, On demand, and flavor-aware Device Control sections. Rows show required/optional/session status and link to the relevant Android Settings surface or Bridge session grant.
+- **Onboarding and Settings entry points.** The Power Tools onboarding page now has a "Review permissions" action, and Settings -> App includes a Permissions row. Google Play builds show the sideload Device Control section as unavailable rather than implying hidden phone-control permissions.
+- **Verification.** `:app:compileGooglePlayDebugKotlin`, `:app:compileGooglePlayDebugAndroidTestKotlin`, and `:app:compileSideloadDebugKotlin` pass with `ANDROID_HOME` pointed at the local SDK.
+
 ## 2026-06-17 — Chat transparency + provenance polish: injected-context audit sheet, spoken-turn badges, version-skew error
 
 **Why.** On-device voice testing surfaced two transparency gaps and two papercuts. The per-turn system context the phone injects (persona + phone status + voice hint) was invisible — no way to audit what the agent actually receives. Spoken voice-mode turns were indistinguishable from typed ones in the scrollback, while realtime turns were already badged. A field an older relay plugin doesn't accept produced a misleading "Network error · HTTP 400" with a dead Retry. And the floating connection toast's Warning tone was semi-transparent, letting content bleed through.
