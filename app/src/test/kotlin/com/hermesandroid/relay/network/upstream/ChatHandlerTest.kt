@@ -908,6 +908,165 @@ class ChatHandlerTest {
         assertEquals("server reasoning", handler.messages.value.single { it.id == "t-2" }.thinkingContent)
     }
 
+    // --- loadMessageHistory: live→server id reconciliation ---
+
+    @Test
+    fun loadMessageHistory_adoptsServerIdForGatewayUuidRows_carriesStateById() {
+        // Gateway-style: live rows keep client UUIDs (no mid-turn server id); the
+        // reloaded transcript carries the server ids. Positional (role+content)
+        // reconciliation must adopt those ids so tokens/badges/attachments carry
+        // BY ID, in place — not drop-and-reinsert, not luck-of-the-content-match.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "uuid-user",
+                role = MessageRole.USER,
+                content = "run a tool",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/png", content = "outb64")),
+            )
+        )
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "uuid-assistant",
+                role = MessageRole.ASSISTANT,
+                content = "done",
+                timestamp = 2L,
+                badges = listOf("Voice"),
+                inputTokens = 5,
+                outputTokens = 9,
+                totalTokens = 14,
+                estimatedCost = 0.003,
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "srv-1", role = "user", content = JsonPrimitive("run a tool"), timestamp = 1.0),
+                MessageItem(id = "srv-2", role = "assistant", content = JsonPrimitive("done"), timestamp = 2.0),
+            )
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        val user = msgs.single { it.role == MessageRole.USER }
+        val assistant = msgs.single { it.role == MessageRole.ASSISTANT }
+        // Server ids adopted onto the live rows.
+        assertEquals("srv-1", user.id)
+        assertEquals("srv-2", assistant.id)
+        // State carried by id, in place.
+        assertEquals(1, user.attachments.size)
+        assertEquals("outb64", user.attachments[0].content)
+        assertEquals(listOf("Voice"), assistant.badges)
+        assertEquals(5, assistant.inputTokens)
+        assertEquals(14, assistant.totalTokens)
+        assertEquals(0.003, assistant.estimatedCost!!, 0.0001)
+        assertFalse(assistant.isStreaming)
+    }
+
+    @Test
+    fun loadMessageHistory_secondReloadMatchesByIdAfterReconciliation() {
+        // Once the first reload adopts the server id, subsequent reloads match by
+        // id and update in place while keeping client-only state.
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "uuid-a",
+                role = MessageRole.ASSISTANT,
+                content = "answer",
+                timestamp = 1L,
+                inputTokens = 3,
+                badges = listOf("Voice"),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "srv-1", role = "assistant", content = JsonPrimitive("answer")))
+        )
+        assertEquals("srv-1", handler.messages.value.single().id)
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "srv-1", role = "assistant", content = JsonPrimitive("answer v2")))
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals("srv-1", msg.id)
+        assertEquals("answer v2", msg.content)
+        assertEquals(3, msg.inputTokens)
+        assertEquals(listOf("Voice"), msg.badges)
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotAdoptServerIdForClientOnlyOrphan() {
+        // A clientOnly bubble whose content happens to match a server row must
+        // NOT be mapped to it — it has no server identity; it stays an orphan and
+        // the server row inserts independently.
+        handler.appendLocalVoiceIntentResult(description = "done")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "srv-9", role = "assistant", content = JsonPrimitive("done")))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertTrue(msgs.any { it.id == "srv-9" && it.role == MessageRole.ASSISTANT })
+        assertTrue(msgs.any { it.id.startsWith("voice-intent-result-") && it.clientOnly })
+    }
+
+    @Test
+    fun loadMessageHistory_leavesRowUnmappedWhenContentDiverges() {
+        // Live UUID row whose content does NOT match any server row → not mapped:
+        // the live row drops, the server row inserts, and nothing is force-carried
+        // (no wrong map on count/content divergence).
+        handler.addUserMessage(
+            ChatMessage(
+                id = "uuid-x",
+                role = MessageRole.USER,
+                content = "hello",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/png", content = "b64")),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "srv-x", role = "user", content = JsonPrimitive("totally different")))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        assertEquals("srv-x", msgs[0].id)
+        assertEquals("totally different", msgs[0].content)
+        assertTrue(msgs[0].attachments.isEmpty())
+    }
+
+    @Test
+    fun loadMessageHistory_reconcilesMarkerBearingAssistantRowByStrippedContent() {
+        // Live assistant content is marker-stripped during streaming; the server
+        // row still carries the raw MEDIA: marker. Reconciliation strips markers
+        // on both sides so the row still matches and carries its tokens by id.
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "uuid-shot",
+                role = MessageRole.ASSISTANT,
+                content = "here is the screenshot",
+                timestamp = 1L,
+                inputTokens = 8,
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "srv-shot",
+                    role = "assistant",
+                    content = JsonPrimitive("here is the screenshot\nMEDIA:hermes-relay://tok123"),
+                )
+            )
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals("srv-shot", msg.id)
+        assertEquals(8, msg.inputTokens)
+    }
+
     // --- onUsageReceived ---
 
     @Test

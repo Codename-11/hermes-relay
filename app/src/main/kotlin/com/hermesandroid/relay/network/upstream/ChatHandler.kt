@@ -791,32 +791,43 @@ class ChatHandler {
         // mutateMessage lookups find the newly-loaded messages.
         val pendingMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
 
-        // Carry CLIENT-ONLY enrichment forward across the wholesale reload, keyed
-        // by message id. The server transcript (MessageItem) rebuilds content,
-        // tool calls, and reasoning — but it does NOT persist per-message token
-        // usage/cost, provenance badges, tapped-card confirmations, or the
-        // voice/realtime sync traces. Without carrying these forward, the
-        // post-turn history reload silently drops them (the disappearing-tokens /
-        // disappearing-badges class of bug — preserve-by-default, not a per-field
-        // whitelist that the next new field always forgets). The live assistant
-        // message has already had its id swapped to the server id via
-        // replaceMessageId, so it matches the reloaded item id.
-        val priorById = _messages.value.associateBy { it.id }
+        // Reconcile optimistic (client-UUID) live ids to their server ids BEFORE
+        // building the carry map, so the id-keyed delta-merge updates rows in
+        // place instead of dropping-and-reinserting them. SSE assistant rows are
+        // already reconciled mid-turn (replaceMessageId ← message.started); but
+        // GATEWAY assistant rows keep a local UUID (the gateway exposes no
+        // per-message server id during the turn) and USER rows of every transport
+        // keep a local UUID. Without this, the id-keyed carry-forward below
+        // silently misses those rows, so a gateway turn's tokens/badges survived
+        // only if a content match happened to cover them. See
+        // [reconcileLiveIdsToServer].
+        val serverItemIds = items.mapNotNullTo(HashSet()) { it.id }
+        val idRemap = reconcileLiveIdsToServer(items, serverItemIds)
 
-        // Outbound (user-authored) attachments must survive the reload too. They
-        // live on USER messages, are NOT echoed back in server content, and are
-        // NOT re-dispatched (only inbound `MEDIA:` markers are), so a wholesale
-        // rebuild drops them. priorById can't recover them: user-message ids are
-        // never reconciled to the server id (only the assistant placeholder is
-        // swapped via replaceMessageId), so the reloaded user row never matches
-        // the live UUID-keyed one. Match by content instead, consuming each prior
-        // outbound set once so repeated identical sends don't cross-assign. Only
-        // outbound (relayToken == null) attachments are queued — inbound ones are
-        // re-fetched by the marker re-dispatch below, and carrying them too would
-        // double-add.
+        // Carry CLIENT-ONLY enrichment forward across the reload, keyed by the
+        // RECONCILED message id. The server transcript (MessageItem) rebuilds
+        // content, tool calls, and reasoning — but it does NOT persist per-message
+        // token usage/cost, provenance badges, tapped-card confirmations, or the
+        // voice/realtime sync traces. Carrying these forward is preserve-by-default
+        // (not a per-field whitelist the next new field forgets). With the remap
+        // above, an id-matched (SSE) row keeps its server id and a positionally
+        // reconciled (gateway/user) row adopts its server id, so both match the
+        // reloaded item id and update in place.
+        val priorById = _messages.value.associateBy { idRemap[it.id] ?: it.id }
+
+        // Outbound (user-authored) attachments are the safety net for any USER row
+        // that did NOT reconcile to a server id at merge time (they live on USER
+        // messages, are not echoed in server content, and are not re-dispatched —
+        // only inbound `MEDIA:` markers are). Reconciled rows already carry their
+        // attachment by id via priorById, so we queue ONLY the still-unreconciled
+        // rows here — otherwise a later same-content row could pull a duplicate
+        // from the queue. Match by content, consume-once so repeated identical
+        // sends don't cross-assign; inbound (relayToken != null) attachments are
+        // excluded since the marker re-dispatch re-fetches them.
         val priorOutboundByContent = HashMap<String, ArrayDeque<List<Attachment>>>()
         for (msg in _messages.value) {
             if (msg.role != MessageRole.USER) continue
+            if ((idRemap[msg.id] ?: msg.id) in serverItemIds) continue // carried by id already
             val outbound = msg.attachments.filter { it.relayToken == null }
             if (outbound.isNotEmpty()) {
                 priorOutboundByContent.getOrPut(msg.content) { ArrayDeque() }.addLast(outbound)
@@ -910,7 +921,13 @@ class ChatHandler {
                 // preserved automatically — and produces an object equal to the
                 // prior one when nothing server-side changed, so unchanged rows
                 // don't churn.
+                //
+                // `id = messageId` adopts the server id: for an id-matched (SSE)
+                // row it's a no-op, but for a positionally reconciled (gateway /
+                // user) row whose `prior` still carries a client UUID it swaps in
+                // the server id so EVERY future reload matches by id.
                 prior.copy(
+                    id = messageId,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,
@@ -1004,6 +1021,105 @@ class ChatHandler {
                 }
             }
         }
+    }
+
+    /** One adoptable server row during id reconciliation. `taken` enforces consume-once. */
+    private class ReconcileSlot(
+        val serverId: String,
+        val role: MessageRole,
+        val key: String,
+    ) {
+        var taken: Boolean = false
+    }
+
+    /**
+     * Map optimistic (client-UUID) live message ids → their server ids so the
+     * id-keyed delta-merge in [loadMessageHistory] updates rows in place.
+     *
+     * Strategy: match each still-unreconciled, non-[ChatMessage.clientOnly] live
+     * row to an unclaimed server row by (role, marker-stripped content),
+     * consume-once in document order, and adopt the server id. Rows whose id is
+     * already a server id (SSE assistant, reconciled mid-turn) are skipped so we
+     * never double-swap; clientOnly orphans have no server row and are never
+     * mapped; a live row that matches no slot is left alone (graceful fallback —
+     * the content-keyed attachment fallback and drop-and-reinsert still apply, so
+     * a count divergence / truncation / compaction never forces a wrong map).
+     *
+     * Returns oldLiveId → serverId for the rows that reconciled (empty when there
+     * is nothing to adopt).
+     */
+    private fun reconcileLiveIdsToServer(
+        items: List<MessageItem>,
+        serverItemIds: Set<String>,
+    ): Map<String, String> {
+        val live = _messages.value
+        if (live.isEmpty()) return emptyMap()
+        val liveIds = live.mapTo(HashSet()) { it.id }
+
+        // Adoptable slots: rendered server rows (not tool, not a hidden steering
+        // marker) whose id no live row already carries.
+        val slots = items.mapNotNull { item ->
+            val serverId = item.id ?: return@mapNotNull null
+            if (serverId in liveIds) return@mapNotNull null
+            val role = renderedRoleOf(item) ?: return@mapNotNull null
+            ReconcileSlot(serverId, role, reconcileKey(item.contentText))
+        }
+        if (slots.isEmpty()) return emptyMap()
+
+        val remap = HashMap<String, String>()
+        for (msg in live) {
+            if (msg.clientOnly) continue            // no server row to adopt
+            if (msg.id in serverItemIds) continue   // already a server id
+            val key = reconcileKey(msg.content)
+            val slot = slots.firstOrNull { !it.taken && it.role == msg.role && it.key == key }
+                ?: continue
+            slot.taken = true
+            remap[msg.id] = slot.serverId
+        }
+        return remap
+    }
+
+    /**
+     * The rendered role for a server message item, or null for rows that never
+     * become a visible bubble (tool results, unknown roles, and hidden
+     * `[System:` steering markers). Mirrors the role/skip logic in
+     * [loadMessageHistory] so reconciliation only adopts ids onto rows that
+     * actually render.
+     */
+    private fun renderedRoleOf(item: MessageItem): MessageRole? = when (item.role) {
+        "user" -> MessageRole.USER
+        "assistant" -> MessageRole.ASSISTANT
+        "system" ->
+            if (!showSystemMarkers &&
+                item.contentText?.trimStart()?.startsWith("[System:") == true
+            ) {
+                null
+            } else {
+                MessageRole.SYSTEM
+            }
+        else -> null
+    }
+
+    /**
+     * Normalize content for reconciliation matching: strip `MEDIA:`/`CARD:` marker
+     * lines (raw server content still carries them; live content already had them
+     * stripped during streaming) and collapse to trimmed, non-blank lines joined
+     * by newlines. Lets a marker-bearing assistant turn match its live row while
+     * staying byte-stable for plain user/assistant text.
+     */
+    private fun reconcileKey(content: String?): String {
+        val text = content.orEmpty()
+        if (text.isEmpty()) return ""
+        val sb = StringBuilder()
+        for (line in text.lines()) {
+            val t = line.trim()
+            if (t.isEmpty()) continue
+            if (mediaRelayRegex.containsMatchIn(t) || mediaBarePathRegex.containsMatchIn(t)) continue
+            if (cardMarkerRegex.containsMatchIn(t)) continue
+            if (sb.isNotEmpty()) sb.append('\n')
+            sb.append(t)
+        }
+        return sb.toString()
     }
 
     /**
