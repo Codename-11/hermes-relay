@@ -566,27 +566,10 @@ fun ChatScreen(
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
     var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
-    // First-run discoverability for clean mode. The entry is a quiet
-    // long-press, so surface a one-time hint that it exists. UI-local (not VM
-    // state) — shown at most once per screen lifetime, gated on having some
-    // conversation so a brand-new user isn't nudged before they've chatted.
-    var cleanModeHintSeen by remember { mutableStateOf(false) }
-    var showCleanModeHint by remember { mutableStateOf(false) }
-    LaunchedEffect(messages.isNotEmpty(), ambientMode) {
-        if (!cleanModeHintSeen && messages.isNotEmpty() && !ambientMode) {
-            delay(1_200) // let the screen settle before nudging
-            if (!ambientMode) {
-                showCleanModeHint = true
-                cleanModeHintSeen = true
-            }
-        }
-    }
-    LaunchedEffect(showCleanModeHint) {
-        if (showCleanModeHint) {
-            delay(4_500)
-            showCleanModeHint = false
-        }
-    }
+    // Clean-mode discoverability hint: a persistent pill shown ONLY on the
+    // empty / new-chat view (no messages) — it teaches the long-press entry
+    // without nagging mid-conversation. Derived directly from the message list
+    // at the pill below; no one-shot timer, no auto-dismiss.
 
     // Sphere state with debounced Thinking→Streaming (min 1.5s in Thinking)
     val rawSphereState by remember {
@@ -2688,11 +2671,11 @@ fun ChatScreen(
             }
         }
 
-        // First-run discoverability hint for clean mode — a quiet, tappable
-        // pill teaching the long-press entry. Sits above the composer; tap or
-        // auto-timeout dismisses. Hidden the moment clean mode is entered.
+        // Clean-mode discoverability hint — a quiet, persistent pill teaching
+        // the long-press entry. Shown ONLY on the empty / new-chat view; it
+        // disappears the moment a conversation exists or clean mode is entered.
         AnimatedVisibility(
-            visible = showCleanModeHint && !ambientMode,
+            visible = messages.isEmpty() && !ambientMode,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -2707,7 +2690,6 @@ fun ChatScreen(
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                    .clickable { showCleanModeHint = false }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }

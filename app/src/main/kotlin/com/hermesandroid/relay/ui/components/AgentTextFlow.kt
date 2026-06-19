@@ -11,6 +11,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,7 +50,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -58,6 +67,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
@@ -75,9 +85,14 @@ import kotlinx.coroutines.delay
  *  visual line so the bounded buffer maps cleanly to "≤6 lines". */
 private const val FLOW_MAX_CHARS = 42
 
-/** Bounded buffer ceiling. Older lines fade out so the buffer can never
- *  exceed this even when a turn streams faster than the dwell window. */
+/** Soft-wrap target only — the visible buffer is now bounded by the ~1/3
+ *  screen viewport + scroll, not a hard line count. */
 private const val FLOW_MAX_LINES = 6
+
+/** Memory ceiling for the persistent line buffer. Lines past this (already
+ *  scrolled well above the faded top edge) are dropped silently so a very long
+ *  turn can't grow the list without bound. */
+private const val FLOW_BUFFER_MAX = 80
 
 /** How long a settled line lingers after it stops growing, before it begins
  *  fading. Inside the 2.5–4s band from the spec. */
@@ -148,6 +163,27 @@ private fun segmentFlowLines(text: String, maxChars: Int): List<String> {
     }
     return out
 }
+
+/**
+ * Soft fade on the TOP edge so lines that scroll up dissolve cleanly into the
+ * background instead of hard-clipping — the "slides up and clears" look — while
+ * the avatar above stays unobstructed. Renders the content into an offscreen
+ * layer and masks the top [fade] dp with a transparent->opaque gradient.
+ */
+private fun Modifier.topFadeEdge(fade: Dp = 28.dp): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val fadePx = fade.toPx().coerceAtMost(size.height)
+        if (fadePx <= 0f) return@drawWithContent
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.Transparent,
+                (fadePx / size.height) to Color.Black,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
 
 /** Resolved motion/accessibility posture for clean mode. */
 private data class CleanMotionState(
@@ -229,12 +265,19 @@ fun AgentTextFlow(
     // --- Static / reduced-motion path -------------------------------------
     if (!motionEnabled) {
         val staticLines = remember(content) {
-            segmentFlowLines(content, FLOW_MAX_CHARS).takeLast(FLOW_MAX_LINES)
+            segmentFlowLines(content, FLOW_MAX_CHARS).takeLast(FLOW_BUFFER_MAX)
         }
-        // No contentDescription — the merged child Text content IS the
-        // readable content; liveRegion announces it on change.
+        val staticScroll = rememberScrollState()
+        // Pin the latest line to the bottom of the bounded viewport.
+        LaunchedEffect(staticLines.size) { staticScroll.scrollTo(staticScroll.maxValue) }
+        // No contentDescription — the merged child Text content IS the readable
+        // content; liveRegion announces it on change. Lines persist + scroll
+        // (bounded + top-faded like the animated path) — they never vanish.
         Column(
-            modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            modifier = modifier
+                .semantics { liveRegion = LiveRegionMode.Polite }
+                .topFadeEdge()
+                .verticalScroll(staticScroll),
             verticalArrangement = Arrangement.Bottom,
         ) {
             staticLines.forEach { line ->
@@ -258,34 +301,22 @@ fun AgentTextFlow(
 
     LaunchedEffect(messageId) {
         flowLines.clear()
-        // High-water mark: the largest segment index ever materialized. Guards
-        // against re-adding a line that already faded out and was removed —
-        // otherwise a completed message would replay its fade forever.
+        // Largest segment index ever materialized — guards against re-adding a
+        // line that was dropped from the front by the memory cap.
         var maxKeyAdded = -1
         while (true) {
             val text = currentContent
             val isStreamingNow = currentStreaming
-            val now = System.currentTimeMillis()
             val segs = segmentFlowLines(text, FLOW_MAX_CHARS)
-            // While streaming the last segment is the growing tail; once the
-            // turn ends nothing is "growing", so even the last line settles.
-            val tailIndex = if (isStreamingNow) segs.lastIndex else -1
-            // Never materialize lines that have already scrolled out of the
-            // window (matters when re-entering a long, already-complete turn).
-            val creationFloor = (segs.size - FLOW_MAX_LINES).coerceAtLeast(0)
 
-            // Stop once the turn is over and everything has flowed out — the
-            // message is immutable from here, so the loop has nothing left to do.
-            if (!isStreamingNow && flowLines.isEmpty() && maxKeyAdded >= segs.lastIndex) {
-                return@LaunchedEffect
-            }
-
-            // 1. Add new lines (only indices never seen before) / update the
-            //    still-growing tail.
+            // Add new lines (they slide in) and grow the still-streaming tail.
+            // Lines PERSIST — they never fade out; older ones simply scroll up
+            // within the bounded ~1/3-height viewport and dissolve at the top
+            // fade edge. (No dwell / fade-out / removal anymore.)
             segs.forEachIndexed { i, s ->
                 val existing = flowLines.firstOrNull { it.key == i }
                 if (existing == null) {
-                    if (i > maxKeyAdded && i >= creationFloor) {
+                    if (i > maxKeyAdded) {
                         flowLines.add(FlowLine(key = i, initialText = s))
                         maxKeyAdded = i
                     }
@@ -294,43 +325,21 @@ fun AgentTextFlow(
                 }
             }
 
-            // 2. Settle every line that is no longer the active tail.
-            flowLines.forEach { line ->
-                if (line.key != tailIndex && line.settledAt == null) {
-                    line.settledAt = now
-                }
-            }
+            // Memory guard: drop the oldest lines once well past the viewport
+            // (already scrolled above the fade — invisible to the user).
+            while (flowLines.size > FLOW_BUFFER_MAX) flowLines.removeAt(0)
 
-            // 3. Enforce the hard cap: expire the oldest intended-visible lines
-            //    immediately (lowest key first — never the tail).
-            val intendedVisible = flowLines.filter { it.visibility.targetState }
-            if (intendedVisible.size > FLOW_MAX_LINES) {
-                intendedVisible
-                    .sortedBy { it.key }
-                    .take(intendedVisible.size - FLOW_MAX_LINES)
-                    .forEach { line -> line.settledAt = now - FLOW_DWELL_MS - 1 }
-            }
-
-            // 4. Dwell expiry → request fade-out.
-            flowLines.forEach { line ->
-                val settledAt = line.settledAt
-                if (line.visibility.targetState && settledAt != null &&
-                    now - settledAt >= FLOW_DWELL_MS
-                ) {
-                    line.visibility.targetState = false
-                    line.hiddenAt = now
-                }
-            }
-
-            // 5. Remove once the fade-out has fully played — the node then
-            //    leaves composition entirely.
-            flowLines.removeAll { line ->
-                val v = line.visibility
-                !v.targetState && v.isIdle && !v.currentState
-            }
+            // Nothing left to do once the turn ended and every segment is in.
+            if (!isStreamingNow && maxKeyAdded >= segs.lastIndex) return@LaunchedEffect
 
             delay(FLOW_TICK_MS)
         }
+    }
+
+    val scrollState = rememberScrollState()
+    // Pin the latest line to the bottom as content streams in / lines slide up.
+    LaunchedEffect(flowLines.size, flowLines.lastOrNull()?.text) {
+        scrollState.scrollTo(scrollState.maxValue)
     }
 
     Box(modifier = modifier) {
@@ -352,7 +361,9 @@ fun AgentTextFlow(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .topFadeEdge()
+                .verticalScroll(scrollState),
             verticalArrangement = Arrangement.Bottom,
         ) {
             flowLines.forEach { line ->
@@ -507,6 +518,9 @@ fun CleanChatMode(
     }
     val flowContent = lastAssistant?.content.orEmpty()
     val flowStreaming = lastAssistant?.isStreaming == true && isStreaming
+    // Cap the flow at ~1/3 of the screen so lines can slide up and accumulate
+    // without ever climbing into / blocking the avatar above them.
+    val maxFlowHeight = (LocalConfiguration.current.screenHeightDp * 0.34f).dp
 
     BackHandler(enabled = true) { onExit() }
 
@@ -577,7 +591,7 @@ fun CleanChatMode(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 560.dp)
-                    .heightIn(min = 96.dp)
+                    .heightIn(min = 96.dp, max = maxFlowHeight)
                     .padding(bottom = 12.dp),
             )
 
