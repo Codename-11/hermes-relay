@@ -22,6 +22,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -39,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -285,6 +289,68 @@ fun MediaSettingsScreen(
                             Text("Clear")
                         }
                     }
+                }
+            }
+
+            // Sensitive-media blur. Separate card because — unlike the four
+            // relay-only knobs above — this applies on the standard (no-Relay)
+            // path too: ALL_IMAGES needs zero server support.
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Sensitive media",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        text = "Blur sensitive media behind a tap-to-reveal cover. " +
+                            "Works on any connection - the All images option needs " +
+                            "no server support.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val blurOptions = listOf(
+                        BlurMode.OFF to "Off",
+                        BlurMode.FLAGGED to "Flagged",
+                        BlurMode.ALL_IMAGES to "All images"
+                    )
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        blurOptions.forEachIndexed { index, (mode, label) ->
+                            SegmentedButton(
+                                selected = settings.blurSensitive == mode,
+                                onClick = { scope.launch { repo.setBlurSensitive(mode) } },
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = blurOptions.size
+                                )
+                            ) {
+                                Text(label)
+                            }
+                        }
+                    }
+                    Text(
+                        text = when (settings.blurSensitive) {
+                            BlurMode.OFF -> "Media shows immediately."
+                            BlurMode.FLAGGED ->
+                                "Only media the agent marks sensitive is blurred."
+                            BlurMode.ALL_IMAGES ->
+                                "Every inbound image is blurred until you tap to reveal."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

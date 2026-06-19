@@ -3,8 +3,6 @@ package com.hermesandroid.relay.ui.components
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -29,11 +27,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -81,11 +76,24 @@ sealed interface ChatImageViewerSource {
  * 1×/2.5×), with overlaid Share / Save / Close controls. Save lands in
  * `Pictures/Hermes-Relay` on Android 10+; on older versions (or any failure
  * path) it falls back to the share sheet via [MediaSaver].
+ *
+ * Shares the zoom gesture stack ([Modifier.zoomable]) and the sensitive-media
+ * blur gate ([BlurredMedia] / [shouldBlurImage]) with [AttachmentViewer], so an
+ * inline markdown image flagged sensitive (or all images, per the user's
+ * [com.hermesandroid.relay.data.BlurMode]) opens behind a tap-to-reveal cover.
+ *
+ * @param sensitive whether the underlying image was flagged sensitive (markdown
+ *   sentinel / spoiler wrap, or relay metadata). Combined with the ambient
+ *   [LocalMediaBlurMode] to decide whether to gate.
+ * @param initiallyRevealed seed for the reveal state — pass `true` when the
+ *   caller already revealed the thumbnail so the modal doesn't re-blur.
  */
 @Composable
 fun ChatImageViewer(
     source: ChatImageViewerSource,
     onDismiss: () -> Unit,
+    sensitive: Boolean = false,
+    initiallyRevealed: Boolean = false,
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -94,36 +102,13 @@ fun ChatImageViewer(
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
 
-        var scale by remember { mutableStateOf(1f) }
-        var offset by remember { mutableStateOf(Offset.Zero) }
         var busy by remember { mutableStateOf(false) }
 
-        val gestureModifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 6f)
-                    offset = if (scale > 1f) offset + pan else Offset.Zero
-                }
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onDoubleTap = {
-                        if (scale > 1f) {
-                            scale = 1f
-                            offset = Offset.Zero
-                        } else {
-                            scale = 2.5f
-                        }
-                    },
-                )
-            }
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                translationX = offset.x
-                translationY = offset.y
-            }
+        val blurMode = LocalMediaBlurMode.current
+        var revealed by remember(source) { mutableStateOf(initiallyRevealed) }
+        val blurred = !revealed && shouldBlurImage(blurMode, sensitive)
+
+        val gestureModifier = Modifier.fillMaxSize().zoomable()
 
         Box(
             modifier = Modifier
@@ -131,20 +116,26 @@ fun ChatImageViewer(
                 .background(Color.Black.copy(alpha = 0.94f)),
             contentAlignment = Alignment.Center,
         ) {
-            when (source) {
-                is ChatImageViewerSource.Coil -> AsyncImage(
-                    model = source.model,
-                    contentDescription = source.displayName,
-                    contentScale = ContentScale.Fit,
-                    modifier = gestureModifier,
-                )
+            BlurredMedia(
+                blurred = blurred,
+                onReveal = { revealed = true },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                when (source) {
+                    is ChatImageViewerSource.Coil -> AsyncImage(
+                        model = source.model,
+                        contentDescription = source.displayName,
+                        contentScale = ContentScale.Fit,
+                        modifier = gestureModifier,
+                    )
 
-                is ChatImageViewerSource.Bitmap -> Image(
-                    bitmap = source.bitmap,
-                    contentDescription = source.displayName,
-                    contentScale = ContentScale.Fit,
-                    modifier = gestureModifier,
-                )
+                    is ChatImageViewerSource.Bitmap -> Image(
+                        bitmap = source.bitmap,
+                        contentDescription = source.displayName,
+                        contentScale = ContentScale.Fit,
+                        modifier = gestureModifier,
+                    )
+                }
             }
 
             if (busy) {

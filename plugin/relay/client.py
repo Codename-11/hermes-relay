@@ -82,8 +82,15 @@ def register_media(
     host: str = "127.0.0.1",
     port: int | None = None,
     timeout: float = 5.0,
+    sensitive: bool = False,
 ) -> str | None:
     """Register ``path`` with the local relay and return an opaque token.
+
+    ``sensitive`` is a model-emitted hint forwarded verbatim in the
+    ``/media/register`` body. The relay stores it on the entry and re-emits
+    it as the ``X-Media-Sensitive`` header so the phone can blur per the
+    user's setting — no classification happens here. Defaults to ``False``
+    for back-compat with existing callers.
 
     Returns ``None`` on any failure (relay not running, HTTP error,
     validation rejected). Callers should treat ``None`` as "relay is
@@ -96,6 +103,7 @@ def register_media(
         "path": path,
         "content_type": content_type,
         "file_name": file_name,
+        "sensitive": bool(sensitive),
     }
 
     data = _post_loopback(host, port, "/media/register", payload, timeout)

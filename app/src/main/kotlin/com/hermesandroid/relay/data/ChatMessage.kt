@@ -186,7 +186,23 @@ data class Attachment(
     /** Opaque token from `MEDIA:hermes-relay://<token>` — identifies the file on the relay. */
     val relayToken: String? = null,
     /** content:// URI from the FileProvider once bytes are cached to disk. */
-    val cachedUri: String? = null
+    val cachedUri: String? = null,
+    /**
+     * Whether this attachment was flagged sensitive (NSFW / spoiler) and should
+     * render blurred until the user taps to reveal — honored per the user's
+     * `MediaSettings.blurMode`.
+     *
+     * The flag is **model-emitted metadata, never an on-device or relay-side
+     * classifier** (see `docs/plans/2026-06-18-attachment-experience.md` §C): the
+     * agent annotates media it surfaces, the relay transports the bit
+     * authoritatively via the `X-Media-Sensitive` response header, and the
+     * client merely renders the blur. Populated for inbound attachments from
+     * [com.hermesandroid.relay.network.relay.RelayHttpClient.FetchedMedia.sensitive]
+     * when the bytes flip to [AttachmentState.LOADED]. Defaults false so every
+     * existing outbound/inbound call site stays valid and unflagged media
+     * renders exactly as before.
+     */
+    val sensitive: Boolean = false
 ) {
     val isImage: Boolean get() = contentType.startsWith("image/")
 

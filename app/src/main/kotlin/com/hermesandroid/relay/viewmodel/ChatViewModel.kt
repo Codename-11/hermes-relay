@@ -3903,7 +3903,14 @@ class ChatViewModel : ViewModel() {
                             contentType = fetched.contentType,
                             fileName = fetched.fileName ?: att.fileName,
                             fileSize = fetched.bytes.size.toLong(),
-                            cachedUri = uri.toString()
+                            cachedUri = uri.toString(),
+                            // Carry the relay-authoritative sensitivity bit
+                            // (X-Media-Sensitive header) onto the LOADED
+                            // attachment so the renderer can blur per the
+                            // user's blurMode. Both inbound fetch paths
+                            // (token + bare-path) funnel through here, so this
+                            // is the single threading point.
+                            sensitive = fetched.sensitive
                         )
                     }
                 } catch (e: Exception) {

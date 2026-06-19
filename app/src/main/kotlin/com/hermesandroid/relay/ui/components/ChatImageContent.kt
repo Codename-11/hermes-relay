@@ -53,11 +53,43 @@ import kotlinx.coroutines.withContext
  * One markdown image reference (`![alt](src)`) pulled out of an assistant
  * message so it can be rendered as a real image (or a graceful inline notice)
  * instead of the empty/blank element the markdown renderer produces for it.
+ *
+ * [sensitive] carries the standard-path sensitivity convention (C3): a
+ * Telegram-style spoiler wrap `||![alt](url)||` or an alt-text sentinel
+ * (`![nsfw]` / `![sensitive]` / `![spoiler]`). When set, the image renders
+ * behind the same tap-to-reveal blur gate as relay-flagged media, honored per
+ * the user's [com.hermesandroid.relay.data.BlurMode].
  */
-data class ChatInlineImage(val alt: String, val src: String)
+data class ChatInlineImage(
+    val alt: String,
+    val src: String,
+    val sensitive: Boolean = false,
+) {
+    /**
+     * Alt text fit to show as a caption (D7) — null when the alt is blank or is
+     * just a sensitivity sentinel (which is a flag, not a caption).
+     */
+    fun caption(): String? {
+        val a = alt.trim()
+        if (a.isEmpty()) return null
+        return if (isSensitiveAltText(a)) null else a
+    }
+}
 
-// `![alt](src)` and `![alt](src "title")`. src = first non-space, non-`)` run.
-private val MARKDOWN_IMAGE_REGEX = Regex("""!\[([^\]]*)]\(([^)\s]+)[^)]*\)""")
+// `||` (optional) + `![alt](src)` / `![alt](src "title")` + `||` (optional).
+// src = first non-space, non-`)` run. The optional `||` pair is the Telegram
+// spoiler-wrap convention; both sides present ⇒ sensitive.
+private val MARKDOWN_IMAGE_REGEX =
+    Regex("""(\|\|)?!\[([^\]]*)]\(([^)\s]+)[^)]*\)(\|\|)?""")
+
+private val SENSITIVE_ALT_TOKENS = setOf("nsfw", "sensitive", "spoiler")
+
+/** True when alt text is (or is prefixed by) a sensitivity sentinel. */
+private fun isSensitiveAltText(alt: String): Boolean {
+    val a = alt.trim().lowercase().removeSurrounding("[", "]")
+    if (a in SENSITIVE_ALT_TOKENS) return true
+    return SENSITIVE_ALT_TOKENS.any { a.startsWith("$it:") || a.startsWith("$it ") }
+}
 
 /**
  * Resolves a server-local image path — an absolute path the agent put in a
@@ -105,7 +137,13 @@ fun extractChatInlineImages(content: String): Pair<String, List<ChatInlineImage>
     if (!content.contains("![")) return content to emptyList()
     val images = mutableListOf<ChatInlineImage>()
     val stripped = MARKDOWN_IMAGE_REGEX.replace(content) { m ->
-        images += ChatInlineImage(alt = m.groupValues[1].trim(), src = m.groupValues[2].trim())
+        val spoilerWrapped = m.groupValues[1].isNotEmpty() && m.groupValues[4].isNotEmpty()
+        val alt = m.groupValues[2].trim()
+        images += ChatInlineImage(
+            alt = alt,
+            src = m.groupValues[3].trim(),
+            sensitive = spoilerWrapped || isSensitiveAltText(alt),
+        )
         ""
     }
     if (images.isEmpty()) return content to emptyList()
@@ -157,6 +195,9 @@ fun ChatInlineImages(
 @Composable
 private fun RemoteChatImage(image: ChatInlineImage, maxWidth: Dp) {
     var viewerOpen by remember { mutableStateOf(false) }
+    val blurMode = LocalMediaBlurMode.current
+    var revealed by remember(image.src) { mutableStateOf(false) }
+    val blurred = !revealed && shouldBlurImage(blurMode, image.sensitive)
     if (viewerOpen) {
         ChatImageViewer(
             source = ChatImageViewerSource.Coil(
@@ -166,33 +207,64 @@ private fun RemoteChatImage(image: ChatInlineImage, maxWidth: Dp) {
                 bytesProvider = { MediaSaver.fetchRemoteBytes(image.src).first },
             ),
             onDismiss = { viewerOpen = false },
+            sensitive = image.sensitive,
+            initiallyRevealed = revealed,
         )
     }
-    SubcomposeAsyncImage(
-        model = image.src,
-        contentDescription = image.alt.ifBlank { "Generated image" },
-        contentScale = ContentScale.Fit,
-        modifier = Modifier
-            .widthIn(max = maxWidth)
-            .heightIn(max = 360.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { viewerOpen = true },
-    ) {
-        val state by painter.state.collectAsState()
-        when (state) {
-            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
-            is AsyncImagePainter.State.Loading -> Box(
+    InlineImageColumn(image, maxWidth) {
+        BlurredMedia(blurred = blurred, onReveal = { revealed = true }) {
+            SubcomposeAsyncImage(
+                model = image.src,
+                contentDescription = image.alt.ifBlank { "Generated image" },
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .widthIn(max = maxWidth)
-                    .height(120.dp)
+                    .heightIn(max = 360.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center,
+                    .clickable { viewerOpen = true },
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                val state by painter.state.collectAsState()
+                when (state) {
+                    is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                    is AsyncImagePainter.State.Loading -> Box(
+                        modifier = Modifier
+                            .widthIn(max = maxWidth)
+                            .height(120.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    }
+                    // Error / Empty — couldn't load. Offer to open it externally.
+                    else -> UnrenderableImageNotice(image, reason = "Couldn't load this image.")
+                }
             }
-            // Error / Empty — couldn't load. Offer to open it externally.
-            else -> UnrenderableImageNotice(image, reason = "Couldn't load this image.")
+        }
+    }
+}
+
+/**
+ * Wraps an inline image with its optional caption (D7). The caption is the
+ * markdown alt text when it's a real caption (not a sensitivity sentinel).
+ */
+@Composable
+private fun InlineImageColumn(
+    image: ChatInlineImage,
+    maxWidth: Dp,
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        content()
+        image.caption()?.let { caption ->
+            Text(
+                text = caption,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = maxWidth),
+            )
         }
     }
 }
@@ -262,6 +334,9 @@ private fun RelayServerImageContent(
     resolver: RelayServerImageResolver,
 ) {
     var viewerOpen by remember { mutableStateOf(false) }
+    val blurMode = LocalMediaBlurMode.current
+    var revealed by remember(image.src) { mutableStateOf(false) }
+    val blurred = !revealed && shouldBlurImage(blurMode, image.sensitive)
     if (viewerOpen) {
         ChatImageViewer(
             source = ChatImageViewerSource.Bitmap(
@@ -275,18 +350,24 @@ private fun RelayServerImageContent(
                 bytesProvider = { resolver.fetch(image.src) },
             ),
             onDismiss = { viewerOpen = false },
+            sensitive = image.sensitive,
+            initiallyRevealed = revealed,
         )
     }
-    androidx.compose.foundation.Image(
-        bitmap = bitmap,
-        contentDescription = image.alt.ifBlank { "Generated image" },
-        contentScale = ContentScale.Fit,
-        modifier = Modifier
-            .widthIn(max = maxWidth)
-            .heightIn(max = 360.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { viewerOpen = true },
-    )
+    InlineImageColumn(image, maxWidth) {
+        BlurredMedia(blurred = blurred, onReveal = { revealed = true }) {
+            androidx.compose.foundation.Image(
+                bitmap = bitmap,
+                contentDescription = image.alt.ifBlank { "Generated image" },
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .widthIn(max = maxWidth)
+                    .heightIn(max = 360.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { viewerOpen = true },
+            )
+        }
+    }
 }
 
 @Composable

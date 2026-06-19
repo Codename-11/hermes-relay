@@ -133,6 +133,7 @@ import android.provider.Settings
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.Close
@@ -796,32 +797,97 @@ fun ChatScreen(
         }
     }
 
-    // File picker for attachments (any file type)
+    // Outbound attach launchers — Files / Photos / Camera all funnel through
+    // the top-level ingestAttachmentFromUri helper so the read → size-cap →
+    // base64 → addAttachment pipeline lives in exactly one place. The "+" button
+    // surfaces them as a small Photos / Files / Camera menu; clipboard paste
+    // reuses the same pipeline for desktop `/paste` parity.
+
+    // Files: arbitrary types via the Storage Access Framework (multi-select).
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        for (uri in uris) {
-            try {
-                val contentResolver = context.contentResolver
-                val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
-                val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: continue
-                val maxSize = maxAttachmentMb * 1024 * 1024
-                if (bytes.size > maxSize) {
-                    Toast.makeText(context, "File too large (max $maxAttachmentMb MB)", Toast.LENGTH_SHORT).show()
-                    continue
-                }
-                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                chatViewModel.addAttachment(
-                    Attachment(
-                        contentType = mimeType,
-                        content = base64,
-                        fileName = fileName,
-                        fileSize = bytes.size.toLong()
-                    )
+        uris.forEach { uri ->
+            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        }
+    }
+
+    // Photos: modern permissionless Android Photo Picker (images, multi-select).
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        uris.forEach { uri ->
+            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        }
+    }
+
+    // Camera: capture into a FileProvider temp uri (held across the launcher
+    // round-trip), then ingest on success. CAMERA is declared in the manifest,
+    // so the system enforces the runtime grant before ACTION_IMAGE_CAPTURE will
+    // launch — hence the permission gate below, mirroring the mic flow.
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (success && uri != null) {
+            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        }
+    }
+    val launchCamera: () -> Unit = {
+        runCatching {
+            val uri = createCameraCaptureUri(context)
+            pendingCameraUri = uri
+            cameraLauncher.launch(uri)
+        }.onFailure {
+            pendingCameraUri = null
+            Toast.makeText(context, "Couldn't open the camera", Toast.LENGTH_SHORT).show()
+        }
+    }
+    var pendingCameraAfterPermission by remember { mutableStateOf(false) }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val wanted = pendingCameraAfterPermission
+        pendingCameraAfterPermission = false
+        if (granted && wanted) {
+            launchCamera()
+        } else if (!granted) {
+            Toast.makeText(
+                context,
+                "Camera permission needed to take a photo",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+    val requestCameraCapture: () -> Unit = {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.CAMERA,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            launchCamera()
+        } else {
+            pendingCameraAfterPermission = true
+            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+        }
+    }
+
+    // Clipboard image paste (desktop `/paste` parity). The Compose Clipboard
+    // API is suspend-based, so the read rides scope.launch; on a miss we hint
+    // the user rather than fail silently.
+    val pasteImageFromClipboard: () -> Unit = {
+        scope.launch {
+            val clip = clipboard.getClipEntry()?.clipData
+            val handled = ingestClipboardImage(context, clip, maxAttachmentMb) {
+                chatViewModel.addAttachment(it)
+            }
+            if (!handled) {
+                snackbarHostState.showSnackbar(
+                    message = "No image on the clipboard",
+                    duration = SnackbarDuration.Short,
                 )
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -2535,7 +2601,14 @@ fun ChatScreen(
                         )
                     }
                 },
-                onAttach = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onAttachPhotos = {
+                    photoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                onAttachFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onAttachCamera = requestCameraCapture,
+                onPasteImage = pasteImageFromClipboard,
                 onLongPressAttach = { showCommandPalette = true },
                 charLimit = charLimit,
                 caption = turnStatus ?: inputCaption,
@@ -3081,6 +3154,134 @@ private fun formatFileSize(bytes: Long): String = when {
     bytes < 1024 -> "${bytes} B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+}
+
+/**
+ * Read an attachment from a content [uri], enforce the [maxAttachmentMb] cap,
+ * base64-encode the bytes, and hand a built [Attachment] to [onAttachment].
+ * Shared by the Files / Photos / Camera launchers and clipboard paste so the
+ * read → cap → encode → add pipeline lives in exactly one place. Best-effort:
+ * surfaces a Toast and returns on any failure (unreadable stream, over-cap)
+ * rather than throwing. [mimeOverride] lets clipboard paste supply the MIME
+ * when the resolver can't (some providers don't resolve a type until read).
+ */
+private fun ingestAttachmentFromUri(
+    context: android.content.Context,
+    uri: Uri,
+    maxAttachmentMb: Int,
+    mimeOverride: String? = null,
+    onAttachment: (Attachment) -> Unit,
+) {
+    try {
+        val resolver = context.contentResolver
+        val mimeType = mimeOverride ?: resolver.getType(uri) ?: "application/octet-stream"
+        val fileName = resolveDisplayName(resolver, uri)
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+        val maxSize = maxAttachmentMb * 1024 * 1024
+        if (bytes.size > maxSize) {
+            Toast.makeText(
+                context,
+                "File too large (max $maxAttachmentMb MB)",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        onAttachment(
+            Attachment(
+                contentType = mimeType,
+                content = base64,
+                fileName = fileName,
+                fileSize = bytes.size.toLong(),
+            )
+        )
+    } catch (e: Exception) {
+        Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/**
+ * Resolve a human-readable file name for [uri]. Prefers the provider's
+ * `OpenableColumns.DISPLAY_NAME` — content-picker and photo-picker URIs rarely
+ * carry a usable last path segment — and falls back to the last path segment,
+ * then a generic "file".
+ */
+private fun resolveDisplayName(
+    resolver: android.content.ContentResolver,
+    uri: Uri,
+): String {
+    runCatching {
+        resolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) {
+                    cursor.getString(idx)?.takeIf { it.isNotBlank() }?.let { return it }
+                }
+            }
+        }
+    }
+    return uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+}
+
+/**
+ * Pull the first image item off a clipboard [clip] into a pending attachment
+ * (desktop `/paste` parity). Returns true when an image was found and ingested,
+ * false otherwise (empty clipboard / no image item) so the caller can hint the
+ * user. Images ride the clipboard as content URIs; raw bitmaps aren't carried
+ * in ClipData, so URI items are the only source.
+ */
+private fun ingestClipboardImage(
+    context: android.content.Context,
+    clip: ClipData?,
+    maxAttachmentMb: Int,
+    onAttachment: (Attachment) -> Unit,
+): Boolean {
+    if (clip == null || clip.itemCount == 0) return false
+    // Some providers expose the image MIME only on the ClipDescription, not via
+    // resolver.getType — capture it once as a fallback for each item.
+    val descriptionImageMime = clip.description?.let { description ->
+        (0 until description.mimeTypeCount)
+            .map { description.getMimeType(it) }
+            .firstOrNull { it.startsWith("image/") }
+    }
+    for (i in 0 until clip.itemCount) {
+        val uri = clip.getItemAt(i).uri ?: continue
+        val resolvedMime = context.contentResolver.getType(uri)
+        val mime = resolvedMime?.takeIf { it.startsWith("image/") } ?: descriptionImageMime
+        if (mime != null) {
+            ingestAttachmentFromUri(
+                context,
+                uri,
+                maxAttachmentMb,
+                mimeOverride = mime,
+                onAttachment = onAttachment,
+            )
+            return true
+        }
+    }
+    return false
+}
+
+/**
+ * Create a FileProvider content URI backed by a fresh temp file in the shared
+ * `hermes-media/` cache dir (already exported by `file_provider_paths.xml`) for
+ * the camera to write its capture into. Reusing that path keeps the manifest
+ * unchanged; the authority mirrors MediaCacheWriter / MediaSaver.
+ */
+private fun createCameraCaptureUri(context: android.content.Context): Uri {
+    val dir = java.io.File(context.cacheDir, "hermes-media").apply { mkdirs() }
+    val file = java.io.File.createTempFile("camera-", ".jpg", dir)
+    return androidx.core.content.FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file,
+    )
 }
 
 private val CHAT_INPUT_REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
