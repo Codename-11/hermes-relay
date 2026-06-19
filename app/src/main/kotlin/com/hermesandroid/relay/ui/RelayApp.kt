@@ -69,9 +69,15 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
-import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkinLoader
+import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
+import com.hermesandroid.relay.ui.components.avatar.PetLoader
+import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
@@ -785,9 +791,28 @@ fun RelayApp() {
         )
     }
 
+    // Agent avatar seam (P2/P3): the built-in sphere plus any user-loaded "pets"
+    // (P3). The sphere nests the skin system one level below (avatar → skin).
+    // Published beside the skin locals so every avatar call site resolves it via
+    // LocalAgentAvatar without per-call-site threading. An unknown selected id
+    // (e.g. a pet pack was removed) falls back to the sphere.
+    val agentAvatarId by connectionViewModel.agentAvatar.collectAsState()
+    val availableAgentAvatars by produceState(
+        initialValue = listOf<AgentAvatar>(SphereAvatar),
+        key1 = sphereContext,
+    ) {
+        value = listOf<AgentAvatar>(SphereAvatar) +
+            withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
+    }
+    val activeAgentAvatar = remember(agentAvatarId, availableAgentAvatars) {
+        availableAgentAvatars.firstOrNull { it.id == agentAvatarId } ?: SphereAvatar
+    }
+
     CompositionLocalProvider(
         LocalSphereSkin provides activeSphereSkin,
         LocalAvailableSphereSkins provides availableSphereSkins,
+        LocalAgentAvatar provides activeAgentAvatar,
+        LocalAvailableAvatars provides availableAgentAvatars,
     ) {
     HermesRelayTheme(
         appThemeId = appThemeId,
@@ -2187,8 +2212,12 @@ fun RelayApp() {
                     .relayGridTexture(alpha = 0.14f),
                 contentAlignment = Alignment.Center
             ) {
-                // Sphere fills background
-                MorphingSphere(modifier = Modifier.fillMaxSize())
+                // Avatar fills background (sphere by default; routed through the
+                // seam so a future pet appears on the startup screen too).
+                LocalAgentAvatar.current.Render(
+                    state = AvatarRenderState(state = SphereState.Idle),
+                    modifier = Modifier.fillMaxSize(),
+                )
 
                 // Branding overlaid at bottom third
                 Column(

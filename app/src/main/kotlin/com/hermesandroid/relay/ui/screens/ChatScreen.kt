@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -148,6 +149,7 @@ import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
 import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.CleanChatMode
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
@@ -161,7 +163,8 @@ import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
-import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayPrimaryMode
@@ -562,7 +565,28 @@ fun ChatScreen(
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
-    var ambientMode by remember { mutableStateOf(false) } // fullscreen sphere, hides chat
+    var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
+    // First-run discoverability for clean mode. The entry is a quiet
+    // long-press, so surface a one-time hint that it exists. UI-local (not VM
+    // state) — shown at most once per screen lifetime, gated on having some
+    // conversation so a brand-new user isn't nudged before they've chatted.
+    var cleanModeHintSeen by remember { mutableStateOf(false) }
+    var showCleanModeHint by remember { mutableStateOf(false) }
+    LaunchedEffect(messages.isNotEmpty(), ambientMode) {
+        if (!cleanModeHintSeen && messages.isNotEmpty() && !ambientMode) {
+            delay(1_200) // let the screen settle before nudging
+            if (!ambientMode) {
+                showCleanModeHint = true
+                cleanModeHintSeen = true
+            }
+        }
+    }
+    LaunchedEffect(showCleanModeHint) {
+        if (showCleanModeHint) {
+            delay(4_500)
+            showCleanModeHint = false
+        }
+    }
 
     // Sphere state with debounced Thinking→Streaming (min 1.5s in Thinking)
     val rawSphereState by remember {
@@ -1612,10 +1636,11 @@ fun ChatScreen(
                             }
                         }
                     }
-                    // Ambient mode (fullscreen sphere) has no top-bar toggle —
-                    // it's a quiet gesture: long-press the conversation
-                    // background to enter, tap anywhere to return. A hint pill
-                    // on entry teaches the way back.
+                    // Clean text-flow mode has no top-bar toggle — it's a quiet
+                    // gesture: long-press the conversation background to enter.
+                    // Exit is the in-mode dismiss control or system back (not
+                    // any-tap, since the mode carries its own composer). A
+                    // first-run hint teaches the entry.
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
@@ -1701,55 +1726,13 @@ fun ChatScreen(
                 }
             }
 
-            // Ambient mode: fullscreen sphere visualization. Tap (or
-            // long-press) anywhere to return; a transient hint pill teaches
-            // the exit on every entry.
-            if (ambientMode && animationEnabled) {
-                var showAmbientHint by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) {
-                    kotlinx.coroutines.delay(2_800)
-                    showAmbientHint = false
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { ambientMode = false },
-                                onLongPress = { ambientMode = false },
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    MorphingSphere(
-                        modifier = Modifier.fillMaxSize(),
-                        state = sphereState,
-                        intensity = streamingIntensity,
-                        toolCallBurst = toolCallBurst
-                    )
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = showAmbientHint,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 18.dp),
-                        enter = fadeIn(),
-                        exit = fadeOut(),
-                    ) {
-                        Text(
-                            text = "tap to return to chat",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
-                                .padding(horizontal = 12.dp, vertical = 5.dp),
-                        )
-                    }
-                }
-            }
+            // Clean text-flow mode is rendered as a full-screen overlay (a
+            // sibling of this Column, below) so it can own its own minimal
+            // composer and explicit-dismiss control. The Column always renders
+            // the normal chat underneath; the overlay covers it when active.
+
             // Message list or empty state
-            else if (messages.isEmpty() && !isStreaming && (!isLoadingHistory || isChatConnecting)) {
+            if (messages.isEmpty() && !isStreaming && (!isLoadingHistory || isChatConnecting)) {
                 AnimatedContent(
                     targetState = chatConnectState,
                     modifier = Modifier
@@ -1810,11 +1793,13 @@ fun ChatScreen(
                                         .aspectRatio(1f)
                                         .weight(0.7f, fill = false)
                                 ) {
-                                    MorphingSphere(
+                                    LocalAgentAvatar.current.Render(
+                                        state = AvatarRenderState(
+                                            state = if (error != null) SphereState.Error else SphereState.Idle,
+                                            intensity = streamingIntensity,
+                                            toolCallBurst = toolCallBurst,
+                                        ),
                                         modifier = Modifier.fillMaxSize(),
-                                        state = if (error != null) SphereState.Error else SphereState.Idle,
-                                        intensity = streamingIntensity,
-                                        toolCallBurst = toolCallBurst
                                     )
                                 }
 
@@ -1932,27 +1917,33 @@ fun ChatScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        // Quiet entry to ambient mode: long-press the
+                        // Quiet entry to clean mode: long-press the
                         // conversation background. Bubbles keep their own
                         // long-press (copy) — they consume the gesture first,
-                        // so only presses on empty space land here.
-                        .pointerInput(animationEnabled) {
+                        // so only presses on empty space land here. Enters
+                        // regardless of animationEnabled — clean mode degrades
+                        // to static text when motion is suppressed, so the
+                        // conversation is never gated on animation.
+                        .pointerInput(Unit) {
                             detectTapGestures(
                                 onLongPress = {
-                                    if (animationEnabled) ambientMode = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    ambientMode = true
                                 },
                             )
                         }
                 ) {
-                    // Ambient sphere behind messages
+                    // Ambient avatar behind messages
                     if (animationEnabled && animationBehindChat && !ambientMode) {
-                        MorphingSphere(
+                        LocalAgentAvatar.current.Render(
+                            state = AvatarRenderState(
+                                state = sphereState,
+                                intensity = streamingIntensity,
+                                toolCallBurst = toolCallBurst,
+                            ),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .alpha(0.65f),
-                            state = sphereState,
-                            intensity = streamingIntensity,
-                            toolCallBurst = toolCallBurst
                         )
                     }
 
@@ -2697,6 +2688,55 @@ fun ChatScreen(
             }
         }
 
+        // First-run discoverability hint for clean mode — a quiet, tappable
+        // pill teaching the long-press entry. Sits above the composer; tap or
+        // auto-timeout dismisses. Hidden the moment clean mode is entered.
+        AnimatedVisibility(
+            visible = showCleanModeHint && !ambientMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 96.dp),
+        ) {
+            Text(
+                text = "Hold the chat for a clean, focused view",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                    .clickable { showCleanModeHint = false }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+
+        // Clean text-flow mode — full-screen overlay covering the whole Box.
+        // Owns its own minimal composer + explicit dismiss; exit is never
+        // any-tap. Renders static text when motion is suppressed.
+        AnimatedVisibility(
+            visible = ambientMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            CleanChatMode(
+                messages = messages,
+                isStreaming = isStreaming,
+                sphereState = sphereState,
+                streamingIntensity = streamingIntensity,
+                toolCallBurst = toolCallBurst,
+                animationEnabled = animationEnabled,
+                enabled = chatReady,
+                onSend = { text ->
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    chatViewModel.sendMessage(text)
+                },
+                onExit = { ambientMode = false },
+            )
+        }
+
         // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
         AnimatedVisibility(
             visible = voiceUiState.voiceMode,
@@ -2882,13 +2922,15 @@ private fun ChatColdStartLoadingState(
         contentAlignment = Alignment.Center,
     ) {
         if (animationEnabled) {
-            MorphingSphere(
+            LocalAgentAvatar.current.Render(
+                state = AvatarRenderState(
+                    state = SphereState.Thinking,
+                    intensity = streamingIntensity.coerceAtLeast(0.18f),
+                    toolCallBurst = toolCallBurst,
+                ),
                 modifier = Modifier
                     .fillMaxSize()
                     .alpha(0.44f),
-                state = SphereState.Thinking,
-                intensity = streamingIntensity.coerceAtLeast(0.18f),
-                toolCallBurst = toolCallBurst,
             )
         }
 

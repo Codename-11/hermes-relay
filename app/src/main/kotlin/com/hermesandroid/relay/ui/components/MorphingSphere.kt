@@ -39,6 +39,12 @@ import com.hermesandroid.relay.ui.theme.LocalBrand
  * This file is the Android/Compose renderer only — it owns animation state
  * (`animateFloatAsState` for state transitions, a throttled per-frame loop for
  * the continuous drift) and text drawing.
+ *
+ * As of the avatar seam (WP-C2) this is the renderer behind the default
+ * [com.hermesandroid.relay.ui.components.avatar.SphereAvatar]; app surfaces no
+ * longer call it directly but go through `LocalAgentAvatar.current.Render(...)`.
+ * It stays a public composable (previews + onboarding still call it directly),
+ * and its rendering is intentionally unchanged.
  */
 
 // Continuous-drift speeds, matched to the legacy infinite-transition tweens so

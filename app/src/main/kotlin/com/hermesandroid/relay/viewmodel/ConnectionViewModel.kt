@@ -177,6 +177,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
+        // Selected agent avatar id. "sphere" (SphereAvatar.id) is the default
+        // built-in; any other id selects a loaded user "pet" by id.
+        private val KEY_AGENT_AVATAR = stringPreferencesKey("agent_avatar")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
         const val DEFAULT_FONT_SCALE: Float = 1.0f
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
@@ -935,6 +938,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             preferences[KEY_SPHERE_SKIN] ?: "auto"
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
+    // Selected agent avatar id ("sphere" = the built-in orb; any other id is a
+    // loaded user pet). Resolved against [SphereAvatar] + PetLoader.loadPets() at
+    // the Compose root; an unknown id (pet removed) falls back to the sphere.
+    val agentAvatar: StateFlow<String> = application.relayDataStore.data
+        .map { preferences ->
+            preferences[KEY_AGENT_AVATAR] ?: "sphere"
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "sphere")
 
     // Global font scale (1.0 = system default). Applied at the Compose theme
     // root via LocalDensity.fontScale and pushed into the xterm WebView via
@@ -4996,6 +5008,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_SPHERE_SKIN] = skinId
+            }
+        }
+    }
+
+    fun setAgentAvatar(avatarId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_AGENT_AVATAR] = avatarId
             }
         }
     }
