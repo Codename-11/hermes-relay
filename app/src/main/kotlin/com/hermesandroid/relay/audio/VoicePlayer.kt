@@ -38,7 +38,13 @@ import kotlin.math.sqrt
  * The Visualizer is attached exactly once against the ExoPlayer's
  * [ExoPlayer.getAudioSessionId]. There is a known gotcha where re-attaching
  * the Visualizer on every track transition invalidates the session id — the
- * single-attach lifecycle here sidesteps it entirely.
+ * single-attach lifecycle here sidesteps it entirely. The single attach is
+ * triggered by whichever of {playback became live, a real session id landed}
+ * arrives last, so a late AudioTrack allocation (deep-buffer cold-start) can't
+ * leave amplitude pinned at 0 for the turn — see [attachVisualizerIfPlaying].
+ * That promptness matters because the voice overlay gates its output waveform
+ * on the first real playback-amplitude frame, so the visual follows audible
+ * speech instead of leading it.
  *
  * @param context used for [ExoPlayer.Builder]. Application context is fine;
  *   the player holds no view references.
@@ -109,6 +115,21 @@ class VoicePlayer(
                 audioSessionId: Int,
             ) {
                 cachedAudioSessionId = audioSessionId
+                // Deep-buffer cold-start guard. On some OEM pipelines the
+                // AudioTrack — and therefore a real (non-zero) session id —
+                // isn't allocated until *after* onIsPlayingChanged(true) has
+                // already fired. In that race the isPlaying-driven attach
+                // below ran with id == 0, no-oped, and isPlaying will not
+                // toggle again for the rest of a continuous TTS turn, so the
+                // Visualizer would never attach and [amplitude] would stay
+                // pinned at 0 for the whole turn. The output waveform gates
+                // its unfold on the first real playback-amplitude frame, so a
+                // never-firing amplitude leaves it stuck in the folded
+                // processing/spinner shape even though audio is audible.
+                // Attaching here — the moment a real session id lands while
+                // playback is already live — makes the first-audible-frame
+                // signal reliable regardless of when the track allocates.
+                attachVisualizerIfPlaying()
             }
         })
         exoPlayer.addListener(object : Player.Listener {
@@ -124,11 +145,11 @@ class VoicePlayer(
                     // runs on the main thread too, so reading the getter here
                     // is safe and guarantees the cache is warm by the time
                     // playback is audible (and thus by the time barge-in
-                    // starts its IO reader).
+                    // starts its IO reader). If the id isn't ready yet, the
+                    // analytics callback above re-tries the attach the instant
+                    // it lands (see attachVisualizerIfPlaying).
                     cachedAudioSessionId = exoPlayer.audioSessionId
-                    if (!visualizerAttached) {
-                        attachVisualizer(cachedAudioSessionId)
-                    }
+                    attachVisualizerIfPlaying()
                 }
             }
 
@@ -306,6 +327,24 @@ class VoicePlayer(
     fun release() {
         stop()
         exoPlayer.release()
+    }
+
+    /**
+     * Attach the [Visualizer] iff playback is live and we haven't attached for
+     * this session yet. Idempotent and main-thread-only: both call sites
+     * ([Player.Listener.onIsPlayingChanged] and the [AnalyticsListener]'s
+     * `onAudioSessionIdChanged`) are delivered on the player's application
+     * thread, so the [visualizerAttached] check needs no extra synchronization.
+     *
+     * The delegate [attachVisualizer] still no-ops (without latching
+     * [visualizerAttached]) when the cached session id is 0, which preserves
+     * the retry: whichever of {isPlaying, valid session id} arrives last drives
+     * the single attach. This is the cold-start race fix — see the
+     * `onAudioSessionIdChanged` comment in `init`.
+     */
+    private fun attachVisualizerIfPlaying() {
+        if (visualizerAttached || !_isPlaying.value) return
+        attachVisualizer(cachedAudioSessionId)
     }
 
     private fun attachVisualizer(audioSessionId: Int) {
