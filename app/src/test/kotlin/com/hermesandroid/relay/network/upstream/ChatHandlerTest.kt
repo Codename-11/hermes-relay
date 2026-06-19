@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MessageRole
@@ -609,6 +610,110 @@ class ChatHandlerTest {
         handler.loadMessageHistory(items)
 
         assertEquals("", handler.messages.value[0].content)
+    }
+
+    // --- loadMessageHistory: outbound attachment preservation (GAP 1) ---
+
+    @Test
+    fun loadMessageHistory_carriesOutboundAttachmentForward_whenIdMatches() {
+        // Assistant placeholder ids are reconciled to the server id, so the
+        // id-keyed carry path must keep an outbound attachment when ids match.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "100",
+                role = MessageRole.USER,
+                content = "look at this",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/png", content = "b64data")),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "100", role = "user", content = JsonPrimitive("look at this")))
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(1, msg.attachments.size)
+        assertEquals("b64data", msg.attachments[0].content)
+    }
+
+    @Test
+    fun loadMessageHistory_carriesOutboundAttachmentForward_whenUserIdDiffers() {
+        // The real gateway/SSE case: the live user bubble keeps its client UUID
+        // (only assistant placeholders swap ids), so the reloaded server row has
+        // a different id. The content-keyed fallback must still preserve it.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "client-uuid-abc",
+                role = MessageRole.USER,
+                content = "see this photo",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/jpeg", content = "jpegbytes")),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "55", role = "user", content = JsonPrimitive("see this photo")))
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals("55", msg.id)
+        assertEquals(1, msg.attachments.size)
+        assertEquals("jpegbytes", msg.attachments[0].content)
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotCarryInboundAttachment() {
+        // Inbound attachments (relayToken != null) come back via the marker
+        // re-dispatch; carrying them in the reload too would double-add them.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "client-uuid-xyz",
+                role = MessageRole.USER,
+                content = "fetched file",
+                timestamp = 1L,
+                attachments = listOf(
+                    Attachment(contentType = "image/png", content = "", relayToken = "tok-123"),
+                ),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "77", role = "user", content = JsonPrimitive("fetched file")))
+        )
+
+        assertTrue(handler.messages.value.single().attachments.isEmpty())
+    }
+
+    @Test
+    fun loadMessageHistory_consumesOutboundAttachmentOncePerDuplicateContent() {
+        // Two identical-text sends, only the first with an attachment: the
+        // attachment must land on exactly one reloaded row, not both.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "uuid-1",
+                role = MessageRole.USER,
+                content = "hi",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/png", content = "first")),
+            )
+        )
+        handler.addUserMessage(
+            ChatMessage(id = "uuid-2", role = MessageRole.USER, content = "hi", timestamp = 2L)
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "10", role = "user", content = JsonPrimitive("hi"), timestamp = 1.0),
+                MessageItem(id = "11", role = "user", content = JsonPrimitive("hi"), timestamp = 2.0),
+            )
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertEquals(1, msgs[0].attachments.size)
+        assertEquals("first", msgs[0].attachments[0].content)
+        assertTrue(msgs[1].attachments.isEmpty())
     }
 
     // --- onUsageReceived ---

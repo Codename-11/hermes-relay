@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.HermesCard
@@ -779,6 +780,26 @@ class ChatHandler {
         // replaceMessageId, so it matches the reloaded item id.
         val priorById = _messages.value.associateBy { it.id }
 
+        // Outbound (user-authored) attachments must survive the reload too. They
+        // live on USER messages, are NOT echoed back in server content, and are
+        // NOT re-dispatched (only inbound `MEDIA:` markers are), so a wholesale
+        // rebuild drops them. priorById can't recover them: user-message ids are
+        // never reconciled to the server id (only the assistant placeholder is
+        // swapped via replaceMessageId), so the reloaded user row never matches
+        // the live UUID-keyed one. Match by content instead, consuming each prior
+        // outbound set once so repeated identical sends don't cross-assign. Only
+        // outbound (relayToken == null) attachments are queued — inbound ones are
+        // re-fetched by the marker re-dispatch below, and carrying them too would
+        // double-add.
+        val priorOutboundByContent = HashMap<String, ArrayDeque<List<Attachment>>>()
+        for (msg in _messages.value) {
+            if (msg.role != MessageRole.USER) continue
+            val outbound = msg.attachments.filter { it.relayToken == null }
+            if (outbound.isNotEmpty()) {
+                priorOutboundByContent.getOrPut(msg.content) { ArrayDeque() }.addLast(outbound)
+            }
+        }
+
         val loaded = items.mapNotNull { item ->
             val role = when (item.role) {
                 "user" -> MessageRole.USER
@@ -837,10 +858,24 @@ class ChatHandler {
             }
 
             val prior = priorById[messageId]
+            // Outbound attachments: prefer an id-match (covers any future
+            // user-message id reconciliation), else fall back to the
+            // content-keyed queue. Inbound attachments are intentionally
+            // excluded — they come back via the marker re-dispatch.
+            val carriedAttachments = run {
+                val byId = prior?.attachments.orEmpty().filter { it.relayToken == null }
+                when {
+                    byId.isNotEmpty() -> byId
+                    role == MessageRole.USER ->
+                        priorOutboundByContent[cleanedContent]?.removeFirstOrNull().orEmpty()
+                    else -> emptyList()
+                }
+            }
             ChatMessage(
                 id = messageId,
                 role = role,
                 content = cleanedContent,
+                attachments = carriedAttachments,
                 timestamp = timestampMs,
                 isStreaming = false,
                 toolCalls = toolCalls,
