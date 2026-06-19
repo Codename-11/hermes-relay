@@ -89,7 +89,28 @@ data class ChatMessage(
      * the durable session turn; the provider's spoken summary is UI/runtime
      * provenance, not another canonical assistant message.
      */
-    val realtimeTurn: RealtimeTurnTrace? = null
+    val realtimeTurn: RealtimeTurnTrace? = null,
+    /**
+     * True for bubbles that exist ONLY on the client and have no server-side
+     * row — slash-command notices, voice-intent traces, the steer echo, gateway
+     * ask cards, an errored turn the server never persisted, and a provider-only
+     * (non-Hermes-backed) realtime turn. The post-turn history reload
+     * ([com.hermesandroid.relay.network.upstream.ChatHandler.loadMessageHistory])
+     * preserves any client-only message whose id is absent from the reloaded
+     * server transcript; without the flag those orphans would be silently
+     * wiped by the reconcile.
+     *
+     * Replaces the old id-prefix whitelist (`voice-intent-`/`steer-`/`ask-`/
+     * `system-notice-`) + "Error"-badge sniffing: each creator now declares its
+     * own provenance instead of the reconcile having to know every id
+     * convention. Defaults false so every server-backed message and existing
+     * call site stays correct.
+     *
+     * NOTE: an "Error" badge alone does NOT make a message preservable — a turn
+     * can error *after* persisting server-side, and that message must still
+     * reconcile normally. Only [clientOnly] gates orphan preservation.
+     */
+    val clientOnly: Boolean = false,
 )
 
 /**

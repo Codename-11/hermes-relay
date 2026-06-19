@@ -1860,6 +1860,10 @@ class ChatViewModel : ViewModel() {
                             role = MessageRole.USER,
                             content = text,
                             timestamp = System.currentTimeMillis(),
+                            // Steered text lands in a server-side tool result,
+                            // never as a user message, so this echo has no server
+                            // row — keep it across the post-turn reload.
+                            clientOnly = true,
                         )
                     )
                 }

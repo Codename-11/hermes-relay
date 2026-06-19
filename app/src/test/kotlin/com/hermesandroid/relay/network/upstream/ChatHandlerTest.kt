@@ -4,6 +4,7 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.upstream.models.MessageItem
@@ -714,6 +715,96 @@ class ChatHandlerTest {
         assertEquals(1, msgs[0].attachments.size)
         assertEquals("first", msgs[0].attachments[0].content)
         assertTrue(msgs[1].attachments.isEmpty())
+    }
+
+    // --- loadMessageHistory: client-only orphan preservation (GAP 2) ---
+
+    @Test
+    fun loadMessageHistory_preservesClientOnlyOrphan() {
+        // A slash-command notice (addSystemNotice → clientOnly) has no server
+        // row; a reload that omits its id must keep it.
+        handler.addSystemNotice("/status result")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "1", role = "user", content = JsonPrimitive("hi"), timestamp = 1.0))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertTrue(
+            msgs.any { it.role == MessageRole.SYSTEM && it.content == "/status result" && it.clientOnly }
+        )
+    }
+
+    @Test
+    fun loadMessageHistory_preservesErroredAssistantOrphan() {
+        // markError flags the bubble clientOnly because the gateway ❌ path fires
+        // on a turn the server never persists — so a later reload that omits the
+        // id must keep the error visible.
+        handler.onTextDelta("assist-err", "partial reply")
+        handler.markError("assist-err")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "u1", role = "user", content = JsonPrimitive("do it"), timestamp = 1.0))
+        )
+
+        val orphan = handler.messages.value.single { it.id == "assist-err" }
+        assertTrue("Error" in orphan.badges)
+        assertTrue(orphan.clientOnly)
+    }
+
+    @Test
+    fun loadMessageHistory_reconcilesPersistedErrorWithoutDuplicating() {
+        // A turn that errors AFTER persisting keeps an "Error" badge but IS in
+        // the transcript: it must reconcile as one server-backed message (badge
+        // carried via priorById), never get double-added as a clientOnly orphan.
+        handler.onTextDelta("100", "reply that errored after persisting")
+        handler.markError("100")
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "100",
+                    role = "assistant",
+                    content = JsonPrimitive("reply that errored after persisting"),
+                )
+            )
+        )
+
+        val matches = handler.messages.value.filter { it.id == "100" }
+        assertEquals(1, matches.size)
+        assertTrue("Error" in matches[0].badges)
+    }
+
+    @Test
+    fun loadMessageHistory_dropsServerBackedMessageRemovedFromTranscript() {
+        // A normal (non-clientOnly) assistant turn that's no longer in the
+        // transcript was genuinely deleted/forked server-side — drop it.
+        handler.onTextDelta("a1", "old reply")
+        handler.onStreamComplete("a1")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "b2", role = "assistant", content = JsonPrimitive("new reply")))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        assertEquals("b2", msgs[0].id)
+    }
+
+    @Test
+    fun attachRealtimeTurnTrace_marksBubbleClientOnly() {
+        // A provider-only realtime turn (trace attached) has no server row, so
+        // attaching the trace must also flag it clientOnly for reload survival.
+        handler.onTextDelta("realtime-agent-1", "spoken answer")
+        handler.attachRealtimeTurnTrace(
+            "realtime-agent-1",
+            RealtimeTurnTrace(userText = "hi", assistantText = "spoken answer"),
+        )
+
+        val msg = handler.messages.value.single { it.id == "realtime-agent-1" }
+        assertTrue(msg.clientOnly)
+        assertEquals("hi", msg.realtimeTurn!!.userText)
     }
 
     // --- onUsageReceived ---
