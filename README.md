@@ -38,6 +38,10 @@ Hermes-Relay puts your [Hermes agent](https://github.com/NousResearch/hermes-age
 
 A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough — chat, management, and voice need **no plugin**. Add the optional relay only when you want terminal, phone control, or the CLI's tools. **Pair once from either surface; both work.**
 
+<p align="center">
+  <img src="docs/diagrams/architecture-homepage.png" alt="How Hermes-Relay connects — Vanilla Hermes (Chat, Manage, Voice) runs with no plugin; the optional Relay plugin adds Terminal, Bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build." width="900">
+</p>
+
 ## Quick Start (Android)
 
 Install → connect → talk, in about two minutes.

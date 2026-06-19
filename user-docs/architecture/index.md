@@ -1,4 +1,10 @@
+<script setup>
+import { withBase } from 'vitepress'
+</script>
+
 # Architecture
+
+<img :src="withBase('/architecture-homepage.svg')" alt="How Hermes-Relay connects: Vanilla Hermes runs chat, Manage and voice with no plugin; the optional Relay plugin adds terminal, bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build." style="width:100%;margin:0.5rem 0 1.75rem;" />
 
 ## Connection Model
 

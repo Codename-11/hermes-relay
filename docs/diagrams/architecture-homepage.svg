@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 596" width="1240" height="596" font-family="Inter, ui-sans-serif, -apple-system, 'Segoe UI', Roboto, sans-serif" role="img" aria-label="How Hermes-Relay connects: Vanilla Hermes (Chat, Manage, Voice) runs on a plain Hermes agent with no plugin; the optional Relay plugin adds Terminal, Bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build.">
+  <defs>
+    <marker id="ahTeal" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#167a6e"/>
+    </marker>
+    <marker id="ahViolet" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b4fb0"/>
+    </marker>
+  </defs>
+
+  <!-- background card (keeps it presentable on light or dark homepages) -->
+  <rect x="6" y="6" width="1228" height="584" rx="22" fill="#ffffff" stroke="#e6ebf0" stroke-width="1.5"/>
+
+  <!-- header -->
+  <text x="44" y="62" font-size="30" font-weight="700" fill="#1e293b">How Hermes-Relay connects</text>
+  <text x="46" y="90" font-size="14.5" fill="#64748b">Chat, Manage &amp; Voice run on a plain Hermes agent — the optional Relay plugin adds Terminal, Bridge &amp; desktop tools.</text>
+
+  <!-- zone labels -->
+  <text x="62" y="158" font-size="12" font-weight="700" letter-spacing="2" fill="#94a3b8">YOUR MACHINE</text>
+  <text x="882" y="158" font-size="12" font-weight="700" letter-spacing="2" fill="#94a3b8">YOUR DEVICES</text>
+
+  <!-- ===================== LANES (drawn under boxes) ===================== -->
+  <!-- Vanilla lane: Hermes <-> App -->
+  <path d="M362,244 L878,302" stroke="#167a6e" stroke-width="3" fill="none" marker-start="url(#ahTeal)" marker-end="url(#ahTeal)"/>
+  <!-- Relay lane: plugin -> App  (optional, dashed) -->
+  <path d="M362,404 L878,362" stroke="#6b4fb0" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-start="url(#ahViolet)" marker-end="url(#ahViolet)"/>
+  <!-- Relay lane: plugin -> CLI  (fan-out) -->
+  <path d="M362,418 L903,482" stroke="#6b4fb0" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#ahViolet)"/>
+
+  <!-- vanilla lane label cluster (above the teal line) -->
+  <text x="432" y="180" font-size="14" font-weight="700" fill="#167a6e">VANILLA HERMES · no plugin needed</text>
+  <text x="432" y="208" font-size="18" font-weight="700" fill="#0f5750">Chat · Manage · Voice</text>
+  <text x="432" y="231" font-size="11" fill="#94a3b8">dashboard :9119   ·   API :8642</text>
+
+  <!-- relay lane label cluster (between the violet lines) -->
+  <text x="432" y="322" font-size="14" font-weight="700" fill="#6b4fb0">+ RELAY PLUGIN · pair to unlock</text>
+  <text x="432" y="348" font-size="15" font-weight="700" fill="#4b2f88">Terminal · Bridge · Relay voice · Desktop tools</text>
+  <text x="432" y="370" font-size="11" fill="#94a3b8">WSS :8767</text>
+
+  <!-- ===================== LEFT: your machine ===================== -->
+  <rect x="60" y="180" width="300" height="120" rx="14" fill="#eef2f7" stroke="#334155" stroke-width="2"/>
+  <text x="80" y="231" font-size="21" font-weight="700" fill="#1e293b">Hermes agent</text>
+  <text x="80" y="258" font-size="13" fill="#64748b">the platform on your machine</text>
+
+  <rect x="60" y="360" width="300" height="110" rx="14" fill="#efeafb" stroke="#6b4fb0" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="80" y="401" font-size="17" font-weight="700" fill="#5b3fa0">+ Relay plugin</text>
+  <text x="80" y="427" font-size="12" fill="#64748b">optional — install on your Hermes</text>
+  <text x="80" y="445" font-size="12" fill="#64748b">host, then pair to unlock</text>
+
+  <!-- ===================== RIGHT: your devices ===================== -->
+  <rect x="880" y="250" width="300" height="130" rx="14" fill="#eef2f7" stroke="#334155" stroke-width="2"/>
+  <text x="900" y="303" font-size="21" font-weight="700" fill="#1e293b">Hermes-Relay app</text>
+  <text x="900" y="331" font-size="13" fill="#64748b">your Android phone</text>
+
+  <!-- sideload gate, attached to the device where Device Control lives -->
+  <rect x="880" y="392" width="300" height="36" rx="10" fill="#fdf3e0" stroke="#c2820c" stroke-width="1.5"/>
+  <text x="1030" y="415" font-size="12" font-weight="600" fill="#9a6313" text-anchor="middle">Device Control needs the sideload build</text>
+
+  <rect x="905" y="446" width="250" height="64" rx="12" fill="#efeafb" stroke="#6b4fb0" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="924" y="478" font-size="16" font-weight="700" fill="#5b3fa0">Relay CLI</text>
+  <text x="924" y="498" font-size="11" fill="#64748b">the agent's hands on any computer</text>
+
+  <!-- footnote: the third axis, kept subtle -->
+  <text x="60" y="558" font-size="12.5" fill="#64748b">
+    <tspan font-weight="700" fill="#167a6e">Vanilla Hermes</tspan> works the moment you point the app at your server.
+    <tspan font-weight="700" fill="#6b4fb0">+ Relay plugin</tspan> adds power tools.
+    <tspan font-weight="700" fill="#9a6313">+ Sideload build</tspan> adds phone control.
+  </text>
+</svg>
