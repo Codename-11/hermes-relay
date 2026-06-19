@@ -71,6 +71,7 @@ fun ChatSettingsScreen(
     val appContextSafetyStatus by connectionViewModel.appContextSafetyStatus.collectAsState()
     // === END PHASE3-status ===
     val parseToolAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
+    val showSystemMessages by connectionViewModel.showSystemMessages.collectAsState()
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val maxMessageLength by connectionViewModel.maxMessageLength.collectAsState()
@@ -500,6 +501,51 @@ fun ChatSettingsScreen(
                             checked = parseToolAnnotations && isTextAnnotationMode,
                             onCheckedChange = { connectionViewModel.setParseToolAnnotations(it) },
                             enabled = isTextAnnotationMode
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    // Show system messages (debug) — render the server's hidden
+                    // role:system steering markers ("[System: …]" model /
+                    // personality-change notes). Off by default for desktop/TUI
+                    // parity; on to inspect what the server injects.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "Show system messages",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "Debug",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiary,
+                                    modifier = Modifier
+                                        .background(
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            Text(
+                                text = "Show the server's hidden \"[System: …]\" markers " +
+                                    "(model / personality changes). Off matches the desktop/TUI.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = showSystemMessages,
+                            onCheckedChange = { connectionViewModel.setShowSystemMessages(it) }
                         )
                     }
 
