@@ -1,8 +1,10 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.upstream.models.MessageItem
@@ -609,6 +611,301 @@ class ChatHandlerTest {
         handler.loadMessageHistory(items)
 
         assertEquals("", handler.messages.value[0].content)
+    }
+
+    // --- loadMessageHistory: outbound attachment preservation (GAP 1) ---
+
+    @Test
+    fun loadMessageHistory_carriesOutboundAttachmentForward_whenIdMatches() {
+        // Assistant placeholder ids are reconciled to the server id, so the
+        // id-keyed carry path must keep an outbound attachment when ids match.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "100",
+                role = MessageRole.USER,
+                content = "look at this",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/png", content = "b64data")),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "100", role = "user", content = JsonPrimitive("look at this")))
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals(1, msg.attachments.size)
+        assertEquals("b64data", msg.attachments[0].content)
+    }
+
+    @Test
+    fun loadMessageHistory_carriesOutboundAttachmentForward_whenUserIdDiffers() {
+        // The real gateway/SSE case: the live user bubble keeps its client UUID
+        // (only assistant placeholders swap ids), so the reloaded server row has
+        // a different id. The content-keyed fallback must still preserve it.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "client-uuid-abc",
+                role = MessageRole.USER,
+                content = "see this photo",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/jpeg", content = "jpegbytes")),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "55", role = "user", content = JsonPrimitive("see this photo")))
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals("55", msg.id)
+        assertEquals(1, msg.attachments.size)
+        assertEquals("jpegbytes", msg.attachments[0].content)
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotCarryInboundAttachment() {
+        // Inbound attachments (relayToken != null) come back via the marker
+        // re-dispatch; carrying them in the reload too would double-add them.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "client-uuid-xyz",
+                role = MessageRole.USER,
+                content = "fetched file",
+                timestamp = 1L,
+                attachments = listOf(
+                    Attachment(contentType = "image/png", content = "", relayToken = "tok-123"),
+                ),
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "77", role = "user", content = JsonPrimitive("fetched file")))
+        )
+
+        assertTrue(handler.messages.value.single().attachments.isEmpty())
+    }
+
+    @Test
+    fun loadMessageHistory_consumesOutboundAttachmentOncePerDuplicateContent() {
+        // Two identical-text sends, only the first with an attachment: the
+        // attachment must land on exactly one reloaded row, not both.
+        handler.addUserMessage(
+            ChatMessage(
+                id = "uuid-1",
+                role = MessageRole.USER,
+                content = "hi",
+                timestamp = 1L,
+                attachments = listOf(Attachment(contentType = "image/png", content = "first")),
+            )
+        )
+        handler.addUserMessage(
+            ChatMessage(id = "uuid-2", role = MessageRole.USER, content = "hi", timestamp = 2L)
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "10", role = "user", content = JsonPrimitive("hi"), timestamp = 1.0),
+                MessageItem(id = "11", role = "user", content = JsonPrimitive("hi"), timestamp = 2.0),
+            )
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertEquals(1, msgs[0].attachments.size)
+        assertEquals("first", msgs[0].attachments[0].content)
+        assertTrue(msgs[1].attachments.isEmpty())
+    }
+
+    // --- loadMessageHistory: client-only orphan preservation (GAP 2) ---
+
+    @Test
+    fun loadMessageHistory_preservesClientOnlyOrphan() {
+        // A slash-command notice (addSystemNotice → clientOnly) has no server
+        // row; a reload that omits its id must keep it.
+        handler.addSystemNotice("/status result")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "1", role = "user", content = JsonPrimitive("hi"), timestamp = 1.0))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertTrue(
+            msgs.any { it.role == MessageRole.SYSTEM && it.content == "/status result" && it.clientOnly }
+        )
+    }
+
+    @Test
+    fun loadMessageHistory_preservesErroredAssistantOrphan() {
+        // markError flags the bubble clientOnly because the gateway ❌ path fires
+        // on a turn the server never persists — so a later reload that omits the
+        // id must keep the error visible.
+        handler.onTextDelta("assist-err", "partial reply")
+        handler.markError("assist-err")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "u1", role = "user", content = JsonPrimitive("do it"), timestamp = 1.0))
+        )
+
+        val orphan = handler.messages.value.single { it.id == "assist-err" }
+        assertTrue("Error" in orphan.badges)
+        assertTrue(orphan.clientOnly)
+    }
+
+    @Test
+    fun loadMessageHistory_reconcilesPersistedErrorWithoutDuplicating() {
+        // A turn that errors AFTER persisting keeps an "Error" badge but IS in
+        // the transcript: it must reconcile as one server-backed message (badge
+        // carried via priorById), never get double-added as a clientOnly orphan.
+        handler.onTextDelta("100", "reply that errored after persisting")
+        handler.markError("100")
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "100",
+                    role = "assistant",
+                    content = JsonPrimitive("reply that errored after persisting"),
+                )
+            )
+        )
+
+        val matches = handler.messages.value.filter { it.id == "100" }
+        assertEquals(1, matches.size)
+        assertTrue("Error" in matches[0].badges)
+    }
+
+    @Test
+    fun loadMessageHistory_dropsServerBackedMessageRemovedFromTranscript() {
+        // A normal (non-clientOnly) assistant turn that's no longer in the
+        // transcript was genuinely deleted/forked server-side — drop it.
+        handler.onTextDelta("a1", "old reply")
+        handler.onStreamComplete("a1")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "b2", role = "assistant", content = JsonPrimitive("new reply")))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        assertEquals("b2", msgs[0].id)
+    }
+
+    @Test
+    fun attachRealtimeTurnTrace_marksBubbleClientOnly() {
+        // A provider-only realtime turn (trace attached) has no server row, so
+        // attaching the trace must also flag it clientOnly for reload survival.
+        handler.onTextDelta("realtime-agent-1", "spoken answer")
+        handler.attachRealtimeTurnTrace(
+            "realtime-agent-1",
+            RealtimeTurnTrace(userText = "hi", assistantText = "spoken answer"),
+        )
+
+        val msg = handler.messages.value.single { it.id == "realtime-agent-1" }
+        assertTrue(msg.clientOnly)
+        assertEquals("hi", msg.realtimeTurn!!.userText)
+    }
+
+    // --- loadMessageHistory: delta-merge semantics (GAP 3) ---
+
+    @Test
+    fun loadMessageHistory_updatesServerContentInPlace() {
+        // (b) a server message's content updates in place on the matching id.
+        handler.onTextDelta("100", "old content")
+        handler.onStreamComplete("100")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "100", role = "assistant", content = JsonPrimitive("updated content")))
+        )
+
+        val msg = handler.messages.value.single { it.id == "100" }
+        assertEquals("updated content", msg.content)
+        assertFalse(msg.isStreaming)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsTokensAndBadgesOnInPlaceUpdate() {
+        // (d) per-message tokens/cost/badges (not server-persisted) survive the
+        // in-place update while content is refreshed from the server.
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "a-1",
+                role = MessageRole.ASSISTANT,
+                content = "draft",
+                timestamp = 1L,
+                badges = listOf("Voice"),
+                inputTokens = 7,
+                outputTokens = 11,
+                totalTokens = 18,
+                estimatedCost = 0.002,
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "a-1", role = "assistant", content = JsonPrimitive("final answer")))
+        )
+
+        val msg = handler.messages.value.single { it.id == "a-1" }
+        assertEquals("final answer", msg.content)
+        assertEquals(listOf("Voice"), msg.badges)
+        assertEquals(7, msg.inputTokens)
+        assertEquals(18, msg.totalTokens)
+        assertEquals(0.002, msg.estimatedCost!!, 0.0001)
+    }
+
+    @Test
+    fun loadMessageHistory_reflectsServerSideDeletion() {
+        // (c) two server-backed turns, then a reload that omits the first one
+        // (deleted/forked/truncated server-side) drops it.
+        handler.onTextDelta("m1", "first")
+        handler.onStreamComplete("m1")
+        handler.onTextDelta("m2", "second")
+        handler.onStreamComplete("m2")
+        assertEquals(2, handler.messages.value.size)
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "m2", role = "assistant", content = JsonPrimitive("second")))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        assertEquals("m2", msgs[0].id)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsLiveThinkingWhenServerOmitsReasoning() {
+        // The delta-merge must not blank live-streamed reasoning when the server
+        // transcript carries none for that message.
+        handler.onThinkingDelta("t-1", "reasoning trace")
+        handler.onTextDelta("t-1", "answer")
+        handler.onStreamComplete("t-1")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "t-1", role = "assistant", content = JsonPrimitive("answer")))
+        )
+
+        assertEquals("reasoning trace", handler.messages.value.single { it.id == "t-1" }.thinkingContent)
+    }
+
+    @Test
+    fun loadMessageHistory_prefersServerReasoningOnUpdate() {
+        // When the server DOES persist reasoning it is authoritative.
+        handler.onThinkingDelta("t-2", "live reasoning")
+        handler.onStreamComplete("t-2")
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "t-2",
+                    role = "assistant",
+                    content = JsonPrimitive("a"),
+                    reasoning = "server reasoning",
+                )
+            )
+        )
+
+        assertEquals("server reasoning", handler.messages.value.single { it.id == "t-2" }.thinkingContent)
     }
 
     // --- onUsageReceived ---

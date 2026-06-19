@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.HermesCard
@@ -242,6 +243,7 @@ class ChatHandler {
                 role = MessageRole.SYSTEM,
                 content = text,
                 timestamp = System.currentTimeMillis(),
+                clientOnly = true,
             )
             (list + notice).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
@@ -250,8 +252,9 @@ class ChatHandler {
     /**
      * Append an assistant message that carries ONLY a gateway ask card
      * (clarify / approval / sudo / secret). Local-only — the server never
-     * stores the ask as a message, so [loadMessageHistory] preserves the
-     * `ask-` id prefix the same way it preserves voice-intent traces.
+     * stores the ask as a message, so the bubble is flagged
+     * [ChatMessage.clientOnly] and [loadMessageHistory] preserves it across the
+     * reload the same way it preserves voice-intent traces.
      * Idempotent on [messageId] so a re-emitted ask never duplicates.
      */
     fun appendAskCardMessage(messageId: String, card: HermesCard) {
@@ -264,6 +267,7 @@ class ChatHandler {
                 timestamp = System.currentTimeMillis(),
                 cards = listOf(card),
                 agentName = activeAgentName,
+                clientOnly = true,
             )
             (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
@@ -335,6 +339,7 @@ class ChatHandler {
             role = MessageRole.USER,
             content = userText,
             timestamp = ts,
+            clientOnly = true,
         )
         val assistantMsg = ChatMessage(
             id = "voice-intent-action-$ts",
@@ -352,6 +357,7 @@ class ChatHandler {
             // session memory. Null for the pre-dispatch user bubble (the
             // raw transcribed utterance carries no structure on its own).
             voiceIntent = voiceIntent,
+            clientOnly = true,
         )
         _messages.update { list ->
             (list + userMsg + assistantMsg).let {
@@ -400,6 +406,7 @@ class ChatHandler {
             // pre-dispatch trace was appended) leave this null and rely
             // on the pre-dispatch trace's voiceIntent field.
             voiceIntent = voiceIntent,
+            clientOnly = true,
         )
         _messages.update { list ->
             (list + resultMsg).let {
@@ -472,7 +479,13 @@ class ChatHandler {
             val mapped = messages.map { msg ->
                 if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
                     changed = true
-                    msg.copy(realtimeTurn = trace)
+                    // A realtimeTurn trace is attached ONLY for provider-only
+                    // (non-Hermes-backed) turns — Hermes-backed ones leave it
+                    // null because the server owns that turn. So a trace ⟺ a
+                    // purely local bubble: mark it clientOnly so the post-turn
+                    // reload preserves it instead of wiping the only record of
+                    // the turn (and the trace the next chat payload still needs).
+                    msg.copy(realtimeTurn = trace, clientOnly = true)
                 } else {
                     msg
                 }
@@ -741,8 +754,19 @@ class ChatHandler {
     }
 
     /**
-     * Load message history from API response into the messages list.
-     * Replaces current messages with the loaded history.
+     * Reconcile the in-memory transcript against the server message history.
+     *
+     * This is a surgical DELTA-MERGE keyed by message id, not a wholesale
+     * replace:
+     *  - a server message whose id matches a local row UPDATES that row's
+     *    server-authoritative fields (content, tool calls, cards, reasoning)
+     *    in place while keeping every client-only field;
+     *  - a server message with no local row is INSERTED in timestamp order;
+     *  - a client-only orphan ([ChatMessage.clientOnly], no server row) is KEPT;
+     *  - a local row that WAS server-backed (not clientOnly) but is no longer in
+     *    the transcript is DROPPED (genuinely deleted / forked / truncated
+     *    server-side).
+     *
      * Reconstructs tool calls from assistant messages' tool_calls field.
      *
      * Server-persisted message content still contains raw `MEDIA:...` markers
@@ -778,6 +802,26 @@ class ChatHandler {
         // message has already had its id swapped to the server id via
         // replaceMessageId, so it matches the reloaded item id.
         val priorById = _messages.value.associateBy { it.id }
+
+        // Outbound (user-authored) attachments must survive the reload too. They
+        // live on USER messages, are NOT echoed back in server content, and are
+        // NOT re-dispatched (only inbound `MEDIA:` markers are), so a wholesale
+        // rebuild drops them. priorById can't recover them: user-message ids are
+        // never reconciled to the server id (only the assistant placeholder is
+        // swapped via replaceMessageId), so the reloaded user row never matches
+        // the live UUID-keyed one. Match by content instead, consuming each prior
+        // outbound set once so repeated identical sends don't cross-assign. Only
+        // outbound (relayToken == null) attachments are queued — inbound ones are
+        // re-fetched by the marker re-dispatch below, and carrying them too would
+        // double-add.
+        val priorOutboundByContent = HashMap<String, ArrayDeque<List<Attachment>>>()
+        for (msg in _messages.value) {
+            if (msg.role != MessageRole.USER) continue
+            val outbound = msg.attachments.filter { it.relayToken == null }
+            if (outbound.isNotEmpty()) {
+                priorOutboundByContent.getOrPut(msg.content) { ArrayDeque() }.addLast(outbound)
+            }
+        }
 
         val loaded = items.mapNotNull { item ->
             val role = when (item.role) {
@@ -837,38 +881,70 @@ class ChatHandler {
             }
 
             val prior = priorById[messageId]
-            ChatMessage(
-                id = messageId,
-                role = role,
-                content = cleanedContent,
-                timestamp = timestampMs,
-                isStreaming = false,
-                toolCalls = toolCalls,
-                cards = extractedCards,
-                agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
-                // Server persists per-message reasoning — restore it so the
-                // Thought-process block survives returning to the chat
-                // instead of existing only for the live turn.
-                thinkingContent = if (role == MessageRole.ASSISTANT) {
-                    item.resolvedReasoning?.trim() ?: ""
-                } else {
-                    ""
-                },
-                // --- Client-only enrichment carried forward (see priorById) ---
-                // The server transcript has none of these; preserve what the
-                // live turn already produced so a reload doesn't blank them.
-                badges = if (role == MessageRole.ASSISTANT) prior?.badges.orEmpty() else emptyList(),
-                inputTokens = prior?.inputTokens,
-                outputTokens = prior?.outputTokens,
-                totalTokens = prior?.totalTokens,
-                estimatedCost = prior?.estimatedCost,
-                // Tapped-card confirmations + voice/realtime sync traces keep a
-                // reload from re-offering dispatched buttons or losing a pending
-                // sync the next chat payload still needs.
-                cardDispatches = prior?.cardDispatches.orEmpty(),
-                voiceIntent = prior?.voiceIntent,
-                realtimeTurn = prior?.realtimeTurn,
-            )
+            // Outbound attachments: prefer an id-match (covers any future
+            // user-message id reconciliation), else fall back to the
+            // content-keyed queue. Inbound attachments are intentionally
+            // excluded — they come back via the marker re-dispatch.
+            val carriedAttachments = run {
+                val byId = prior?.attachments.orEmpty().filter { it.relayToken == null }
+                when {
+                    byId.isNotEmpty() -> byId
+                    role == MessageRole.USER ->
+                        priorOutboundByContent[cleanedContent]?.removeFirstOrNull().orEmpty()
+                    else -> emptyList()
+                }
+            }
+            // Server reasoning is authoritative when present; absent, keep the
+            // live-streamed thinking rather than blanking it on reload.
+            val serverThinking =
+                if (role == MessageRole.ASSISTANT) item.resolvedReasoning?.trim() else null
+
+            if (prior != null) {
+                // DELTA-MERGE UPDATE — a local row with this id already exists.
+                // Refresh ONLY the server-authoritative fields (content, tool
+                // calls, cards, reasoning, role, timestamp) and keep every
+                // client-only field (tokens, cost, badges, tapped-card
+                // confirmations, voice/realtime traces, the clientOnly flag, …)
+                // by copying the existing message. This is strictly broader than
+                // the old curated carry list — a new client-only field is
+                // preserved automatically — and produces an object equal to the
+                // prior one when nothing server-side changed, so unchanged rows
+                // don't churn.
+                prior.copy(
+                    role = role,
+                    content = cleanedContent,
+                    attachments = carriedAttachments,
+                    timestamp = timestampMs,
+                    isStreaming = false,
+                    isThinkingStreaming = false,
+                    toolCalls = toolCalls,
+                    cards = extractedCards,
+                    agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
+                    thinkingContent = if (role == MessageRole.ASSISTANT) {
+                        serverThinking ?: prior.thinkingContent
+                    } else {
+                        ""
+                    },
+                )
+            } else {
+                // INSERT — a server message with no local row yet. Built from
+                // server data; client-only enrichment defaults empty (there is
+                // nothing local to carry).
+                ChatMessage(
+                    id = messageId,
+                    role = role,
+                    content = cleanedContent,
+                    attachments = carriedAttachments,
+                    timestamp = timestampMs,
+                    isStreaming = false,
+                    toolCalls = toolCalls,
+                    cards = extractedCards,
+                    agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
+                    // Server persists per-message reasoning — restore it so the
+                    // Thought-process block survives returning to the chat.
+                    thinkingContent = if (role == MessageRole.ASSISTANT) serverThinking ?: "" else "",
+                )
+            }
         }
 
         // Reload swaps the entire message list — any stale dedupe entries keyed
@@ -876,61 +952,37 @@ class ChatHandler {
         // just collected against the reloaded IDs are guaranteed to fire.
         dispatchedMediaMarkers.clear()
 
-        // === PHASE3-voice-intents-chathistory ===
-        // Preserve local-only voice-intent trace messages across a reload.
-        // These messages are injected by [appendLocalVoiceIntentTrace] with
-        // IDs prefixed "voice-intent-" and never reach the server-side
-        // session, so a wholesale `_messages.value = loaded` assignment
-        // would wipe them. Bailey hit this 2026-04-15: voice fall-through
-        // ("proceed" → not a recognized intent → chat.sendMessage) triggered
-        // a history reload on stream complete and the previous voice trace
-        // vanished, making it look like "the chat cleared". Server-side
-        // sync (so these traces reach the LLM's session memory too) is
-        // still a v0.4.1 follow-up, but preserving them client-side is
-        // enough to fix the disappearing-scrollback bug today.
-        // Gateway-local bubbles ride the same preservation: steered text
-        // (id "steer-…") lives inside a server-side tool result, never as a
-        // user message, and ask cards (id "ask-…") are built from gateway
-        // events that have no server-side message at all — a wholesale
-        // reload would silently erase both.
-        val preservedVoiceTraces = _messages.value.filter {
-            it.id.startsWith("voice-intent-") ||
-                it.id.startsWith("steer-") ||
-                it.id.startsWith("ask-") ||
-                // Slash-command result bubbles (addSystemNotice) are local-only —
-                // the server never persists them, so a wholesale reload would wipe
-                // a just-shown `/personality`, `/status`, … result the moment the
-                // next turn reconciles. Preserve them like the other client bubbles.
-                it.id.startsWith("system-notice-")
-        }
-        // Errored assistant turns (gateway ❌ lifecycle, transport failure, …)
-        // are NOT persisted server-side, so a wholesale reload would silently
-        // wipe the just-shown error bubble — the "reply appears then vanishes"
-        // regression. Preserve any local assistant message carrying the "Error"
-        // badge whose id is absent from the reloaded transcript, so a failure
-        // stays visible no matter WHICH reload path fires. onComplete already
-        // skips the reload for errored turns; this is the catch-all for every
-        // other reload (connection restore, manual refresh, profile resync, …).
+        // Preserve client-only orphans across the reload. A bubble flagged
+        // [ChatMessage.clientOnly] has no server-side row — slash-command
+        // notices (addSystemNotice), voice-intent traces
+        // (appendLocalVoiceIntent*), the steer echo, gateway ask cards
+        // (appendAskCardMessage), an errored turn the server never persisted
+        // (markError), and provider-only realtime turns (attachRealtimeTurnTrace).
+        // A wholesale `_messages.value = loaded` assignment would silently wipe
+        // any whose id is absent from the reloaded transcript: the
+        // disappearing-scrollback / "reply appears then vanishes" class of bug.
+        //
+        // This replaces the old id-prefix whitelist (voice-intent-/steer-/ask-/
+        // system-notice-) plus "Error"-badge sniffing — each creator now declares
+        // its own provenance, so a new client-only bubble type is preserved the
+        // moment it sets the flag, with no reconcile-side change. Note the badge
+        // subtlety: a turn that errors *after* persisting keeps an "Error" badge
+        // but IS in the transcript, so it reconciles normally; only clientOnly +
+        // absent-from-transcript marks a preservable orphan.
         val loadedIds = loaded.mapTo(HashSet()) { it.id }
-        val preservedErrorBubbles = _messages.value.filter { msg ->
-            msg.role == MessageRole.ASSISTANT &&
-                "Error" in msg.badges &&
-                msg.id !in loadedIds
-        }
-        val preservedLocal = (preservedVoiceTraces + preservedErrorBubbles).distinctBy { it.id }
+        val preservedLocal = _messages.value.filter { it.clientOnly && it.id !in loadedIds }
         val merged = if (preservedLocal.isEmpty()) {
             loaded
         } else {
-            // Merge by timestamp so preserved local bubbles interleave with the
+            // Merge by timestamp so preserved orphans interleave with the
             // reloaded server messages in chronological order. Voice trace IDs
             // carry `System.currentTimeMillis()` in their suffix (see
-            // appendLocalVoiceIntentTrace); errored bubbles keep their live
+            // appendLocalVoiceIntentTrace); other orphans keep their live
             // ChatMessage.timestamp — the source of truth either way.
             (loaded + preservedLocal).sortedBy { it.timestamp }
         }
 
         _messages.value = if (merged.size > MAX_MESSAGES) merged.takeLast(MAX_MESSAGES) else merged
-        // === END PHASE3-voice-intents-chathistory ===
 
         // Now that the reloaded messages are in state, fire callbacks so the
         // ViewModel can insert LOADING/FAILED attachments via mutateMessage.
@@ -2187,12 +2239,22 @@ class ChatHandler {
      * Stamp an "Error" badge on a message whose turn ended in a server error
      * (e.g. a gateway ❌ lifecycle status), so a failed turn doesn't read as a
      * normal answer. No-op if already present.
+     *
+     * Also marks the bubble [ChatMessage.clientOnly] = true: the only caller is
+     * the gateway ❌ terminal-error path, which fires on an in-flight turn the
+     * server never persists. That makes this assistant bubble a client-only
+     * orphan, so the reload must preserve it (the "reply appears then vanishes"
+     * regression). If the same id later turns up in the server transcript (a
+     * turn that errored *after* persisting), the reload reconciles it as a
+     * normal server-backed message and the Error badge rides along via the
+     * priorById carry — the clientOnly flag only gates the not-in-transcript
+     * orphan case.
      */
     fun markError(messageId: String) {
         _messages.update { messages ->
             messages.map { msg ->
                 if (msg.id == messageId && "Error" !in msg.badges) {
-                    msg.copy(badges = msg.badges + "Error")
+                    msg.copy(badges = msg.badges + "Error", clientOnly = true)
                 } else {
                     msg
                 }
