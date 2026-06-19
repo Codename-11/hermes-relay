@@ -131,9 +131,10 @@ hermes-android/
 ## Project Conventions
 
 ### File Structure
-- **Root-level:** README.md, CLAUDE.md, AGENTS.md, DEVLOG.md, .gitignore
+- **Root-level:** README.md, CLAUDE.md, AGENTS.md, DEVLOG.md, TODO.md, .gitignore
 - **docs/** — spec, decisions, security, and any other long-form documentation
-- **DEVLOG.md** — update at end of each work session with what was done, what's next, blockers
+- **DEVLOG.md** — update at end of each work session with what was done + verification (the factual record of *what happened*). It churns; do NOT park forward work here.
+- **TODO.md** — the single home for follow-ups / deferred work / known gaps ("what's next"). Record them here — never buried in DEVLOG or scattered through code/doc comments where they get lost.
 - **CLAUDE.md hygiene:** Key Files entries must stay one line — implementation detail belongs in the file or `docs/`. Run `/revise-claude-md` after feature-heavy sessions to trim drift.
 
 ### Public-repo writing hygiene
@@ -335,7 +336,8 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 - **Don't use Ktor for networking** — OkHttp for WebSocket
 - **Don't use plaintext WebSocket** — `wss://` only, even in development
 - **Don't put documentation in root** — long-form docs go in `docs/`
-- **Don't forget DEVLOG.md** — update it
+- **Don't forget DEVLOG.md** — update it (record *what happened*)
+- **Don't bury follow-ups** — deferred work / known gaps go in `TODO.md`, never in DEVLOG or one-off code/doc comments
 
 ## MCP Tooling
 

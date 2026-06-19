@@ -97,3 +97,21 @@ When the answer becomes clearer, this section becomes either an ADR in `docs/dec
 - **`llms.txt` standard** — explicitly skipped in favor of the `hermes-relay-self-setup` SKILL.md path; revisit if the standard gains traction in the agent ecosystem
 - **`markdown-renderer` 0.40.x API update** — pinned at `0.30.0` in `gradle/libs.versions.toml` because 0.40.2 introduced breaking API changes that `app/src/main/kotlin/com/hermesandroid/relay/ui/components/MarkdownContent.kt` hasn't been updated for. Specifically: `markdownColor()` drops `codeText`/`linkText`, `MarkdownCodeBlock`/`MarkdownCodeFence` inner lambdas now take a 3rd `TextStyle` arg, and `MarkdownHighlightedCode`'s 3rd param is now `TextStyle` instead of `Highlights.Builder`. Dependabot auto-merged the bump on 2026-04-13 which silently broke CI; reverted for the v0.3.0 release. Update requires reading the new library API docs and testing in Studio — not a blind fix. Consider adding a dependabot ignore rule for `markdown-renderer` major bumps until this is handled.
 - **Dependabot auto-merge guardrails** — Dependabot merged breaking bumps despite CI failing. Investigate why `.github/workflows/dependabot-auto-merge.yml` isn't gating on CI status, and consider adding an ignore rule for packages we know need manual attention on major bumps (`markdown-renderer`, compose BOM, activity-compose).
+
+---
+
+## Attachments (shipped 2026-06-18 — `docs/plans/2026-06-18-attachment-experience.md`)
+
+- **B3 — download progress + cancel.** Inbound fetch is un-cancelable; the previews work scaffolded an indeterminate bar + nullable `onCancel`. Live wiring needs the fetch-path owner (`ChatViewModel`/`Attachment`) to expose determinate progress (Content-Length) + a cancel hook.
+- **A6 — multi-image gallery.** N images in one message → grid + swipe-across viewer (Telegram media-group parity).
+- **C5 — agent-side sensitivity config gate.** `RELAY_MEDIA_SENSITIVITY_HINTS` (env or per-profile) instructing the agent to annotate sensitive media via the prompt-builder. Transport (relay `X-Media-Sensitive` header + client blur) already ships; the agent isn't asked to set the bit yet.
+- **Relay thumbnails (D6).** Server-side thumbnail generation to avoid full-size download for cards/galleries. Needs an image lib (Pillow not currently a dep) — evaluate before adding.
+- **D5 — outbound upload progress.** No per-attachment progress during the 60s gateway PDF-render window.
+
+## Voice overhaul (planned — `docs/plans/2026-06-18-voice-overhaul.md`)
+
+- **Per-profile voice on Standard (upstream PR).** Upstream `/api/profiles/*` has no voice field and `/api/audio/*` is host-global. Long-term: PR a voice section to the profile config + make `/api/audio/*` honor the active/`?profile=` profile. The relay path already carries per-profile voice; ship that first.
+
+## Chat clean-mode + pets (planned — `docs/plans/2026-06-18-chat-clean-mode-and-pets.md`)
+
+- **Part-A chat polish (optional bundle).** Per-code-block copy + horizontal scroll, visible copy affordance, mid-stream stall feedback, profile/skill-aware empty-state chips, the ~40-flow recomposition hotspot at the top of `ChatScreen`, sphere `contentDescription` + reduced-motion gate.

@@ -13,6 +13,7 @@ then `docs/spec.md` and `docs/decisions.md`.
 - Release process → **[RELEASE.md](RELEASE.md)**
 - Contributor setup → **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - `android_*` toolset + MCP → **[docs/mcp-tooling.md](docs/mcp-tooling.md)**
+- Follow-ups / deferred work / known gaps → **[TODO.md](TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
 
 ## Non-negotiables (the short list)
 
