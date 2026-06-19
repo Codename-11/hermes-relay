@@ -253,6 +253,7 @@ fun AttachmentViewer(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         val context = LocalContext.current
+        AllowDeviceRotation()
         val scope = rememberCoroutineScope()
         var busy by remember { mutableStateOf(false) }
 
