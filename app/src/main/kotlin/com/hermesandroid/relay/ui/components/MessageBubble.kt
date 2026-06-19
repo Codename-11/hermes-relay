@@ -34,7 +34,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -50,8 +53,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
+import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
@@ -174,6 +179,16 @@ fun MessageBubble(
         }
     }
 
+    // Provide the sensitive-media blur mode to the attachment / inline-image
+    // renderers below, sourced as locally as possible (here, not threaded
+    // through ChatScreen). One collector per visible bubble — DataStore
+    // shares the underlying read, and the static default (FLAGGED) keeps
+    // behavior safe until the first emission lands.
+    val context = LocalContext.current
+    val blurRepo = remember(context) { MediaSettingsRepository(context.applicationContext) }
+    val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
+
+    CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = alignment
@@ -462,6 +477,7 @@ fun MessageBubble(
         } // end Row (bubble + optional leading accent bar)
         } // end if (showBubble)
     }
+    } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
 
 @Composable

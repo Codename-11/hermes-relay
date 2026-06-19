@@ -431,7 +431,7 @@ def android_press_key(key: str) -> str:
         return json.dumps({"error": str(e)})
 
 
-def android_screenshot() -> str:
+def android_screenshot(sensitive: bool = False) -> str:
     """
     Capture a screenshot of the Android screen.
 
@@ -440,6 +440,12 @@ def android_screenshot() -> str:
     tool returns ``MEDIA:hermes-relay://<token>`` in its output, which
     the phone parses and fetches via bearer-auth'd ``GET /media/<token>``
     on the same relay.
+
+    Set ``sensitive=True`` when the captured screen may contain private or
+    NSFW content (e.g. a lock screen, a 2FA code, a banking app). The bit is
+    transported verbatim to the phone via the relay's ``X-Media-Sensitive``
+    header so the client can blur the image per the user's setting — the
+    relay performs no classification of its own. Defaults to ``False``.
 
     Fallback: if the relay is not running (or rejects the registration),
     the tool returns the old ``MEDIA:/tmp/<path>`` form and logs a warning.
@@ -475,7 +481,12 @@ def android_screenshot() -> str:
         # bare path form — the phone shows a placeholder in that case.
         try:
             from plugin.relay.client import register_media
-            token = register_media(tmp.name, "image/jpeg", file_name="screenshot.jpg")
+            token = register_media(
+                tmp.name,
+                "image/jpeg",
+                file_name="screenshot.jpg",
+                sensitive=bool(sensitive),
+            )
         except Exception:
             logging.getLogger("hermes_relay.tools").warning(
                 "register_media raised; falling back to bare MEDIA: path",
@@ -1806,7 +1817,16 @@ _SCHEMAS = {
     "android_screenshot": {
         "name": "android_screenshot",
         "description": "Take a screenshot of the current Android screen. Returns base64 PNG. Use when the accessibility tree is missing context or the screen uses canvas/game rendering.",
-        "parameters": {"type": "object", "properties": {}, "required": []},
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sensitive": {
+                    "type": "boolean",
+                    "description": "Set true if the screen may contain private or NSFW content (lock screen, 2FA code, banking app). The phone blurs the image per the user's setting. Defaults to false.",
+                },
+            },
+            "required": [],
+        },
     },
     "android_scroll": {
         "name": "android_scroll",
@@ -2407,7 +2427,7 @@ _HANDLERS = {
     "android_drag":         lambda args, **kw: android_drag(**args),
     "android_open_app":     lambda args, **kw: android_open_app(**args),
     "android_press_key":    lambda args, **kw: android_press_key(**args),
-    "android_screenshot":   lambda args, **kw: android_screenshot(),
+    "android_screenshot":   lambda args, **kw: android_screenshot(**args),
     "android_scroll":       lambda args, **kw: android_scroll(**args),
     "android_wait":         lambda args, **kw: android_wait(**args),
     "android_get_apps":     lambda args, **kw: android_get_apps(),

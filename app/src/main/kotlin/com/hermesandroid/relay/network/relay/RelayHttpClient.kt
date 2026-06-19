@@ -71,24 +71,33 @@ class RelayHttpClient(
      * @property bytes raw response body.
      * @property fileName best-effort filename parsed from
      *           `Content-Disposition: inline; filename="..."`, or null.
+     * @property sensitive model-emitted sensitivity hint, read from the
+     *           relay's `X-Media-Sensitive` response header (`"1"`/`"true"`
+     *           → true). The relay never classifies media — it transports
+     *           whatever the producing tool/agent declared. Absent header →
+     *           false. Consumed by `ChatViewModel` to blur per the user's
+     *           setting.
      */
     data class FetchedMedia(
         val contentType: String,
         val bytes: ByteArray,
-        val fileName: String?
+        val fileName: String?,
+        val sensitive: Boolean = false
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
             if (other !is FetchedMedia) return false
             return contentType == other.contentType &&
                 bytes.contentEquals(other.bytes) &&
-                fileName == other.fileName
+                fileName == other.fileName &&
+                sensitive == other.sensitive
         }
 
         override fun hashCode(): Int {
             var result = contentType.hashCode()
             result = 31 * result + bytes.contentHashCode()
             result = 31 * result + (fileName?.hashCode() ?: 0)
+            result = 31 * result + sensitive.hashCode()
             return result
         }
     }
@@ -151,12 +160,16 @@ class RelayHttpClient(
                     response.header("Content-Disposition")
                 )
 
+                val sensitive = parseSensitiveHeader(
+                    response.header("X-Media-Sensitive")
+                )
+
                 val body = response.body
                 if (body == null) {
                     return@withContext Result.failure(IOException("Empty response body"))
                 }
                 val bytes = body.bytes()
-                Result.success(FetchedMedia(contentType, bytes, fileName))
+                Result.success(FetchedMedia(contentType, bytes, fileName, sensitive))
             }
         } catch (e: IOException) {
             Log.w(TAG, "fetchMedia failed for $token: ${e.message}")
@@ -258,12 +271,16 @@ class RelayHttpClient(
                     response.header("Content-Disposition")
                 )
 
+                val sensitive = parseSensitiveHeader(
+                    response.header("X-Media-Sensitive")
+                )
+
                 val body = response.body
                 if (body == null) {
                     return@withContext Result.failure(IOException("Empty response body"))
                 }
                 val bytes = body.bytes()
-                Result.success(FetchedMedia(contentType, bytes, fileName))
+                Result.success(FetchedMedia(contentType, bytes, fileName, sensitive))
             }
         } catch (e: IOException) {
             Log.w(TAG, "fetchMediaByPath failed for $path: ${e.message}")
@@ -786,5 +803,17 @@ class RelayHttpClient(
         if (header.isNullOrBlank()) return null
         val match = Regex("""filename\s*=\s*"?([^";]+)"?""", RegexOption.IGNORE_CASE).find(header)
         return match?.groupValues?.get(1)?.trim()?.ifBlank { null }
+    }
+
+    /**
+     * Parse the relay's `X-Media-Sensitive` response header into a bool.
+     *
+     * The relay emits the header only when the media was flagged sensitive,
+     * with value `"1"` (and tolerates `"true"`). Any other value — or an
+     * absent header — means "not sensitive", so when in doubt we don't blur.
+     */
+    private fun parseSensitiveHeader(header: String?): Boolean {
+        val value = header?.trim()?.lowercase() ?: return false
+        return value == "1" || value == "true"
     }
 }

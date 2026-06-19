@@ -1,7 +1,10 @@
 package com.hermesandroid.relay.ui.components
 
 import android.content.Context
-import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfRenderer
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -12,17 +15,29 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -41,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentRenderMode
 import com.hermesandroid.relay.data.AttachmentState
+import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.util.MediaSaver
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import kotlinx.coroutines.Dispatchers
@@ -52,16 +69,24 @@ import kotlinx.coroutines.withContext
  * or inbound (fetched from the relay via a `MEDIA:hermes-relay://` marker).
  *
  * Dispatches on (state × renderMode):
- *   - LOADING   → small spinner card, "Tap to download" CTA when
- *                 [Attachment.errorMessage] equals [ChatViewModel.MEDIA_TAP_TO_DOWNLOAD].
+ *   - LOADING   → progress card; "Tap to download" CTA when
+ *                 [Attachment.errorMessage] equals [ChatViewModel.MEDIA_TAP_TO_DOWNLOAD];
+ *                 a cancel affordance appears when [onCancel] is wired.
  *   - FAILED    → small warning card with retry tap target.
- *   - LOADED    → IMAGE renders inline (bitmap decode), everything else
- *                 renders as a tap-to-open file card that fires ACTION_VIEW
- *                 on the cached content:// URI with FLAG_GRANT_READ_URI_PERMISSION.
+ *   - LOADED    → IMAGE renders inline (bitmap decode); everything else renders
+ *                 as a file card with a real thumbnail when one is cheap to make.
+ *                 Tapping any loaded attachment opens it IN-APP via
+ *                 [AttachmentViewer]; "Open externally" stays in the long-press
+ *                 menu. Images flagged sensitive (or all images, per the user's
+ *                 [BlurMode]) render behind a tap-to-reveal blur.
  *
  * Outbound attachments always have [AttachmentState.LOADED] so they take the
  * LOADED branch immediately — no behavior change relative to the legacy
  * MessageBubble attachment code.
+ *
+ * @param onCancel cancels an in-flight LOADING fetch. Null hides the cancel
+ *   affordance — the actual cancellation is owned by the fetch path
+ *   (ChatViewModel); this component only surfaces the control when wired.
  */
 @Composable
 fun InboundAttachmentCard(
@@ -69,12 +94,14 @@ fun InboundAttachmentCard(
     onRetry: () -> Unit,
     onManualFetch: () -> Unit,
     modifier: Modifier = Modifier,
-    maxWidth: Dp = 280.dp
+    maxWidth: Dp = 280.dp,
+    onCancel: (() -> Unit)? = null,
 ) {
     when (attachment.state) {
         AttachmentState.LOADING -> LoadingCard(
             attachment = attachment,
             onManualFetch = onManualFetch,
+            onCancel = onCancel,
             modifier = modifier,
             maxWidth = maxWidth
         )
@@ -96,6 +123,7 @@ fun InboundAttachmentCard(
 private fun LoadingCard(
     attachment: Attachment,
     onManualFetch: () -> Unit,
+    onCancel: (() -> Unit)?,
     modifier: Modifier,
     maxWidth: Dp
 ) {
@@ -107,8 +135,8 @@ private fun LoadingCard(
             .widthIn(max = maxWidth)
             .then(if (isManualCta) Modifier.clickable { onManualFetch() } else Modifier)
     ) {
+        Column(modifier = Modifier.padding(12.dp)) {
         Row(
-            modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -122,8 +150,10 @@ private fun LoadingCard(
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
+                val sizeHint = attachment.fileSize?.takeIf { it > 0 }
+                    ?.let { " · ${formatBytes(it)}" } ?: ""
                 Text(
-                    text = if (isManualCta) "Tap to download" else "Downloading…",
+                    text = if (isManualCta) "Tap to download" else "Downloading…$sizeHint",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -138,7 +168,32 @@ private fun LoadingCard(
                     )
                 }
             }
+            // Cancel an in-flight fetch — only shown when the fetch path wires
+            // a handler (the fetch lifecycle is owned by ChatViewModel, so the
+            // control stays hidden until that worker passes onCancel through).
+            if (!isManualCta && onCancel != null) {
+                IconButton(onClick = onCancel, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Cancel download",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
         }
+        // Active download bar. Indeterminate today: a determinate % needs the
+        // fetch path to publish bytes-read against Content-Length (a field on
+        // the Attachment model owned by the fetch worker).
+        if (!isManualCta) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+            )
+        }
+        } // end outer Column
     }
 }
 
@@ -198,7 +253,14 @@ private fun LoadedAttachment(
  * Inline image render. Prefers [Attachment.cachedUri] (inbound attachments
  * written to FileProvider cache), falls back to decoding base64 [Attachment.content]
  * for outbound attachments authored by the user.
+ *
+ * Tapping opens the in-app [AttachmentViewer] (IMAGE case); long-press surfaces
+ * the Open-externally / Share / Save menu inline images previously lacked (B1),
+ * and a small download overlay gives a one-tap save affordance (B2). When the
+ * image is flagged sensitive (or the user chose to blur all images) it renders
+ * behind a tap-to-reveal cover (C1).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ImageRender(
     attachment: Attachment,
@@ -206,55 +268,104 @@ private fun ImageRender(
     maxWidth: Dp
 ) {
     val context = LocalContext.current
-    val bitmap: ImageBitmap? = remember(attachment.cachedUri, attachment.content) {
-        try {
-            val bytes: ByteArray? = when {
-                !attachment.cachedUri.isNullOrBlank() -> {
-                    context.contentResolver.openInputStream(Uri.parse(attachment.cachedUri))
-                        ?.use { it.readBytes() }
+    val scope = rememberCoroutineScope()
+    // Decode OFF the main thread — a large inbound image would otherwise block
+    // composition. Null while decoding (placeholder); decodeFailed → file card.
+    var bitmap by remember(attachment.cachedUri, attachment.content) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    var decodeFailed by remember(attachment.cachedUri, attachment.content) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(attachment.cachedUri, attachment.content) {
+        val decoded = withContext(Dispatchers.IO) {
+            runCatching {
+                val bytes: ByteArray? = when {
+                    !attachment.cachedUri.isNullOrBlank() ->
+                        context.contentResolver.openInputStream(Uri.parse(attachment.cachedUri))
+                            ?.use { it.readBytes() }
+                    attachment.content.isNotBlank() ->
+                        android.util.Base64.decode(attachment.content, android.util.Base64.DEFAULT)
+                    else -> null
                 }
-                attachment.content.isNotBlank() -> {
-                    android.util.Base64.decode(attachment.content, android.util.Base64.DEFAULT)
-                }
-                else -> null
-            }
-            bytes?.let {
-                android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap()
-            }
-        } catch (_: Exception) {
-            null
+                bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+            }.getOrNull()
         }
+        if (decoded != null) bitmap = decoded else decodeFailed = true
     }
 
-    if (bitmap != null) {
-        var viewerOpen by remember { mutableStateOf(false) }
-        if (viewerOpen) {
-            ChatImageViewer(
-                source = ChatImageViewerSource.Bitmap(
-                    bitmap = bitmap,
-                    displayName = attachment.fileName ?: "image",
-                    mime = attachment.contentType.ifBlank { "image/*" },
-                    bytesProvider = { attachmentBytes(context, attachment) },
-                ),
-                onDismiss = { viewerOpen = false },
-            )
-        }
-        Image(
-            bitmap = bitmap,
-            contentDescription = attachment.fileName,
-            modifier = modifier
-                .widthIn(max = maxWidth)
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { viewerOpen = true },
-            contentScale = ContentScale.FillWidth
-        )
-    } else {
-        // Decode failed — degrade to a generic file card so at least the
-        // user can tap through to an external viewer.
+    if (decodeFailed) {
+        // Couldn't decode — degrade to a generic file card so the user can
+        // still tap through to an external viewer.
         FileCardRender(
             attachment = attachment.copy(contentType = "application/octet-stream"),
             modifier = modifier,
             maxWidth = maxWidth
+        )
+        return
+    }
+
+    val blurMode = LocalMediaBlurMode.current
+    var revealed by remember(attachment.cachedUri, attachment.content) { mutableStateOf(false) }
+    val blurred = !revealed && shouldBlurImage(blurMode, attachment.sensitive)
+    var viewerOpen by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    val bmp = bitmap
+    if (bmp == null) {
+        // Brief placeholder while the bitmap decodes off-thread.
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = modifier
+                .widthIn(max = maxWidth)
+                .fillMaxWidth()
+                .height(120.dp),
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+            }
+        }
+        return
+    }
+
+    if (viewerOpen) {
+        AttachmentViewer(
+            attachment = attachment,
+            onDismiss = { viewerOpen = false },
+            initiallyRevealed = revealed,
+        )
+    }
+
+    Box(modifier = modifier) {
+        BlurredMedia(blurred = blurred, onReveal = { revealed = true }) {
+            Image(
+                bitmap = bmp,
+                contentDescription = attachment.fileName,
+                modifier = Modifier
+                    .widthIn(max = maxWidth)
+                    .clip(RoundedCornerShape(8.dp))
+                    .combinedClickable(
+                        onClick = { viewerOpen = true },
+                        onLongClick = { menuExpanded = true },
+                    ),
+                contentScale = ContentScale.FillWidth,
+            )
+        }
+        // One-tap save overlay — hidden while the blur cover is up so it
+        // doesn't sit over the "tap to reveal" prompt.
+        if (!blurred) {
+            SaveOverlayButton(
+                onClick = { scope.launch { saveAttachment(context, attachment) } },
+                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+            )
+        }
+        AttachmentActionsMenu(
+            expanded = menuExpanded,
+            onDismiss = { menuExpanded = false },
+            context = context,
+            scope = scope,
+            attachment = attachment,
         )
     }
 }
@@ -270,12 +381,21 @@ private fun FileCardRender(
     val scope = rememberCoroutineScope()
     val (emoji, typeLabel) = emojiAndLabelFor(attachment.renderMode, attachment.contentType)
     var menuExpanded by remember { mutableStateOf(false) }
+    var viewerOpen by remember { mutableStateOf(false) }
 
-    val openExternal = {
-        val uriStr = attachment.cachedUri
-        if (!uriStr.isNullOrBlank()) {
-            MediaSaver.open(context, Uri.parse(uriStr), attachment.contentType)
-        }
+    // Real thumbnail when one is cheap (video first frame, PDF first page);
+    // null falls back to the type emoji.
+    val thumbnail = rememberAttachmentThumbnail(attachment)
+    val blurMode = LocalMediaBlurMode.current
+    val blurThumb = thumbnail != null && shouldBlurThumb(blurMode, attachment)
+
+    if (viewerOpen) {
+        // Non-image types don't blur in the viewer; open straight through.
+        AttachmentViewer(
+            attachment = attachment,
+            onDismiss = { viewerOpen = false },
+            initiallyRevealed = true,
+        )
     }
 
     Surface(
@@ -283,11 +403,10 @@ private fun FileCardRender(
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = modifier
             .widthIn(max = maxWidth)
-            // Tap opens externally (unchanged); long-press surfaces the
-            // Open / Share / Save menu — only when there are bytes to act on.
+            // Tap previews in-app; long-press surfaces Open-externally / Share / Save.
             .combinedClickable(
-                onClick = openExternal,
-                onLongClick = { if (!attachment.cachedUri.isNullOrBlank()) menuExpanded = true },
+                onClick = { viewerOpen = true },
+                onLongClick = { menuExpanded = true },
             )
     ) {
       Box {
@@ -297,10 +416,28 @@ private fun FileCardRender(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Box(
-                modifier = Modifier.size(36.dp),
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(6.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = emoji, style = MaterialTheme.typography.headlineSmall)
+                if (thumbnail != null) {
+                    BlurredMedia(
+                        blurred = blurThumb,
+                        onReveal = {},
+                        revealOnTap = false,
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Image(
+                            bitmap = thumbnail,
+                            contentDescription = null,
+                            modifier = Modifier.size(44.dp),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                } else {
+                    Text(text = emoji, style = MaterialTheme.typography.headlineSmall)
+                }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -323,65 +460,237 @@ private fun FileCardRender(
                     )
                 }
             }
+            // Visible one-tap save affordance (B2).
+            IconButton(
+                onClick = { scope.launch { saveAttachment(context, attachment) } },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Download,
+                    contentDescription = "Save",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
 
-        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-            DropdownMenuItem(
-                text = { Text("Open") },
-                onClick = {
-                    menuExpanded = false
-                    openExternal()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Share") },
-                onClick = {
-                    menuExpanded = false
-                    scope.launch {
-                        val bytes = attachmentBytes(context, attachment)
-                        if (bytes == null) {
-                            attachmentToast(context, "Couldn't read this file")
-                            return@launch
-                        }
-                        val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
-                        MediaSaver.share(context, uri, attachment.contentType)
-                    }
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Save to device") },
-                onClick = {
-                    menuExpanded = false
-                    scope.launch {
-                        val bytes = attachmentBytes(context, attachment)
-                        if (bytes == null) {
-                            attachmentToast(context, "Couldn't read this file")
-                            return@launch
-                        }
-                        when (val result = MediaSaver.saveFile(context, bytes, attachment.fileName, attachment.contentType)) {
-                            is MediaSaver.SaveResult.Saved ->
-                                attachmentToast(context, "Saved to ${result.location}")
-                            MediaSaver.SaveResult.UseShareInstead -> {
-                                val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
-                                MediaSaver.share(context, uri, attachment.contentType)
-                            }
-                            is MediaSaver.SaveResult.Failed ->
-                                attachmentToast(context, "Save failed: ${result.message}")
-                        }
-                    }
-                },
-            )
-        }
+        AttachmentActionsMenu(
+            expanded = menuExpanded,
+            onDismiss = { menuExpanded = false },
+            context = context,
+            scope = scope,
+            attachment = attachment,
+        )
       } // end Box
     }
+}
+
+/**
+ * Shared long-press menu for any attachment: Open externally / Share / Save.
+ * "Open externally" preserves the legacy `ACTION_VIEW` escape hatch now that
+ * the default tap previews in-app.
+ */
+@Composable
+private fun AttachmentActionsMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    context: Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    attachment: Attachment,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text("Open externally") },
+            leadingIcon = { Icon(Icons.Filled.OpenInNew, contentDescription = null) },
+            onClick = {
+                onDismiss()
+                scope.launch { openAttachmentExternally(context, attachment) }
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Share") },
+            onClick = {
+                onDismiss()
+                scope.launch { shareAttachment(context, attachment) }
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Save to device") },
+            leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null) },
+            onClick = {
+                onDismiss()
+                scope.launch { saveAttachment(context, attachment) }
+            },
+        )
+    }
+}
+
+/** Small circular download button overlaid on inline images (B2). */
+@Composable
+private fun SaveOverlayButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        shape = CircleShape,
+        color = Color.Black.copy(alpha = 0.45f),
+        modifier = modifier,
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
+            Icon(
+                imageVector = Icons.Filled.Download,
+                contentDescription = "Save",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+// --- Save / Share / Open helpers (shared by image + file-card paths) --------
+
+private suspend fun shareAttachment(context: Context, attachment: Attachment) {
+    val bytes = attachmentBytes(context, attachment)
+    if (bytes == null) {
+        attachmentToast(context, "Couldn't read this file")
+        return
+    }
+    val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
+    MediaSaver.share(context, uri, attachment.contentType)
+}
+
+private suspend fun saveAttachment(context: Context, attachment: Attachment) {
+    val bytes = attachmentBytes(context, attachment)
+    if (bytes == null) {
+        attachmentToast(context, "Couldn't read this file")
+        return
+    }
+    val result = if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
+        MediaSaver.saveImage(context, bytes, attachment.fileName, attachment.contentType)
+    } else {
+        MediaSaver.saveFile(context, bytes, attachment.fileName, attachment.contentType)
+    }
+    when (result) {
+        is MediaSaver.SaveResult.Saved ->
+            attachmentToast(context, "Saved to ${result.location}")
+        MediaSaver.SaveResult.UseShareInstead -> {
+            val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
+            MediaSaver.share(context, uri, attachment.contentType)
+        }
+        is MediaSaver.SaveResult.Failed ->
+            attachmentToast(context, "Save failed: ${result.message}")
+    }
+}
+
+private suspend fun openAttachmentExternally(context: Context, attachment: Attachment) {
+    val cached = attachment.cachedUri
+    val uri = if (!cached.isNullOrBlank()) {
+        Uri.parse(cached)
+    } else {
+        attachmentBytes(context, attachment)?.let {
+            MediaSaver.stageForShare(context, it, attachment.fileName, attachment.contentType)
+        }
+    }
+    if (uri != null) {
+        MediaSaver.open(context, uri, attachment.contentType)
+    } else {
+        attachmentToast(context, "Couldn't open this file")
+    }
+}
+
+// --- Thumbnails (A1) --------------------------------------------------------
+
+private fun shouldBlurThumb(blurMode: BlurMode, attachment: Attachment): Boolean {
+    if (blurMode == BlurMode.OFF) return false
+    // Thumbnails are previews: blur a flagged-sensitive one. ALL_IMAGES blurs
+    // image previews; video/PDF frames blur only when explicitly flagged.
+    return if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
+        shouldBlurImage(blurMode, attachment.sensitive)
+    } else {
+        attachment.sensitive
+    }
+}
+
+/**
+ * Decode a real thumbnail off the main thread, falling back to null (-> emoji)
+ * on any failure. Video -> first frame via [MediaMetadataRetriever]; PDF ->
+ * first page via [PdfRenderer]. Images are handled inline by [ImageRender].
+ */
+@Composable
+private fun rememberAttachmentThumbnail(attachment: Attachment): ImageBitmap? {
+    val context = LocalContext.current
+    var thumb by remember(attachment.cachedUri, attachment.content, attachment.renderMode) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    LaunchedEffect(attachment.cachedUri, attachment.content, attachment.renderMode) {
+        thumb = withContext(Dispatchers.IO) {
+            runCatching { generateThumbnail(context, attachment) }.getOrNull()
+        }
+    }
+    return thumb
+}
+
+private const val THUMB_TARGET_PX = 220
+
+private fun generateThumbnail(context: Context, attachment: Attachment): ImageBitmap? =
+    when (attachment.renderMode) {
+        AttachmentRenderMode.VIDEO -> videoFrameThumb(context, attachment)
+        AttachmentRenderMode.PDF -> pdfFirstPageThumb(context, attachment)
+        else -> null
+    }
+
+private fun videoFrameThumb(context: Context, attachment: Attachment): ImageBitmap? {
+    val uri = attachment.cachedUri?.takeIf { it.isNotBlank() } ?: return null
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, Uri.parse(uri))
+        retriever.getFrameAtTime(0)?.let { scaleToThumb(it, THUMB_TARGET_PX).asImageBitmap() }
+    } catch (_: Exception) {
+        null
+    } finally {
+        runCatching { retriever.release() }
+    }
+}
+
+private fun pdfFirstPageThumb(context: Context, attachment: Attachment): ImageBitmap? {
+    val uri = attachment.cachedUri?.takeIf { it.isNotBlank() } ?: return null
+    return try {
+        context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.use { pfd ->
+            PdfRenderer(pfd).use { renderer ->
+                if (renderer.pageCount == 0) return@use null
+                renderer.openPage(0).use { page ->
+                    val w = THUMB_TARGET_PX
+                    val h = (w.toFloat() * page.height / page.width).toInt().coerceAtLeast(1)
+                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bmp.asImageBitmap()
+                }
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun scaleToThumb(src: Bitmap, targetPx: Int): Bitmap {
+    val w = src.width
+    val h = src.height
+    if (w <= 0 || h <= 0 || (w <= targetPx && h <= targetPx)) return src
+    val (tw, th) = if (w >= h) {
+        targetPx to (targetPx.toFloat() * h / w).toInt().coerceAtLeast(1)
+    } else {
+        (targetPx.toFloat() * w / h).toInt().coerceAtLeast(1) to targetPx
+    }
+    return Bitmap.createScaledBitmap(src, tw, th, true)
 }
 
 /**
  * Original bytes behind an attachment — read from the cached `content://` URI
  * when present (inbound), else base64-decoded from the inline content
  * (outbound). Off the main thread; null when neither source is available.
+ *
+ * `internal` so the in-app [AttachmentViewer] (same package) shares one byte
+ * acquisition path for Save / Share / Open-externally rather than duplicating it.
  */
-private suspend fun attachmentBytes(context: Context, attachment: Attachment): ByteArray? {
+internal suspend fun attachmentBytes(context: Context, attachment: Attachment): ByteArray? {
     val uriStr = attachment.cachedUri
     return when {
         !uriStr.isNullOrBlank() -> MediaSaver.readUriBytes(context, Uri.parse(uriStr))
