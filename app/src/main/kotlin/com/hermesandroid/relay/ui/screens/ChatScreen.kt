@@ -377,6 +377,9 @@ fun ChatScreen(
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    // Voice mode gear button → full Voice Settings screen. Default no-op so
+    // existing test/preview call sites keep compiling.
+    onNavigateToVoiceSettings: () -> Unit = {},
     onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
@@ -1287,6 +1290,10 @@ fun ChatScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        // Disable the drawer's edge-swipe while voice mode is up so the
+        // overlay reads as a true modal — the swipe gesture lives on the
+        // drawer itself, so the overlay's pointer scrim alone can't block it.
+        gesturesEnabled = !voiceUiState.voiceMode,
         drawerContent = {
             val drawerTitle = if (selectedProfile != null) {
                 "$agentDisplayName sessions"
@@ -2726,6 +2733,10 @@ fun ChatScreen(
                 voiceOutputEnabled = activeVoiceEnabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
                 onOverlayRequest = showVoiceSystemOverlay,
+                // Gear button in the overlay's expanded controls. The overlay
+                // exits voice mode before invoking this, so navigation lands
+                // on Voice Settings with no overlay left on top.
+                onOpenSettings = onNavigateToVoiceSettings,
                 onCompactModeChange = { compact ->
                     voiceCompactMode = compact
                 },

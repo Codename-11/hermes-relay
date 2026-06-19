@@ -847,48 +847,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             this.voicePreferences = voicePreferences
             voicePreferencesJob?.cancel()
             voicePreferencesJob = viewModelScope.launch {
+                // The repository's `settings` flow is now scope-aware (WP-V2):
+                // it re-emits whenever the DataStore OR the active
+                // (connection, profile) scope changes, so a profile switch
+                // (see [onProfileChanged]) flows the new profile's
+                // engine/route/enhanced picks through here automatically.
                 voicePreferences.settings.collect { settings ->
-                    val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
-                    if (
-                        voiceEngineMode != nextEngineMode ||
-                        realtimeTraceDetails != settings.realtimeTraceDetails
-                    ) {
-                        Log.i(
-                            TAG,
-                            "Voice prefs updated engine=${nextEngineMode.storageValue} " +
-                                "interaction=${settings.interactionMode} " +
-                                "realtimeTraceDetails=${settings.realtimeTraceDetails}",
-                        )
-                    }
-                    // Switching engine away from Realtime Agent (or disabling the
-                    // persistent toggle) must drop any open persistent session.
-                    if (
-                        (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
-                            nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
-                        (realtimePersistentSession && !settings.realtimePersistentSession)
-                    ) {
-                        closeRealtimeSession()
-                    }
-                    voiceEngineMode = nextEngineMode
-                    realtimeTraceDetails = settings.realtimeTraceDetails
-                    realtimePersistentSession = settings.realtimePersistentSession
-                    val mode = when (settings.interactionMode.lowercase()) {
-                        "hold" -> InteractionMode.HoldToTalk
-                        "continuous" -> InteractionMode.Continuous
-                        else -> InteractionMode.TapToTalk
-                    }
-                    if (_uiState.value.interactionMode != mode) {
-                        _uiState.update { it.copy(interactionMode = mode) }
-                    }
-                    // Mirror the user-facing settings into the voiceStats
-                    // snapshot so StatsForNerds → Voice reflects live values.
-                    _voiceStats.update {
-                        it.copy(
-                            vadThresholdMs = settings.silenceThresholdMs,
-                            interactionMode = settings.interactionMode,
-                            voiceEngineMode = settings.engineMode,
-                        )
-                    }
+                    applyVoiceSettingsSnapshot(settings)
                 }
             }
         } else {
@@ -1061,7 +1026,107 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceOutputProfileName = normalized
         voiceOutputAvailable = null
         resetRealtimeSpeechCoalescer()
+        // WP-V2: re-point the voice prefs at this (connection, profile) scope
+        // and re-seed the VM's engine/route from the per-profile values so the
+        // *next* turn speaks with this profile's voice, not the prior one's.
+        // The repository's scope-aware `settings` flow also re-emits to the
+        // initialize() collector; the explicit re-read below guarantees the
+        // engine mode is correct even before that collector is rescheduled.
+        applyVoicePrefsScope(normalized)
         maybeNoteStandardVoiceProfileLimitation(normalized)
+    }
+
+    /**
+     * WP-V2 seam: the active connection id used to namespace per-profile voice
+     * prefs (`_<connectionId>_<profile>`, mirroring `ProfileSelectionStore`).
+     *
+     * Null until an integration wires `ConnectionViewModel.activeConnectionId`
+     * in via [setVoicePrefsConnection] (RelayApp owns that wiring today and
+     * passes only the profile name to [onProfileChanged]). While null,
+     * per-profile keys degrade to profile-only namespacing — still enough to
+     * isolate profiles within a single connection; it just can't disambiguate
+     * two connections that both expose a same-named profile.
+     */
+    private var voicePrefsConnectionId: String? = null
+
+    /**
+     * WP-V2 seam: set the active connection id for per-profile voice-pref
+     * namespacing and re-apply the current scope. Lets a connection switch
+     * (with the profile unchanged) re-target the right namespaced keys. Safe
+     * to call before [initialize]; a no-op when the value is unchanged.
+     */
+    fun setVoicePrefsConnection(connectionId: String?) {
+        val normalized = connectionId?.trim()?.takeIf { it.isNotBlank() }
+        if (voicePrefsConnectionId == normalized) return
+        voicePrefsConnectionId = normalized
+        applyVoicePrefsScope(voiceOutputProfileName)
+    }
+
+    /**
+     * Push the current (connection, profile) scope to the voice-prefs
+     * repository and re-seed the VM's cached engine/route from the resolved
+     * per-profile values. The explicit [firstOrNull] read shares
+     * [applyVoiceSettingsSnapshot] with the reactive collector in
+     * [initialize], so running both converges on the same values with no
+     * duplicated engine-transition side effects (the first to run handles a
+     * realtime-session close; the second sees no transition).
+     */
+    private fun applyVoicePrefsScope(profileName: String?) {
+        val prefs = voicePreferences ?: return
+        prefs.setActiveScope(voicePrefsConnectionId, profileName)
+        viewModelScope.launch {
+            prefs.settings.firstOrNull()?.let { applyVoiceSettingsSnapshot(it) }
+        }
+    }
+
+    /**
+     * Apply a [VoiceSettings] snapshot to the VM's cached engine/route/diag
+     * state and the [VoiceStats] mirror. Shared by the [initialize] settings
+     * collector and the per-profile re-seed ([applyVoicePrefsScope]); idempotent
+     * so it is safe to call repeatedly with the same snapshot.
+     */
+    private fun applyVoiceSettingsSnapshot(settings: com.hermesandroid.relay.data.VoiceSettings) {
+        val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
+        if (
+            voiceEngineMode != nextEngineMode ||
+            realtimeTraceDetails != settings.realtimeTraceDetails
+        ) {
+            Log.i(
+                TAG,
+                "Voice prefs updated engine=${nextEngineMode.storageValue} " +
+                    "interaction=${settings.interactionMode} " +
+                    "realtimeTraceDetails=${settings.realtimeTraceDetails}",
+            )
+        }
+        // Switching engine away from Realtime Agent (or disabling the
+        // persistent toggle) must drop any open persistent session.
+        if (
+            (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
+                nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
+            (realtimePersistentSession && !settings.realtimePersistentSession)
+        ) {
+            closeRealtimeSession()
+        }
+        voiceEngineMode = nextEngineMode
+        realtimeTraceDetails = settings.realtimeTraceDetails
+        realtimePersistentSession = settings.realtimePersistentSession
+        val mode = when (settings.interactionMode.lowercase()) {
+            "hold" -> InteractionMode.HoldToTalk
+            "continuous" -> InteractionMode.Continuous
+            else -> InteractionMode.TapToTalk
+        }
+        if (_uiState.value.interactionMode != mode) {
+            _uiState.update { it.copy(interactionMode = mode) }
+        }
+        // Mirror the user-facing settings into the voiceStats snapshot so
+        // StatsForNerds → Voice reflects live values.
+        _voiceStats.update {
+            it.copy(
+                vadThresholdMs = settings.silenceThresholdMs,
+                interactionMode = settings.interactionMode,
+                voiceEngineMode = settings.engineMode,
+            )
+        }
     }
 
     /**

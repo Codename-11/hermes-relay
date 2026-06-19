@@ -53,6 +53,11 @@ import kotlin.math.sin
  *    states so sphere + waveform read as one cohesive element
  *  - Never fully disappears during silence — baseline ~10% envelope keeps
  *    the component alive so the UI doesn't flicker on/off with voice gaps
+ *  - On output, the unfolded "Speaking" shape must *follow* audible speech,
+ *    not lead it. The waveform holds the folded processing/spinner shape
+ *    until [outputAudioActive] reports the first real playback-amplitude
+ *    frame, defeating the AudioTrack deep-buffer cold-start where the
+ *    Speaking state arrives a beat before the playback head leaves 0.
  *
  * Pure Compose Canvas — no external libraries.
  */
@@ -112,6 +117,24 @@ private const val STROKE_WIDTH_DP = 2.5f
 // overlay, not a solid pill. 0.12 = 12 % fade per side, 76 % solid middle.
 private const val EDGE_FADE_FRACTION = 0.12f
 
+/**
+ * @param amplitude live 0..1 envelope. On the input/Listening path this is the
+ *   mic envelope; on the output/Speaking path it is the player's real playback
+ *   amplitude (Visualizer RMS), already attack/release-smoothed by the
+ *   VoiceViewModel — do not re-smooth here.
+ * @param state current voice-turn state. Drives the color palette and, together
+ *   with [outputAudioActive], whether the component is folded (spinner) or
+ *   unfolded (moving wave).
+ * @param outputAudioActive output-start gate. While [state] is
+ *   [VoiceState.Speaking] but the agent's audio is not yet audible (TTS /
+ *   realtime PCM still preparing, or the AudioTrack deep-buffer cold-start with
+ *   the playback head parked at 0), this stays false and the component keeps
+ *   its folded processing/spinner shape. It latches true on the first real
+ *   playback-amplitude frame, unfolding into the moving Speaking shape — so the
+ *   visual *follows* audio instead of leading it. Defaults to false so callers
+ *   on the input path (and previews) get folded-until-audible behavior without
+ *   threading the flag through.
+ */
 @Composable
 fun VoiceWaveform(
     amplitude: Float,
@@ -451,9 +474,39 @@ private fun VoiceWaveformSpeakingPeakPreview() {
             .fillMaxSize()
             .background(Color(0xFF0A0A0A)),
     ) {
+        // outputAudioActive = true → audio is audible, so the wave is unfolded.
+        // Without it the Speaking state alone renders the folded spinner (see
+        // the "Speaking preparing" preview below) and this peak would not show.
         VoiceWaveform(
             amplitude = 0.9f,
             state = VoiceState.Speaking,
+            outputAudioActive = true,
+            modifier = Modifier.padding(16.dp),
+        )
+    }
+}
+
+@Preview(
+    name = "Speaking preparing",
+    showBackground = true,
+    backgroundColor = 0xFF0A0A0A,
+    widthDp = 360,
+    heightDp = 80,
+)
+@Composable
+private fun VoiceWaveformSpeakingPreparingPreview() {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0A0A0A)),
+    ) {
+        // Speaking state has arrived but no real playback frame yet
+        // (outputAudioActive = false) — the output-start gate holds the folded
+        // processing spinner so the visual does not lead the audio.
+        VoiceWaveform(
+            amplitude = 0.0f,
+            state = VoiceState.Speaking,
+            outputAudioActive = false,
             modifier = Modifier.padding(16.dp),
         )
     }

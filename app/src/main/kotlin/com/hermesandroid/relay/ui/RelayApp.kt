@@ -1467,6 +1467,11 @@ fun RelayApp() {
                                 launchSingleTop = true
                             }
                         },
+                        onNavigateToVoiceSettings = {
+                            navController.navigate(Screen.VoiceSettings.route) {
+                                launchSingleTop = true
+                            }
+                        },
                         onNavigateToProfileInspector = { profileName ->
                             navController.navigate(Screen.ProfileInspector.route(profileName)) {
                                 launchSingleTop = true

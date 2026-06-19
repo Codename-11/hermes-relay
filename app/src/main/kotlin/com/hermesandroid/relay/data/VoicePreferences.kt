@@ -8,8 +8,11 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 
 /**
  * User-tunable voice mode preferences.
@@ -112,13 +115,63 @@ enum class VoiceAudioRoute(val storageValue: String) {
     }
 }
 
+/**
+ * Active scope for per-profile voice prefs.
+ *
+ * Mirrors [ProfileSelectionStore]'s `_<connectionId>` keying and extends it to
+ * `_<connectionId>_<profile>` so per-profile voice picks don't leak across
+ * profiles (or across connections that expose a same-named profile).
+ *
+ * A null/blank [profileName] is the "default / launch profile" and resolves to
+ * the un-namespaced global keys — i.e. the default profile *is* the base layer
+ * that named profiles override. A null/blank [connectionId] degrades to
+ * profile-only namespacing, which still isolates profiles within one
+ * connection; it just can't disambiguate two connections with a same-named
+ * profile. See [VoicePreferencesRepository.setActiveScope].
+ */
+data class VoiceProfileScope(
+    val connectionId: String? = null,
+    val profileName: String? = null,
+) {
+    companion object {
+        val Global = VoiceProfileScope()
+    }
+}
+
 class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) {
 
     constructor(context: Context) : this(context.relayDataStore)
 
     companion object {
-        private val KEY_ENGINE_MODE = stringPreferencesKey("voice_engine_mode")
-        private val KEY_AUDIO_ROUTE = stringPreferencesKey("voice_audio_route")
+        // --- Per-profile keys (override map; namespaced by active scope) -----
+        // These are stored as base NAME strings (not typed Key<>s) so the
+        // scoped key can be built per (connectionId, profile) at read/write
+        // time. Resolution layers a per-profile value over the global value
+        // over the hard default — see [scopedName] / [resolveString].
+        //
+        // Why these are per-profile: engine mode, audio route, and the
+        // enhanced-voice overrides describe *which voice the agent speaks
+        // with*, which is a property of the profile (the relay already
+        // persists `voice_output:`/`realtime_voice:` per profile and
+        // `RelayVoiceClient` already sends `?profile=`). Keeping them global
+        // leaked one profile's voice onto every other profile.
+        private const val KEY_ENGINE_MODE = "voice_engine_mode"
+        private const val KEY_AUDIO_ROUTE = "voice_audio_route"
+        private const val KEY_ENH_VOICE = "voice_enh_voice"
+        private const val KEY_ENH_MODEL = "voice_enh_model"
+        private const val KEY_ENH_AUDIO_TAGS = "voice_enh_audio_tags"
+        private const val KEY_ENH_PERSONA = "voice_enh_persona"
+        private const val KEY_ENH_LANGUAGE = "voice_enh_language"
+
+        // --- Global keys (shared across profiles; never namespaced) ----------
+        // Why these stay global: interaction-mode and silence-threshold are
+        // ergonomic input preferences about *how the user drives the mic*, not
+        // about the agent's voice — a user wants the same tap/hold/continuous
+        // habit regardless of which profile is active. auto-tts and the STT
+        // language hint are dead/experimental controls today, and the two
+        // realtime diagnostic toggles (trace details, persistent session) are
+        // engine-behaviour switches that aren't profile-specific. Keeping them
+        // un-namespaced means switching profiles never churns these.
         private val KEY_INTERACTION_MODE = stringPreferencesKey("voice_interaction_mode")
         private val KEY_SILENCE_THRESHOLD_MS = longPreferencesKey("voice_silence_threshold_ms")
         private val KEY_AUTO_TTS = booleanPreferencesKey("voice_auto_tts")
@@ -126,11 +179,6 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         private val KEY_REALTIME_TRACE_DETAILS = booleanPreferencesKey("voice_realtime_trace_details")
         private val KEY_REALTIME_PERSISTENT_SESSION =
             booleanPreferencesKey("voice_realtime_persistent_session")
-        private val KEY_ENH_VOICE = stringPreferencesKey("voice_enh_voice")
-        private val KEY_ENH_MODEL = stringPreferencesKey("voice_enh_model")
-        private val KEY_ENH_AUDIO_TAGS = booleanPreferencesKey("voice_enh_audio_tags")
-        private val KEY_ENH_PERSONA = stringPreferencesKey("voice_enh_persona")
-        private val KEY_ENH_LANGUAGE = stringPreferencesKey("voice_enh_language")
 
         const val DEFAULT_ENGINE_MODE = "hermes_voice_output"
         const val DEFAULT_AUDIO_ROUTE = "auto"
@@ -140,41 +188,148 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         const val DEFAULT_LANGUAGE = ""
         const val DEFAULT_REALTIME_TRACE_DETAILS = false
         const val DEFAULT_REALTIME_PERSISTENT_SESSION = true
+
+        /**
+         * Build the storage name for a per-profile [base] key under [scope].
+         *
+         * - null/blank profile → returns [base] verbatim (the global base
+         *   layer; the default profile reads/writes the un-namespaced key).
+         * - profile set, no connection → `<base>_<profile>`.
+         * - profile + connection set → `<base>_<connectionId>_<profile>`,
+         *   matching [ProfileSelectionStore]'s connection-first ordering.
+         */
+        internal fun scopedName(base: String, scope: VoiceProfileScope): String {
+            val profile = scope.profileName?.trim()?.takeIf { it.isNotEmpty() } ?: return base
+            val conn = scope.connectionId?.trim()?.takeIf { it.isNotEmpty() }
+            return if (conn != null) "${base}_${conn}_$profile" else "${base}_$profile"
+        }
     }
 
-    val settings: Flow<VoiceSettings> = dataStore.data
-        .map { prefs ->
-            VoiceSettings(
-                engineMode = VoiceEngineMode.fromStorage(
-                    prefs[KEY_ENGINE_MODE] ?: DEFAULT_ENGINE_MODE,
-                ).storageValue,
-                audioRoute = VoiceAudioRoute.fromStorage(
-                    prefs[KEY_AUDIO_ROUTE] ?: DEFAULT_AUDIO_ROUTE,
-                ).storageValue,
-                interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
-                silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
-                autoTts = prefs[KEY_AUTO_TTS] ?: DEFAULT_AUTO_TTS,
-                language = prefs[KEY_LANGUAGE] ?: DEFAULT_LANGUAGE,
-                realtimeTraceDetails = prefs[KEY_REALTIME_TRACE_DETAILS]
-                    ?: DEFAULT_REALTIME_TRACE_DETAILS,
-                realtimePersistentSession = prefs[KEY_REALTIME_PERSISTENT_SESSION]
-                    ?: DEFAULT_REALTIME_PERSISTENT_SESSION,
-                enhancedVoice = prefs[KEY_ENH_VOICE] ?: "",
-                enhancedModel = prefs[KEY_ENH_MODEL] ?: "",
-                enhancedAudioTags = prefs[KEY_ENH_AUDIO_TAGS] ?: false,
-                enhancedPersona = prefs[KEY_ENH_PERSONA] ?: "",
-                enhancedLanguage = prefs[KEY_ENH_LANGUAGE] ?: "",
-            )
+    // In-memory active scope. Defaults to global so un-scoped consumers (and
+    // every existing call site) behave exactly as before until a scope is set.
+    private val _scope = MutableStateFlow(VoiceProfileScope.Global)
+
+    /** The active per-profile scope. Set via [setActiveScope]. */
+    val activeScope: StateFlow<VoiceProfileScope> = _scope.asStateFlow()
+
+    /**
+     * Point the repository at a (connection, profile) scope. Per-profile reads
+     * and writes (engine/route/enhanced) re-target the namespaced keys for that
+     * profile; global prefs are unaffected. Passing a null/blank profile name
+     * reverts per-profile reads/writes to the global base layer (the default
+     * profile). Idempotent — a no-op when the normalized scope is unchanged.
+     */
+    fun setActiveScope(connectionId: String?, profileName: String?) {
+        val next = VoiceProfileScope(
+            connectionId = connectionId?.trim()?.takeIf { it.isNotEmpty() },
+            profileName = profileName?.trim()?.takeIf { it.isNotEmpty() },
+        )
+        if (_scope.value != next) {
+            _scope.value = next
         }
-        .distinctUntilChanged()
+    }
+
+    /**
+     * Emits the resolved [VoiceSettings] for the [activeScope]. Re-emits when
+     * either the underlying DataStore or the active scope changes. Per-profile
+     * fields are resolved as: per-profile key → global key → hard default.
+     */
+    val settings: Flow<VoiceSettings> = combine(_scope, dataStore.data) { scope, prefs ->
+        VoiceSettings(
+            // --- per-profile (override map) ---
+            engineMode = VoiceEngineMode.fromStorage(
+                resolveString(prefs, KEY_ENGINE_MODE, scope, DEFAULT_ENGINE_MODE),
+            ).storageValue,
+            audioRoute = VoiceAudioRoute.fromStorage(
+                resolveString(prefs, KEY_AUDIO_ROUTE, scope, DEFAULT_AUDIO_ROUTE),
+            ).storageValue,
+            enhancedVoice = resolveString(prefs, KEY_ENH_VOICE, scope, ""),
+            enhancedModel = resolveString(prefs, KEY_ENH_MODEL, scope, ""),
+            enhancedAudioTags = resolveBoolean(prefs, KEY_ENH_AUDIO_TAGS, scope, false),
+            enhancedPersona = resolveString(prefs, KEY_ENH_PERSONA, scope, ""),
+            enhancedLanguage = resolveString(prefs, KEY_ENH_LANGUAGE, scope, ""),
+            // --- global (shared across profiles) ---
+            interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
+            silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
+            autoTts = prefs[KEY_AUTO_TTS] ?: DEFAULT_AUTO_TTS,
+            language = prefs[KEY_LANGUAGE] ?: DEFAULT_LANGUAGE,
+            realtimeTraceDetails = prefs[KEY_REALTIME_TRACE_DETAILS]
+                ?: DEFAULT_REALTIME_TRACE_DETAILS,
+            realtimePersistentSession = prefs[KEY_REALTIME_PERSISTENT_SESSION]
+                ?: DEFAULT_REALTIME_PERSISTENT_SESSION,
+        )
+    }.distinctUntilChanged()
+
+    // --- per-profile resolution (per-profile key → global key → default) -----
+
+    private fun resolveString(
+        prefs: Preferences,
+        base: String,
+        scope: VoiceProfileScope,
+        default: String,
+    ): String {
+        val scopedName = scopedName(base, scope)
+        if (scopedName != base) {
+            prefs[stringPreferencesKey(scopedName)]?.let { return it }
+        }
+        return prefs[stringPreferencesKey(base)] ?: default
+    }
+
+    private fun resolveBoolean(
+        prefs: Preferences,
+        base: String,
+        scope: VoiceProfileScope,
+        default: Boolean,
+    ): Boolean {
+        val scopedName = scopedName(base, scope)
+        if (scopedName != base) {
+            prefs[booleanPreferencesKey(scopedName)]?.let { return it }
+        }
+        return prefs[booleanPreferencesKey(base)] ?: default
+    }
+
+    // --- per-profile setters (write the namespaced key for the active scope) -
 
     suspend fun setEngineMode(mode: VoiceEngineMode) {
-        dataStore.edit { it[KEY_ENGINE_MODE] = mode.storageValue }
+        val key = stringPreferencesKey(scopedName(KEY_ENGINE_MODE, _scope.value))
+        dataStore.edit { it[key] = mode.storageValue }
     }
 
     suspend fun setAudioRoute(route: VoiceAudioRoute) {
-        dataStore.edit { it[KEY_AUDIO_ROUTE] = route.storageValue }
+        val key = stringPreferencesKey(scopedName(KEY_AUDIO_ROUTE, _scope.value))
+        dataStore.edit { it[key] = route.storageValue }
     }
+
+    /** "" clears the override (relay falls back to the server's saved voice). */
+    suspend fun setEnhancedVoice(voice: String) {
+        val key = stringPreferencesKey(scopedName(KEY_ENH_VOICE, _scope.value))
+        dataStore.edit { it[key] = voice.trim() }
+    }
+
+    /** "" clears the override (relay falls back to the server's saved model). */
+    suspend fun setEnhancedModel(model: String) {
+        val key = stringPreferencesKey(scopedName(KEY_ENH_MODEL, _scope.value))
+        dataStore.edit { it[key] = model.trim() }
+    }
+
+    suspend fun setEnhancedAudioTags(enabled: Boolean) {
+        val key = booleanPreferencesKey(scopedName(KEY_ENH_AUDIO_TAGS, _scope.value))
+        dataStore.edit { it[key] = enabled }
+    }
+
+    /** "" clears the inline persona/style direction (Gemini). */
+    suspend fun setEnhancedPersona(persona: String) {
+        val key = stringPreferencesKey(scopedName(KEY_ENH_PERSONA, _scope.value))
+        dataStore.edit { it[key] = persona }
+    }
+
+    /** "" clears the language override (xAI). */
+    suspend fun setEnhancedLanguage(language: String) {
+        val key = stringPreferencesKey(scopedName(KEY_ENH_LANGUAGE, _scope.value))
+        dataStore.edit { it[key] = language.trim() }
+    }
+
+    // --- global setters (always the un-namespaced key) -----------------------
 
     suspend fun setInteractionMode(mode: String) {
         dataStore.edit { it[KEY_INTERACTION_MODE] = mode }
@@ -198,29 +353,5 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setRealtimePersistentSession(enabled: Boolean) {
         dataStore.edit { it[KEY_REALTIME_PERSISTENT_SESSION] = enabled }
-    }
-
-    /** "" clears the override (relay falls back to the server's saved voice). */
-    suspend fun setEnhancedVoice(voice: String) {
-        dataStore.edit { it[KEY_ENH_VOICE] = voice.trim() }
-    }
-
-    /** "" clears the override (relay falls back to the server's saved model). */
-    suspend fun setEnhancedModel(model: String) {
-        dataStore.edit { it[KEY_ENH_MODEL] = model.trim() }
-    }
-
-    suspend fun setEnhancedAudioTags(enabled: Boolean) {
-        dataStore.edit { it[KEY_ENH_AUDIO_TAGS] = enabled }
-    }
-
-    /** "" clears the inline persona/style direction (Gemini). */
-    suspend fun setEnhancedPersona(persona: String) {
-        dataStore.edit { it[KEY_ENH_PERSONA] = persona }
-    }
-
-    /** "" clears the language override (xAI). */
-    suspend fun setEnhancedLanguage(language: String) {
-        dataStore.edit { it[KEY_ENH_LANGUAGE] = language.trim() }
     }
 }
