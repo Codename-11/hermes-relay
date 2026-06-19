@@ -413,7 +413,14 @@ class ChatViewModel : ViewModel() {
                 )
                 if (!defaultModel.isNullOrBlank()) {
                     viewModelScope.launch {
-                        gateway.prewarm(handler.currentSessionId.value)
+                        // Await a live session so the reset is session-scoped; if
+                        // there is none, the cleared override already resolves to
+                        // the server default on the next session.create — skip the
+                        // global config.set.
+                        if (!gateway.prewarmAwait(handler.currentSessionId.value)) {
+                            refreshActiveAgentName()
+                            return@launch
+                        }
                         gateway.setModel(defaultModel).fold(
                             onSuccess = { result ->
                                 val resolved = result.stringValue("value") ?: defaultModel
@@ -452,9 +459,20 @@ class ChatViewModel : ViewModel() {
             // Upstream model-switch flag string: `<model> [--provider <slug>]`.
             val value = if (!provider.isNullOrBlank()) "$sendModel --provider $provider" else sendModel
             viewModelScope.launch {
-                // Warm a session so the switch is session-scoped (config.set
-                // also works sessionless, falling back to the global default).
-                gateway.prewarm(handler.currentSessionId.value)
+                // Resolve the live session FIRST (suspending), so the switch is
+                // applied SESSION-SCOPED. A fresh chat pre-creates a session, so
+                // racing the fire-and-forget prewarm made config.set run with no
+                // session_id — a GLOBAL write that never reached the turn's
+                // session, leaving it on the server default.
+                val hasSession = gateway.prewarmAwait(handler.currentSessionId.value)
+                if (!hasSession) {
+                    // Genuinely sessionless (brand-new chat, no stored session):
+                    // skip the global config.set. The pick is held in
+                    // _selectedModelOverride and rides the next session.create as
+                    // a per-session override (sessionModelProvider / ensureSession).
+                    refreshActiveAgentName()
+                    return@launch
+                }
                 // Dispatch via config.set (the `_apply_model_switch` path) — NOT
                 // the `/model` slash path, whose command.dispatch fallback
                 // reports a spurious "not a quick/plugin/skill command" failure.

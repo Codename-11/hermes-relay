@@ -106,6 +106,14 @@ class ChatHandler {
     /** Whether to parse tool annotations from assistant text (for servers that don't emit tool events). */
     var parseToolAnnotations: Boolean = false
 
+    /**
+     * When false (default — TUI/desktop parity), server-injected role:system
+     * STEERING markers ("[System: The active model … has changed …]") are
+     * hidden from the rendered transcript. A developer toggle flips this to
+     * surface them for debugging. They always remain in server-side history.
+     */
+    var showSystemMarkers: Boolean = false
+
     /** Active personality/agent name — set by ChatViewModel before each stream. Included on new assistant messages. */
     var activeAgentName: String? = null
 
@@ -774,7 +782,22 @@ class ChatHandler {
             val role = when (item.role) {
                 "user" -> MessageRole.USER
                 "assistant" -> MessageRole.ASSISTANT
-                "system" -> MessageRole.SYSTEM
+                "system" ->
+                    // Upstream injects role:system STEERING markers into the
+                    // session history on model/personality change — e.g.
+                    // "[System: The active model for this chat has changed to …]"
+                    // (tui_gateway/server.py) — so the LLM picks up the new
+                    // runtime/persona. They are NOT user-facing; the TUI/desktop
+                    // keep them invisible. Hide them for parity UNLESS the
+                    // developer "Show system messages" toggle is on (debugging).
+                    // They remain in server-side history for the model regardless.
+                    if (!showSystemMarkers &&
+                        item.contentText?.trimStart()?.startsWith("[System:") == true
+                    ) {
+                        return@mapNotNull null
+                    } else {
+                        MessageRole.SYSTEM
+                    }
                 "tool" -> return@mapNotNull null // Merged into assistant tool calls above
                 else -> return@mapNotNull null
             }
@@ -869,15 +892,30 @@ class ChatHandler {
                 // next turn reconciles. Preserve them like the other client bubbles.
                 it.id.startsWith("system-notice-")
         }
-        val merged = if (preservedVoiceTraces.isEmpty()) {
+        // Errored assistant turns (gateway ❌ lifecycle, transport failure, …)
+        // are NOT persisted server-side, so a wholesale reload would silently
+        // wipe the just-shown error bubble — the "reply appears then vanishes"
+        // regression. Preserve any local assistant message carrying the "Error"
+        // badge whose id is absent from the reloaded transcript, so a failure
+        // stays visible no matter WHICH reload path fires. onComplete already
+        // skips the reload for errored turns; this is the catch-all for every
+        // other reload (connection restore, manual refresh, profile resync, …).
+        val loadedIds = loaded.mapTo(HashSet()) { it.id }
+        val preservedErrorBubbles = _messages.value.filter { msg ->
+            msg.role == MessageRole.ASSISTANT &&
+                "Error" in msg.badges &&
+                msg.id !in loadedIds
+        }
+        val preservedLocal = (preservedVoiceTraces + preservedErrorBubbles).distinctBy { it.id }
+        val merged = if (preservedLocal.isEmpty()) {
             loaded
         } else {
-            // Merge by timestamp so voice traces interleave with the
-            // reloaded server messages in chronological order. The voice
-            // trace IDs carry `System.currentTimeMillis()` in their suffix
-            // (see appendLocalVoiceIntentTrace), so ChatMessage.timestamp
-            // is the source of truth here.
-            (loaded + preservedVoiceTraces).sortedBy { it.timestamp }
+            // Merge by timestamp so preserved local bubbles interleave with the
+            // reloaded server messages in chronological order. Voice trace IDs
+            // carry `System.currentTimeMillis()` in their suffix (see
+            // appendLocalVoiceIntentTrace); errored bubbles keep their live
+            // ChatMessage.timestamp — the source of truth either way.
+            (loaded + preservedLocal).sortedBy { it.timestamp }
         }
 
         _messages.value = if (merged.size > MAX_MESSAGES) merged.takeLast(MAX_MESSAGES) else merged

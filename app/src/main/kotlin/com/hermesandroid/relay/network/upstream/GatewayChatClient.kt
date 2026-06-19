@@ -498,16 +498,31 @@ class GatewayChatClient(
      * send.
      */
     fun prewarm(storedSessionId: String?) {
-        scope.launch {
-            try {
-                connectMutex.withLock {
-                    ensureConnected()
-                    if (storedSessionId != null) resumeForPrewarm(storedSessionId)
-                }
-            } catch (e: Exception) {
-                Log.d(TAG, "Gateway prewarm skipped: ${e.message}")
+        scope.launch { prewarmAwait(storedSessionId) }
+    }
+
+    /**
+     * Suspending [prewarm]: establishes the socket and (when [storedSessionId]
+     * is non-null) resumes the existing session, returning only once that work
+     * has settled. Returns true when a live session is available afterwards.
+     *
+     * An in-chat model/effort/fast switch MUST await this before its
+     * `config.set`. Otherwise the switch races the fire-and-forget [prewarm]
+     * and runs with `liveSessionId == null`, which upstream applies as a GLOBAL
+     * config write instead of a per-session one — so the pick never lands on
+     * the session the next turn actually uses (a fresh chat pre-creates a
+     * session, so this path is the common case, not the edge case).
+     */
+    suspend fun prewarmAwait(storedSessionId: String?): Boolean {
+        try {
+            connectMutex.withLock {
+                ensureConnected()
+                if (storedSessionId != null) resumeForPrewarm(storedSessionId)
             }
+        } catch (e: Exception) {
+            Log.d(TAG, "Gateway prewarm skipped: ${e.message}")
         }
+        return liveSessionId != null
     }
 
     /**
@@ -1512,6 +1527,13 @@ class GatewayChatClient(
         onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
         onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
+        // MUST be wrapped like every other member: GatewayTurnCallbacks gives
+        // onStatusUpdate a default no-op, so omitting it here silently swallows
+        // EVERY gateway status line — the ❌ terminal-error lifecycle update
+        // included. Without it markError never fires, the turn isn't badged
+        // "Error", and onComplete's history reload wipes the error bubble (the
+        // "reply appears then vanishes" bug).
+        onStatusUpdate = { kind, text -> callbackDispatcher { callbacks.onStatusUpdate(kind, text) } },
     )
 }
 
