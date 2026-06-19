@@ -211,7 +211,7 @@ Sources: `plugin/relay/channels/bridge.py`, `app/src/main/kotlin/.../network/han
 
 ### 3.3 Chat
 
-**Note:** Chat does **not** traverse the relay. It rides the standard upstream Hermes surfaces — the dashboard `/api/ws` gateway transport (live thinking) when Manage auth is ready, falling back to the API server's SSE routes.
+**Note:** Chat does **not** traverse the relay. It rides the vanilla upstream Hermes surfaces — the dashboard `/api/ws` gateway transport (live thinking) when Manage auth is ready, falling back to the API server's SSE routes.
 
 Relay involvement is limited to session management routes (`/api/sessions/*`) for create/list/delete/extend. See hermes-relay CLAUDE.md §"Upstream Hermes API Reference" for the endpoint catalog.
 

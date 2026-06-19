@@ -1298,10 +1298,15 @@ fun ChatScreen(
                     // at once. Before the server config lands (or while
                     // disconnected) we fall back to the connection status.
                     //
-                    // Model priority: profile.model (explicit or default
-                    // profile pick) trumps /api/config's `serverModelName`.
-                    // The profile picker is the more specific intent.
-                    val modelName = AgentDisplay.displayModelName(effectiveProfile?.model)
+                    // Model priority mirrors the input chip (currentModelForInput)
+                    // so header, chip, and footer agree on ONE model: the SESSION's
+                    // live model wins — the in-chat pick, then the gateway
+                    // session.info model — so a mid-session switch shows here
+                    // instead of a stale profile/global default. Profile model and
+                    // /api/config's serverModelName are the fallbacks.
+                    val modelName = AgentDisplay.displayModelName(selectedModelOverride)
+                        ?: AgentDisplay.displayModelName(gatewayCurrentModel)
+                        ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                         ?: AgentDisplay.displayModelName(serverModelName)
                     // Subtext: a NON-default personality shown BEFORE the model
                     // (e.g. "Catgirl \u00B7 gpt-5.5"). A CLEARED overlay (default /
@@ -1792,7 +1797,7 @@ fun ChatScreen(
                                             verticalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
                                             Text(
-                                                text = "Chat needs a Standard Hermes API connection.",
+                                                text = "Chat needs a Vanilla Hermes API connection.",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -1800,7 +1805,7 @@ fun ChatScreen(
                                                 onClick = onNavigateToConnect,
                                                 modifier = Modifier.fillMaxWidth(),
                                             ) {
-                                                Text("Connect Standard Hermes")
+                                                Text("Connect Vanilla Hermes")
                                             }
                                         }
                                     }

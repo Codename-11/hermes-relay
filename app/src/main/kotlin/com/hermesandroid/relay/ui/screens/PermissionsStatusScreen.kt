@@ -138,7 +138,7 @@ fun PermissionsStatusScreen(
             PermissionsIntroCard()
 
             PermissionSection(
-                title = "Standard Hermes",
+                title = "Vanilla Hermes",
                 subtitle = "Chat and Manage use your configured Hermes API/dashboard connection.",
             ) {
                 PermissionStatusRow(

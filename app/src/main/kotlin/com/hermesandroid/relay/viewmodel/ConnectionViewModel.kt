@@ -195,6 +195,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // === END PHASE3-status ===
         private val KEY_STREAMING_ENDPOINT = stringPreferencesKey("streaming_endpoint")
         private val KEY_PARSE_TOOL_ANNOTATIONS = booleanPreferencesKey("parse_tool_annotations")
+        private val KEY_SHOW_SYSTEM_MESSAGES = booleanPreferencesKey("show_system_messages")
         private val KEY_MAX_ATTACHMENT_MB = intPreferencesKey("max_attachment_mb")
         private val KEY_MAX_MESSAGE_LENGTH = intPreferencesKey("max_message_length")
 
@@ -1256,6 +1257,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // Show server-injected role:system steering markers ("[System: …]" model /
+    // personality-change notes) in the transcript. Default off (TUI/desktop
+    // parity); on for debugging. Synced to ChatHandler.showSystemMarkers.
+    val showSystemMessages: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_SHOW_SYSTEM_MESSAGES] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setShowSystemMessages(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_SHOW_SYSTEM_MESSAGES] = enabled
+            }
+        }
+    }
+
     // Animation settings
     val animationEnabled: StateFlow<Boolean> = application.relayDataStore.data
         .map { it[KEY_ANIMATION_ENABLED] ?: true }
@@ -1667,7 +1683,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 entries = listOf(
                     ConnectionHandoffTraceEntry(
                         label = "Setup",
-                        detail = "Add a Standard Hermes API/dashboard connection",
+                        detail = "Add a Vanilla Hermes API/dashboard connection",
                     ),
                 ),
             )
@@ -3287,7 +3303,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Voice,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Standard voice needs dashboard sign-in",
+                    title = "Vanilla Hermes voice needs dashboard sign-in",
                     detail = "Dashboard sessions are per-host — a sign-in from another " +
                         "route does not carry over; sign in once via Manage on this one",
                     url = dashboardUrl,
@@ -3854,7 +3870,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Api,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Standard setup skipped",
+                    title = "Vanilla Hermes setup skipped",
                     detail = "No API client configured",
                     url = effectiveApiServerUrlSnapshot(),
                 )
@@ -3884,7 +3900,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Api,
                     severity = DiagnosticSeverity.Error,
-                    title = "Standard setup health failed",
+                    title = "Vanilla Hermes setup health failed",
                     detail = health.message,
                     url = effectiveApiServerUrlSnapshot(),
                 )
@@ -3965,7 +3981,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Api,
                 severity = if (reachable) DiagnosticSeverity.Info else DiagnosticSeverity.Error,
-                title = if (reachable) "Standard Hermes connection ok" else "Standard Hermes auth failed",
+                title = if (reachable) "Vanilla Hermes connection ok" else "Vanilla Hermes auth failed",
                 detail = message,
                 url = effectiveApiServerUrlSnapshot(),
             )
@@ -4053,10 +4069,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     IllegalStateException(
                         when (_standardVoiceAvailability.value) {
                             StandardVoiceAvailability.SignInRequired ->
-                                "Standard voice needs dashboard sign-in (Manage tab)"
+                                "Vanilla Hermes voice needs dashboard sign-in (Manage tab)"
                             StandardVoiceAvailability.Unsupported ->
                                 "This Hermes build has no dashboard audio routes"
-                            else -> "Standard Hermes voice is not available"
+                            else -> "Vanilla Hermes voice is not available"
                         },
                     ),
                 )

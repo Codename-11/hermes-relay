@@ -1,20 +1,20 @@
 # Voice Mode
 
 Real-time voice conversation with your Hermes agent. Tap the mic in chat, speak,
-and the agent speaks back. **No Relay required**: on a standard connection,
+and the agent speaks back. **No Relay required**: on a vanilla connection,
 speech runs through your Hermes dashboard's audio routes — the same path the
 official Hermes Desktop voice mode uses — with the server's configured STT/TTS
 providers.
 
 ::: tip Two speech routes, picked automatically
-- **Standard** — works on a vanilla Hermes install. The phone talks to your
+- **Vanilla Hermes** — works on a vanilla Hermes install. The phone talks to your
   Hermes dashboard; if the dashboard requires sign-in, signing in once under
   **Manage** also unlocks voice for that connection.
 - **Relay** — when the optional Relay is paired, voice prefers it: per-profile
   voice providers, streaming voice output, and the Realtime Agent engine.
 
 You can pin either route under **Settings → Voice → Stable STT/TTS Route**;
-the default *Auto* uses Relay when paired, otherwise Standard.
+the default *Auto* uses Relay when paired, otherwise Vanilla Hermes.
 :::
 
 The stable default engine is **Hermes Chat + Voice Output**: Hermes owns the
@@ -48,7 +48,7 @@ happened.
 
 **On your server:**
 
-- **Standard route (no Relay):** a current hermes-agent whose dashboard
+- **Vanilla Hermes route (no Relay):** a current hermes-agent whose dashboard
   exposes the audio endpoints, with `stt:` and `tts:` configured in
   `~/.hermes/config.yaml`. If the dashboard is auth-gated, sign in once under
   **Manage** on the phone. Older builds without dashboard audio routes show
@@ -87,7 +87,7 @@ Five STT providers are supported:
 **On your phone:**
 
 - Microphone permission (requested the first time you tap the mic).
-- For Standard voice: a saved dashboard URL and dashboard sign-in when the
+- For Vanilla Hermes voice: a saved dashboard URL and dashboard sign-in when the
   dashboard requires auth.
 - For Relay voice extras or Realtime Agent: a reachable relay at `:8767` with
   the voice routes available.
@@ -235,7 +235,7 @@ defer to the saved config.
 
 Two scoping notes:
 
-- **Relay-only.** On the Standard (no-plugin) path the dashboard
+- **Relay-only.** On the Vanilla Hermes (no-plugin) path the dashboard
   `/api/audio/speak` endpoint accepts only the text to speak, so enhanced voice
   there is whatever the server's `tts.<provider>.*` config sets — change it under
   **Manage**, and it applies to every voice turn, not per utterance.

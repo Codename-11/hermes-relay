@@ -4,11 +4,11 @@ This prompt helps a local agent clean up older Hermes-Relay install artifacts
 after moving to the upstream plugin-manager path.
 
 Use it when you want to remove legacy service/shim/bootstrap pieces without
-breaking standard Android chat, Manage, or dashboard voice.
+breaking Vanilla Hermes Android chat, Manage, or dashboard voice.
 
 ```text
 Goal: Audit and clean Hermes-Relay legacy install artifacts while preserving the
-standard upstream Hermes path. Standard Android chat, Manage, and dashboard voice
+vanilla upstream Hermes path. Vanilla Hermes Android chat, Manage, and dashboard voice
 must continue to work against unmodified hermes-agent. Relay power features
 should remain available only through the Hermes-Relay plugin if the operator
 wants them.
@@ -22,9 +22,9 @@ Repository or host context:
 
 Rules:
 1. Do not delete shared Hermes state.
-2. Do not patch or fork upstream hermes-agent for the standard path.
+2. Do not patch or fork upstream hermes-agent for the Vanilla Hermes path.
 3. Treat the optional hermes_relay_bootstrap.pth hook as legacy compatibility
-   only. It is not required for standard chat, Manage, or dashboard voice.
+   only. It is not required for Vanilla Hermes chat, Manage, or dashboard voice.
 4. Prefer plugin-owned commands over manual file deletion when available.
 5. Use dry-run output before removing legacy installer artifacts.
 
@@ -75,10 +75,10 @@ Reinstall Relay through the plugin manager when requested:
    or `hermes pair --register-code <code>`
 
 Verify app flow:
-1. Save a standard API/dashboard connection in Android.
+1. Save a Vanilla Hermes API/dashboard connection in Android.
 2. Verify Chat works without Relay.
 3. Verify Manage signs in through the dashboard.
-4. Verify standard voice uses dashboard audio when available.
+4. Verify Vanilla Hermes voice uses dashboard audio when available.
 5. Pair Relay by QR only for Terminal, Bridge, media, relay sessions, desktop
    tools, notification companion, and Relay voice extras.
 6. Confirm Terminal and Bridge stay gated when no Relay session is paired.
@@ -87,6 +87,6 @@ Report:
 - What was installed.
 - What legacy artifacts were removed.
 - What was intentionally preserved.
-- Whether the standard path was verified.
+- Whether the Vanilla Hermes path was verified.
 - Whether Relay power features were reinstalled and paired.
 ```

@@ -215,7 +215,7 @@ async function copy(key: string, text: string) {
   margin: 1rem auto 1.75rem;
 }
 
-/* ── Path cards — stacked, Standard first ─────────────────────────── */
+/* ── Path cards — stacked, Vanilla Hermes first ─────────────────────────── */
 .path-card {
   max-width: 720px;
   margin: 1rem auto;

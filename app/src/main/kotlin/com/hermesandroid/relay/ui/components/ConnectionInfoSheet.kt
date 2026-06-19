@@ -695,6 +695,7 @@ fun AgentInfoSheet(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
+    val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
     val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
 
     // Session-path state — drives the glanceable transport/route summary +
@@ -785,6 +786,10 @@ fun AgentInfoSheet(
                 defaultPersonality = defaultPersonality,
                 localDisplayAlias = profileDisplayAlias,
                 serverModelName = serverModelName,
+                // The SESSION's live model — so the header model pairs with the
+                // (session-scoped) provider label instead of mixing the global
+                // default with the session provider.
+                sessionModelName = selectedModelOverride ?: gatewayCurrentModel,
                 modelProviderLabel = currentProviderLabel,
                 apiServerReachable = apiServerReachable,
                 chatMode = chatMode,
@@ -1444,7 +1449,7 @@ fun AgentInfoSheet(
                             val hostname = com.hermesandroid.relay.data.Connection
                                 .extractDefaultLabel(connection.apiServerUrl)
                             val statusLine = when {
-                                connection.pairedAt == null -> "$hostname • Standard"
+                                connection.pairedAt == null -> "$hostname • Vanilla Hermes"
                                 else -> "$hostname • Paired"
                             }
                             ProfileRadioRow(
@@ -1998,6 +2003,7 @@ private fun AgentSheetHeader(
     defaultPersonality: String,
     localDisplayAlias: String?,
     serverModelName: String,
+    sessionModelName: String? = null,
     modelProviderLabel: String? = null,
     apiServerReachable: Boolean,
     chatMode: ChatMode,
@@ -2010,8 +2016,14 @@ private fun AgentSheetHeader(
         connectionLabel = null,
         localDisplayAlias = localDisplayAlias,
     )
-    val modelLabel = AgentDisplay.displayModelName(profile?.model)
+    // Session model wins so it pairs with the (session-scoped) provider label;
+    // falls back to the profile model, then the server default.
+    val modelLabel = AgentDisplay.displayModelName(sessionModelName)
+        ?: AgentDisplay.displayModelName(profile?.model)
         ?: AgentDisplay.displayModelName(serverModelName)
+    // The global default — surfaced as a quiet caption only when THIS session
+    // runs something different (the always-visible global-vs-session split).
+    val serverDefaultLabel = AgentDisplay.displayModelName(serverModelName)
     val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
     val statusText = when {
         apiServerReachable -> "Connected"
@@ -2079,6 +2091,19 @@ private fun AgentSheetHeader(
                     text = modelProviderLabel?.takeIf { it.isNotBlank() }
                         ?.let { "$label · $it" } ?: label,
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            // Global-vs-session split: when the session runs a different model
+            // than the server's global default, name the default here so the
+            // scope is obvious at a glance (matches a mid-session switch).
+            if (modelLabel != null && serverDefaultLabel != null &&
+                !modelLabel.equals(serverDefaultLabel, ignoreCase = true)
+            ) {
+                Text(
+                    text = "Server default: $serverDefaultLabel",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                 )

@@ -11,6 +11,7 @@ import ExperimentalBadge from './components/ExperimentalBadge.vue';
 import HowItWorks from './components/HowItWorks.vue';
 import SurfaceCards from './components/SurfaceCards.vue';
 import StoreBadge from './components/StoreBadge.vue';
+import CombineModel from './components/CombineModel.vue';
 
 export default {
   extends: DefaultTheme,
@@ -20,6 +21,7 @@ export default {
     app.component('ExperimentalBadge', ExperimentalBadge);
     // Global so `<StoreBadge />` works inside any markdown page.
     app.component('StoreBadge', StoreBadge);
+    app.component('CombineModel', CombineModel);
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {

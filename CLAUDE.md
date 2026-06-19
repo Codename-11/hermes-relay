@@ -4,26 +4,26 @@
 
 ## What This Is
 
-A native Android app (Kotlin + Jetpack Compose) paired with an optional Python relay plugin/server (aiohttp) for the Hermes agent platform. Standard chat, Manage, and dashboard voice work against unmodified upstream Hermes. Relay adds phone control, terminal, remote desktop tooling, extra voice engines, and dashboard Relay management.
+A native Android app (Kotlin + Jetpack Compose) paired with an optional Python relay plugin/server (aiohttp) for the Hermes agent platform. Vanilla Hermes chat, Manage, and dashboard voice work against unmodified upstream Hermes. Relay adds phone control, terminal, remote desktop tooling, extra voice engines, and dashboard Relay management.
 
-**Current state:** v1.0.0 stable. The default no-plugin path supports chat, Manage, and voice on vanilla upstream Hermes. Chat auto-prefers the dashboard `/api/ws` gateway transport when Manage auth is ready, then falls back to API-server SSE routes. Standard voice uses dashboard `/api/audio/*` with the Manage session. Relay remains an additive power path for terminal, bridge/device control, notification companion, extra/provider-native voice, remote access, and desktop tooling. Two Android product flavors ship: `googlePlay` (conservative, no unattended Device Control surface) and `sideload` (full-capability).
+**Current state:** v1.0.0 stable. The default no-plugin path supports chat, Manage, and voice on vanilla upstream Hermes. Chat auto-prefers the dashboard `/api/ws` gateway transport when Manage auth is ready, then falls back to API-server SSE routes. Vanilla Hermes voice uses dashboard `/api/audio/*` with the Manage session. Relay remains an additive power path for terminal, bridge/device control, notification companion, extra/provider-native voice, remote access, and desktop tooling. Two Android product flavors ship: `googlePlay` (conservative, no unattended Device Control surface) and `sideload` (full-capability).
 
 ## Architecture
 
 ```
-Phone (WS)       -> Hermes dashboard (:9119)     [standard gateway chat, live thinking]
-Phone (HTTP/SSE) -> Hermes API Server (:8642)    [standard chat fallback, sessions, runs]
-Phone (HTTP)     -> Hermes dashboard (:9119)     [standard Manage + voice]
+Phone (WS)       -> Hermes dashboard (:9119)     [vanilla Hermes gateway chat, live thinking]
+Phone (HTTP/SSE) -> Hermes API Server (:8642)    [vanilla Hermes chat fallback, sessions, runs]
+Phone (HTTP)     -> Hermes dashboard (:9119)     [vanilla Hermes Manage + voice]
 Phone (WSS/HTTP) -> Relay plugin/server (:8767)  [optional bridge, terminal, relay voice, remote tools]
 ```
 
-The standard path must stay vanilla upstream only. API-server bearer auth and dashboard cookie auth are separate. Terminal and bridge require Relay pairing; standard chat, Manage, and dashboard voice must not.
+The Vanilla Hermes path must stay upstream-only. API-server bearer auth and dashboard cookie auth are separate. Terminal and bridge require Relay pairing; Vanilla Hermes chat, Manage, and dashboard voice must not.
 
 ### Upstream Hermes API Reference
 
 **IMPORTANT:** Always verify endpoints against the actual hermes-agent source (`gateway/platforms/api_server.py`). The upstream repo is the source of truth — not our docs, not our memory, not assumptions from other frontends.
 
-**Standard endpoints (confirmed in hermes-agent source):**
+**Vanilla Hermes endpoints (confirmed in hermes-agent source):**
 
 | Endpoint | Purpose | Tool Call Format |
 |----------|---------|-----------------|
@@ -65,9 +65,9 @@ The Android client probes per-endpoint capability via `HermesApiClient.probeCapa
 
 **Dashboard web server (separate surface — standard Manage / Desktop remote gateway):**
 
-hermes-agent ships a second web server at `hermes_cli/web_server.py` that hosts the React admin dashboard at `hermes_cli/web_dist/`. It has its **own** `/api/*` routes that **do not live on `api_server.py`** — notably: `GET/PUT /api/config` (full tree), `GET /api/config/schema`, `GET /api/config/defaults`, `GET/PUT /api/config/raw` (YAML text), `GET/PUT/DELETE /api/env` + `POST /api/env/reveal`, `PUT /api/skills/toggle`, `/api/cron/jobs/*` (different shape from `/api/jobs/*`), `/api/providers/oauth/*`, `/api/dashboard/themes`, `/api/dashboard/plugins`, `/api/model/info` + `/api/model/options` + `POST /api/model/set`, `/api/profiles/*` (CRUD, `POST /api/profiles/active`, per-profile soul/description/model), `/api/mcp/*`, `/api/logs`, `/api/analytics/usage`, and **`POST /api/audio/transcribe` + `POST /api/audio/speak`** (base64 data-url contract, built for hermes-desktop voice). The API server has **no audio routes** — its `/v1/capabilities` advertises `audio_api: false`; PR #8199 (`/v1/audio/*`) is the canonical future surface but is unmerged. Android's **standard (no-plugin) voice** therefore rides this dashboard surface via `StandardHermesVoiceClient` with the per-connection dashboard cookie session (Manage sign-in unlocks voice); `AutoVoiceAudioClient` prefers Relay when paired and falls back to standard.
+hermes-agent ships a second web server at `hermes_cli/web_server.py` that hosts the React admin dashboard at `hermes_cli/web_dist/`. It has its **own** `/api/*` routes that **do not live on `api_server.py`** — notably: `GET/PUT /api/config` (full tree), `GET /api/config/schema`, `GET /api/config/defaults`, `GET/PUT /api/config/raw` (YAML text), `GET/PUT/DELETE /api/env` + `POST /api/env/reveal`, `PUT /api/skills/toggle`, `/api/cron/jobs/*` (different shape from `/api/jobs/*`), `/api/providers/oauth/*`, `/api/dashboard/themes`, `/api/dashboard/plugins`, `/api/model/info` + `/api/model/options` + `POST /api/model/set`, `/api/profiles/*` (CRUD, `POST /api/profiles/active`, per-profile soul/description/model), `/api/mcp/*`, `/api/logs`, `/api/analytics/usage`, and **`POST /api/audio/transcribe` + `POST /api/audio/speak`** (base64 data-url contract, built for hermes-desktop voice). The API server has **no audio routes** — its `/v1/capabilities` advertises `audio_api: false`; PR #8199 (`/v1/audio/*`) is the canonical future surface but is unmerged. Android's **Vanilla Hermes (no-plugin) voice** therefore rides this dashboard surface via `StandardHermesVoiceClient` with the per-connection dashboard cookie session (Manage sign-in unlocks voice); `AutoVoiceAudioClient` prefers Relay when paired and falls back to standard.
 
-Current upstream supports two auth modes on this surface. Loopback dashboards still use the injected `window.__HERMES_SESSION_TOKEN__` path. Remote/non-loopback dashboards use the Desktop-style dashboard auth gate: `/api/status` advertises `auth_required` and providers, `/auth/password-login` handles password providers, `/auth/login?provider=...` handles Nous/OIDC redirects, `/api/auth/me` returns the verified session, and `/api/auth/ws-ticket` mints a short-lived ticket for `/api/ws` / `/api/pty`. This dashboard session is **not** an `API_SERVER_KEY`. Android uses it for Manage, standard voice, and the gateway chat transport. `/api/ws` is backed by `tui_gateway/server.py` (what hermes-desktop + the Ink TUI speak) and is the only upstream surface with **live** `reasoning.delta`/`thinking.delta` streaming; the api_server SSE paths remain the standard fallback. Relay-only capabilities remain behind Relay pairing. **Do not proxy dashboard auth or dashboard admin APIs over the relay.**
+Current upstream supports two auth modes on this surface. Loopback dashboards still use the injected `window.__HERMES_SESSION_TOKEN__` path. Remote/non-loopback dashboards use the Desktop-style dashboard auth gate: `/api/status` advertises `auth_required` and providers, `/auth/password-login` handles password providers, `/auth/login?provider=...` handles Nous/OIDC redirects, `/api/auth/me` returns the verified session, and `/api/auth/ws-ticket` mints a short-lived ticket for `/api/ws` / `/api/pty`. This dashboard session is **not** an `API_SERVER_KEY`. Android uses it for Manage, Vanilla Hermes voice, and the gateway chat transport. `/api/ws` is backed by `tui_gateway/server.py` (what hermes-desktop + the Ink TUI speak) and is the only upstream surface with **live** `reasoning.delta`/`thinking.delta` streaming; the api_server SSE paths remain the SSE fallback. Relay-only capabilities remain behind Relay pairing. **Do not proxy dashboard auth or dashboard admin APIs over the relay.**
 
 **Tool call rendering paths:**
 1. **Runs API** — Emits `tool.started`/`tool.completed` as real SSE events → `ToolProgressCard` in real-time.
@@ -75,7 +75,7 @@ Current upstream supports two auth modes on this surface. Loopback dashboards st
 3. **Annotation parser** — Fallback for servers emitting inline markdown annotations (`` `💻 terminal` ``).
 
 ## Key Instructions
-- **Standard path = vanilla upstream only.** The default (no-plugin) connection path — gateway/API chat, Manage, and standard voice via the dashboard surface — must work against **unmodified upstream hermes-agent**: no fork patches, no bespoke server config as a dependency. The app ships on Google Play to users whose servers we don't control. Features that need server-side changes go through upstream PRs (with graceful degradation until merged) or live behind the opt-in relay plugin.
+- **Vanilla Hermes path = upstream-only.** The default (no-plugin) connection path — gateway/API chat, Manage, and Vanilla Hermes voice via the dashboard surface — must work against **unmodified upstream hermes-agent**: no fork patches, no bespoke server config as a dependency. The app ships on Google Play to users whose servers we don't control. Features that need server-side changes go through upstream PRs (with graceful degradation until merged) or live behind the opt-in relay plugin.
 - **Always verify upstream before assuming an endpoint exists.** Check `gateway/platforms/api_server.py` in hermes-agent. If an endpoint isn't there, document whether bootstrap injects it or it requires the fork.
 - If we use a non-standard endpoint, ensure `probeCapabilities()` covers it and the auto-resolver degrades gracefully.
 - **Bootstrap maintenance:** Retire `plugin/hermes_relay_bootstrap/` per surface. Sessions and read-only skills/toolsets now have native upstream replacements; config, memory, legacy skill detail/toggle, available-models, and slash middleware still need explicit replacement decisions before full removal.
@@ -396,7 +396,7 @@ Server is a Linux box running hermes-agent with hermes-relay editable-installed 
 **Compat hook:** `hermes relay compat status/install/remove` manages only the
 optional `hermes_relay_bootstrap.pth` startup hook. New installs load the
 plugin-owned bootstrap from `plugin/hermes_relay_bootstrap/`; the repo-root
-package is only a legacy import shim. Standard chat, Manage, and dashboard voice
+package is only a legacy import shim. Vanilla Hermes chat, Manage, and dashboard voice
 must not depend on this hook.
 
 **Key conventions:**
@@ -429,13 +429,13 @@ See [RELEASE.md](RELEASE.md) for the full recipe.
 
 | Surface | Endpoint | Notes |
 |---------|----------|-------|
-| Chat (gateway) | Dashboard `POST /api/auth/ws-ticket` -> WS `/api/ws` | Standard upstream dashboard/tui_gateway path; live thinking/reasoning; requires dashboard auth |
+| Chat (gateway) | Dashboard `POST /api/auth/ws-ticket` -> WS `/api/ws` | Vanilla Hermes dashboard/tui_gateway path; live thinking/reasoning; requires dashboard auth |
 | Chat streaming | `POST /v1/runs` → `GET /v1/runs/{id}/events` | Structured tool events; async run-control path |
 | Chat (sessions) | `POST /api/sessions/{id}/chat/stream` | Native upstream session-persisted SSE; preferred when capability probe finds it |
 | Chat (compat) | `POST /v1/chat/completions` (stream=true) | Inline tool annotations only |
 | Session CRUD | `GET/POST/PATCH/DELETE /api/sessions` | Native upstream (#33134); bootstrap fallback only for old builds |
-| Manage | Dashboard `/api/status`, `/api/auth/me`, `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` | Standard upstream dashboard surface; do not proxy through Relay |
-| Standard voice | Dashboard `POST /api/audio/transcribe`, `POST /api/audio/speak` | Standard no-plugin voice; uses dashboard session from Manage |
+| Manage | Dashboard `/api/status`, `/api/auth/me`, `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` | Vanilla Hermes dashboard surface; do not proxy through Relay |
+| Vanilla Hermes voice | Dashboard `POST /api/audio/transcribe`, `POST /api/audio/speak` | Vanilla Hermes no-plugin voice; uses dashboard session from Manage |
 | Pairing (QR) | `POST /pairing/register` (loopback only) | Via `/hermes-relay-pair` or `hermes-pair` shim; accepts optional `endpoints` for multi-endpoint QRs |
 | Pairing (multi-endpoint) | QR `endpoints` array (ADR 24) | `hermes: 3` schema; ordered `lan`/`tailscale`/`public`/... candidates; phone re-probes on network change |
 | Pairing auth | WSS `auth.ok` payload | Includes `expires_at`, `grants`, `transport_hint` |

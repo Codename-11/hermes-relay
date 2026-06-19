@@ -487,7 +487,7 @@ fun VoiceSettingsScreen(
                         ),
                         RouteOption(
                             route = VoiceAudioRoute.Standard,
-                            label = "Standard Hermes",
+                            label = "Vanilla Hermes",
                             detail = "The dashboard audio path Hermes Desktop uses — works on a " +
                                 "vanilla Hermes install, no Relay plugin required.",
                             status = standardStatus,

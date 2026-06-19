@@ -715,6 +715,12 @@ fun RelayApp() {
         connectionViewModel.chatHandler.parseToolAnnotations = parseAnnotations
     }
 
+    // Sync "show system messages" debug toggle to ChatHandler
+    val showSystemMessages by connectionViewModel.showSystemMessages.collectAsState()
+    LaunchedEffect(showSystemMessages) {
+        connectionViewModel.chatHandler.showSystemMarkers = showSystemMessages
+    }
+
     // Sync streaming endpoint preference to chat. Resolves "auto" against the
     // current server capabilities so vanilla upstream + bootstrap-injected
     // sessions API picks /v1/chat/completions for portable SSE chat while
@@ -1016,7 +1022,7 @@ fun RelayApp() {
                 // (or there was none), and the checklist has visibly
                 // finished ticking. Anything weaker (e.g. the resolver's
                 // earlier health evidence) reveals a chat screen that still
-                // shows "Connect Standard Hermes" for the few hundred ms
+                // shows "Connect Vanilla Hermes" for the few hundred ms
                 // until the client-based verdict catches up.
                 (chatReady && initialChatSettled && startupNarrationComplete) ||
                 // Error path: a settled unreachable reveals the normal UI,

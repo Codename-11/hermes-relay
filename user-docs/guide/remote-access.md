@@ -4,7 +4,7 @@ Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailsc
 
 ## What Uses Which Connection
 
-Standard setup saves the API server URL and API key directly. The setup form
+Vanilla Hermes setup saves the API server URL and API key directly. The setup form
 also has a **Remote access — Tailscale URL** field; fill it in and Android
 stores both routes and uses the highest-priority reachable one. A Relay
 pairing QR can also carry both parts of the app when you enable the optional

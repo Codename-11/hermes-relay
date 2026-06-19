@@ -38,7 +38,7 @@ Open **Settings → Connections**. Each card shows the connection's label, hostn
 - **Revoke** — server-side logout. The token is invalidated on the server; the connection stays in the app but is marked unpaired.
 - **Remove** — deletes the connection and its stored auth material. The TOFU cert pin for the server's host survives, so if you re-add the same server later, it's still trusted without a re-verify.
 
-Tap **Add connection** to create a new one. This launches the same connection wizard used during first-time setup. Choose **Standard Hermes** for the normal API/dashboard path, or scan a QR when your host already printed one. Relay pairing is optional and can be added later from the connection card.
+Tap **Add connection** to create a new one. This launches the same connection wizard used during first-time setup. Choose **Vanilla Hermes** for the normal API/dashboard path, or scan a QR when your host already printed one. Relay pairing is optional and can be added later from the connection card.
 
 ## Live status and diagnostics
 

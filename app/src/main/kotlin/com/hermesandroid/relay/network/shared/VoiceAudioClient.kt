@@ -78,7 +78,7 @@ class AutoVoiceAudioClient(
                 if (!standardReadyProvider()) {
                     Result.failure(
                         IllegalStateException(
-                            "Standard Hermes voice is not available — check dashboard sign-in in Manage",
+                            "Vanilla Hermes voice is not available — check dashboard sign-in in Manage",
                         ),
                     )
                 } else {

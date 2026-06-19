@@ -1,0 +1,952 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hermes-Relay · Path Architecture</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f6f7;
+      --panel: #ffffff;
+      --panel-2: #fbfcfd;
+      --text: #14202a;
+      --muted: #5d6b78;
+      --faint: #8593a0;
+      --line: #d9e0e6;
+      --line-soft: #e8edf1;
+      --code-bg: #0f1820;
+      --code-text: #e8f0f5;
+
+      /* Vanilla Hermes path = teal (vanilla upstream, the safe default) */
+      --std: #167a6e;
+      --std-strong: #0e5750;
+      --std-bg: #e6f4f0;
+      --std-line: #b6ddd4;
+
+      /* Relay path = violet (additive plugin power) */
+      --relay: #6b4fb0;
+      --relay-strong: #503a89;
+      --relay-bg: #efeafb;
+      --relay-line: #d3c8f0;
+
+      /* Decision / runtime nodes = amber */
+      --dec: #9a6313;
+      --dec-bg: #fdf3e0;
+      --dec-line: #f0dcb4;
+
+      --ok: #167a6e;
+      --warn: #9a6313;
+      --bad: #b23a48;
+
+      --radius: 12px;
+      --radius-sm: 8px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1318;
+        --panel: #151e26;
+        --panel-2: #111921;
+        --text: #e7eef3;
+        --muted: #9aa8b4;
+        --faint: #6b7884;
+        --line: #283541;
+        --line-soft: #1d2832;
+        --std-bg: #11302b;
+        --std-line: #1f5048;
+        --std: #4fc8b8;
+        --std-strong: #76d8cb;
+        --relay-bg: #221b3a;
+        --relay-line: #3d3168;
+        --relay: #a991e8;
+        --relay-strong: #c2b1f0;
+        --dec-bg: #2e2410;
+        --dec-line: #574419;
+        --dec: #e0aa55;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 80px;
+    }
+
+    header {
+      display: grid;
+      gap: 14px;
+      padding: 8px 0 28px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 36px;
+    }
+
+    h1, h2, h3, h4, p { margin: 0; }
+
+    h1 {
+      font-size: clamp(2.1rem, 5vw, 3.4rem);
+      line-height: 1.02;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      font-size: 1.45rem;
+      letter-spacing: -0.01em;
+      margin-bottom: 6px;
+      scroll-margin-top: 20px;
+    }
+
+    h3 { font-size: 1.05rem; margin-bottom: 4px; }
+
+    a { color: var(--std-strong); font-weight: 640; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .eyebrow {
+      color: var(--std-strong);
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .lede {
+      color: var(--muted);
+      font-size: 1.08rem;
+      max-width: 760px;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 640;
+    }
+    .pill.std { border-color: var(--std-line); background: var(--std-bg); color: var(--std-strong); }
+    .pill.relay { border-color: var(--relay-line); background: var(--relay-bg); color: var(--relay-strong); }
+
+    section { margin: 44px 0; }
+    section > p { color: var(--muted); max-width: 820px; }
+    section > p + p { margin-top: 12px; }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .section-head .num {
+      font-variant-numeric: tabular-nums;
+      font-weight: 800;
+      color: var(--faint);
+      font-size: 1.1rem;
+    }
+
+    /* ── TOC ─────────────────────────────────────── */
+    nav.toc {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 8px;
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+    nav.toc a {
+      display: flex;
+      gap: 9px;
+      padding: 7px 9px;
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-weight: 560;
+      font-size: 0.92rem;
+    }
+    nav.toc a:hover { background: var(--panel-2); text-decoration: none; }
+    nav.toc a .n { color: var(--faint); font-weight: 800; font-variant-numeric: tabular-nums; }
+
+    /* ── Generic panel ───────────────────────────── */
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--dec);
+      background: var(--dec-bg);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin: 18px 0;
+      font-size: 0.95rem;
+    }
+    .callout.std { border-left-color: var(--std); background: var(--std-bg); }
+    .callout.relay { border-left-color: var(--relay); background: var(--relay-bg); }
+    .callout strong { font-weight: 740; }
+
+    /* ── Flow nodes ──────────────────────────────── */
+    .flow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      padding: 8px 0;
+    }
+    .fnode {
+      width: min(560px, 100%);
+      background: var(--panel);
+      border: 1.5px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      text-align: center;
+    }
+    .fnode .t { font-weight: 700; font-size: 0.97rem; }
+    .fnode .s { color: var(--muted); font-size: 0.84rem; margin-top: 3px; }
+    .fnode code { font-size: 0.82rem; }
+
+    .fnode.entry { border-color: var(--faint); background: var(--panel-2); }
+    .fnode.dec {
+      border-color: var(--dec-line);
+      background: var(--dec-bg);
+      border-radius: 999px;
+      width: min(520px, 100%);
+    }
+    .fnode.dec .t { color: var(--dec); }
+    .fnode.gateway { border-color: var(--std-line); background: var(--std-bg); }
+    .fnode.gateway .t { color: var(--std-strong); }
+    .fnode.sse { border-color: var(--std-line); }
+    .fnode.relay { border-color: var(--relay-line); background: var(--relay-bg); }
+    .fnode.relay .t { color: var(--relay-strong); }
+    .fnode.term { border-style: dashed; }
+
+    .conn { width: 2px; height: 22px; background: var(--line); }
+    .conn.arrow { position: relative; }
+    .conn.arrow::after {
+      content: "";
+      position: absolute;
+      left: 50%; bottom: -1px;
+      transform: translateX(-50%);
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid var(--line);
+    }
+
+    .branch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      width: 100%;
+      margin-top: 6px;
+    }
+    .branch.three { grid-template-columns: 1fr 1fr 1fr; }
+    .branch-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      border: 1px dashed var(--line-soft);
+      border-radius: var(--radius);
+      padding: 10px 10px 14px;
+      background: var(--panel-2);
+    }
+    .branch-label {
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--faint);
+      margin-bottom: 8px;
+    }
+    .branch-label.yes { color: var(--ok); }
+    .branch-label.no { color: var(--bad); }
+    .branch-col .fnode { width: 100%; }
+
+    @media (max-width: 640px) {
+      .branch, .branch.three { grid-template-columns: 1fr; }
+    }
+
+    /* ── Two-path top diagram ────────────────────── */
+    .paths {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+    @media (max-width: 760px) { .paths { grid-template-columns: 1fr; } }
+    .path-card {
+      border-radius: var(--radius);
+      padding: 18px;
+      border: 1.5px solid;
+    }
+    .path-card.std { border-color: var(--std-line); background: var(--std-bg); }
+    .path-card.relay { border-color: var(--relay-line); background: var(--relay-bg); }
+    .path-card h3 { display: flex; align-items: center; gap: 8px; font-size: 1.15rem; }
+    .path-card.std h3 { color: var(--std-strong); }
+    .path-card.relay h3 { color: var(--relay-strong); }
+    .path-card .tag {
+      font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em;
+      text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+    }
+    .path-card.std .tag { background: var(--std); color: #fff; }
+    .path-card.relay .tag { background: var(--relay); color: #fff; }
+    .path-card ul { margin: 12px 0 0; padding-left: 18px; color: var(--text); }
+    .path-card li { margin: 5px 0; font-size: 0.92rem; }
+    .path-card .req {
+      margin-top: 12px; font-size: 0.84rem; color: var(--muted);
+      border-top: 1px dashed var(--line); padding-top: 10px;
+    }
+
+    /* ── Tables ──────────────────────────────────── */
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 640px; }
+    thead th {
+      text-align: left; padding: 11px 14px; background: var(--panel-2);
+      font-size: 0.74rem; font-weight: 800; letter-spacing: 0.05em;
+      text-transform: uppercase; color: var(--muted);
+      border-bottom: 1px solid var(--line);
+    }
+    tbody td { padding: 11px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--panel-2); }
+    td .owner { font-weight: 740; }
+    td.std-c, td .std-c { color: var(--std-strong); }
+    td.relay-c, td .relay-c { color: var(--relay-strong); }
+
+    .dot {
+      display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+      margin-right: 6px; vertical-align: middle;
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.warn { background: var(--warn); }
+    .dot.bad { background: var(--bad); }
+    .dot.neutral { background: var(--faint); }
+
+    code {
+      font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+      font-size: 0.86em;
+      background: color-mix(in srgb, var(--muted) 14%, transparent);
+      padding: 1px 5px; border-radius: 5px;
+    }
+    .fnode.gateway code, .fnode.dec code { background: rgba(0,0,0,0.06); }
+
+    .ref {
+      font-size: 0.8rem; color: var(--faint);
+      font-family: ui-monospace, Consolas, monospace;
+    }
+
+    /* ── Status-surface grid ─────────────────────── */
+    .surf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    .surf {
+      border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 15px; background: var(--panel);
+    }
+    .surf h4 { font-size: 0.98rem; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .surf .where { font-size: 0.76rem; color: var(--faint); font-weight: 600; }
+    .surf ul { margin: 9px 0 0; padding-left: 17px; }
+    .surf li { font-size: 0.85rem; color: var(--muted); margin: 3px 0; }
+    .chip {
+      font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em;
+      text-transform: uppercase; padding: 2px 7px; border-radius: 999px;
+      border: 1px solid var(--line);
+    }
+    .chip.good { color: var(--ok); border-color: var(--std-line); background: var(--std-bg); }
+    .chip.gap  { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); background: color-mix(in srgb, var(--bad) 9%, transparent); }
+    .chip.part { color: var(--warn); border-color: var(--dec-line); background: var(--dec-bg); }
+
+    footer {
+      margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
+      color: var(--faint); font-size: 0.84rem;
+    }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 14px 0 2px; font-size: 0.83rem; color: var(--muted); }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 13px; height: 13px; border-radius: 4px; border: 1px solid var(--line); }
+    .swatch.std { background: var(--std-bg); border-color: var(--std-line); }
+    .swatch.relay { background: var(--relay-bg); border-color: var(--relay-line); }
+    .swatch.dec { background: var(--dec-bg); border-color: var(--dec-line); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="eyebrow">Hermes-Relay · Architecture Reference</span>
+    <h1>Connection Paths &amp; Chat Transport Resolution</h1>
+    <p class="lede">
+      How the Android app splits into a <strong>Vanilla Hermes</strong> path that runs on
+      unmodified upstream Hermes and an additive <strong>Relay</strong> plugin path —
+      and how, <em>within</em> Vanilla Hermes chat, it climbs a tier ladder of transports
+      and falls back gracefully. A separate <strong>build-flavor gate</strong> decides which
+      capabilities ship in the APK at all.
+    </p>
+    <div class="meta-row">
+      <span class="pill std">Vanilla Hermes = vanilla upstream only</span>
+      <span class="pill relay">Relay = optional plugin</span>
+      <span class="pill" style="border-color:var(--dec-line);background:var(--dec-bg);color:var(--dec)">Sideload = Device Control gate</span>
+      <span class="pill">v1.0.0 · updated 2026-06-18</span>
+    </div>
+    <div class="legend">
+      <span><span class="swatch std"></span> Vanilla Hermes / upstream surface</span>
+      <span><span class="swatch relay"></span> Relay plugin surface</span>
+      <span><span class="swatch dec"></span> Runtime decision</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#model"><span class="n">1</span> Paths &amp; the flavor gate</a>
+    <a href="#network"><span class="n">2</span> Four network endpoints</a>
+    <a href="#tiers"><span class="n">3</span> Chat transport tiers</a>
+    <a href="#resolve"><span class="n">4</span> How a path is chosen (flowchart)</a>
+    <a href="#inputs"><span class="n">5</span> Decision inputs: availability + caps</a>
+    <a href="#matrix"><span class="n">6</span> Feature → path matrix</a>
+    <a href="#auth"><span class="n">7</span> Auth model per path</a>
+    <a href="#surfaces"><span class="n">8</span> Where status is surfaced</a>
+  </nav>
+
+  <!-- ───────────────────────── 1 ───────────────────────── -->
+  <section id="model">
+    <div class="section-head"><span class="num">01</span><h2>The two paths &amp; the flavor gate</h2></div>
+    <p>
+      Every capability in the app belongs to exactly one of two paths. The dividing
+      line is a hard product rule: the Vanilla Hermes path must work against
+      <strong>unmodified upstream hermes-agent</strong> — the app ships on Google Play to
+      servers we don't control. Anything needing server-side code lives behind the
+      opt-in Relay plugin (or goes upstream as a PR with graceful degradation).
+    </p>
+
+    <div class="paths" style="margin-top:18px">
+      <div class="path-card std">
+        <h3>🟢 Vanilla Hermes <span class="tag">vanilla upstream</span></h3>
+        <p style="color:var(--std-strong);font-size:0.9rem;margin-top:4px">
+          No pairing. Works the moment you point at a Hermes server + dashboard.
+        </p>
+        <ul>
+          <li><strong>Chat</strong> — gateway WS, then API-server SSE (tiered, see §3)</li>
+          <li><strong>Manage</strong> — config, profiles, model, env, MCP (dashboard)</li>
+          <li><strong>Vanilla Hermes voice</strong> — dashboard <code>/api/audio/*</code></li>
+          <li><strong>Sessions / history</strong> — native <code>/api/sessions</code></li>
+        </ul>
+        <div class="req">Auth: API-server bearer key + dashboard cookie (Manage sign-in).</div>
+      </div>
+      <div class="path-card relay">
+        <h3>🟣 Relay <span class="tag">optional plugin</span></h3>
+        <p style="color:var(--relay-strong);font-size:0.9rem;margin-top:4px">
+          Requires pairing a Relay. Purely additive power features.
+        </p>
+        <ul>
+          <li><strong>Terminal</strong> — server shell over WSS</li>
+          <li><strong>Bridge</strong> — phone/device control (sideload)</li>
+          <li><strong>Enhanced / relay voice</strong> — streaming TTS, realtime agent</li>
+          <li><strong>Desktop tools</strong> · <strong>notification companion</strong> · <strong>remote access</strong></li>
+        </ul>
+        <div class="req">Auth: paired Relay session token (in-memory; re-pair after relay restart).</div>
+      </div>
+    </div>
+
+    <div class="callout std">
+      <strong>Chat never crosses into Relay.</strong> Vanilla Hermes chat "mixes" only
+      <em>within</em> the Vanilla Hermes path — between the gateway WS transport and the
+      API-server SSE transports. The Relay plugin adds terminal, bridge, and voice
+      surfaces, but it does <em>not</em> carry Vanilla Hermes chat. That keeps the Play-Store
+      default fully functional with zero plugin installed.
+    </div>
+
+    <h3 style="margin-top:36px">The third axis — build flavor (capability gate)</h3>
+    <p style="margin-top:6px">
+      Path (Vanilla Hermes vs Relay) is about <em>which server surface</em> you talk to. Flavor is a
+      different axis entirely: a capability ceiling <strong>compiled into the APK</strong>,
+      independent of any server or pairing. Both flavors ship the full Relay client — only
+      <strong>sideload</strong> compiles in phone <strong>Device Control</strong> (the
+      AccessibilityService "hands"). The active track shows in Settings → About as a badge.
+    </p>
+    <div class="paths" style="margin-top:16px">
+      <div class="path-card" style="border-color:var(--line);background:var(--panel)">
+        <h3 style="color:var(--text)">googlePlay <span class="tag" style="background:var(--faint);color:#fff">Bridge Core</span></h3>
+        <p style="font-size:0.9rem;color:var(--muted);margin-top:4px">
+          Conservative track. No phone Device Control surface.
+        </p>
+        <ul>
+          <li>Full Vanilla Hermes path — chat, Manage, voice</li>
+          <li>Relay: terminal, relay voice, notification companion, media, session grants</li>
+          <li><strong>No</strong> screen reading, taps, typing, screenshots, overlays, or unattended control</li>
+        </ul>
+        <div class="req">Gated <code>android_*</code> tools return a <code>sideload-only</code> 403 instead of crashing; the Bridge phone-control screen isn't present.</div>
+      </div>
+      <div class="path-card relay">
+        <h3>sideload <span class="tag">full Device Control</span></h3>
+        <p style="color:var(--relay-strong);font-size:0.9rem;margin-top:4px">
+          Full-capability track. Adds the AccessibilityService bridge.
+        </p>
+        <ul>
+          <li>Everything googlePlay ships, plus…</li>
+          <li>Device Control hands: tap · type · navigate · screen-read · screenshot · overlay</li>
+          <li>Unattended access · Tier-C tools (call / SMS / contacts / location)</li>
+        </ul>
+        <div class="req">Device Control tiers 1–6 (baseline → screen context → voice-first → vision-first → safety rails → future) are all sideload-gated.</div>
+      </div>
+    </div>
+    <div class="callout relay">
+      <strong>Bridge is two-layered.</strong> Relay pairing unlocks the bridge <em>channel</em>;
+      the sideload flavor unlocks the Device Control <em>hands</em> within it. A paired Relay on a
+      googlePlay build still cannot tap or type — the capability simply isn't compiled in.
+      <span class="ref">BuildFlavor · data/FeatureFlags.kt:92</span>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 2 ───────────────────────── -->
+  <section id="network">
+    <div class="section-head"><span class="num">02</span><h2>Four network endpoints</h2></div>
+    <p>The phone talks to up to four distinct surfaces. The first three are upstream; the fourth is ours.</p>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead>
+          <tr><th>Transport</th><th>Target</th><th>Owner</th><th>Carries</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="dot ok"></span><strong>WS</strong></td>
+            <td>Hermes dashboard <code>:9119</code> <code>/api/ws</code></td>
+            <td class="std-c owner">Upstream (tui_gateway)</td>
+            <td>Vanilla Hermes gateway chat · <strong>live</strong> thinking/reasoning deltas</td>
+          </tr>
+          <tr>
+            <td><span class="dot ok"></span><strong>HTTP/SSE</strong></td>
+            <td>Hermes API server <code>:8642</code></td>
+            <td class="std-c owner">Upstream (api_server)</td>
+            <td>Vanilla Hermes chat fallback · sessions · runs · capabilities</td>
+          </tr>
+          <tr>
+            <td><span class="dot ok"></span><strong>HTTP</strong></td>
+            <td>Hermes dashboard <code>:9119</code> <code>/api/*</code></td>
+            <td class="std-c owner">Upstream (web_server)</td>
+            <td>Manage · Vanilla Hermes voice <code>/api/audio/*</code> · auth/ws-ticket</td>
+          </tr>
+          <tr>
+            <td><span class="dot" style="background:var(--relay)"></span><strong>WSS/HTTP</strong></td>
+            <td>Relay plugin/server <code>:8767</code></td>
+            <td class="relay-c owner">Hermes-Relay plugin</td>
+            <td>Bridge · terminal · relay voice · desktop tools · media</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="ref" style="margin-top:10px">
+      API-server bearer auth and dashboard cookie auth are <em>separate</em>. See
+      <a href="upstream-surface-matrix.md">docs/upstream-surface-matrix.md</a> for the full route-ownership contract.
+    </p>
+  </section>
+
+  <!-- ───────────────────────── 3 ───────────────────────── -->
+  <section id="tiers">
+    <div class="section-head"><span class="num">03</span><h2>Chat transport tiers</h2></div>
+    <p>
+      Vanilla Hermes chat has four transports, ordered best-to-fallback. The resolver
+      prefers the gateway (it's the only surface with live reasoning), then degrades
+      down the SSE ladder based on what the server actually advertises.
+    </p>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Tier</th><th>Endpoint</th><th>Why prefer it</th><th>Tool / reasoning fidelity</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>1</strong></td>
+            <td class="std-c"><strong>Gateway WS</strong></td>
+            <td><code>/api/ws</code> (dashboard)</td>
+            <td>Only surface with <strong>live</strong> <code>reasoning.delta</code> / <code>thinking.delta</code>; full byte-upload attach</td>
+            <td>Structured tool events + live thinking</td>
+          </tr>
+          <tr>
+            <td><strong>2</strong></td>
+            <td><strong>Sessions SSE</strong></td>
+            <td><code>/api/sessions/{id}/chat/stream</code></td>
+            <td>Native upstream, session-persisted; preferred SSE when probed present</td>
+            <td>Structured SSE events; reasoning post-hoc</td>
+          </tr>
+          <tr>
+            <td><strong>3</strong></td>
+            <td><strong>Completions SSE</strong></td>
+            <td><code>/v1/chat/completions</code></td>
+            <td>OpenAI-compatible; always-available stateless fallback</td>
+            <td>Inline markdown tool annotations only</td>
+          </tr>
+          <tr>
+            <td><strong>4</strong></td>
+            <td><strong>Runs SSE</strong></td>
+            <td><code>/v1/runs</code> → <code>/events</code></td>
+            <td>Structured run lifecycle when sessions absent but runs advertised</td>
+            <td>Structured tool events (<code>tool.started/completed</code>)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>Voice turns are SSE-only.</strong> The gateway's <code>prompt.submit</code> RPC
+      has no system-message slot, so per-turn ephemeral instructions (voice interface
+      context) can't ride it. A "gateway" preference is force-downgraded to SSE for
+      those turns. <span class="ref">ChatViewModel.send() · effectiveEndpoint</span>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 4 ───────────────────────── -->
+  <section id="resolve">
+    <div class="section-head"><span class="num">04</span><h2>How a path is chosen — the flowchart</h2></div>
+    <p>
+      Resolution happens in <strong>two moments</strong>. First, at connect/probe time, a pure
+      function picks a <em>preference</em>. Second, at send time, <code>ChatViewModel</code>
+      re-checks live state and can still downgrade to SSE. This is why a turn whose
+      preference reads "gateway" can quietly complete over SSE.
+    </p>
+
+    <h3 style="margin-top:24px;color:var(--dec)">Phase A · Connect-time preference</h3>
+    <p class="ref"><code>resolveStreamingEndpointPreference(preference, gateway, capabilities)</code> — GatewayModels.kt:63</p>
+    <div class="flow panel" style="margin-top:12px">
+      <div class="fnode entry">
+        <div class="t">streamingEndpoint preference</div>
+        <div class="s">user setting: <code>"auto"</code> (default) · or a manual pin</div>
+      </div>
+      <div class="conn arrow"></div>
+      <div class="fnode dec">
+        <div class="t">Is the preference a manual pin?</div>
+        <div class="s"><code>"gateway"</code> / <code>"sessions"</code> / <code>"completions"</code> / <code>"runs"</code></div>
+      </div>
+      <div class="conn"></div>
+      <div class="branch">
+        <div class="branch-col">
+          <span class="branch-label yes">Yes — manual</span>
+          <div class="fnode term">
+            <div class="t">Use it verbatim</div>
+            <div class="s">Manual pick wins. Per-turn fallback still applies if it can't serve.</div>
+          </div>
+        </div>
+        <div class="branch-col">
+          <span class="branch-label no">No — "auto"</span>
+          <div class="fnode dec" style="width:100%">
+            <div class="t">gateway == Ready?</div>
+          </div>
+          <div class="conn"></div>
+          <div class="branch">
+            <div class="branch-col">
+              <span class="branch-label yes">Yes</span>
+              <div class="fnode gateway"><div class="t">→ "gateway"</div></div>
+            </div>
+            <div class="branch-col">
+              <span class="branch-label no">No</span>
+              <div class="fnode sse">
+                <div class="t">capabilities<br>.preferredChatEndpoint()</div>
+                <div class="s">sessions › completions › runs</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:32px;color:var(--dec)">Phase B · Send-time dispatch</h3>
+    <p class="ref"><code>ChatViewModel.send()</code> — runtime re-check &amp; fallback wiring</p>
+    <div class="flow panel" style="margin-top:12px">
+      <div class="fnode entry">
+        <div class="t">User sends a message</div>
+        <div class="s">effectiveEndpoint = resolved preference</div>
+      </div>
+      <div class="conn arrow"></div>
+      <div class="fnode dec">
+        <div class="t">Voice interface-context present AND endpoint == gateway?</div>
+      </div>
+      <div class="conn"></div>
+      <div class="branch">
+        <div class="branch-col">
+          <span class="branch-label yes">Yes</span>
+          <div class="fnode sse">
+            <div class="t">Force SSE fallback</div>
+            <div class="s">gateway can't carry system_message</div>
+          </div>
+        </div>
+        <div class="branch-col">
+          <span class="branch-label no">No</span>
+          <div class="fnode dec" style="width:100%"><div class="t">effectiveEndpoint == "gateway"?</div></div>
+          <div class="conn"></div>
+          <div class="branch">
+            <div class="branch-col">
+              <span class="branch-label no">SSE pick</span>
+              <div class="fnode sse"><div class="t">dispatchSse(endpoint)</div></div>
+            </div>
+            <div class="branch-col">
+              <span class="branch-label yes">gateway</span>
+              <div class="fnode dec" style="width:100%"><div class="t">gateway client live?</div></div>
+              <div class="conn"></div>
+              <div class="branch">
+                <div class="branch-col">
+                  <span class="branch-label no">null</span>
+                  <div class="fnode sse"><div class="t">dispatchSse(fallback)</div></div>
+                </div>
+                <div class="branch-col">
+                  <span class="branch-label yes">yes</span>
+                  <div class="fnode gateway"><div class="t">gateway.sendTurn()</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="conn arrow" style="margin-top:6px"></div>
+      <div class="fnode dec">
+        <div class="t">gateway.sendTurn → outcome</div>
+      </div>
+      <div class="conn"></div>
+      <div class="branch">
+        <div class="branch-col">
+          <span class="branch-label yes">streams OK</span>
+          <div class="fnode gateway term">
+            <div class="t">Gateway turn</div>
+            <div class="s">live thinking + structured tools</div>
+          </div>
+        </div>
+        <div class="branch-col">
+          <span class="branch-label no">onPreflightFailure</span>
+          <div class="fnode sse term">
+            <div class="t">dispatchSse(fallback)</div>
+            <div class="s">nothing started server-side → safe to retry on SSE</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout std">
+      <strong>SSE fallback resolution.</strong> When the chosen SSE endpoint is
+      <code>sessions</code> but there's no session yet, it downgrades to stateless
+      <code>completions</code> for that first turn — there's nothing to stream against
+      otherwise. <span class="ref">resolveSseFallback()</span>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 5 ───────────────────────── -->
+  <section id="inputs">
+    <div class="section-head"><span class="num">05</span><h2>Decision inputs: availability + capabilities</h2></div>
+    <p>The two flowcharts above read two pieces of probed state. Both are computed at connect time and refreshed on resume.</p>
+
+    <div class="paths" style="margin-top:16px">
+      <div class="panel">
+        <h3 style="color:var(--std-strong)">GatewayAvailability</h3>
+        <p class="ref">GatewayModels.kt:22 · set by the dashboard <code>/api/status</code> + <code>/api/auth/me</code> probe</p>
+        <ul style="padding-left:18px;margin-top:10px">
+          <li><span class="dot neutral"></span><strong>Unknown</strong> — no probe yet (startup / connection switch)</li>
+          <li><span class="dot ok"></span><strong>Ready</strong> — reachable + authenticated (or no auth) → gateway preferred</li>
+          <li><span class="dot warn"></span><strong>SignInRequired</strong> — reachable but gated; Manage sign-in unlocks it</li>
+          <li><span class="dot bad"></span><strong>Unreachable</strong> — <code>/api/status</code> didn't answer</li>
+          <li><span class="dot bad"></span><strong>Unsupported</strong> — <em>sticky</em>: WS upgrade/ticket got 404/403 (build predates embedded chat)</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>ServerCapabilities</h3>
+        <p class="ref">HermesApiClient.probeCapabilities() · probe order below</p>
+        <div class="flow" style="padding-top:4px">
+          <div class="fnode" style="width:100%"><div class="t"><code>GET /health</code></div><div class="s">unreachable → DISCONNECTED, stop</div></div>
+          <div class="conn arrow"></div>
+          <div class="fnode" style="width:100%"><div class="t"><code>GET /v1/capabilities</code></div><div class="s">present → parse &amp; return (authoritative)</div></div>
+          <div class="conn arrow"></div>
+          <div class="fnode" style="width:100%">
+            <div class="t">HEAD probes (fallback)</div>
+            <div class="s"><code>/api/sessions</code> · <code>…/chat/stream</code> · <code>/v1/chat/completions</code> · <code>/v1/runs</code></div>
+          </div>
+        </div>
+        <p style="font-size:0.85rem;color:var(--muted);margin-top:8px">
+          <code>preferredChatEndpoint()</code> = <code>sessionsChatStream ? "sessions" : portable ? "completions" : runs ? "runs" : "sessions"</code>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 6 ───────────────────────── -->
+  <section id="matrix">
+    <div class="section-head"><span class="num">06</span><h2>Feature → path matrix</h2></div>
+    <p>Which path unlocks each feature, and what it degrades to when that path is unavailable.</p>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead>
+          <tr><th>Feature</th><th>Path</th><th>Surface</th><th>Degrades to</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Chat (live thinking)</strong></td><td class="std-c">Vanilla Hermes</td><td>Gateway WS</td><td>Sessions → Completions → Runs SSE</td></tr>
+          <tr><td><strong>Chat (fallback)</strong></td><td class="std-c">Vanilla Hermes</td><td>API-server SSE</td><td>Inline-annotation parser</td></tr>
+          <tr><td><strong>Session history / CRUD</strong></td><td class="std-c">Vanilla Hermes</td><td><code>/api/sessions</code></td><td>Stateless completions (no persistence)</td></tr>
+          <tr><td><strong>Manage</strong> (config/profiles/model/env/MCP)</td><td class="std-c">Vanilla Hermes</td><td>Dashboard <code>/api/*</code></td><td>—  (hidden if dashboard down)</td></tr>
+          <tr><td><strong>Vanilla Hermes voice</strong> (STT/TTS)</td><td class="std-c">Vanilla Hermes</td><td>Dashboard <code>/api/audio/*</code></td><td>Relay voice if paired (Auto route)</td></tr>
+          <tr><td><strong>Terminal</strong></td><td class="relay-c">Relay</td><td>WSS <code>terminal.*</code></td><td>Unavailable — "Pair Relay"</td></tr>
+          <tr><td><strong>Bridge — Device Control</strong> (tap/type/read/screenshot/overlay)</td><td class="relay-c">Relay + <strong>sideload</strong></td><td>AccessibilityService + WSS <code>bridge.command</code></td><td>googlePlay: surface absent</td></tr>
+          <tr><td><strong>Unattended access</strong></td><td class="relay-c">Relay + <strong>sideload</strong></td><td>Bridge unattended mode</td><td>googlePlay: not shipped</td></tr>
+          <tr><td><strong>Tier-C tools</strong> (call / SMS / contacts / location)</td><td class="relay-c">Relay + <strong>sideload</strong></td><td><code>android_*</code> tools</td><td>googlePlay: <code>403 sideload_only</code></td></tr>
+          <tr><td><strong>Enhanced / streaming voice</strong></td><td class="relay-c">Relay</td><td><code>/voice/output/*</code>, <code>/voice/synthesize</code></td><td>Vanilla Hermes voice (basic)</td></tr>
+          <tr><td><strong>Realtime agent voice</strong></td><td class="relay-c">Relay</td><td><code>/voice/realtime-agent/*</code></td><td>Unavailable (experimental)</td></tr>
+          <tr><td><strong>Notification companion</strong></td><td class="relay-c">Relay</td><td>WSS notifications channel</td><td>Unavailable</td></tr>
+          <tr><td><strong>Desktop tools</strong></td><td class="relay-c">Relay</td><td>WSS <code>desktop.command</code></td><td>Unavailable</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 7 ───────────────────────── -->
+  <section id="auth">
+    <div class="section-head"><span class="num">07</span><h2>Auth model per path</h2></div>
+    <p>Three independent credential systems. None substitutes for another — this is why "connected" is not one boolean.</p>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead>
+          <tr><th>Path</th><th>Credential</th><th>Source</th><th>Lifetime</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="std-c owner">Gateway WS</td>
+            <td>Dashboard cookie + WS ticket</td>
+            <td>Manage sign-in → <code>/api/auth/ws-ticket</code></td>
+            <td>Ticket 30s, one-use (fresh per connect); cookie = session</td>
+          </tr>
+          <tr>
+            <td class="std-c owner">API-server SSE</td>
+            <td>Bearer API key</td>
+            <td>Stored per connection (<code>SessionTokenStore</code>)</td>
+            <td>Until rotated</td>
+          </tr>
+          <tr>
+            <td class="std-c owner">Dashboard / Manage / voice</td>
+            <td>Dashboard cookie</td>
+            <td>Manage sign-in (password / Nous OIDC)</td>
+            <td>Server session; wiped on dashboard restart</td>
+          </tr>
+          <tr>
+            <td class="relay-c owner">Relay plugin</td>
+            <td>Paired session token</td>
+            <td>QR / 6-char pairing → <code>auth.ok</code></td>
+            <td><strong>In-memory</strong> — re-pair after each relay restart</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout relay">
+      <strong>Do not proxy dashboard auth or admin APIs over the Relay.</strong> Manage and
+      Vanilla Hermes voice ride the dashboard surface directly with the dashboard cookie.
+      The Relay carries only Relay-owned capabilities.
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 8 ───────────────────────── -->
+  <section id="surfaces">
+    <div class="section-head"><span class="num">08</span><h2>Where status is surfaced today</h2></div>
+    <p>
+      Inventory of the surfaces a user can read connection / path / feature health from.
+      Status coverage is broad; the gap is a single consolidated diagnostic view and any
+      visibility into the <em>capability snapshot</em> that actually drives the decision.
+    </p>
+
+    <div class="surf-grid" style="margin-top:18px">
+      <div class="surf">
+        <h4>Connections settings — active card <span class="chip good">rich</span></h4>
+        <div class="where">ConnectionsSettingsScreen · ActiveConnectionSections</div>
+        <ul>
+          <li>API / Dashboard / Voice / Relay / Terminal / Secure-proxy status rows</li>
+          <li>Route section: per-endpoint probe outcome (LAN/Tailscale/Public)</li>
+          <li>Transport security badge · keystore · relay session count</li>
+        </ul>
+      </div>
+      <div class="surf">
+        <h4>Settings root — exception pills <span class="chip good">good</span></h4>
+        <div class="where">SettingsScreen · ActiveAgentCard</div>
+        <ul>
+          <li>"connection · model · personality" subtitle</li>
+          <li>Pills appear only when action needed (API offline, Dashboard sign-in, Relay stale, Plugin offline)</li>
+        </ul>
+      </div>
+      <div class="surf">
+        <h4>Chat / Terminal headers <span class="chip good">good</span></h4>
+        <div class="where">ConnectionStatusBadge · RelayUiState</div>
+        <ul>
+          <li>4-state animated dot (Connected/Connecting/Probing/Disconnected)</li>
+          <li>Relay row: Connected · Stale · Expired + endpoint role ("· Tailscale")</li>
+        </ul>
+      </div>
+      <div class="surf">
+        <h4>Voice settings <span class="chip good">good</span></h4>
+        <div class="where">VoiceSettingsScreen</div>
+        <ul>
+          <li>Engine · STT/TTS route (Auto/Vanilla Hermes/Relay) each Ready/Offline/Checking</li>
+          <li>Render path: streaming vs basic synthesize</li>
+        </ul>
+      </div>
+      <div class="surf">
+        <h4>Bridge <span class="chip good">good</span></h4>
+        <div class="where">BridgeScreen · BridgeStatusCard</div>
+        <ul>
+          <li>Relay-paired vs "Relay not connected" warning</li>
+          <li>Device / battery / screen / current-app / a11y telemetry</li>
+        </ul>
+      </div>
+      <div class="surf">
+        <h4>Info sheets (tap-to-detail) <span class="chip part">fragmented</span></h4>
+        <div class="where">ApiServer / Relay / Session InfoSheet + DiagnosticsLogPanel</div>
+        <ul>
+          <li>Per-surface URL, reachability, recent diagnostic-log entries (6–8)</li>
+          <li>Three separate sheets — no single combined view</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top:28px">Diagnostic gaps vs. <code>hermes relay doctor</code></h3>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead>
+          <tr><th>What's missing</th><th>Today</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Active transport "you are on X" indicator</td><td>Preference resolved silently; user can't see gateway vs which SSE tier is live</td><td><span class="chip gap">gap</span></td></tr>
+          <tr><td>Capability snapshot (sessions/completions/runs/health)</td><td>Probed and used internally; <strong>never shown</strong></td><td><span class="chip gap">gap</span></td></tr>
+          <tr><td>"Why auto picked X" explanation</td><td>No surfaced reasoning (e.g. "gateway SignInRequired → sessions")</td><td><span class="chip gap">gap</span></td></tr>
+          <tr><td>Turn latency (TTFE / TTFT / done)</td><td><code>TurnLatencyTracer</code> → <strong>logcat only</strong></td><td><span class="chip gap">gap</span></td></tr>
+          <tr><td>Unified single-screen health view</td><td>Scattered across 3 info sheets + 2 settings screens</td><td><span class="chip part">partial</span></td></tr>
+          <tr><td>Per-route reachability + reason</td><td>Shown in Routes section, but not all failure reasons</td><td><span class="chip part">partial</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>Recommendation.</strong> A single <em>Connection Diagnostics</em> screen (the in-app
+      analogue of <code>hermes relay doctor --json</code>) would consolidate: active chat
+      transport + tier, the capability probe table with the resolver's reasoning, per-route
+      probe outcomes, auth state for all three credential systems, and the last turn's latency
+      marks. Everything it needs already exists in <code>ServerCapabilities</code>,
+      <code>GatewayAvailability</code>, <code>DiagnosticsLog</code>, and <code>TurnLatencyTracer</code> —
+      it's an aggregation surface, not new plumbing.
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      Hermes-Relay path architecture reference. Source of truth for transport resolution:
+      <code>network/upstream/GatewayModels.kt</code>, <code>HermesApiClient.kt</code>,
+      <code>viewmodel/ChatViewModel.kt</code>, <code>viewmodel/connection/UpstreamTransportController.kt</code>.
+      Route ownership: <a href="upstream-surface-matrix.md">upstream-surface-matrix.md</a>.
+      Always verify upstream endpoints against <code>gateway/platforms/api_server.py</code>.
+    </p>
+  </footer>
+</main>
+</body>
+</html>

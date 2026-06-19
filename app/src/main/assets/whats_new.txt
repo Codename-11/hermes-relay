@@ -1,6 +1,6 @@
 v1.0.0 - The 1.0 release
 
-Standard path
+Vanilla Hermes
 * Chat, Manage, and voice now work on a plain Hermes agent — no relay
   plugin required. The plugin is optional and only adds power tools.
 

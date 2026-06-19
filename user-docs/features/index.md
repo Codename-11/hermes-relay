@@ -8,7 +8,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 
 | Feature | Description |
 |---------|-------------|
-| [Standard Chat Transport](/features/direct-api) | Gateway `/api/ws` (live thinking) preferred, API-server SSE fallback — never the relay |
+| [Vanilla Hermes Chat Transport](/features/direct-api) | Gateway `/api/ws` (live thinking) preferred, API-server SSE fallback — never the relay |
 | [Voice Mode](/features/voice) | Real-time voice conversation — you talk, the agent answers aloud via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |
@@ -17,7 +17,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
 | [Command Palette](/guide/chat#command-palette) | Searchable command browser — 29 gateway commands, personalities, 90+ skills |
 | [Slash Commands](/guide/chat#inline-autocomplete) | Inline autocomplete as you type `/` |
-| [Standard Setup](/guide/getting-started#connect-android-to-hermes) | Connect by API URL/key first; scan a QR only when you want Relay pairing |
+| [Vanilla Hermes Setup](/guide/getting-started#connect-android-to-hermes) | Connect by API URL/key first; scan a QR only when you want Relay pairing |
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
 

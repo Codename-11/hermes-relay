@@ -16,8 +16,8 @@ then `docs/spec.md` and `docs/decisions.md`.
 
 ## Non-negotiables (the short list)
 
-- **Standard path = vanilla upstream only.** The default (no-plugin) connection —
-  chat via the API server, standard voice via the Hermes dashboard — must work
+- **Vanilla Hermes path = upstream-only.** The default (no-plugin) connection —
+  chat via the API server, Vanilla Hermes voice via the Hermes dashboard — must work
   against unmodified upstream hermes-agent. Server-side needs go through upstream
   PRs or the optional relay plugin, never fork patches.
 - **Verify endpoints against upstream** (`gateway/platforms/api_server.py` /

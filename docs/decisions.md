@@ -146,7 +146,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 - When `--no-relay` is passed to the pair command, or the relay isn't running, the QR omits the `relay` block and the command prints an `[info]` pointing at `hermes relay start`.
 - Top-level `key` is always the Hermes API bearer token for direct chat/session HTTP. The relay pairing code lives only at `relay.code`; putting an empty API key in a dashboard-minted QR will pair voice/relay successfully but leaves direct chat unauthenticated when the gateway requires `API_SERVER_KEY`.
 - Top-level `dashboard_url` is optional. When present, Android stores it for
-  Manage and standard dashboard voice instead of deriving the conventional
+  Manage and Vanilla Hermes dashboard voice instead of deriving the conventional
   same-host `:9119` URL from the API server.
 
 **Pairing alphabet change:** `PAIRING_ALPHABET` in `plugin/relay/config.py` was widened from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no ambiguous 0/O/1/I) to the full `A-Z / 0-9` (36 chars) to match the phone-side `AuthManager.PAIRING_CODE_CHARS`. The old restriction only mattered when a human had to retype a code from a display; now that the code flows phone ↔ server through a QR + HTTP, the restriction silently rejected ~12% of valid codes and had to go.
@@ -521,7 +521,7 @@ We considered four options:
 - **C. Full parity by porting all 800 lines onto the plugin relay.** Same architectural pollution as B, plus duplicates ~250 lines of chat-stream handler with cross-cutting `_create_agent` / `run_conversation` dependencies that the fork may have implicitly modified.
 - **D. Runtime injection via Python interpreter startup hook.** Ship a `.pth` file in the venv site-packages that imports a bootstrap module, which installs a `sys.meta_path` finder for `aiohttp.web`. When the gateway eventually imports `aiohttp.web`, our finder wraps the loader and replaces `web.Application` with a thin subclass. The subclass overrides `__setitem__` to detect `app["api_server_adapter"] = self` (the line in upstream's `connect()` that gives us a reference to the adapter while the router is still mutable). At that point we register only missing method/path handlers directly onto the same router the gateway is in the middle of populating.
 
-**Decision: D, scoped to management endpoints only.** The chat-stream handler is intentionally NOT injected — chat goes through standard upstream `/v1/runs`, which already emits structured `tool.started`/`tool.completed` events. This avoids touching `_create_agent` / `run_conversation` (the fork's riskiest cross-cutting dependencies) and is arguably an upgrade — `/v1/runs` has live tool events whereas the sessions chat-stream path required a post-stream message-history reload to render tool cards.
+**Decision: D, scoped to management endpoints only.** The chat-stream handler is intentionally NOT injected — chat goes through vanilla upstream Hermes `/v1/runs`, which already emits structured `tool.started`/`tool.completed` events. This avoids touching `_create_agent` / `run_conversation` (the fork's riskiest cross-cutting dependencies) and is arguably an upgrade — `/v1/runs` has live tool events whereas the sessions chat-stream path required a post-stream message-history reload to render tool cards.
 
 **Why this is the right answer despite being a clever hack:**
 
@@ -1719,7 +1719,7 @@ default-on is unblocked.
 - `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/VoiceSettingsScreen.kt`
 
-### 34. v1.0.0 Standard-First Relay Plugin Boundary (2026-06-16)
+### 34. v1.0.0 Vanilla-Hermes-First Relay Plugin Boundary (2026-06-16)
 
 **Status:** Accepted.
 
@@ -1745,13 +1745,13 @@ use version `1.0.0` for this stable line.
 
 **Runtime boundary:**
 
-- Standard upstream owns chat, Manage, dashboard auth, dashboard voice, sessions,
+- Vanilla upstream Hermes owns chat, Manage, dashboard auth, dashboard voice, sessions,
   runs, responses, capabilities, skills, and toolset discovery.
 - Relay owns pairing, terminal, bridge/device control, relay voice extensions,
   remote access, media relay, notification companion, desktop tools, and the
   dashboard Relay tab.
 - `plugin/hermes_relay_bootstrap` is legacy compatibility only. It must not be a
-  hidden prerequisite for the standard path.
+  hidden prerequisite for the Vanilla Hermes path.
 
 **Why not add a repo-root `plugin.yaml` now:** Current upstream imports directory
 plugins from the directory that contains both `plugin.yaml` and `__init__.py`.
@@ -1786,7 +1786,7 @@ command is available, falling back to deleting only the Relay `.pth` file.
 
 **Status:** Accepted (2026-06-17).
 
-**Context.** The project's load-bearing invariant — *the standard (no-plugin) path
+**Context.** The project's load-bearing invariant — *the Vanilla Hermes (no-plugin) path
 must work against unmodified upstream hermes-agent* — is enforced only by
 convention and `CLAUDE.md` prose, never by structure or test:
 
@@ -1794,9 +1794,9 @@ convention and `CLAUDE.md` prose, never by structure or test:
   cleanly *named* by surface (`HermesApiClient`, `GatewayChatClient`,
   `DashboardApiClient` → upstream; `RelayHttpClient`, `RelayVoiceClient`,
   `ConnectionManager`, `ChannelMultiplexer` → relay), but nothing *prevents* a
-  standard-path file from importing a relay client. The discipline is a code-review
+  Vanilla-Hermes-path file from importing a relay client. The discipline is a code-review
   rule, not a compiler/lint rule.
-- The standard path has never been exercised against *true* vanilla upstream. The
+- The Vanilla Hermes path has never been exercised against *true* vanilla upstream. The
   staging server runs a fork with relay routes compiled into `api_server.py`, so
   "vanilla-only" is an aspiration validated by review, not by CI. When upstream
   renames or drops a route the app depends on, nothing surfaces it until a user hits
@@ -1812,7 +1812,7 @@ convention and `CLAUDE.md` prose, never by structure or test:
    `upstream` imports nothing from `relay` and vice-versa, and that `shared` imports
    neither concrete client. The boundary becomes a *failing test*, not a convention.
 3. **Vanilla-upstream contract test.** A CI job clones a pinned, unmodified upstream,
-   boots it with the bootstrap compat hook absent, and asserts the standard-path
+   boots it with the bootstrap compat hook absent, and asserts the Vanilla-Hermes-path
    route surface exists (`404` = fail; `401/400/405` = pass — existence, not agent
    behavior). A scheduled run against upstream `main` acts as a drift siren.
 
@@ -1843,7 +1843,7 @@ convention and `CLAUDE.md` prose, never by structure or test:
 
 **Consequences.**
 
-- A future file cannot quietly pull a relay client into the standard path — CI fails.
+- A future file cannot quietly pull a relay client into the Vanilla Hermes path — CI fails.
 - `shared/` stays genuinely neutral (`ConnectivityObserver`, `EndpointResolver`,
   `HermesLanDiscovery`, `ProfileApiUrlResolver`, voice routing seam).
 - The contract test converts the standing "upstream-only path never actually

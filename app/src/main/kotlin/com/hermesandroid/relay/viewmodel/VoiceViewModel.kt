@@ -1082,7 +1082,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Info,
-            title = "Standard voice uses the host's global TTS",
+            title = "Vanilla Hermes voice uses the host's global TTS",
             detail = "Profile \"$profile\" changes the chat agent, but standard " +
                 "(no-plugin) voice speaks with the host's global TTS config, not " +
                 "the profile's voice. Pair the Relay plugin for profile-aware voice.",

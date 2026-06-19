@@ -1013,7 +1013,7 @@ private fun MethodStep(
 
         MethodTile(
             icon = Icons.Filled.Check,
-            title = "Standard Hermes",
+            title = "Vanilla Hermes",
             subtitle = "API/dashboard setup for Chat, Manage, Skills, Cron, MCP, Profiles, Models, and Settings",
             onClick = onPickStandard,
             isPrimary = true,
@@ -1251,7 +1251,7 @@ private fun StandardEntryStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Standard Hermes",
+            text = "Vanilla Hermes",
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
@@ -1617,7 +1617,7 @@ private fun StandardSetupResultCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "Standard Hermes connected",
+                text = "Vanilla Hermes connected",
                 style = MaterialTheme.typography.titleMedium,
             )
             ReadinessLine(
@@ -2481,7 +2481,7 @@ private fun ConfirmStep(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Connecting to Standard Hermes",
+                            text = "Connecting to Vanilla Hermes",
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Text(

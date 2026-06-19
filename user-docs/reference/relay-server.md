@@ -1,13 +1,13 @@
 # Relay Server
 
-The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media, sessions, and voice routes in Hermes-Relay. Chat never touches the relay — it rides your standard Hermes surfaces, preferring the dashboard gateway (`/api/ws`, live thinking) when Manage auth is ready and falling back to the API server's SSE routes otherwise.
+The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media, sessions, and voice routes in Hermes-Relay. Chat never touches the relay — it rides your vanilla Hermes surfaces, preferring the dashboard gateway (`/api/ws`, live thinking) when Manage auth is ready and falling back to the API server's SSE routes otherwise.
 
 ## Do I Need It?
 
 | Feature | Relay required? | Auth path |
 |---------|-----------------|-----------|
 | Chat | No | Hermes API key direct to API server |
-| Standard Voice Mode | No | Dashboard session from Manage |
+| Vanilla Hermes Voice Mode | No | Dashboard session from Manage |
 | Relay voice extras | Yes for relay TTS/STT/realtime endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
 | Realtime Agent voice engine | Yes; experimental `/voice/realtime-agent/*` broker | Hermes API bearer or relay session with `voice:realtime` |
 | Inbound media (screenshots from tools) | Yes | Relay session |
@@ -71,13 +71,13 @@ hermes relay compat install   # older Hermes builds only
 hermes relay compat remove
 ```
 
-Standard chat, Manage, and dashboard voice do not require the compat hook.
+Vanilla Hermes chat, Manage, and dashboard voice do not require the compat hook.
 New compat installs load the bootstrap implementation from the installed plugin
 tree. Existing legacy hooks remain visible in `hermes relay compat status` and
 can be removed with `hermes relay compat remove`.
 
 Pairing/setup QRs can include top-level `dashboard_url`; Android uses it for
-Manage and standard dashboard voice instead of deriving same-host `:9119`.
+Manage and Vanilla Hermes dashboard voice instead of deriving same-host `:9119`.
 
 ### Legacy cleanup ownership
 

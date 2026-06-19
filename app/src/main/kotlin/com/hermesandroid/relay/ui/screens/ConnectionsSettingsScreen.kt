@@ -207,7 +207,7 @@ fun ConnectionsSettingsScreen(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = "Tap Add connection to connect to Standard Hermes.",
+                    text = "Tap Add connection to connect to Vanilla Hermes.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -868,7 +868,7 @@ private fun ConnectionCard(
                 SectionHeader(text = "Advanced")
                 SectionCaption(
                     text = "Manual setup — most people don't need this " +
-                        "after Standard Hermes setup.",
+                        "after Vanilla Hermes setup.",
                 )
 
                 // Advanced expander: manual URL config + insecure toggle

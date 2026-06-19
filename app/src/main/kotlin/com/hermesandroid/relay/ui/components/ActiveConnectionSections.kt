@@ -330,7 +330,7 @@ fun ActiveCardFeaturesSection(
     ) {
         Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
             CapabilityRow(
-                label = "Standard API",
+                label = "Vanilla Hermes API",
                 value = apiValue,
                 tone = apiTone,
                 onClick = onOpenApiInfo,
@@ -344,7 +344,7 @@ fun ActiveCardFeaturesSection(
             )
             CapabilityDivider()
             CapabilityRow(
-                label = "Standard voice",
+                label = "Vanilla Hermes voice",
                 value = voiceValue,
                 tone = voiceTone,
                 onClick = if (standardVoiceAvailability ==
@@ -665,7 +665,7 @@ private fun ManualUrlSubsection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Relay is optional for voice. Standard voice uses the Hermes API; Relay voice uses this route when selected or needed.",
+                text = "Relay is optional for voice. Vanilla Hermes voice uses the Hermes API; Relay voice uses this route when selected or needed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

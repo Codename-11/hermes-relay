@@ -37,7 +37,9 @@ features:
       width: 40
       height: 40
     title: Your phone, on the agent's toolbelt
-    details: Sideload builds add screen reading, taps, typing, and vision-driven navigation — fenced by a per-app blocklist, destructive-verb confirmation, and auto-disable.
+    details: With the Relay plugin paired and the Sideload build, the agent can read the screen, tap, type, and navigate apps — fenced by a per-app blocklist, destructive-verb confirmation, and auto-disable.
+    link: /guide/release-tracks#how-the-pieces-combine
+    linkText: How the pieces combine
   - icon:
       src: /icons/tokens.svg
       width: 40

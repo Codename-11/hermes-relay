@@ -85,7 +85,7 @@ Paste into Play Console → **What's new** (≤500 characters):
 ```
 Hermes-Relay 1.0 — our biggest release.
 
-Standard path: chat, Manage, and voice now run on a plain Hermes agent, no plugin. The relay plugin is optional now — Advanced power tools only.
+Vanilla Hermes path: chat, Manage, and voice now run on a plain Hermes agent, no plugin. The relay plugin is optional now — Advanced power tools only.
 
 Chat streams reasoning live, attaches images/PDFs/files, steers a running turn, and edits & resends. Switch agent profiles per conversation. Manage hits desktop-dashboard parity.
 

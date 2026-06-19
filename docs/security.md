@@ -4,6 +4,10 @@
 
 Hermes-Relay gives a remote AI agent full control of an Android device via AccessibilityService. This is powerful and inherently sensitive — treat it with the same caution as remote desktop access.
 
+### Device Control is a build-flavor boundary
+
+AccessibilityService-backed Device Control (screen reading, taps, typing, screenshots, overlays, unattended control) and the Tier-C `android_*` tools (call, SMS, contacts, location) ship **only in the `sideload` flavor**. The conservative `googlePlay` flavor is "Bridge Core" — relay pairing, chat, voice, terminal, notification companion, media, and session grants — and does **not** compile in any phone-control surface; gated routes fail closed with a structured `403` (`error_code: device_control_sideload_only` for Device Control commands, `sideload_only` for the Tier-C `android_*` tools) rather than acting. This flavor gate is the most conservative security boundary in the app: on a `googlePlay` build the capability is absent, not merely disabled, regardless of pairing or server configuration. It is orthogonal to relay pairing — pairing a relay on a `googlePlay` build still cannot tap or type. See `BuildFlavor` in `data/FeatureFlags.kt` and the capability matrix in `docs/path-architecture.html`.
+
 ## Current Security Model
 
 ### Authentication

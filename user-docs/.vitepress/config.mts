@@ -111,7 +111,7 @@ export default defineConfig({
           text: 'Features',
           items: [
             { text: 'Overview', link: '/features/' },
-            { text: 'Standard Chat Transport', link: '/features/direct-api' },
+            { text: 'Vanilla Hermes Chat Transport', link: '/features/direct-api' },
             { text: 'Markdown Rendering', link: '/features/markdown' },
             { text: 'Reasoning Display', link: '/features/reasoning' },
             { text: 'Connections', link: '/features/connections' },

@@ -3,7 +3,7 @@
 Updated: 2026-06-17
 
 This matrix records the v1.0.0 route ownership contract. It is meant to keep
-future app, plugin, and agent work honest about what is standard upstream
+future app, plugin, and agent work honest about what is vanilla upstream
 Hermes, what belongs to the Relay plugin, and what is only legacy compatibility.
 
 Verified upstream source snapshot:
@@ -25,17 +25,39 @@ Verified upstream source snapshot:
 | `/api/sessions/*` | Upstream API server | No | Session CRUD and SSE chat | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Bootstrap is old-build fallback only. |
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Read-only API-server skill/toolset inventory. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. |
-| Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Standard gateway chat path with live reasoning/thinking events. |
-| Dashboard `/api/audio/transcribe`, `/api/audio/speak` | Upstream dashboard | No | Standard voice | Manage sign-in unlocks standard voice. API server has no `/v1/audio/*` route today. |
+| Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. |
+| Dashboard `/api/audio/transcribe`, `/api/audio/speak` | Upstream dashboard | No | Vanilla Hermes voice | Manage sign-in unlocks Vanilla Hermes voice. API server has no `/v1/audio/*` route today. |
 | Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` | Upstream dashboard | No | Manage | Do not proxy through Relay. |
 | `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab | FastAPI plugin backend proxies loopback requests to the Relay server. |
-| `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports standard route reachability, plugin layout, Relay loopback state, and legacy bootstrap presence. |
-| `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-standard | Fallback only | Installed via `.pth` by legacy installer. Keep only for older Hermes builds or compatibility-only gaps. |
+| `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability, plugin layout, Relay loopback state, and legacy bootstrap presence. |
+| `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-upstream | Fallback only | Installed via `.pth` by legacy installer. Keep only for older Hermes builds or compatibility-only gaps. |
 
-## Voice Surfaces (standard vs. relay)
+## Client capability gate (build flavor)
 
-Voice splits the same way as everything else: standard rides vanilla upstream,
+Route ownership above is a *server-side* contract. The Android client adds a
+second, orthogonal axis: the **build flavor**, a capability ceiling compiled
+into the APK regardless of which routes the server exposes.
+
+- `googlePlay` ("Bridge Core") ships the full Vanilla Hermes path plus the Relay
+  client (terminal, relay voice, notification companion, media, session
+  grants), but **no** AccessibilityService Device Control.
+- `sideload` additionally compiles in phone Device Control — screen reading,
+  taps, typing, screenshots, overlays, unattended control — and the Tier-C
+  `android_*` tools (call, SMS, contacts, location). On `googlePlay` those
+  routes fail closed with a structured `403` — `error_code:
+  device_control_sideload_only` for Device Control commands, `sideload_only`
+  for the Tier-C tools.
+
+Bridge is therefore two-layered: relay pairing unlocks the bridge *channel*;
+the `sideload` flavor unlocks the Device Control *hands* within it. A paired
+relay on a `googlePlay` build still cannot tap or type. See `BuildFlavor`
+(`data/FeatureFlags.kt`) and the full capability matrix in
+`docs/path-architecture.html`.
+
+## Voice Surfaces (Vanilla Hermes vs. relay)
+
+Voice splits the same way as everything else: Vanilla Hermes rides vanilla upstream,
 relay is the additive power path.
 
 ### Route ownership
@@ -44,8 +66,8 @@ Be explicit, because the names look similar:
 
 | Route | Owner | Requires Relay | Notes |
 |-------|-------|----------------|-------|
-| Dashboard `POST /api/audio/transcribe` | **Upstream** (dashboard web_server) | No | Standard STT. Cookie/session auth. |
-| Dashboard `POST /api/audio/speak` | **Upstream** (dashboard web_server) | No | Standard TTS. Accepts ONLY `{text}` — one-shot, config-driven. |
+| Dashboard `POST /api/audio/transcribe` | **Upstream** (dashboard web_server) | No | Vanilla Hermes STT. Cookie/session auth. |
+| Dashboard `POST /api/audio/speak` | **Upstream** (dashboard web_server) | No | Vanilla Hermes TTS. Accepts ONLY `{text}` — one-shot, config-driven. |
 | Dashboard `GET /api/audio/elevenlabs/voices` | **Upstream** (dashboard web_server) | No | Voice-list helper. |
 | `POST /voice/transcribe`, `POST /voice/synthesize` | **Relay** (`plugin/relay/voice.py`) | Yes | Basic STT/TTS. `/voice/synthesize` wraps upstream `text_to_speech_tool` + adds per-request enhanced overrides. |
 | `GET /voice/config` | **Relay** | Yes | Reports `tts:`/`stt:` + a provider-aware `tts.enhanced` capability block. |
@@ -56,7 +78,7 @@ Be explicit, because the names look similar:
 
 ### Enhanced voice (provider-native voice/tone control)
 
-| Capability | Standard path (vanilla upstream) | Relay path (plugin) |
+| Capability | Vanilla Hermes path (vanilla upstream) | Relay path (plugin) |
 |------------|----------------------------------|---------------------|
 | Where it applies | Dashboard `/api/audio/speak`. | Relay `/voice/synthesize` (basic) **and** `/voice/output/*` (streaming renderer, the default when `voice_output_enabled`). |
 | Control model | **Config-only.** Read from `~/.hermes/config.yaml` `tts.<provider>.*`. `/api/audio/speak` takes only `{text}`. The phone changes enhanced behavior only via Manage `PUT /api/config` (global), never per utterance. | **Synthesize:** per-request override (`voice`/`model`/`audio_tags`/`persona_prompt`/`language`), advertised via `/voice/config` `tts.enhanced`. **Streaming:** per-profile `voice_output:` config (incl. `auto_speech_tags` for xAI), set via `PATCH /voice/output/config`. Neither mutates the basic `tts:` config. |
@@ -67,7 +89,7 @@ Upstream parity notes (verify against `tools/tts_tool.py`): Gemini `audio_tags` 
 `gemini-3.1*tts` model and runs a hidden auxiliary-LLM rewrite that **fails soft**
 (unavailable aux client → untagged text). OpenAI TTS exposes only `voice` + `speed`
 upstream — the `gpt-4o-mini-tts` `instructions` tone param is **not** wired — so it is
-intentionally not offered as a relay enhanced provider. The standard path stays vanilla
+intentionally not offered as a relay enhanced provider. The Vanilla Hermes path stays vanilla
 upstream regardless; the relay enhanced surface is purely additive.
 
 ## Plugin Lifecycle Contract
@@ -120,19 +142,19 @@ commands exist. For a bounded cleanup handoff, see
 
 ## App Flow Rule
 
-The app should present Standard as the default path:
+The app should present Vanilla Hermes as the default path:
 
 1. Connect API server and dashboard.
 2. Sign in to Manage when dashboard auth is required.
 3. Use gateway chat when `/api/ws` is ready; otherwise fall back to API-server
    SSE.
-4. Use standard dashboard voice when audio routes are present.
+4. Use Vanilla Hermes dashboard voice when audio routes are present.
 5. Offer Relay pairing only for Relay-owned power features.
 
 When Auto voice selects Relay because a paired Relay is healthy, the UI should
-make that active route visible and continue to fall back to Standard voice when
+make that active route visible and continue to fall back to Vanilla Hermes voice when
 Relay fails but dashboard audio is ready.
 
 Setup QR payloads may include top-level `dashboard_url`. Android uses that value
-for Manage and standard dashboard voice; when absent it derives the conventional
+for Manage and Vanilla Hermes dashboard voice; when absent it derives the conventional
 same-host `:9119` dashboard URL from the API server.
