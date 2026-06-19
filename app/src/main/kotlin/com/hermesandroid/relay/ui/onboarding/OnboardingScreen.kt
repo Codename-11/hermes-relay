@@ -55,9 +55,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.ConnectionWizard
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -266,12 +267,14 @@ private fun WelcomePage() {
         transparentHero = true,
         heroContent = {
             Box(modifier = Modifier.fillMaxSize()) {
-                MorphingSphere(
+                LocalAgentAvatar.current.Render(
+                    state = AvatarRenderState(
+                        state = SphereState.Idle,
+                        intensity = 0.12f,
+                    ),
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 4.dp, vertical = 2.dp),
-                    state = SphereState.Idle,
-                    intensity = 0.12f,
                 )
 
                 Box(

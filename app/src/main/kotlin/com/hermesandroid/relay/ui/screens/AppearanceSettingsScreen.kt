@@ -51,6 +51,13 @@ import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkin
 import com.hermesandroid.relay.ui.components.SphereSkinSource
+import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.AvatarSource
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
+import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.theme.AppTheme
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.BrandPalette
@@ -353,9 +360,11 @@ fun AppearanceSettingsScreen(
                 }
             }
 
-            // Agent sphere skin section
+            // Agent avatar section — choose the avatar first (sphere today;
+            // user "pets" arrive in C3). When the sphere avatar is selected its
+            // skin chips remain nested below: avatar → skin.
             Text(
-                text = "Agent sphere",
+                text = "Agent avatar",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -372,6 +381,8 @@ fun AppearanceSettingsScreen(
                 )
             ) {
                 val brand = LocalBrand.current
+                val availableAvatars = LocalAvailableAvatars.current
+                val activeAvatar = LocalAgentAvatar.current
                 val availableSkins = LocalAvailableSphereSkins.current
                 val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
                 val effectiveSkinId = SphereRegistry.resolve(
@@ -385,7 +396,7 @@ fun AppearanceSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Choose the orb's look. Each skin shows which live " +
+                        text = "Pick the agent's avatar. Each shows which live " +
                             "signals it reacts to.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -396,25 +407,55 @@ fun AppearanceSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        availableSkins.forEach { skin ->
-                            SphereSkinChip(
-                                skin = skin,
+                        availableAvatars.forEach { avatar ->
+                            AgentAvatarChip(
+                                avatar = avatar,
                                 brand = brand,
-                                selected = skin.id == effectiveSkinId,
-                                onClick = { connectionViewModel.setSphereSkin(skin.id) },
+                                selected = avatar.id == activeAvatar.id,
+                                // Persist + switch. RelayApp re-resolves
+                                // LocalAgentAvatar from this pref, so every
+                                // surface (and these chips) updates.
+                                onClick = { connectionViewModel.setAgentAvatar(avatar.id) },
                             )
                         }
                     }
 
-                    HorizontalDivider()
+                    // Second level of the model: skin chips, shown only when the
+                    // sphere avatar is active (a pet carries no skins).
+                    if (activeAvatar.id == SphereAvatar.id) {
+                        HorizontalDivider()
 
-                    Text(
-                        text = "Add your own: drop a sphere JSON spec into the app's " +
-                            "private spheres/ folder, then reopen this screen. See " +
-                            "docs/sphere-spec.md for the format.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        Text(
+                            text = "Sphere skin — choose the orb's look.",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            availableSkins.forEach { skin ->
+                                SphereSkinChip(
+                                    skin = skin,
+                                    brand = brand,
+                                    selected = skin.id == effectiveSkinId,
+                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
+                                )
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        Text(
+                            text = "Add your own: drop a sphere JSON spec into the app's " +
+                                "private spheres/ folder, then reopen this screen. See " +
+                                "docs/sphere-spec.md for the format.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -573,6 +614,97 @@ private fun SphereSkinChip(
         )
         Text(
             text = capability,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * Agent avatar chip — a representative preview, the avatar's label, and its
+ * one-line capability summary (which live signals it reacts to). Mirrors
+ * [SphereSkinChip]'s layout so the avatar row and the skin row read as one
+ * family. The built-in sphere previews as a brand-gradient orb; a user "pet"
+ * previews as its own static first frame (rendered paused via the avatar seam).
+ */
+@Composable
+private fun AgentAvatarChip(
+    avatar: AgentAvatar,
+    brand: BrandPalette,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .width(110.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = RoundedCornerShape(12.dp),
+            )
+            .padding(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (avatar.source == AvatarSource.USER) {
+                // Honest preview: the pet's own first frame, frozen (paused) so
+                // the picker doesn't run N animation loops at once.
+                avatar.Render(
+                    state = AvatarRenderState(state = SphereState.Idle, paused = true),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(2.dp),
+                )
+            } else {
+                // Orb glyph — a small radial-gradient circle for the sphere.
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(Brush.radialGradient(listOf(brand.relay, brand.purple))),
+                )
+            }
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(11.dp),
+                    )
+                }
+            }
+        }
+        Text(
+            text = avatar.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+        Text(
+            text = avatar.reactivity.summary(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
