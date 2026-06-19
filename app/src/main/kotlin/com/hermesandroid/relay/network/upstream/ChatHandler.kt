@@ -754,8 +754,19 @@ class ChatHandler {
     }
 
     /**
-     * Load message history from API response into the messages list.
-     * Replaces current messages with the loaded history.
+     * Reconcile the in-memory transcript against the server message history.
+     *
+     * This is a surgical DELTA-MERGE keyed by message id, not a wholesale
+     * replace:
+     *  - a server message whose id matches a local row UPDATES that row's
+     *    server-authoritative fields (content, tool calls, cards, reasoning)
+     *    in place while keeping every client-only field;
+     *  - a server message with no local row is INSERTED in timestamp order;
+     *  - a client-only orphan ([ChatMessage.clientOnly], no server row) is KEPT;
+     *  - a local row that WAS server-backed (not clientOnly) but is no longer in
+     *    the transcript is DROPPED (genuinely deleted / forked / truncated
+     *    server-side).
+     *
      * Reconstructs tool calls from assistant messages' tool_calls field.
      *
      * Server-persisted message content still contains raw `MEDIA:...` markers
@@ -883,39 +894,57 @@ class ChatHandler {
                     else -> emptyList()
                 }
             }
-            ChatMessage(
-                id = messageId,
-                role = role,
-                content = cleanedContent,
-                attachments = carriedAttachments,
-                timestamp = timestampMs,
-                isStreaming = false,
-                toolCalls = toolCalls,
-                cards = extractedCards,
-                agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
-                // Server persists per-message reasoning — restore it so the
-                // Thought-process block survives returning to the chat
-                // instead of existing only for the live turn.
-                thinkingContent = if (role == MessageRole.ASSISTANT) {
-                    item.resolvedReasoning?.trim() ?: ""
-                } else {
-                    ""
-                },
-                // --- Client-only enrichment carried forward (see priorById) ---
-                // The server transcript has none of these; preserve what the
-                // live turn already produced so a reload doesn't blank them.
-                badges = if (role == MessageRole.ASSISTANT) prior?.badges.orEmpty() else emptyList(),
-                inputTokens = prior?.inputTokens,
-                outputTokens = prior?.outputTokens,
-                totalTokens = prior?.totalTokens,
-                estimatedCost = prior?.estimatedCost,
-                // Tapped-card confirmations + voice/realtime sync traces keep a
-                // reload from re-offering dispatched buttons or losing a pending
-                // sync the next chat payload still needs.
-                cardDispatches = prior?.cardDispatches.orEmpty(),
-                voiceIntent = prior?.voiceIntent,
-                realtimeTurn = prior?.realtimeTurn,
-            )
+            // Server reasoning is authoritative when present; absent, keep the
+            // live-streamed thinking rather than blanking it on reload.
+            val serverThinking =
+                if (role == MessageRole.ASSISTANT) item.resolvedReasoning?.trim() else null
+
+            if (prior != null) {
+                // DELTA-MERGE UPDATE — a local row with this id already exists.
+                // Refresh ONLY the server-authoritative fields (content, tool
+                // calls, cards, reasoning, role, timestamp) and keep every
+                // client-only field (tokens, cost, badges, tapped-card
+                // confirmations, voice/realtime traces, the clientOnly flag, …)
+                // by copying the existing message. This is strictly broader than
+                // the old curated carry list — a new client-only field is
+                // preserved automatically — and produces an object equal to the
+                // prior one when nothing server-side changed, so unchanged rows
+                // don't churn.
+                prior.copy(
+                    role = role,
+                    content = cleanedContent,
+                    attachments = carriedAttachments,
+                    timestamp = timestampMs,
+                    isStreaming = false,
+                    isThinkingStreaming = false,
+                    toolCalls = toolCalls,
+                    cards = extractedCards,
+                    agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
+                    thinkingContent = if (role == MessageRole.ASSISTANT) {
+                        serverThinking ?: prior.thinkingContent
+                    } else {
+                        ""
+                    },
+                )
+            } else {
+                // INSERT — a server message with no local row yet. Built from
+                // server data; client-only enrichment defaults empty (there is
+                // nothing local to carry).
+                ChatMessage(
+                    id = messageId,
+                    role = role,
+                    content = cleanedContent,
+                    attachments = carriedAttachments,
+                    timestamp = timestampMs,
+                    isStreaming = false,
+                    toolCalls = toolCalls,
+                    cards = extractedCards,
+                    agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
+                    // Server persists per-message reasoning — restore it so the
+                    // Thought-process block survives returning to the chat.
+                    thinkingContent = if (role == MessageRole.ASSISTANT) serverThinking ?: "" else "",
+                )
+            }
         }
 
         // Reload swaps the entire message list — any stale dedupe entries keyed

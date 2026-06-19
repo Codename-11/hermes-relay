@@ -807,6 +807,107 @@ class ChatHandlerTest {
         assertEquals("hi", msg.realtimeTurn!!.userText)
     }
 
+    // --- loadMessageHistory: delta-merge semantics (GAP 3) ---
+
+    @Test
+    fun loadMessageHistory_updatesServerContentInPlace() {
+        // (b) a server message's content updates in place on the matching id.
+        handler.onTextDelta("100", "old content")
+        handler.onStreamComplete("100")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "100", role = "assistant", content = JsonPrimitive("updated content")))
+        )
+
+        val msg = handler.messages.value.single { it.id == "100" }
+        assertEquals("updated content", msg.content)
+        assertFalse(msg.isStreaming)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsTokensAndBadgesOnInPlaceUpdate() {
+        // (d) per-message tokens/cost/badges (not server-persisted) survive the
+        // in-place update while content is refreshed from the server.
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "a-1",
+                role = MessageRole.ASSISTANT,
+                content = "draft",
+                timestamp = 1L,
+                badges = listOf("Voice"),
+                inputTokens = 7,
+                outputTokens = 11,
+                totalTokens = 18,
+                estimatedCost = 0.002,
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "a-1", role = "assistant", content = JsonPrimitive("final answer")))
+        )
+
+        val msg = handler.messages.value.single { it.id == "a-1" }
+        assertEquals("final answer", msg.content)
+        assertEquals(listOf("Voice"), msg.badges)
+        assertEquals(7, msg.inputTokens)
+        assertEquals(18, msg.totalTokens)
+        assertEquals(0.002, msg.estimatedCost!!, 0.0001)
+    }
+
+    @Test
+    fun loadMessageHistory_reflectsServerSideDeletion() {
+        // (c) two server-backed turns, then a reload that omits the first one
+        // (deleted/forked/truncated server-side) drops it.
+        handler.onTextDelta("m1", "first")
+        handler.onStreamComplete("m1")
+        handler.onTextDelta("m2", "second")
+        handler.onStreamComplete("m2")
+        assertEquals(2, handler.messages.value.size)
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "m2", role = "assistant", content = JsonPrimitive("second")))
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        assertEquals("m2", msgs[0].id)
+    }
+
+    @Test
+    fun loadMessageHistory_keepsLiveThinkingWhenServerOmitsReasoning() {
+        // The delta-merge must not blank live-streamed reasoning when the server
+        // transcript carries none for that message.
+        handler.onThinkingDelta("t-1", "reasoning trace")
+        handler.onTextDelta("t-1", "answer")
+        handler.onStreamComplete("t-1")
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "t-1", role = "assistant", content = JsonPrimitive("answer")))
+        )
+
+        assertEquals("reasoning trace", handler.messages.value.single { it.id == "t-1" }.thinkingContent)
+    }
+
+    @Test
+    fun loadMessageHistory_prefersServerReasoningOnUpdate() {
+        // When the server DOES persist reasoning it is authoritative.
+        handler.onThinkingDelta("t-2", "live reasoning")
+        handler.onStreamComplete("t-2")
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "t-2",
+                    role = "assistant",
+                    content = JsonPrimitive("a"),
+                    reasoning = "server reasoning",
+                )
+            )
+        )
+
+        assertEquals("server reasoning", handler.messages.value.single { it.id == "t-2" }.thinkingContent)
+    }
+
     // --- onUsageReceived ---
 
     @Test
