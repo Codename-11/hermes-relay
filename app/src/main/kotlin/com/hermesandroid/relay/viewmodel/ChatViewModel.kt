@@ -1682,6 +1682,33 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
+        // Gateway transport: a new chat is a fresh DRAFT with NO session id.
+        // Pre-creating an api_server session would hand the next turn a concrete
+        // id, forcing ensureSession down the session.resume branch (the api_ id
+        // resumes against the shared launch state.db on the default profile) —
+        // which BYPASSES the model/provider/effort/fast binding that only runs on
+        // session.create, so the new chat silently runs the DEFAULT model while
+        // the picker still shows the last pick. Instead drop the gateway session
+        // and null the id; the next send hits ensureSession(null) ->
+        // session.create, binding the carried-over model from currentSessionModel().
+        // SSE still needs a concrete id, so it keeps pre-creating below. Mirrors
+        // the desktop's lazy-create-on-first-send. _selectedModelOverride and the
+        // provider/effort picks are intentionally PRESERVED so they carry + bind.
+        if (streamingEndpoint == "gateway" && gatewayClient != null) {
+            gatewayClient?.clearSession()
+            handler.setSessionId(null)
+            handler.clearMessages()
+            _contextUsage.value = null
+            _contextWindow.value = null
+            _pendingAsk.value = null
+            _yoloEnabled.value = null
+            _fastEnabled.value = null
+            pendingYolo = null
+            onSessionChanged?.invoke(null)
+            AppAnalytics.onSessionCreated()
+            return
+        }
+
         viewModelScope.launch {
             val selectedProfile = selectedProfileProvider()
             val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
