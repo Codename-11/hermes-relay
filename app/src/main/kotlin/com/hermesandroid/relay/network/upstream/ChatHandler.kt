@@ -767,16 +767,17 @@ class ChatHandler {
         // mutateMessage lookups find the newly-loaded messages.
         val pendingMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
 
-        // Preserve provenance badges ("Voice", "Realtime Agent", "Stopped",
-        // "Error") across a wholesale reload. The messages reconstructed below
-        // come from server data and carry no badges, so without this the
-        // post-turn history reload would silently wipe them. Keyed by message
-        // id — the live assistant message has already had its id swapped to the
-        // server id via replaceMessageId, so it matches the reloaded item id.
-        val priorBadges = _messages.value
-            .asSequence()
-            .filter { it.role == MessageRole.ASSISTANT && it.badges.isNotEmpty() }
-            .associate { it.id to it.badges }
+        // Carry CLIENT-ONLY enrichment forward across the wholesale reload, keyed
+        // by message id. The server transcript (MessageItem) rebuilds content,
+        // tool calls, and reasoning — but it does NOT persist per-message token
+        // usage/cost, provenance badges, tapped-card confirmations, or the
+        // voice/realtime sync traces. Without carrying these forward, the
+        // post-turn history reload silently drops them (the disappearing-tokens /
+        // disappearing-badges class of bug — preserve-by-default, not a per-field
+        // whitelist that the next new field always forgets). The live assistant
+        // message has already had its id swapped to the server id via
+        // replaceMessageId, so it matches the reloaded item id.
+        val priorById = _messages.value.associateBy { it.id }
 
         val loaded = items.mapNotNull { item ->
             val role = when (item.role) {
@@ -835,6 +836,7 @@ class ChatHandler {
                 afterMedia to emptyList()
             }
 
+            val prior = priorById[messageId]
             ChatMessage(
                 id = messageId,
                 role = role,
@@ -852,11 +854,20 @@ class ChatHandler {
                 } else {
                     ""
                 },
-                badges = if (role == MessageRole.ASSISTANT) {
-                    priorBadges[messageId].orEmpty()
-                } else {
-                    emptyList()
-                },
+                // --- Client-only enrichment carried forward (see priorById) ---
+                // The server transcript has none of these; preserve what the
+                // live turn already produced so a reload doesn't blank them.
+                badges = if (role == MessageRole.ASSISTANT) prior?.badges.orEmpty() else emptyList(),
+                inputTokens = prior?.inputTokens,
+                outputTokens = prior?.outputTokens,
+                totalTokens = prior?.totalTokens,
+                estimatedCost = prior?.estimatedCost,
+                // Tapped-card confirmations + voice/realtime sync traces keep a
+                // reload from re-offering dispatched buttons or losing a pending
+                // sync the next chat payload still needs.
+                cardDispatches = prior?.cardDispatches.orEmpty(),
+                voiceIntent = prior?.voiceIntent,
+                realtimeTurn = prior?.realtimeTurn,
             )
         }
 
