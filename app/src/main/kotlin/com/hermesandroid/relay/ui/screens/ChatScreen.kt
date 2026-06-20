@@ -2419,6 +2419,13 @@ fun ChatScreen(
             val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                 ?: AgentDisplay.displayModelName(serverModelName)
+            // The TRUE server/global default for the "Server default" row caption.
+            // Deliberately EXCLUDES gatewayCurrentModel: selectModel() force-sets
+            // that to the active OVERRIDE, so using it here mislabeled the user's
+            // override as the server default. serverModelName comes from /api/config
+            // (never touched by overrides) — the same source the agent drawer uses.
+            val serverDefaultModelDetail = AgentDisplay.displayModelName(serverModelName)
+                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
             val hasModelChoices = modelProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
             val modelPickerOptions = remember(
                 modelProviders,
@@ -2426,6 +2433,7 @@ fun ChatScreen(
                 selectedModelOverride,
                 gatewayCurrentModel,
                 fallbackModelDetail,
+                serverDefaultModelDetail,
                 hasModelChoices,
             ) {
                 if (!hasModelChoices && fallbackModelDetail.isNullOrBlank()) {
@@ -2436,7 +2444,7 @@ fun ChatScreen(
                             ChatInputPickerOption(
                                 label = "Server default",
                                 value = null,
-                                secondary = fallbackModelDetail?.let { "Current: ${compactModelChipLabel(it)}" },
+                                secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it) },
                                 selected = selectedModelOverride == null,
                             ),
                         )
