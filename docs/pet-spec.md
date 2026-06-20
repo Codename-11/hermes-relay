@@ -118,6 +118,7 @@ through a fallback chain (first existing clip wins). The names you write are
 |----------------|---------------|---------------------|----------------|
 | **Idle** | Waiting between turns | `idle` | `idle` |
 | **Thinking** | Reasoning before output | `thinking` | `thinking` → `idle` |
+| **Working** | Running a tool, mid-turn | `working` | *opt-in overlay — see below* |
 | **Streaming** | Writing / producing output | `writing` *(or `streaming`)* | `writing` → `streaming` → `speaking` → `thinking` → `idle` |
 | **Listening** | Mic open (voice) | `listening` | `listening` → `idle` |
 | **Speaking** | Talking via TTS (voice) | `speaking` | `speaking` → `writing` → `thinking` → `idle` |
@@ -126,6 +127,19 @@ through a fallback chain (first existing clip wins). The names you write are
 `idle` is the **only** hard requirement; every other state falls back to it.
 Author the subset you want and the chain fills the rest.
 
+### The `working` overlay — tool use vs. thinking
+
+`working` is special: not one of the six base states but a **tool-use overlay**.
+When the agent runs a tool mid-turn (while thinking or writing), a pet that ships
+a `working` clip swaps to it; as tool activity subsides it returns to the base
+state. This makes *acting* read differently from *thinking* — the strongest
+cross-system convention (Microsoft Agent splits `Think` from `Process`/`Search`;
+the `pi-animations` indicator splits Thinking · Working · Tool).
+
+It is **opt-in**: with no `working` clip the pet just keeps its base-state clip
+during tool use (the original behavior). Shipping a usable `working` clip is also
+what lights the **Tools** badge — no separate flag needed.
+
 ### Authoring ladder (how much buys how much)
 
 - **Minimal — 1 clip:** `idle`. A present, state-agnostic companion.
@@ -133,32 +147,24 @@ Author the subset you want and the chain fills the rest.
   the core spine. (Add `voice` reactivity for a talking bounce.)
 - **Standard — 5 clips:** add `writing` (distinct output loop) and `listening`
   (mic open), so chat-output vs. voice-output vs. mic-open read at a glance.
-- **Rich — 6 clips:** add `error`. The full activity story across a turn.
+- **Rich — 7 clips:** add `error` and `working` (the tool-use overlay, so the
+  user sees *thinking* vs. *running a tool* vs. *writing*). The full story.
 
 > **Loop vs. one-shot.** Every clip here is a **looping base** for a sustained
-> state. Transient *reaction* one-shots (a wave on connect, a celebrate when a
-> turn finishes) and a distinct **`working`/tool-use** loop (the agent running a
-> tool, separate from `thinking`) are a planned next tier — see
-> *Forthcoming behavior* below. Authoring a `working` clip today is harmless but
-> not yet reached by the renderer.
+> state — including `working`, shown while the agent runs a tool. Transient
+> *reaction* one-shots (a wave on connect, a celebrate when a turn finishes) are a
+> planned next tier — see *Forthcoming behavior* below.
 
 ### Forthcoming behavior (designed, not yet rendered)
 
 These are specified so authors can plan, but the renderer doesn't drive them
 yet — they're tracked in `TODO.md`. Authoring the clips/flags now is harmless.
 
-- **`working` / tool-use clip** — a distinct loop for *the agent running a tool*
-  (operating a gadget, rummaging), separate from the contemplative `thinking`
-  pose. The strongest cross-system convention (Microsoft Agent splits `Think`
-  from `Process`/`Search`; the `pi-animations` indicator splits Thinking ·
-  Working · Tool) is that *acting* should look different from *thinking*. Needs
-  the host to expose a tool-active sub-state (via the already-plumbed tool-call
-  signal); chain would be `working` → `writing` → `thinking` → `idle`.
 - **One-shot reactions** — transient overlays that play once and return to the
   base loop: `greet`/`wake` on connect, `celebrate`/`done` on turn completion,
   `attention` on a notification. Cf. the Peon Pet's celebrate-on-finish.
-- **`tools` / `intensity` continuous modulation** — tool-call bursts and stream
-  rate driving extra liveliness, which would un-clamp those badge flags.
+- **`intensity` continuous modulation** — stream rate / activity driving extra
+  idle and working liveliness, which would un-clamp the `intensity` badge flag.
 
 ## Reactivity — optional and detectable
 
@@ -168,13 +174,14 @@ summary so users see what a pet does before selecting it.
 | Flag | Default | Effect when `true` |
 |------|---------|--------------------|
 | `voice` | `true` | Voice amplitude gives a subtle scale "bounce" while speaking/listening. |
-| `tools` | `false` | **Reserved.** Tool-call pulses aren't rendered yet, so this is **clamped off the badge** until the renderer supports it — declaring it has no effect today. |
-| `intensity` | `false` | **Reserved.** Same — clamped off the badge until the renderer consumes activity intensity. |
+| `tools` | *auto* | **Driven by the `working` clip, not this flag.** A pet that ships a usable `working` clip reacts to tool use (swaps to it while a tool runs) and advertises **Tools**; one without it doesn't — so the flag is ignored and can't over-promise. |
+| `intensity` | `false` | **Reserved.** Clamped off the badge until the renderer consumes activity intensity. |
 
 The badge only ever advertises what the renderer actually delivers: a declared
 flag the renderer doesn't honor is dropped, so a pet can't over-promise. The
-clips themselves carry most of a pet's expressiveness (idle vs. thinking vs.
-writing vs. speaking loops); `voice` adds the only extra motion today.
+clips carry most of a pet's expressiveness (idle vs. thinking vs. working vs.
+writing vs. speaking loops); `voice` (bounce) and the `working` overlay add the
+extra motion today.
 
 ## Frames and images
 

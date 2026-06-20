@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet `working`/tool-use behavior (Android)
+
+**Why.** The behavior-model spec called for a distinct "agent is running a tool" pose — the strongest cross-system convention (Microsoft Agent splits `Think` from `Process`/`Search`; the `pi-animations` indicator splits Thinking · Working · Tool) is that *acting* should look different from *thinking*. Our six `SphereState`s folded tool-use into thinking/streaming.
+
+- **Pet-local tool overlay (`PetAvatar`).** Implemented as a sub-state derived from the already-plumbed `toolCallBurst`, **not** a 7th `SphereState` — zero blast radius on the Sphere or the call sites. `Render` swaps to an optional `workingClip` when `toolCallBurst ≥ WORKING_BURST_THRESHOLD` (0.5) during a `Thinking`/`Streaming` turn, and returns to the base-state clip as the burst decays (the signal ramps to ~1 in 200ms and decays over 1200ms, so 0.5 activates fast and lingers ~600ms — smoothing back-to-back tool calls). Error keeps its own clip; `toolCallBurst` is ~0 outside tool activity, so it never fires spuriously.
+- **Opt-in, clip-driven capability (`PetLoader.toAvatar`).** `workingClip` resolves only from an explicit `working` key (no fallback) — a pet without one keeps its base-state clip during tool use, exactly as before. Shipping a usable `working` clip is *itself* the tool-reactivity capability: it drives both the swap and the **Tools** badge (`reactivity.tools = (workingClip != null) && PET_RENDERER_CAPABILITIES.tools`), so the declared `reactive.tools` flag is no longer needed and can't over-promise. Flipped `PET_RENDERER_CAPABILITIES.tools` to `true` (the renderer now consumes the signal).
+- **Tests.** `PetLoaderTest`: a `working` clip lights the Tools badge (`Voice · Tools`); a `working` clip with missing files does not; the existing declared-but-no-clip case still clamps to `Voice`.
+- **Docs (`docs/pet-spec.md`).** `working` moved from "Forthcoming" into the implemented model: a `Working` row in the state table, a "The `working` overlay" subsection (opt-in, tool-use vs. thinking), the authoring ladder's Rich tier now 7 clips, and the reactivity table's `tools` row now "driven by the `working` clip." Forthcoming trimmed to one-shot reactions + intensity modulation.
+- **Verification.** Code + tests authored to the established patterns; not run here (Studio-side). On-device check (clean mode, a `working` clip swapping in during a tool run) recorded in TODO.md.
+
 ## 2026-06-19 — Pet reactivity: honest badge + behavior-model spec (Android)
 
 **Why.** Follow-up to the custom-avatar audit. The pet picker badge read `reactivity.summary()` straight from `pet.json`, so a pet declaring `reactive:{tools:true,intensity:true}` advertised "Voice · Tools · Activity" while `PetAvatar.Render` only ever consumed voice — the badge could lie. Separately, the goal was to let pets *associate behavior with agent activity* (show "thinking" vs "writing" vs "speaking"), which needed a documented behavior model rather than a fallback table buried in the clip docs.

@@ -101,12 +101,48 @@ class PetLoaderTest {
 
         val avatar = PetLoader.loadPets(dir).single()
 
-        // The renderer only consumes voice today, so a manifest that declares
-        // tools/intensity must NOT advertise them on the picker badge.
+        // `tools` reactivity is driven by shipping a `working` clip (this pack has
+        // none), and `intensity` is still unsupported — so a bare declaration of
+        // either must NOT advertise on the picker badge.
         assertTrue(avatar.reactivity.voice)
         assertFalse(avatar.reactivity.tools)
         assertFalse(avatar.reactivity.intensity)
         assertEquals("Voice", avatar.reactivity.summary())
+    }
+
+    @Test
+    fun `a working clip enables tool reactivity on the badge`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "blob",
+            """{ "id": "blob", "states": { "idle": { "frames": ["idle.png"], "fps": 6 }, "working": { "frames": ["work.png"], "fps": 8 } } }""",
+            imageFiles = listOf("idle.png", "work.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        // Shipping a usable `working` clip IS the tool-reactivity capability — no
+        // separate flag needed — so the badge now advertises Tools.
+        assertTrue(avatar.reactivity.tools)
+        assertEquals("Voice · Tools", avatar.reactivity.summary())
+    }
+
+    @Test
+    fun `a working clip with missing files does not enable tool reactivity`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "blob",
+            """{ "id": "blob", "states": { "idle": { "frames": ["idle.png"], "fps": 6 }, "working": { "frames": ["missing.png"], "fps": 8 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        // The working clip's file doesn't exist, so there's no real tool behavior
+        // and the badge must not claim it.
+        assertFalse(avatar.reactivity.tools)
     }
 
     @Test

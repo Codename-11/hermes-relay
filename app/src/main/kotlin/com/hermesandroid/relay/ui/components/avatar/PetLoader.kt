@@ -114,6 +114,11 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
         resolveStateClip(state, dir) ?: idleClip
     }
 
+    // Opt-in tool-use clip: resolved only from an explicit `working` key (no
+    // fallback — without it there's no distinct tool behavior, and the pet just
+    // keeps its base-state clip during tool use, exactly as before).
+    val workingClip = states["working"]?.toClip(dir)
+
     return PetAvatar(
         id = id,
         label = resolvedLabel,
@@ -121,13 +126,16 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
         // Clamp declared reactivity to what the renderer actually honors today so
         // the picker badge can't over-promise (declared AND supported). Flip a
         // flag in [PET_RENDERER_CAPABILITIES] to let a declared signal through.
+        // `tools` reactivity is the `working` clip: a pet reacts to tool use iff
+        // it ships one, so the badge is driven by the clip, not the declared flag.
         reactivity = SphereReactivity(
             voice = reactive.voice && PET_RENDERER_CAPABILITIES.voice,
-            tools = reactive.tools && PET_RENDERER_CAPABILITIES.tools,
+            tools = (workingClip != null) && PET_RENDERER_CAPABILITIES.tools,
             intensity = reactive.intensity && PET_RENDERER_CAPABILITIES.intensity,
             gaze = false,
         ),
         clips = clips,
+        workingClip = workingClip,
     )
 }
 

@@ -31,6 +31,14 @@ private const val PET_MAX_FPS = 60f
 private const val PET_BOUNCE = 0.12f
 
 /**
+ * toolCallBurst (0..1; ramps to ~1 within 200ms of a tool call, decays over
+ * 1200ms) above this switches the pet to its `working` clip. 0.5 activates fast
+ * and lingers ~600ms after the last tool, smoothing back-to-back tool calls
+ * without flicker.
+ */
+private const val WORKING_BURST_THRESHOLD = 0.5f
+
+/**
  * The live reactive signals the pet renderer actually consumes **today**. A pet's
  * effective [AgentAvatar.reactivity] is clamped to this in [PetSpec.toAvatar]
  * (declared-AND-supported), so a `pet.json` can never advertise reactivity on the
@@ -40,14 +48,14 @@ private const val PET_BOUNCE = 0.12f
  * [Render] learns to consume that signal, and every manifest that already declared
  * it lights up with no other change.
  *
- * Today only [SphereReactivity.voice] is honored (`voiceAmplitude` → bounce).
- * `tools` ([AvatarRenderState.toolCallBurst]) and `intensity`
- * ([AvatarRenderState.intensity]) are delivered to [Render] by every call site but
- * not yet consumed; `gaze` is never fed.
+ * Honored today: [SphereReactivity.voice] (`voiceAmplitude` → bounce) and
+ * [SphereReactivity.tools] (`toolCallBurst` → swap to the `working` clip, gated
+ * per-pet on it shipping one — see [PetSpec.toAvatar]). [SphereReactivity.intensity]
+ * is delivered to [Render] but not yet consumed; `gaze` is never fed.
  */
 internal val PET_RENDERER_CAPABILITIES: SphereReactivity = SphereReactivity(
     voice = true,
-    tools = false,
+    tools = true,
     intensity = false,
     gaze = false,
 )
@@ -96,6 +104,11 @@ data class SpriteSheetClip(
  * @property clips a fully-resolved clip for every [SphereState] (the loader
  *   pre-applies the idle/thinking/speaking fallback chain), so [Render] is a
  *   simple lookup.
+ * @property workingClip optional distinct "agent is running a tool" loop. When
+ *   present (the author shipped a `working` clip), it overrides the base-state
+ *   clip while [AvatarRenderState.toolCallBurst] is high during a thinking/
+ *   writing turn — so tool-use reads differently from contemplation. Null →
+ *   tool-use looks like the base state (the pre-working behavior).
  */
 class PetAvatar(
     override val id: String,
@@ -103,12 +116,21 @@ class PetAvatar(
     override val description: String,
     override val reactivity: SphereReactivity,
     private val clips: Map<SphereState, PetClip>,
+    private val workingClip: PetClip? = null,
 ) : AgentAvatar {
     override val source: AvatarSource = AvatarSource.USER
 
     @Composable
     override fun Render(state: AvatarRenderState, modifier: Modifier) {
-        val clip = clips[state.state] ?: clips[SphereState.Idle]
+        // While a tool runs mid-turn (thinking/writing), show the distinct
+        // `working` clip if the pet ships one; otherwise fall through to the
+        // base-state clip. toolCallBurst is ~0 outside tool activity, and Error
+        // keeps its own clip, so this only fires when the agent is actually
+        // operating a tool.
+        val toolActive = workingClip != null &&
+            state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
+            (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
+        val clip = if (toolActive) workingClip else (clips[state.state] ?: clips[SphereState.Idle])
 
         // Decode the active clip off the main thread; null until ready / on
         // decode failure (graceful — the avatar just renders nothing).
