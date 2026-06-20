@@ -146,12 +146,12 @@ Each generated sheet becomes one clip. This manifest wires up **all nine** — s
   "label": "My Pet",
   "reactive": { "voice": true, "intensity": true },
   "states": {
-    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 6 },
+    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
     "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
     "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
     "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
     "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 },
-    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 6 },
+    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
     "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
     "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
     "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 }
@@ -163,6 +163,10 @@ Each generated sheet becomes one clip. This manifest wires up **all nine** — s
 
 ::: tip Validate as you author
 The example above starts with a `$schema` line pointing at the published [pet schema](https://codename-11.github.io/hermes-relay/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
+:::
+
+::: tip Smoothness: frames vs. fps
+Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed. A 2×2 grid (4 frames) is the easy-to-keep-consistent minimum but reads steppy; for fluid motion ask for **9 (3×3) or 16 (4×4)** frames — consistency gets a little harder, so lean on the reference image. And **match fps to frame count**: a 4-frame loop at `fps: 6` cycles in under a second (busy), so keep calm states like `idle`/`listening` at `fps: 3–4` and reserve higher rates for `speaking`/`done`.
 :::
 
 ::: warning Two things AI image models get wrong

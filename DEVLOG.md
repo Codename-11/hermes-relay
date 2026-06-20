@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet frame-loop smoothness fix (Android)
+
+**Why.** First on-device pet (Lucy) animated with a periodic hitch and felt a touch fast. Root cause: `PetAvatar.Render`'s frame loop awaited `withFrameNanos` (one vsync ≈16ms) **and** `delay(1000/fps)` each iteration, so every frame waited ~16ms longer than its `frameDurSec`; the surplus accumulated until the loop forced a 2-frame skip to catch up — a visible hitch, worst at low fps.
+
+- **Vsync-paced loop (`PetAvatar.Render`).** Removed the per-frame `delay`. `withFrameNanos` already suspends until the next frame, so the loop is now purely vsync-paced (~60fps) and advances the sprite only when `frameDurSec` of real time has accumulated — no double-count, no periodic skips. Intensity modulation still recomputes fps each tick; the accumulator absorbs the variable rate without skipping.
+- **Authoring guidance (docs).** Clarified that smoothness comes from frame **count**, not fps: 4 frames (2×2) is the consistent-but-steppy minimum, 8–16 (3×3 / 4×4) for fluid motion; match fps to count (calm states 3–4, not 6+). Added to `docs/pet-spec.md`, the user-docs kit, and `pet-prompt-kit.txt`; lowered the example/kit `idle`+`listening` fps to 4.
+- **Verification.** `:app:assembleSideloadDebug` BUILD SUCCESSFUL. On-device re-check pending: the test device's wireless adb dropped mid-deploy; the rebuilt APK + a tuned `lucy.zip` (idle/listening fps lowered) are staged to install + re-import once it reconnects.
+
 ## 2026-06-20 — In-app pet avatar add/remove/refresh (Android)
 
 **Why.** The Appearance screen could *select* avatars but offered no way to **add or remove** a pet from inside the app — the only path was `adb push` into app-scoped external storage, which scoped storage stalls on (confirmed hanging on a Samsung device: a push into `/sdcard/Android/data/<pkg>/files/pets/` wrote nothing, though `adb shell ls` of the dir worked). And the avatar list loaded once at startup, so even a successfully-pushed pet never appeared without a restart. Net effect: users saw only the Sphere.

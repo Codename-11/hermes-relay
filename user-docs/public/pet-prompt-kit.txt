@@ -74,12 +74,12 @@ STEP 3 — pet.json   (save beside the PNGs in a folder, e.g. my-pet/)
   "label": "My Pet",
   "reactive": { "voice": true, "intensity": true },
   "states": {
-    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 6 },
+    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
     "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
     "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
     "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
     "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 },
-    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 6 },
+    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
     "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
     "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
     "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 }
@@ -117,6 +117,9 @@ GOTCHAS
 • CONSISTENCY: reuse the reference image every time, keep the character/style/
   accent lines identical, lock a fixed seed if you can. Fewer frames (2–4)
   stay consistent more easily.
+• SMOOTHNESS: comes from frame COUNT, not fps. 4 frames (2x2) is the
+  consistent-but-steppy minimum; for fluid motion ask for 9 (3x3) or 16 (4x4)
+  frames. Match fps to count — keep idle/listening at fps 3-4; 6+ looks busy.
 • FASTEST FIRST PASS: generate one 3x3 image (nine cells, one per state),
   slice it into nine single-frame PNGs, and reference each as
   "frames": ["idle.png"] instead of a sheet. No in-state motion, but it

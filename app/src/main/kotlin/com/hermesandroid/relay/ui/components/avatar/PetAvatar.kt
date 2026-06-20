@@ -222,8 +222,8 @@ class PetAvatar(
         val modulateIntensity = reactivity.intensity && !playOnce
 
         if (animate) {
-            // Rate-capped frame advance. Cancels when this leaves composition.
-            // A one-shot (playOnce) runs 0→end then releases to the base loop;
+            // Vsync-paced frame advance (no fixed delay). Cancels when this leaves
+            // composition. A one-shot (playOnce) runs 0→end then releases to the base loop;
             // the base loop wraps with modulo. With intensity modulation on, fps
             // is recomputed each tick from the live activity level.
             LaunchedEffect(current, playOnce) {
@@ -254,7 +254,12 @@ class PetAvatar(
                         frameIndex = (frameIndex + steps).let { if (playOnce) it else it % f.frameCount }
                         acc -= steps * frameDurSec
                     }
-                    delay((1000f / fps).toLong().coerceIn(16L, 1000L))
+                    // No extra delay: withFrameNanos already suspends until the
+                    // next frame, so the loop is vsync-paced and advances the
+                    // sprite only when frameDurSec of real time has accumulated.
+                    // A fixed per-frame delay here double-counted the vsync wait,
+                    // drifted the accumulator, and forced periodic 2-frame skips
+                    // (visible stutter, worst at low fps).
                 }
             }
         }

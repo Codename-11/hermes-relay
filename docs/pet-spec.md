@@ -100,7 +100,10 @@ A **clip** is one animation loop, defined as **either**:
   top-to-bottom).
 
 Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
-`8`). All clips **loop** while their state is active.
+`8`). All clips **loop** while their state is active. Smoothness comes from frame
+**count**, not rate — a 4-frame loop looks steppy at any speed; prefer **8–16
+frames** for fluid motion, and match fps to the count (a 4-frame `idle` at `fps`
+3–4 reads calm; `fps` 6+ looks busy).
 
 ### Editor validation (JSON Schema)
 
