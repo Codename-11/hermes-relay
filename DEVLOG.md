@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Relay enhancement layer + agent-context injection
+
+**Why.** Teaching the agent to mark sensitive media (and, more generally, to know things only the relay can teach it) needs a way to inject context into the agent's system prompt — but hermes-agent exposes no plugin context hook (`system_prompt_block()` is memory-provider-only; lifecycle hooks are observers). The one transport-agnostic seam is `AIAgent._build_system_prompt`. Rather than a one-off patch, we built a reusable, removable **enhancement layer** so the relay can apply such patches cleanly and retire them per-surface as upstream catches up — the same pattern as the bootstrap route shims.
+
+- **`plugin/enhancements/` (registry + contract).** Each enhancement declares `name · phase · enabled() · apply() · retirement note`. Config-gated, OFF by default, no-op on vanilla, removable with the plugin.
+- **`context_injection` enhancement (fail-open).** Wraps `AIAgent._build_system_prompt` at plugin-load; appends auditable fenced blocks (`<!-- hermes-relay:<name> -->`). Fail-open at every step — seam absent / block build throws / setattr fails ⇒ returns the base prompt unchanged. With `RELAY_AGENT_CONTEXT_ENABLED` off, the prompt is byte-for-byte unchanged. Works on BOTH gateway and SSE (agent core).
+- **First block: media-sensitivity.** Teaches the agent to mark private/NSFW media with the client's spoiler convention (`||![alt](path)||` / sentinel alt) — the bit the client already blurs. No soul/memory touched.
+- **`GET /context/injected` audit route + client audit.** The relay exposes exactly what it would inject; the chat "What the agent sees" sheet gained a "Relay context (server-side)" section. Server-side injection is never hidden.
+- **Sensitivity re-thread (client).** `ServerImageResult.Success` carries the fetched `sensitive` bit again; `RelayServerImage` blur ORs it with the markdown-parsed flag.
+- **Transport-path UI.** New `ChatTransportStatusBadge` + `RelayStatusStrip` surface the ACTUAL chat tier (⚡ Gateway / 📡 Sessions / Completions / Runs / offline) instead of a bare "api online"; Chat Settings gained a basic→best tier ladder + a gateway sign-in callout.
+- **Dashboard.** Relay management tab gained Agent-context master + per-block toggles (off by default; labeled experimental/server-side/removable).
+- **Verification.** Plugin: `python -m unittest plugin.tests.test_enhancements` (16 pass). Android: `:app:lintSideloadDebug :app:assembleSideloadDebug --no-daemon` green. Built by a 2-worker Orca orchestration (server + client slices), coordinator-integrated. Design: `docs/plans/2026-06-20-relay-enhancement-layer.md`.
+- **Follow-ups (TODO).** Confirm the `AIAgent` module on the live host when enabling; structured media channel (`docs/plans/2026-06-20-structured-media-channel.md`); incremental bootstrap migration into the enhancement layer; retire the wrap when upstream ships a context hook.
+
 ## 2026-06-20 — Pet intensity modulation (Android)
 
 **Why.** The last continuous-reactivity gap: a pet's clip looped at a fixed rate regardless of how hard the agent was working. `intensity` (the activity ramp already fed to every avatar — ~0.7 while streaming) was plumbed to `PetAvatar.Render` but ignored. Wiring it completes the reactivity story (voice ✓ · tools ✓ · activity ✓) and un-clamps the last reserved badge flag — and unlike the deferred `attention`, the signal needed no host plumbing.
