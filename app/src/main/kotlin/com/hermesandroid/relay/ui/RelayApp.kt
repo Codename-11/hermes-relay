@@ -81,11 +81,14 @@ import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
+import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
+import com.hermesandroid.relay.ui.components.ChatTransportTier
 import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
 import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
+import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
 import com.hermesandroid.relay.update.UpdateCheckResult
 import com.hermesandroid.relay.viewmodel.UpdateViewModel
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
@@ -1327,19 +1330,19 @@ fun RelayApp() {
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (!suppressGlobalChrome && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
-                    val leading = when {
-                        apiReachable -> "api online"
-                        relayReady -> "relay connected"
-                        else -> "offline"
-                    }
-                    val leadingColor = when {
-                        apiReachable -> RelayRefresh.Green
-                        relayReady -> RelayRefresh.Relay
-                        else -> RelayRefresh.Danger
-                    }
                     val routeLabel = activeEndpoint?.displayLabel()
                         ?: activeConnection?.label
                         ?: "no route"
+                    val transportStatus = resolveChatTransportStatus(
+                        streamingEndpoint = streamingEndpoint,
+                        gatewayAvailability = gatewayAvailability,
+                        serverCapabilities = serverCapabilities,
+                    )
+                    val transportRouteLabel = if (transportStatus.tier == ChatTransportTier.Offline) {
+                        ""
+                    } else {
+                        routeLabel
+                    }
                     val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() } ?: "default"
                     val displayProfile = AgentDisplay.effectiveDisplayProfile(
                         selectedProfile = selectedProfile,
@@ -1354,18 +1357,24 @@ fun RelayApp() {
                     } else {
                         "profile: $profileLabel"
                     }
+                    val openConnections = {
+                        navController.navigate(Screen.ConnectionsSettings.route) {
+                            launchSingleTop = true
+                        }
+                    }
                     RelayStatusStrip(
-                        leading = "$leading / $routeLabel",
+                        leadingBadge = {
+                            ChatTransportStatusBadge(
+                                status = transportStatus,
+                                onClick = openConnections,
+                            )
+                        },
+                        routeLabel = transportRouteLabel,
                         trailing = "$modelLabel / $safetyLabel",
-                        leadingColor = leadingColor,
                         // Tap the persistent status/route readout to open
                         // Connections — preserves the affordance the dropped
                         // header endpoint chip used to provide.
-                        onClick = {
-                            navController.navigate(Screen.ConnectionsSettings.route) {
-                                launchSingleTop = true
-                            }
-                        },
+                        onClick = openConnections,
                     )
                 }
             }

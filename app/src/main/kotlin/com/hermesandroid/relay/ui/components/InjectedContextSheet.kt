@@ -91,6 +91,16 @@ fun InjectedContextSheet(
                 },
             )
             ContextSection(
+                title = "Relay context (server-side)",
+                body = context.relayServerBlocks
+                    .takeIf { it.isNotEmpty() }
+                    ?.joinToString("\n\n") { (name, text) ->
+                        "[$name]\n$text"
+                    },
+                emptyNote = "No relay server-side context blocks are active, or the relay " +
+                    "context layer is disabled.",
+            )
+            ContextSection(
                 title = "This turn",
                 body = context.interfaceContext,
                 emptyNote = "Nothing extra for a typed turn. Voice turns add a " +

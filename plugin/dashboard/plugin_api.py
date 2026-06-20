@@ -12,6 +12,7 @@ Route map
 - ``GET /sessions``         → relay ``GET /sessions`` (loopback-exempt since R3)
 - ``GET /bridge-activity``  → relay ``GET /bridge/activity`` (forwards ``limit``)
 - ``GET /media``            → relay ``GET /media/inspect`` (forwards ``include_expired``)
+- ``GET /agent-context``    → relay ``GET /context/injected`` + local env settings
 - ``GET /push``             → static stub (no network call) until FCM is wired
 
 Error translation
@@ -176,6 +177,23 @@ async def get_media(include_expired: Optional[bool] = Query(default=None)) -> An
         # httpx serializes bool as "True"/"False"; relay expects lower-case.
         params["include_expired"] = "true" if include_expired else "false"
     return await _proxy_get("/media/inspect", params=params or None)
+
+
+@router.get("/agent-context")
+async def get_agent_context() -> dict[str, Any]:
+    """Return current Agent context flags and the relay audit payload."""
+    from plugin.config import (
+        agent_context_enabled,
+        context_media_sensitivity_enabled,
+    )
+
+    return {
+        "settings": {
+            "RELAY_AGENT_CONTEXT_ENABLED": agent_context_enabled(),
+            "RELAY_CONTEXT_MEDIA_SENSITIVITY": context_media_sensitivity_enabled(),
+        },
+        "injected": await _proxy_get("/context/injected"),
+    }
 
 
 @router.get("/push")

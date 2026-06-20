@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -2989,6 +2990,12 @@ class ChatViewModel : ViewModel() {
          */
         val mediaCapability: String?,
         /**
+         * Relay-plugin-owned server-side context blocks that are injected into
+         * Hermes by the relay enhancement layer. These are audit-only on the
+         * client: they are not included in [combinedSystemMessage].
+         */
+        val relayServerBlocks: List<Pair<String, String>>,
+        /**
          * True when a relay route is configured, so the relay `/media/by-path`
          * route can fetch server-local images/files. On the GATEWAY this is how
          * media works (the client renders them inline) even though
@@ -3016,6 +3023,7 @@ class ChatViewModel : ViewModel() {
         interfaceContextPrompt: String?,
         selectedProfile: Profile?,
         useIsolatedProfileApi: Boolean,
+        relayServerBlocks: List<Pair<String, String>> = emptyList(),
     ): InjectedContext {
         val selected = _selectedPersonality.value
         val profileSystemMessage = selectedProfile
@@ -3053,6 +3061,7 @@ class ChatViewModel : ViewModel() {
             appContext = appContextRaw?.takeIf { it.isNotBlank() },
             interfaceContext = interfaceContextPrompt?.takeIf { it.isNotBlank() },
             mediaCapability = mediaCapability,
+            relayServerBlocks = relayServerBlocks,
             relayMediaAvailable = relayMediaAvailable,
             combinedSystemMessage = combined,
             transport = streamingEndpoint,
@@ -3067,10 +3076,21 @@ class ChatViewModel : ViewModel() {
      */
     fun previewInjectedContext(): InjectedContext {
         val profile = selectedProfileProvider()
+        val relayBlocks = runCatching {
+            runBlocking {
+                relayHttpClient
+                    ?.fetchInjectedContext()
+                    ?.getOrNull()
+                    ?.blocks
+                    ?.map { it.name to it.text }
+                    .orEmpty()
+            }
+        }.getOrDefault(emptyList())
         return composeInjectedContext(
             interfaceContextPrompt = null,
             selectedProfile = profile,
             useIsolatedProfileApi = profile?.hasIsolatedApi == true,
+            relayServerBlocks = relayBlocks,
         )
     }
 
@@ -3842,7 +3862,7 @@ class ChatViewModel : ViewModel() {
         // into a non-Result type. The resolver boundary must not return
         // kotlin.Result from a suspend fun (see [ServerImageResult]).
         return relay.fetchMediaByPath(serverPath).fold(
-            onSuccess = { ServerImageResult.Success(it.bytes) },
+            onSuccess = { ServerImageResult.Success(it.bytes, it.sensitive) },
             onFailure = { ServerImageResult.Failure(it.message ?: "relay fetch failed") },
         )
     }
