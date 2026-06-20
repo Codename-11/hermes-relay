@@ -129,37 +129,58 @@ object CrashReporter {
         File(File(context.filesDir, DIR), FILE)
 
     /**
-     * Build a pre-filled GitHub "new issue" URL targeting our `bug_report.yml`
-     * form. Textarea/dropdown fields are pre-filled by their form `id`
-     * (`area`, `summary`, `environment`, `logs`); the required confirmation
-     * checkboxes are left for the user to tick.
+     * Build a pre-filled GitHub "new issue" URL.
+     *
+     * Uses the **stable** classic `title` + `body` + `labels` query params, NOT
+     * issue-form field-`id` prefilling (`template=...&<id>=...`). The latter is
+     * a GitHub public-preview feature and was observed to silently not apply
+     * (only `title` carried), which is unacceptable for a crash reporter that
+     * fires on devices we can't retry from. `blank_issues_enabled: true` in
+     * `.github/ISSUE_TEMPLATE/config.yml` guarantees `?body=` opens a prefilled
+     * issue. The body mirrors `bug_report.yml`'s sections in markdown so triage
+     * structure is preserved without depending on the preview path.
      */
     fun buildGithubIssueUrl(report: CrashReport): String {
-        val logs = report.stackTrace.let {
+        // LinkedHashMap preserves a stable, readable param order.
+        val params = linkedMapOf(
+            "title" to "[Bug]: Crash — ${report.shortTitle()}",
+            "labels" to "bug",
+            "body" to buildIssueBody(report),
+        )
+        return GITHUB_NEW_ISSUE + "?" + params.entries.joinToString("&") { (key, value) ->
+            "$key=" + URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        }
+    }
+
+    private fun buildIssueBody(report: CrashReport): String {
+        val trace = report.stackTrace.let {
             if (it.length > MAX_TRACE_FOR_URL) {
                 it.take(MAX_TRACE_FOR_URL) + "\n… (truncated — full report copied to your clipboard)"
             } else {
                 it
             }
         }
-        val summary = buildString {
-            appendLine("Observed:")
+        return buildString {
+            appendLine(
+                "> ⚠️ Before submitting: remove any secrets, tokens, real hostnames/IPs, " +
+                    "or personal data from the trace below.",
+            )
+            appendLine()
+            appendLine("### Affected area")
+            appendLine("Android app")
+            appendLine()
+            appendLine("### What happened?")
             appendLine("The app closed unexpectedly. Auto-captured crash report below.")
             appendLine()
-            appendLine("Expected:")
-            append("No crash.")
-        }
-        // LinkedHashMap preserves a stable, readable param order.
-        val params = linkedMapOf(
-            "template" to "bug_report.yml",
-            "title" to "[Bug]: Crash — ${report.shortTitle()}",
-            "area" to "Android app",
-            "summary" to summary,
-            "environment" to report.environmentBlock(),
-            "logs" to logs,
-        )
-        return GITHUB_NEW_ISSUE + "?" + params.entries.joinToString("&") { (key, value) ->
-            "$key=" + URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+            appendLine("### Environment")
+            appendLine(report.environmentBlock())
+            appendLine()
+            appendLine("### Crash")
+            appendLine("```")
+            appendLine(trace)
+            appendLine("```")
+            appendLine()
+            append("<sub>Captured by the Hermes-Relay in-app crash reporter · ${report.timeIso}</sub>")
         }
     }
 

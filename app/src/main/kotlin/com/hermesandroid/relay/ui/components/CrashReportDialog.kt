@@ -160,7 +160,7 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                             val opened = openUrl(context, CrashReporter.buildGithubIssueUrl(report))
                             toast(
                                 context,
-                                if (opened) "Full report copied — paste into Logs if needed"
+                                if (opened) "Full report copied — paste into the issue if it's truncated"
                                 else "Report copied — no browser found to open GitHub",
                             )
                             onDismiss()
