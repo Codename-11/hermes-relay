@@ -54,11 +54,14 @@ import kotlinx.coroutines.withContext
 
 /**
  * Drop-in gate that surfaces a pending crash report (if the previous session
- * crashed) exactly once per launch. Render it inside the app theme so the
- * dialog picks up Material colors — see RelayApp.
+ * crashed). Render it inside the app theme so the dialog picks up Material
+ * colors — see RelayApp.
  *
- * Reads + clears the report on first composition (show-once), so a clean launch
- * is a no-op and the dialog never reappears within the same process.
+ * Peeks the report on first composition (does NOT delete on read) and clears it
+ * only when the user acknowledges it (Dismiss/Report). A report the user merely
+ * glanced at — or never reached because the app was backgrounded — therefore
+ * survives relaunches instead of being lost after one view; once acknowledged
+ * it's deleted and won't reappear.
  */
 @Composable
 fun CrashReportGate() {
@@ -69,11 +72,20 @@ fun CrashReportGate() {
     LaunchedEffect(Unit) {
         if (checked) return@LaunchedEffect
         checked = true
-        report = withContext(Dispatchers.IO) { CrashReporter.consumePending(context) }
+        report = withContext(Dispatchers.IO) { CrashReporter.peekPending(context) }
     }
 
     val pending = report ?: return
-    CrashReportDialog(report = pending, onDismiss = { report = null })
+    CrashReportDialog(
+        report = pending,
+        onDismiss = {
+            // Acknowledged (Dismiss/Report) → delete so it won't reappear.
+            // Copy does NOT route through here, so the report stays available
+            // across relaunches until the user actually dismisses or reports it.
+            CrashReporter.clearPending(context)
+            report = null
+        },
+    )
 }
 
 @Composable
