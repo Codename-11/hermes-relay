@@ -28,8 +28,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -535,6 +537,13 @@ fun QrPairingScanner(
     // AtomicBoolean for thread-safe detection flag (accessed from camera executor thread)
     val hasDetected = remember { AtomicBoolean(false) }
     val cameraProviderRef = remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    // Set when the camera can't be brought up on this device/ROM (e.g. a
+    // foldable that fails CameraX init, or a busy/unavailable back camera).
+    // Drives a graceful "pair manually" fallback instead of a force-close —
+    // ProcessCameraProvider.getInstance().get() runs on the MAIN thread, so an
+    // uncaught throw there would crash the app outright (the failure mode behind
+    // foldable "keeps crashing during setup" reports).
+    var cameraError by remember { mutableStateOf<String?>(null) }
 
     // Viewport is sized at 50% of the screen width via Modifier.fillMaxWidth(0.5f)
     // below — comfortable scan target without dominating the screen, and
@@ -635,6 +644,12 @@ fun QrPairingScanner(
                     .onSizeChanged { viewportSizePx = it },
                 contentAlignment = Alignment.Center
             ) {
+                if (cameraError != null) {
+                    CameraUnavailableCard(
+                        message = cameraError ?: "",
+                        onPairManually = onDismiss,
+                    )
+                } else {
                 AndroidView(
                     factory = { ctx ->
                         val previewView = PreviewView(ctx).apply {
@@ -647,7 +662,17 @@ fun QrPairingScanner(
 
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                         cameraProviderFuture.addListener({
-                            val cameraProvider = cameraProviderFuture.get()
+                            // get() can throw ExecutionException if CameraX init
+                            // fails (common on foldables / busy cameras). This
+                            // listener runs on the MAIN thread, so an uncaught
+                            // throw here force-closes the app — catch and degrade.
+                            val cameraProvider = try {
+                                cameraProviderFuture.get()
+                            } catch (t: Throwable) {
+                                Log.e("QrPairingScanner", "Camera provider init failed", t)
+                                cameraError = "Couldn't start the camera on this device."
+                                return@addListener
+                            }
                             cameraProviderRef.value = cameraProvider
 
                             val preview = Preview.Builder().build().also {
@@ -667,13 +692,20 @@ fun QrPairingScanner(
                                             imageProxy.close()
                                             return@setAnalyzer
                                         }
+                                        // fromMediaImage() can throw on an
+                                        // unexpected frame format/rotation — a bad
+                                        // frame must skip, never kill the analyzer
+                                        // thread (which would crash the process).
                                         val rotation = imageProxy.imageInfo.rotationDegrees
                                         val imgW = mediaImage.width
                                         val imgH = mediaImage.height
-                                        val inputImage = InputImage.fromMediaImage(
-                                            mediaImage,
-                                            rotation
-                                        )
+                                        val inputImage = try {
+                                            InputImage.fromMediaImage(mediaImage, rotation)
+                                        } catch (t: Throwable) {
+                                            Log.w("QrPairingScanner", "Skipping unprocessable camera frame", t)
+                                            imageProxy.close()
+                                            return@setAnalyzer
+                                        }
                                         barcodeScanner.process(inputImage)
                                             .addOnSuccessListener { barcodes ->
                                                 // Drive the brackets off ANY decoded QR so
@@ -726,6 +758,7 @@ fun QrPairingScanner(
                                 )
                             } catch (e: Exception) {
                                 Log.e("QrPairingScanner", "Camera bind failed", e)
+                                cameraError = "Couldn't start the camera on this device."
                             }
                         }, ContextCompat.getMainExecutor(ctx))
 
@@ -742,6 +775,7 @@ fun QrPairingScanner(
                     locked = lockedPayload != null,
                     modifier = Modifier.fillMaxSize(),
                 )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -771,6 +805,52 @@ fun QrPairingScanner(
                     textAlign = TextAlign.Center
                 )
             }
+        }
+    }
+}
+
+/**
+ * Graceful fallback shown inside the scan viewport when CameraX can't bring the
+ * camera up on this device (the foldable "keeps crashing during setup" class).
+ * Instead of a force-close, we explain the situation and route the user to the
+ * manual pairing paths (URL entry / 6-char code) via [onPairManually].
+ */
+@Composable
+private fun CameraUnavailableCard(
+    message: String,
+    onPairManually: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Filled.CameraAlt,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(40.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "You can pair without the camera.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = onPairManually) {
+            Text("Pair manually")
         }
     }
 }

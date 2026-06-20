@@ -67,6 +67,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.hermesandroid.relay.ui.components.CrashReportGate
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
 import com.hermesandroid.relay.ui.components.SphereRegistry
@@ -819,6 +820,11 @@ fun RelayApp() {
         themePreference = themePreference,
         fontScale = fontScale,
     ) {
+        // Surface a crash report from a previous session, if any. Renders a
+        // platform Dialog (own window) so tree position is z-order-agnostic;
+        // it just needs to be inside the theme for Material colors.
+        CrashReportGate()
+
         val navController = rememberNavController()
         var postOnboardingRoute by remember { mutableStateOf<String?>(null) }
 
