@@ -113,7 +113,7 @@ private fun isSensitiveAltText(alt: String): Boolean {
  * `RelayServerImage` on app open with a server-local image in history).
  */
 sealed interface ServerImageResult {
-    class Success(val bytes: ByteArray) : ServerImageResult
+    class Success(val bytes: ByteArray, val sensitive: Boolean = false) : ServerImageResult
     class Failure(val reason: String) : ServerImageResult
 }
 
@@ -134,18 +134,23 @@ val LocalRelayServerImageResolver = staticCompositionLocalOf<RelayServerImageRes
  * memory in check; eldest-accessed is evicted first.
  */
 private const val INLINE_IMAGE_CACHE_MAX = 12
+private data class CachedInlineImage(
+    val bitmap: ImageBitmap,
+    val sensitive: Boolean,
+)
+
 private val inlineImageCache =
-    object : LinkedHashMap<String, ImageBitmap>(16, 0.75f, true) {
+    object : LinkedHashMap<String, CachedInlineImage>(16, 0.75f, true) {
         override fun removeEldestEntry(
-            eldest: MutableMap.MutableEntry<String, ImageBitmap>,
+            eldest: MutableMap.MutableEntry<String, CachedInlineImage>,
         ): Boolean = size > INLINE_IMAGE_CACHE_MAX
     }
 
-private fun cachedInlineImage(key: String): ImageBitmap? =
+private fun cachedInlineImage(key: String): CachedInlineImage? =
     synchronized(inlineImageCache) { inlineImageCache[key] }
 
-private fun putInlineImage(key: String, bitmap: ImageBitmap) {
-    synchronized(inlineImageCache) { inlineImageCache[key] = bitmap }
+private fun putInlineImage(key: String, bitmap: ImageBitmap, sensitive: Boolean) {
+    synchronized(inlineImageCache) { inlineImageCache[key] = CachedInlineImage(bitmap, sensitive) }
 }
 
 /**
@@ -327,7 +332,7 @@ private fun InlineImageColumn(
 
 private sealed interface RelayImagePhase {
     data object Loading : RelayImagePhase
-    data class Loaded(val bitmap: ImageBitmap) : RelayImagePhase
+    data class Loaded(val bitmap: ImageBitmap, val sensitive: Boolean) : RelayImagePhase
     data class Failed(val reason: String?) : RelayImagePhase
 }
 
@@ -346,7 +351,7 @@ private fun RelayServerImage(
     var phase by remember(image.src) {
         mutableStateOf<RelayImagePhase>(
             cachedInlineImage(image.src)
-                ?.let { RelayImagePhase.Loaded(it) }
+                ?.let { RelayImagePhase.Loaded(it.bitmap, it.sensitive) }
                 ?: RelayImagePhase.Loading,
         )
     }
@@ -365,8 +370,8 @@ private fun RelayServerImage(
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     }.getOrNull()?.asImageBitmap()
                     if (bmp != null) {
-                        putInlineImage(image.src, bmp)
-                        RelayImagePhase.Loaded(bmp)
+                        putInlineImage(image.src, bmp, result.sensitive)
+                        RelayImagePhase.Loaded(bmp, result.sensitive)
                     } else {
                         RelayImagePhase.Failed("fetched ${bytes.size} B but couldn't decode the image")
                     }
@@ -386,7 +391,13 @@ private fun RelayServerImage(
         ) {
             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
         }
-        is RelayImagePhase.Loaded -> RelayServerImageContent(image, current.bitmap, maxWidth, resolver)
+        is RelayImagePhase.Loaded -> RelayServerImageContent(
+            image,
+            current.bitmap,
+            current.sensitive,
+            maxWidth,
+            resolver,
+        )
         is RelayImagePhase.Failed -> UnrenderableImageNotice(
             image,
             reason = "Couldn't load ${image.src}" +
@@ -399,13 +410,15 @@ private fun RelayServerImage(
 private fun RelayServerImageContent(
     image: ChatInlineImage,
     bitmap: ImageBitmap,
+    fetchedSensitive: Boolean,
     maxWidth: Dp,
     resolver: RelayServerImageResolver,
 ) {
     var viewerOpen by remember { mutableStateOf(false) }
     val blurMode = LocalMediaBlurMode.current
     var revealed by remember(image.src) { mutableStateOf(false) }
-    val blurred = !revealed && shouldBlurImage(blurMode, image.sensitive)
+    val sensitive = image.sensitive || fetchedSensitive
+    val blurred = !revealed && shouldBlurImage(blurMode, sensitive)
     if (viewerOpen) {
         ChatImageViewer(
             source = ChatImageViewerSource.Bitmap(
@@ -419,7 +432,7 @@ private fun RelayServerImageContent(
                 bytesProvider = { (resolver.fetch(image.src) as? ServerImageResult.Success)?.bytes },
             ),
             onDismiss = { viewerOpen = false },
-            sensitive = image.sensitive,
+            sensitive = sensitive,
             initiallyRevealed = revealed,
         )
     }

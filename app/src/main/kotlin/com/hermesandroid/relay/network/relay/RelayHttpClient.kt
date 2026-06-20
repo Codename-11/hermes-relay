@@ -7,6 +7,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -108,6 +109,22 @@ class RelayHttpClient(
             return result
         }
     }
+
+    /**
+     * Server-side relay context that would be injected into the next agent turn.
+     * Mirrors `GET /context/injected`; Android treats it as audit-only state.
+     */
+    @Serializable
+    data class InjectedContextAudit(
+        val enabled: Boolean = false,
+        val blocks: List<InjectedContextBlock> = emptyList(),
+    )
+
+    @Serializable
+    data class InjectedContextBlock(
+        val name: String,
+        val text: String,
+    )
 
     /**
      * Fetch `GET /media/<token>` from the relay over HTTP(S). Returns a
@@ -294,6 +311,85 @@ class RelayHttpClient(
             Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
         } catch (e: Exception) {
             Log.w(TAG, "fetchMediaByPath unexpected error for $path: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch the relay's server-side injected-context audit. This endpoint is
+     * optional and fail-open: old/plugin-absent relays return an empty disabled
+     * audit rather than breaking the client-side context sheet.
+     */
+    suspend fun fetchInjectedContext(): Result<InjectedContextAudit> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        val url = try {
+            "$httpBase/context/injected".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(
+                IOException("Invalid relay URL: ${e.message}")
+            )
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+
+        val auditClient = okHttpClient.newBuilder()
+            .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        try {
+            auditClient.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    return@withContext Result.success(InjectedContextAudit())
+                }
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) {
+                    return@withContext Result.failure(IOException("Empty response body"))
+                }
+
+                Result.success(
+                    sessionsJson.decodeFromString(
+                        InjectedContextAudit.serializer(),
+                        body,
+                    )
+                )
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "fetchInjectedContext failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchInjectedContext parse error: ${e.message}")
             Result.failure(e)
         }
     }
