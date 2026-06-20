@@ -373,7 +373,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // Pull it out via the authState StateFlow snapshot — if we're not
             // paired yet, return null and the fetch fails with a clean error.
             (authManager.authState.value as? AuthState.Paired)?.token
-        }
+        },
+        pairedTokenSnapshot = {
+            // Same synchronous paired-token read the fetch uses, so the media-
+            // capability badge agrees with whether /media/by-path can actually
+            // fetch (the token is wiped on relay restart until we re-pair).
+            (authManager.authState.value as? AuthState.Paired)?.token
+        },
     )
 
     // Pairing-management collaborator — owns the paired-devices list

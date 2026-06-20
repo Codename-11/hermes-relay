@@ -40,7 +40,11 @@ import java.io.IOException
 class RelayHttpClient(
     private val okHttpClient: OkHttpClient,
     private val relayUrlProvider: () -> String?,
-    private val sessionTokenProvider: suspend () -> String?
+    private val sessionTokenProvider: suspend () -> String?,
+    /** Synchronous snapshot of the paired session token (null when not currently
+     *  paired). Lets [mediaUrlConfigured] check fetch-readiness without
+     *  suspending; mirrors what [sessionTokenProvider] resolves. */
+    private val pairedTokenSnapshot: () -> String? = { null },
 ) {
 
     companion object {
@@ -54,14 +58,17 @@ class RelayHttpClient(
     }
 
     /**
-     * True when this connection has a relay route configured (a non-blank relay
-     * URL), so the relay media routes are reachable. Synchronous (URL-only) —
-     * the bearer token is resolved per request and may lag pairing; callers that
-     * only need a coarse "relay media is available" gate (e.g. the agent
-     * media-capability hint) use this. The actual fetch still fails closed if the
-     * token is missing.
+     * True when relay media is actually FETCHABLE right now: a non-blank relay
+     * URL AND a current paired session token. Synchronous. The token check
+     * matters because the relay's SessionManager is in-memory and wiped on
+     * restart, so a configured relay URL can outlive the pairing — gating on URL
+     * alone made the media-capability badge read "available" while every
+     * `/media/by-path` fetch failed for a missing token. Now the badge (and the
+     * SSE media hint) agree with what the fetch can do, and self-correct on
+     * re-pair.
      */
-    fun mediaUrlConfigured(): Boolean = !relayUrlProvider().isNullOrBlank()
+    fun mediaUrlConfigured(): Boolean =
+        !relayUrlProvider().isNullOrBlank() && !pairedTokenSnapshot().isNullOrBlank()
 
     /**
      * The result of a successful [fetchMedia] call.

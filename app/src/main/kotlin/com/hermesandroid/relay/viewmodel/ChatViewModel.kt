@@ -3834,9 +3834,10 @@ class ChatViewModel : ViewModel() {
      * the `MEDIA:` marker path uses ([onMediaBarePathRequested]); this just wires
      * it into the markdown-image renderer, which previously ignored the relay.
      */
-    suspend fun resolveServerImage(serverPath: String): ByteArray? {
-        val relay = relayHttpClient ?: return null
-        return relay.fetchMediaByPath(serverPath).getOrNull()?.bytes
+    suspend fun resolveServerImage(serverPath: String): Result<ByteArray> {
+        val relay = relayHttpClient
+            ?: return Result.failure(IllegalStateException("Relay not configured on this connection"))
+        return relay.fetchMediaByPath(serverPath).map { it.bytes }
     }
 
     fun onMediaBarePathRequested(messageId: String, originalPath: String) {

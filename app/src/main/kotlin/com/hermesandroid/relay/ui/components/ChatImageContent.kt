@@ -102,7 +102,10 @@ private fun isSensitiveAltText(alt: String): Boolean {
  * server-local path simply can't be shown.
  */
 fun interface RelayServerImageResolver {
-    suspend fun fetch(serverPath: String): ByteArray?
+    /** Fetch the server-local file's bytes over the relay, or a [Result.failure]
+     *  whose message explains why (unpaired / sandboxed / missing / decode) so
+     *  the UI can surface the reason instead of a generic placeholder. */
+    suspend fun fetch(serverPath: String): Result<ByteArray>
 }
 
 val LocalRelayServerImageResolver = staticCompositionLocalOf<RelayServerImageResolver?> { null }
@@ -180,13 +183,22 @@ fun ChatInlineImages(
         images.forEach { image ->
             when {
                 image.isRemote() -> RemoteChatImage(image, maxWidth)
-                // A relay session is paired and the agent referenced a
-                // server-local file — fetch it through /media/by-path and
-                // render it inline instead of showing the "on the server"
-                // notice. Falls back to the notice if the fetch fails.
-                relayResolver != null && image.isServerLocalPath() ->
-                    RelayServerImage(image, maxWidth, relayResolver)
-                else -> UnrenderableImageNotice(image)
+                // A server-local file the agent referenced — fetch it through
+                // /media/by-path and render inline; on failure the notice shows
+                // the ACTUAL reason (for debugging) instead of a generic message.
+                image.isServerLocalPath() ->
+                    if (relayResolver != null) {
+                        RelayServerImage(image, maxWidth, relayResolver)
+                    } else {
+                        UnrenderableImageNotice(
+                            image,
+                            reason = "Server image — pair the relay to show it.",
+                        )
+                    }
+                else -> UnrenderableImageNotice(
+                    image,
+                    reason = "Unsupported image path: ${image.src}",
+                )
             }
         }
     }
@@ -272,7 +284,7 @@ private fun InlineImageColumn(
 private sealed interface RelayImagePhase {
     data object Loading : RelayImagePhase
     data class Loaded(val bitmap: ImageBitmap) : RelayImagePhase
-    data object Failed : RelayImagePhase
+    data class Failed(val reason: String?) : RelayImagePhase
 }
 
 /**
@@ -296,18 +308,23 @@ private fun RelayServerImage(
     }
     LaunchedEffect(image.src) {
         if (phase is RelayImagePhase.Loaded) return@LaunchedEffect
-        val bitmap = withContext(Dispatchers.IO) {
-            val bytes = runCatching { resolver.fetch(image.src) }.getOrNull()
-                ?: return@withContext null
-            runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
-                .getOrNull()
-                ?.asImageBitmap()
-        }
-        phase = if (bitmap != null) {
-            putInlineImage(image.src, bitmap)
-            RelayImagePhase.Loaded(bitmap)
-        } else {
-            RelayImagePhase.Failed
+        phase = withContext(Dispatchers.IO) {
+            runCatching { resolver.fetch(image.src) }
+                .getOrElse { Result.failure(it) }
+                .fold(
+                    onSuccess = { bytes ->
+                        val bmp = runCatching {
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        }.getOrNull()?.asImageBitmap()
+                        if (bmp != null) {
+                            putInlineImage(image.src, bmp)
+                            RelayImagePhase.Loaded(bmp)
+                        } else {
+                            RelayImagePhase.Failed("fetched ${bytes.size} B but couldn't decode the image")
+                        }
+                    },
+                    onFailure = { RelayImagePhase.Failed(it.message ?: "relay fetch failed") },
+                )
         }
     }
     when (val current = phase) {
@@ -322,7 +339,11 @@ private fun RelayServerImage(
             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
         }
         is RelayImagePhase.Loaded -> RelayServerImageContent(image, current.bitmap, maxWidth, resolver)
-        RelayImagePhase.Failed -> UnrenderableImageNotice(image)
+        is RelayImagePhase.Failed -> UnrenderableImageNotice(
+            image,
+            reason = "Couldn't load ${image.src}" +
+                (current.reason?.let { ": $it" } ?: ""),
+        )
     }
 }
 
@@ -347,7 +368,7 @@ private fun RelayServerImageContent(
                 mime = "image/*",
                 // Save/Share re-fetch the original bytes on demand so we don't
                 // hold them in memory next to the decoded bitmap.
-                bytesProvider = { resolver.fetch(image.src) },
+                bytesProvider = { resolver.fetch(image.src).getOrNull() },
             ),
             onDismiss = { viewerOpen = false },
             sensitive = image.sensitive,
