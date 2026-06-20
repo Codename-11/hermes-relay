@@ -102,6 +102,26 @@ A **clip** is one animation loop, defined as **either**:
 Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
 `8`). All clips **loop** while their state is active.
 
+### Editor validation (JSON Schema)
+
+A JSON Schema for this manifest is published at
+`https://codename-11.github.io/hermes-relay/pet.schema.json` (source of truth:
+`user-docs/public/pet.schema.json`). Add it as the first key of a `pet.json` for
+editor autocomplete and inline validation — and for an AI agent to lint its own
+output against:
+
+```json
+{ "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json", "id": "blob", "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }
+```
+
+The `$schema` key is an unknown field to the loader and is silently ignored
+(`ignoreUnknownKeys`), so it never affects rendering. The schema encodes the
+manifest's **structural** rules — `schemaVersion`, a required `idle` clip, the
+frames-or-sheet clip shapes, positive sheet dimensions — but it **cannot** check
+the things only the device knows: whether a referenced file actually exists in
+the pack, or decodes as an image. Those remain load-time checks (see
+[Frames and images](#frames-and-images)).
+
 ## Agent states & pet behavior
 
 The point of per-state clips is to make the agent's activity **legible** — a
@@ -218,6 +238,24 @@ writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
   pet's **current** clip is decoded, off the main thread.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
+
+## Generating frames with AI
+
+You don't have to draw a pet by hand. The **sprite-sheet** clip form (one image, a
+grid of frames) is exactly what an AI image model produces most naturally, so the
+common workflow is to generate **one sheet per state** and reference each as a
+`sheet` clip. A 2×2 grid of 128 px cells maps directly to
+`{ "sheet": "idle.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4 }`.
+
+Two caveats from [Frames and images](#frames-and-images) bite hardest here:
+**transparency** — many models bake in an opaque background, so run a
+background-removal pass and save PNG-with-alpha before shipping — and **per-frame
+consistency** — keep the same character across cells; fewer frames stay consistent
+more easily. Hand-drawn pixel art still wins for smooth, perfectly-stable loops.
+
+The ready-to-use, fill-in-the-blanks prompt template plus a per-state motion table
+live in the user guide under **Custom Avatars → Generate a pet with AI**
+(`user-docs/features/custom-avatars.md`).
 
 ## Reduced motion / accessibility
 

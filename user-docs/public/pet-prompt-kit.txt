@@ -1,0 +1,125 @@
+==================================================================
+HERMES-RELAY — PET PROMPT KIT
+Turn your own avatar into a reactive animated "pet" for the agent.
+Full guide: docs site → "Custom Avatars", or in-app Settings → Appearance.
+==================================================================
+
+A pet is pure data: a few PNG "sprite sheets" (one per agent state) plus a
+small pet.json manifest. An AI image model can make every sheet for you,
+starting from a picture of your own avatar. No drawing app required.
+
+
+------------------------------------------------------------------
+STEP 1 — LOCK YOUR CHARACTER  (two moves that make any avatar work)
+------------------------------------------------------------------
+• USE A REFERENCE IMAGE. Attach a picture of your avatar to the image model
+  and tell it to keep the face/outfit identical across the sheet. This is the
+  #1 lever for consistency — without it the character drifts frame to frame.
+
+• PICK ONE SIGNATURE ACCENT. Choose a single glow/outline color that brightens
+  when the agent is busy (a soft aura works well). That makes the pet look
+  reactive without redrawing it — only the accent changes between states.
+
+
+------------------------------------------------------------------
+STEP 2 — GENERATE ONE SPRITE SHEET PER STATE
+------------------------------------------------------------------
+Paste this prompt once per state. Keep the CHARACTER / STYLE / ACCENT lines
+identical every time; change ONLY the "Animate across the frames" line.
+
+  A sprite sheet of {YOUR AVATAR — e.g. "the character in the attached
+  reference image; keep the face, hair, and outfit identical"},
+  drawn as {STYLE — e.g. "a clean flat-shaded illustration with crisp
+  outlines, half-body, facing forward"}.
+  Give it a signature {ACCENT — e.g. "soft teal-to-violet aura"} that reads as
+  "alive" and grows brighter when it is more active.
+  Lay out 4 frames in a 2x2 grid, evenly spaced, each cell exactly the same
+  size, the character centered in every cell.
+  Animate across the frames: {MOTION — see the list below}.
+  It must be the exact same character in every cell — identical face, colors,
+  shapes, and proportions — only the pose/expression and the accent change.
+  Transparent background. No background, no text, no labels, no grid lines,
+  no frame borders, no shadow.
+
+MOTION lines — save each result under the given file name:
+
+  idle.png      (required) a calm breathing loop: gently rises and settles
+                with one blink; the accent pulses softly
+  thinking.png  looking upward in thought, a glowing spark above the head;
+                a cooler, dimmer accent
+  working.png   a focused, busy pose turning a small glowing gear/tool; the
+                accent at its brightest and steady     [lights the Tools badge]
+  writing.png   a quick scribbling/typing motion, eyes down, thin streaks of
+                light trailing from the hand
+  speaking.png  mouth opening and closing as if talking, a slight head bob,
+                the accent rippling outward in time
+  listening.png leaning in, a hand near the ear, mouth closed; the accent
+                drawing inward into a soft ring
+  error.png     a small startled "oops": wide eyes, a tiny sweat-drop, the
+                accent flickering briefly to a dim red
+  greet.png     (one-shot) a friendly wave from low to mid-wave; accent blooms
+  done.png      (one-shot) a happy celebration, arms up with a sparkle pop;
+                accent bursts
+
+Only idle is required. Add as many of the others as you want.
+
+
+------------------------------------------------------------------
+STEP 3 — pet.json   (save beside the PNGs in a folder, e.g. my-pet/)
+------------------------------------------------------------------
+{
+  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "schemaVersion": 1,
+  "id": "my-pet",
+  "label": "My Pet",
+  "reactive": { "voice": true, "intensity": true },
+  "states": {
+    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 6 },
+    "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
+    "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
+    "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
+    "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 },
+    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 6 },
+    "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
+    "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
+    "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 }
+  }
+}
+
+frameWidth/frameHeight = the size of ONE cell. frameCount = number of cells
+(rows x cols). A 1x4 strip works too — same numbers, wider image.
+Shipping "working" lights the Tools badge; "intensity": true lights Activity.
+Only idle is required; delete the rows you didn't make.
+
+The "$schema" line is optional: it gives editors (and AI agents) autocomplete
+and validation against the published pet schema. The app ignores it.
+
+
+------------------------------------------------------------------
+STEP 4 — INSTALL
+------------------------------------------------------------------
+Put pet.json + the PNGs in a folder (e.g. my-pet/) and push it:
+
+  # sideload flavor
+  adb push my-pet/ /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/pets/
+
+  # googlePlay flavor: drop the .sideload suffix
+  adb push my-pet/ /sdcard/Android/data/com.axiomlabs.hermesrelay/files/pets/
+
+Restart the app, then: Settings → Appearance → Agent avatar → pick your pet.
+
+
+------------------------------------------------------------------
+GOTCHAS
+------------------------------------------------------------------
+• TRANSPARENCY: if the model bakes a background in, remove it and re-save as a
+  PNG WITH ALPHA, or the pet renders inside an opaque box.
+• CONSISTENCY: reuse the reference image every time, keep the character/style/
+  accent lines identical, lock a fixed seed if you can. Fewer frames (2–4)
+  stay consistent more easily.
+• FASTEST FIRST PASS: generate one 3x3 image (nine cells, one per state),
+  slice it into nine single-frame PNGs, and reference each as
+  "frames": ["idle.png"] instead of a sheet. No in-state motion, but it
+  proves the whole pipeline from a single generation.
+• An invalid/incomplete pack is simply skipped in the picker (check logcat,
+  tag PetLoader) — one bad pack never breaks the rest.
