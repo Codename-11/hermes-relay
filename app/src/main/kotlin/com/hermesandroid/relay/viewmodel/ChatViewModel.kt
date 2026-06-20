@@ -44,6 +44,7 @@ import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SkillInfo
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
+import com.hermesandroid.relay.ui.components.ServerImageResult
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
@@ -3834,10 +3835,16 @@ class ChatViewModel : ViewModel() {
      * the `MEDIA:` marker path uses ([onMediaBarePathRequested]); this just wires
      * it into the markdown-image renderer, which previously ignored the relay.
      */
-    suspend fun resolveServerImage(serverPath: String): Result<ByteArray> {
+    suspend fun resolveServerImage(serverPath: String): ServerImageResult {
         val relay = relayHttpClient
-            ?: return Result.failure(IllegalStateException("Relay not configured on this connection"))
-        return relay.fetchMediaByPath(serverPath).map { it.bytes }
+            ?: return ServerImageResult.Failure("Relay not configured on this connection")
+        // fetchMediaByPath returns Result<MediaBytes>; fold it ONCE, right here,
+        // into a non-Result type. The resolver boundary must not return
+        // kotlin.Result from a suspend fun (see [ServerImageResult]).
+        return relay.fetchMediaByPath(serverPath).fold(
+            onSuccess = { ServerImageResult.Success(it.bytes) },
+            onFailure = { ServerImageResult.Failure(it.message ?: "relay fetch failed") },
+        )
     }
 
     fun onMediaBarePathRequested(messageId: String, originalPath: String) {

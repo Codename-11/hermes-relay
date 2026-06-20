@@ -101,11 +101,24 @@ private fun isSensitiveAltText(alt: String): Boolean {
  * default is null, which preserves the standard (no-plugin) behavior where a
  * server-local path simply can't be shown.
  */
+/**
+ * Outcome of a relay server-image fetch. Deliberately a purpose-built type and
+ * NOT `kotlin.Result`: a `suspend` function must not return `Result<T>` — the
+ * coroutine state machine's own `Result` wrapper collides with it and throws
+ * `kotlin.Result cannot be cast to ...` at runtime (observed crash 2026-06-20,
+ * `RelayServerImage` on app open with a server-local image in history).
+ */
+sealed interface ServerImageResult {
+    class Success(val bytes: ByteArray) : ServerImageResult
+    class Failure(val reason: String) : ServerImageResult
+}
+
 fun interface RelayServerImageResolver {
-    /** Fetch the server-local file's bytes over the relay, or a [Result.failure]
-     *  whose message explains why (unpaired / sandboxed / missing / decode) so
-     *  the UI can surface the reason instead of a generic placeholder. */
-    suspend fun fetch(serverPath: String): Result<ByteArray>
+    /** Fetch the server-local file's bytes over the relay, or a
+     *  [ServerImageResult.Failure] whose reason explains why (unpaired /
+     *  sandboxed / missing / decode) so the UI can surface it instead of a
+     *  generic placeholder. */
+    suspend fun fetch(serverPath: String): ServerImageResult
 }
 
 val LocalRelayServerImageResolver = staticCompositionLocalOf<RelayServerImageResolver?> { null }
@@ -309,22 +322,26 @@ private fun RelayServerImage(
     LaunchedEffect(image.src) {
         if (phase is RelayImagePhase.Loaded) return@LaunchedEffect
         phase = withContext(Dispatchers.IO) {
-            runCatching { resolver.fetch(image.src) }
-                .getOrElse { Result.failure(it) }
-                .fold(
-                    onSuccess = { bytes ->
-                        val bmp = runCatching {
-                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        }.getOrNull()?.asImageBitmap()
-                        if (bmp != null) {
-                            putInlineImage(image.src, bmp)
-                            RelayImagePhase.Loaded(bmp)
-                        } else {
-                            RelayImagePhase.Failed("fetched ${bytes.size} B but couldn't decode the image")
-                        }
-                    },
-                    onFailure = { RelayImagePhase.Failed(it.message ?: "relay fetch failed") },
-                )
+            val result = try {
+                resolver.fetch(image.src)
+            } catch (t: Throwable) {
+                ServerImageResult.Failure(t.message ?: "relay fetch failed")
+            }
+            when (result) {
+                is ServerImageResult.Success -> {
+                    val bytes = result.bytes
+                    val bmp = runCatching {
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }.getOrNull()?.asImageBitmap()
+                    if (bmp != null) {
+                        putInlineImage(image.src, bmp)
+                        RelayImagePhase.Loaded(bmp)
+                    } else {
+                        RelayImagePhase.Failed("fetched ${bytes.size} B but couldn't decode the image")
+                    }
+                }
+                is ServerImageResult.Failure -> RelayImagePhase.Failed(result.reason)
+            }
         }
     }
     when (val current = phase) {
@@ -368,7 +385,7 @@ private fun RelayServerImageContent(
                 mime = "image/*",
                 // Save/Share re-fetch the original bytes on demand so we don't
                 // hold them in memory next to the decoded bitmap.
-                bytesProvider = { resolver.fetch(image.src).getOrNull() },
+                bytesProvider = { (resolver.fetch(image.src) as? ServerImageResult.Success)?.bytes },
             ),
             onDismiss = { viewerOpen = false },
             sensitive = image.sensitive,
