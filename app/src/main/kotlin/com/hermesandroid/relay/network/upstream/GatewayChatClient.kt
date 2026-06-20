@@ -960,10 +960,52 @@ class GatewayChatClient(
                 currentSessionProfile()?.let { put("profile", it) }
             },
         )
-        val live = resumed.getOrNull()?.stringField("session_id")
+        val result = resumed.getOrNull()
+        val live = result?.stringField("session_id")
         if (live != null) {
             liveSessionId = live
             storedSessionId = storedId
+            // Paint the session's real model/provider/effort/etc NOW from the
+            // resume result's embedded `info` (same shape session.info carries),
+            // so a reopened session shows its ACTUAL model immediately instead of
+            // a misleading default until the first turn's async session.info.
+            (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
+        }
+    }
+
+    /**
+     * Apply connection-level session info (model / provider / reasoning effort /
+     * personality / yolo / fast / context usage) into the `_server*` state flows.
+     * Shared by the `session.info` event handler and the `session.resume` RPC
+     * result — the resume response embeds the same `info` object, so reopening a
+     * session can paint its real model up front rather than waiting for a turn.
+     */
+    private fun applySessionInfo(info: JsonObject) {
+        if (info.containsKey("personality")) {
+            _serverPersonality.value =
+                (info.stringField("personality") ?: "").ifBlank { "none" }
+        }
+        info.stringField("model")?.takeIf { it.isNotBlank() }?.let { _serverModel.value = it }
+        info.stringField("provider")?.takeIf { it.isNotBlank() }?.let { _serverProvider.value = it }
+        // reasoning effort: ignore "" (reasoning disabled) so it can't clobber
+        // the chip; display mode is config.get-only, not here.
+        info.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
+            ?.let { _serverReasoningEffort.value = it }
+        // credential_warning: present only when the provider key is missing/
+        // invalid. ABSENT means healthy — clear to null so it self-resolves.
+        _serverCredentialWarning.value =
+            info.stringField("credential_warning")?.takeIf { it.isNotBlank() }
+        (info["yolo"] as? JsonPrimitive)?.booleanOrNull?.let { _serverYolo.value = it }
+        (info["fast"] as? JsonPrimitive)?.booleanOrNull?.let { _serverFast.value = it }
+        // Context usage: require used > 0 — a COLD resume resets counters and
+        // reports 0 until the first turn rebuilds the prompt; painting 0 would
+        // mislead on a session that actually has history.
+        (info["usage"] as? JsonObject)?.let { usage ->
+            val used = (usage["context_used"] as? JsonPrimitive)?.intOrNull
+            val max = (usage["context_max"] as? JsonPrimitive)?.intOrNull
+            if (used != null && used > 0 && max != null && max > 0) {
+                _serverContext.value = used to max
+            }
         }
     }
 
@@ -986,10 +1028,12 @@ class GatewayChatClient(
                     currentSessionProfile()?.let { put("profile", it) }
                 },
             )
-            val live = resumed.getOrNull()?.stringField("session_id")
+            val result = resumed.getOrNull()
+            val live = result?.stringField("session_id")
             if (live != null) {
                 liveSessionId = live
                 storedSessionId = requestedStoredId
+                (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
                 return
             }
             Log.w(
@@ -1130,40 +1174,10 @@ class GatewayChatClient(
         if (type == "session.info" &&
             (eventSessionId == null || liveSessionId == null || eventSessionId == liveSessionId)
         ) {
-            payload?.let { p ->
-                if (p.containsKey("personality")) {
-                    _serverPersonality.value =
-                        (p.stringField("personality") ?: "").ifBlank { "none" }
-                }
-                p.stringField("model")?.takeIf { it.isNotBlank() }?.let { _serverModel.value = it }
-                p.stringField("provider")?.takeIf { it.isNotBlank() }?.let { _serverProvider.value = it }
-                // reasoning effort: ignore "" (reasoning disabled) so it can't
-                // clobber the chip; display mode is config.get-only, not here.
-                p.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
-                    ?.let { _serverReasoningEffort.value = it }
-                // credential_warning: present only when the provider key is
-                // missing/invalid. ABSENT means healthy — clear to null so the
-                // warning self-resolves (no ?.let, assign through takeIf).
-                _serverCredentialWarning.value =
-                    p.stringField("credential_warning")?.takeIf { it.isNotBlank() }
-                // yolo / fast: effective booleans (approval bypass + priority tier).
-                (p["yolo"] as? JsonPrimitive)?.booleanOrNull?.let { _serverYolo.value = it }
-                (p["fast"] as? JsonPrimitive)?.booleanOrNull?.let { _serverFast.value = it }
-                // Context-window usage. Require used > 0: on a COLD resume the
-                // agent's token counters + compressor are reset, so _get_usage
-                // reports context_used=0 until the first turn rebuilds the
-                // prompt. Painting that 0 would show a misleading "0%" on a
-                // session that actually has history — so we only adopt a real,
-                // non-zero figure (warm resume, or post-turn echo). Cold resumes
-                // fill on the first exchange via the usage callback.
-                (p["usage"] as? JsonObject)?.let { usage ->
-                    val used = (usage["context_used"] as? JsonPrimitive)?.intOrNull
-                    val max = (usage["context_max"] as? JsonPrimitive)?.intOrNull
-                    if (used != null && used > 0 && max != null && max > 0) {
-                        _serverContext.value = used to max
-                    }
-                }
-            }
+            // Connection-level session info (model / provider / effort / persona /
+            // yolo / fast / usage) — shared with the session.resume result via
+            // applySessionInfo so both paths stay in lockstep.
+            payload?.let { applySessionInfo(it) }
         }
 
         val turn = activeTurn ?: return
