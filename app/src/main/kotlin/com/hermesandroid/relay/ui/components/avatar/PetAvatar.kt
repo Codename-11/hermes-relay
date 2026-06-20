@@ -31,6 +31,28 @@ private const val PET_MAX_FPS = 60f
 private const val PET_BOUNCE = 0.12f
 
 /**
+ * The live reactive signals the pet renderer actually consumes **today**. A pet's
+ * effective [AgentAvatar.reactivity] is clamped to this in [PetSpec.toAvatar]
+ * (declared-AND-supported), so a `pet.json` can never advertise reactivity on the
+ * picker badge that [Render] doesn't deliver.
+ *
+ * This is the single forward-compat switch: flip a flag to `true` here the moment
+ * [Render] learns to consume that signal, and every manifest that already declared
+ * it lights up with no other change.
+ *
+ * Today only [SphereReactivity.voice] is honored (`voiceAmplitude` → bounce).
+ * `tools` ([AvatarRenderState.toolCallBurst]) and `intensity`
+ * ([AvatarRenderState.intensity]) are delivered to [Render] by every call site but
+ * not yet consumed; `gaze` is never fed.
+ */
+internal val PET_RENDERER_CAPABILITIES: SphereReactivity = SphereReactivity(
+    voice = true,
+    tools = false,
+    intensity = false,
+    gaze = false,
+)
+
+/**
  * A resolved, ready-to-render animation clip for one agent state. Holds file
  * references + metadata only — pixels are decoded lazily by [PetAvatar.Render]
  * so an unselected pet costs no bitmap memory.

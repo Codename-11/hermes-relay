@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components.avatar
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -86,6 +87,26 @@ class PetLoaderTest {
         val avatar = PetLoader.loadPets(dir).single()
 
         assertEquals("blob", avatar.label)
+    }
+
+    @Test
+    fun `declared tools and intensity reactivity are clamped out of the badge`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "blob",
+            """{ "id": "blob", "reactive": { "voice": true, "tools": true, "intensity": true }, "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        // The renderer only consumes voice today, so a manifest that declares
+        // tools/intensity must NOT advertise them on the picker badge.
+        assertTrue(avatar.reactivity.voice)
+        assertFalse(avatar.reactivity.tools)
+        assertFalse(avatar.reactivity.intensity)
+        assertEquals("Voice", avatar.reactivity.summary())
     }
 
     @Test

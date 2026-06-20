@@ -80,14 +80,16 @@ data class PetClipSpec(
 
 // Each agent state maps onto an ordered clip-name fallback chain ending at
 // "idle" — so authors can supply just idle/thinking/speaking, or override any
-// individual state by its full name (streaming/listening/error).
+// individual state by name. The Streaming state accepts a friendly "writing"
+// alias (the agent producing output text) ahead of the internal "streaming"
+// key. See docs/pet-spec.md "Agent states & pet behavior".
 private val STATE_CLIP_CHAIN: Map<SphereState, List<String>> = mapOf(
     SphereState.Idle to listOf("idle"),
     SphereState.Thinking to listOf("thinking", "idle"),
-    SphereState.Streaming to listOf("streaming", "speaking", "thinking", "idle"),
+    SphereState.Streaming to listOf("writing", "streaming", "speaking", "thinking", "idle"),
     SphereState.Listening to listOf("listening", "idle"),
-    SphereState.Speaking to listOf("speaking", "idle"),
-    SphereState.Error to listOf("error", "idle"),
+    SphereState.Speaking to listOf("speaking", "writing", "thinking", "idle"),
+    SphereState.Error to listOf("error", "thinking", "idle"),
 )
 
 /**
@@ -116,10 +118,13 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
         id = id,
         label = resolvedLabel,
         description = description,
+        // Clamp declared reactivity to what the renderer actually honors today so
+        // the picker badge can't over-promise (declared AND supported). Flip a
+        // flag in [PET_RENDERER_CAPABILITIES] to let a declared signal through.
         reactivity = SphereReactivity(
-            voice = reactive.voice,
-            tools = reactive.tools,
-            intensity = reactive.intensity,
+            voice = reactive.voice && PET_RENDERER_CAPABILITIES.voice,
+            tools = reactive.tools && PET_RENDERER_CAPABILITIES.tools,
+            intensity = reactive.intensity && PET_RENDERER_CAPABILITIES.intensity,
             gaze = false,
         ),
         clips = clips,

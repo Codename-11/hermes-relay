@@ -100,25 +100,67 @@ A **clip** is one animation loop, defined as **either**:
   top-to-bottom).
 
 Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
-`8`).
+`8`). All clips **loop** while their state is active.
 
-You only need the three **core clips** — `idle`, `thinking`, `speaking` — and
-`idle` is the only hard requirement. The agent's six internal states map onto
-your clips with this fallback chain (first existing clip wins):
+## Agent states & pet behavior
 
-| Agent state | Clip lookup order |
-|-------------|-------------------|
-| idle | `idle` |
-| thinking | `thinking` → `idle` |
-| streaming | `streaming` → `speaking` → `thinking` → `idle` |
-| listening | `listening` → `idle` |
-| speaking | `speaking` → `idle` |
-| error | `error` → `idle` |
+The point of per-state clips is to make the agent's activity **legible** — a
+glance at the pet tells you whether it's idle, thinking, writing, or talking.
+This mirrors a 30-year convention (Microsoft Agent's `Think`/`Write`/`Process`
+animation set, Live2D motion groups, VTuber lip-sync): a **looping base clip per
+activity**, plus amplitude-driven motion while speaking.
 
-So a minimal pet supplies just `idle`; add `thinking` and `speaking` for life
-during a turn. Any state with no match (and no `defaults`) falls back to `idle`.
+The agent reports six activity states; you author clips by name and they resolve
+through a fallback chain (first existing clip wins). The names you write are
+**friendly aliases**, so `writing` targets the output/streaming state:
 
-### Reactivity — optional and detectable
+| Agent activity | What it means | Author clip (alias) | Fallback chain |
+|----------------|---------------|---------------------|----------------|
+| **Idle** | Waiting between turns | `idle` | `idle` |
+| **Thinking** | Reasoning before output | `thinking` | `thinking` → `idle` |
+| **Streaming** | Writing / producing output | `writing` *(or `streaming`)* | `writing` → `streaming` → `speaking` → `thinking` → `idle` |
+| **Listening** | Mic open (voice) | `listening` | `listening` → `idle` |
+| **Speaking** | Talking via TTS (voice) | `speaking` | `speaking` → `writing` → `thinking` → `idle` |
+| **Error** | A turn failed | `error` | `error` → `thinking` → `idle` |
+
+`idle` is the **only** hard requirement; every other state falls back to it.
+Author the subset you want and the chain fills the rest.
+
+### Authoring ladder (how much buys how much)
+
+- **Minimal — 1 clip:** `idle`. A present, state-agnostic companion.
+- **Basic — 3 clips:** `idle` + `thinking` + `speaking`. Rest / busy / talking —
+  the core spine. (Add `voice` reactivity for a talking bounce.)
+- **Standard — 5 clips:** add `writing` (distinct output loop) and `listening`
+  (mic open), so chat-output vs. voice-output vs. mic-open read at a glance.
+- **Rich — 6 clips:** add `error`. The full activity story across a turn.
+
+> **Loop vs. one-shot.** Every clip here is a **looping base** for a sustained
+> state. Transient *reaction* one-shots (a wave on connect, a celebrate when a
+> turn finishes) and a distinct **`working`/tool-use** loop (the agent running a
+> tool, separate from `thinking`) are a planned next tier — see
+> *Forthcoming behavior* below. Authoring a `working` clip today is harmless but
+> not yet reached by the renderer.
+
+### Forthcoming behavior (designed, not yet rendered)
+
+These are specified so authors can plan, but the renderer doesn't drive them
+yet — they're tracked in `TODO.md`. Authoring the clips/flags now is harmless.
+
+- **`working` / tool-use clip** — a distinct loop for *the agent running a tool*
+  (operating a gadget, rummaging), separate from the contemplative `thinking`
+  pose. The strongest cross-system convention (Microsoft Agent splits `Think`
+  from `Process`/`Search`; the `pi-animations` indicator splits Thinking ·
+  Working · Tool) is that *acting* should look different from *thinking*. Needs
+  the host to expose a tool-active sub-state (via the already-plumbed tool-call
+  signal); chain would be `working` → `writing` → `thinking` → `idle`.
+- **One-shot reactions** — transient overlays that play once and return to the
+  base loop: `greet`/`wake` on connect, `celebrate`/`done` on turn completion,
+  `attention` on a notification. Cf. the Peon Pet's celebrate-on-finish.
+- **`tools` / `intensity` continuous modulation** — tool-call bursts and stream
+  rate driving extra liveliness, which would un-clamp those badge flags.
+
+## Reactivity — optional and detectable
 
 `reactive` declares which live signals the pet honors; the picker shows the
 summary so users see what a pet does before selecting it.
@@ -126,13 +168,15 @@ summary so users see what a pet does before selecting it.
 | Flag | Default | Effect when `true` |
 |------|---------|--------------------|
 | `voice` | `true` | Voice amplitude gives a subtle scale "bounce" while speaking/listening. |
-| `tools` | `false` | Declared for the badge; reserved (the default pet renderer doesn't add tool pulses). |
-| `intensity` | `false` | Declared for the badge; reserved. |
+| `tools` | `false` | **Reserved.** Tool-call pulses aren't rendered yet, so this is **clamped off the badge** until the renderer supports it — declaring it has no effect today. |
+| `intensity` | `false` | **Reserved.** Same — clamped off the badge until the renderer consumes activity intensity. |
 
-The clips themselves carry most of a pet's expressiveness (idle vs. thinking vs.
-speaking loops); `voice` adds the only extra motion the renderer applies today.
+The badge only ever advertises what the renderer actually delivers: a declared
+flag the renderer doesn't honor is dropped, so a pet can't over-promise. The
+clips themselves carry most of a pet's expressiveness (idle vs. thinking vs.
+writing vs. speaking loops); `voice` adds the only extra motion today.
 
-### Frames and images
+## Frames and images
 
 - PNG with alpha is recommended (transparent background composites cleanly).
 - Frames are **contain-fit and centered** in the avatar area, preserving aspect
@@ -151,7 +195,7 @@ speaking loops); `voice` adds the only extra motion the renderer applies today.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
 
-### Reduced motion / accessibility
+## Reduced motion / accessibility
 
 When the user disables animations (app setting or OS reduce-motion) or a screen
 reader is exploring, the avatar is rendered **paused** — the pet freezes on its
