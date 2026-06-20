@@ -79,8 +79,12 @@ data class ChatInlineImage(
 // `||` (optional) + `![alt](src)` / `![alt](src "title")` + `||` (optional).
 // src = first non-space, non-`)` run. The optional `||` pair is the Telegram
 // spoiler-wrap convention; both sides present ⇒ sensitive.
+// Group 3 (the URL) accepts either the markdown angle-bracket form
+// `<…>` (which legally contains spaces — what models emit for paths like
+// `/mnt/media/Coralee Adshade/x.jpg`) OR a plain whitespace-free run. The
+// brackets are stripped + the path percent-decoded in [normalizeImageSrc].
 private val MARKDOWN_IMAGE_REGEX =
-    Regex("""(\|\|)?!\[([^\]]*)]\(([^)\s]+)[^)]*\)(\|\|)?""")
+    Regex("""(\|\|)?!\[([^\]]*)]\((<[^>\n]*>|[^)\s]+)[^)]*\)(\|\|)?""")
 
 private val SENSITIVE_ALT_TOKENS = setOf("nsfw", "sensitive", "spoiler")
 
@@ -157,7 +161,7 @@ fun extractChatInlineImages(content: String): Pair<String, List<ChatInlineImage>
         val alt = m.groupValues[2].trim()
         images += ChatInlineImage(
             alt = alt,
-            src = m.groupValues[3].trim(),
+            src = normalizeImageSrc(m.groupValues[3].trim()),
             sensitive = spoilerWrapped || isSensitiveAltText(alt),
         )
         ""
@@ -166,6 +170,33 @@ fun extractChatInlineImages(content: String): Pair<String, List<ChatInlineImage>
     // Collapse the blank lines the removal can leave behind.
     return stripped.replace(Regex("\n{3,}"), "\n\n").trim() to images
 }
+
+/**
+ * Normalize a markdown image URL into the form the renderer/relay expect:
+ *  - Strip markdown angle-bracket wrapping (`<…>`) — models use it for URLs
+ *    that contain spaces, but it would otherwise fail the `startsWith("/")`
+ *    server-local check.
+ *  - Percent-decode absolute paths (e.g. `Coralee%20Adshade` → `Coralee
+ *    Adshade`) so `/media/by-path` finds the real file. Remote http(s) URLs are
+ *    left verbatim for Coil.
+ */
+private fun normalizeImageSrc(raw: String): String {
+    val unwrapped = raw.removeSurrounding("<", ">").trim()
+    return if (unwrapped.startsWith("/")) decodePercentEscapes(unwrapped) else unwrapped
+}
+
+/** Decode `%XX` escapes, protecting a literal `+` (which URLDecoder would
+ *  otherwise turn into a space). No-op when there's nothing to decode. */
+private fun decodePercentEscapes(s: String): String =
+    if ('%' !in s) {
+        s
+    } else {
+        try {
+            java.net.URLDecoder.decode(s.replace("+", "%2B"), Charsets.UTF_8.name())
+        } catch (_: Exception) {
+            s
+        }
+    }
 
 private fun ChatInlineImage.isRemote(): Boolean {
     val s = src.lowercase()

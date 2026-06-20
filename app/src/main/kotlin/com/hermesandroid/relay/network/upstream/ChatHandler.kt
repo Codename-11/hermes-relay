@@ -82,7 +82,11 @@ class ChatHandler {
         //   reachable when the tool fired, so we render an "unavailable"
         //   placeholder instead of attempting a fetch.
         private val mediaRelayRegex = Regex("""MEDIA:hermes-relay://([A-Za-z0-9_-]+)""")
-        private val mediaBarePathRegex = Regex("""^\s*MEDIA:(/\S+)\s*$""")
+        // `/.+?` (not `/\S+`) so absolute paths containing spaces — e.g.
+        // `MEDIA:/mnt/media/Coralee Adshade/undressher.jpg` — still match. The
+        // trailing `\s*$` trims any trailing whitespace; non-greedy keeps the
+        // capture to the path. OkHttp re-encodes the space for /media/by-path.
+        private val mediaBarePathRegex = Regex("""^\s*MEDIA:(/.+?)\s*$""")
         // Rich card marker — single line, full JSON object payload.
         //
         // Agents emit:
