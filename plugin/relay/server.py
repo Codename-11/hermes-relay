@@ -62,6 +62,7 @@ from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
 from .realtime_voice import RealtimeVoiceHandler
 from .realtime_agent import RealtimeAgentHandler
+from ..enhancements.context_injection import injected_context_payload
 
 logger = logging.getLogger("hermes_relay")
 
@@ -3168,6 +3169,25 @@ async def handle_notifications_recent(request: web.Request) -> web.Response:
 # === END PHASE3-notif-listener ===
 
 
+async def handle_context_injected(request: web.Request) -> web.Response:
+    """Return the relay-owned system-prompt context audit shape.
+
+    Loopback callers skip bearer auth, matching ``/notifications/recent``.
+    Remote callers must present a valid relay session bearer.
+
+    GET /context/injected
+      -> 200 {"enabled": <bool>, "blocks": [{"name": ..., "text": ...}]}
+      -> 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+
+    if not is_loopback:
+        _server, _session = _require_bearer_session(request)
+
+    return web.json_response(injected_context_payload())
+
+
 # ── WebSocket handler ────────────────────────────────────────────────────────
 
 
@@ -3881,6 +3901,9 @@ def create_app(config: RelayConfig) -> web.Application:
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
+
+    # Relay-owned agent context audit.
+    app.router.add_get("/context/injected", handle_context_injected)
 
     # Profile-scoped read-only config + skills (§22).
     app.router.add_get(
