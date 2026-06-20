@@ -117,6 +117,7 @@ export default defineConfig({
             { text: 'Connections', link: '/features/connections' },
             { text: 'Profiles', link: '/features/profiles' },
             { text: 'Personalities', link: '/features/personalities' },
+            { text: 'Custom Avatars', link: '/features/custom-avatars' },
             { text: 'Voice Mode', link: '/features/voice' },
             { text: 'Voice Intents', link: '/features/voice-intents' },
             { text: 'Token Tracking', link: '/features/tokens' },

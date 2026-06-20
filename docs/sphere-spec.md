@@ -5,6 +5,10 @@ the voice overlay) is a **hot-swappable component**. Built-in skins ship with th
 app, an **Adaptive** skin recolors to match your theme, and you can side-load your
 own skins from a small JSON file. This document is the authoring reference.
 
+> **See also** [`pet-spec.md`](./pet-spec.md) — appearance is two-level: the
+> **avatar** is either the Sphere or a side-loaded pet, and skins apply to the
+> **Sphere** avatar only.
+
 > The sphere's motion (the core math in `MorphingSphereCore.kt`, mirrored in the
 > docs-site `preview/web/sphere.js`) is shared and unchanged. A skin only changes
 > **colors**, optional **animation parameters**, and which **live signals** the
@@ -13,22 +17,30 @@ own skins from a small JSON file. This document is the authoring reference.
 
 ## Where skins live
 
-Drop `*.json` files into the app's private `spheres/` directory:
+Drop `*.json` files into the app's `spheres/` directory:
 
 ```
 <app files dir>/spheres/my-orb.json
 ```
 
-The app creates the folder on first launch. The easiest way to add a file today:
+This lives in **app-scoped external storage**
+(`/sdcard/Android/data/<applicationId>/files/spheres/`), which is reachable by
+`adb push` (or a file manager) with **no runtime permission** on API 19+; the
+app falls back to internal storage only if external storage is unavailable. The
+app creates the folder on first launch. The easiest way to add a file today:
 
 ```bash
 # replace the path with your app's files dir (sideload flavor shown)
 adb push my-orb.json /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/spheres/
 ```
 
-Then reopen **Settings → Appearance → Agent sphere** — valid skins appear in the
-picker with a **Custom** tag. Invalid files are skipped (check logcat for the
-reason); one bad file never breaks the picker.
+On the **googlePlay** flavor, drop the `.sideload` suffix from the package —
+`/sdcard/Android/data/com.axiomlabs.hermesrelay/files/spheres/`.
+
+Then reopen **Settings → Appearance → Agent avatar**; with the **Sphere** avatar
+selected, your skins appear in the **Sphere skin** row with a **Custom** tag.
+Invalid files are skipped (check logcat for the reason); one bad file never
+breaks the picker.
 
 ## Format
 

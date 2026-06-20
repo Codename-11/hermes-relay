@@ -6,6 +6,10 @@ component**. The built-in **Sphere** ships with the app, and you can side-load
 your own animated **"pet"** — a bitmap frame-sequence or sprite atlas — to
 replace it. This document is the authoring reference.
 
+> **See also** [`sphere-spec.md`](./sphere-spec.md) — the Sphere avatar has its
+> own skin system; pets and Sphere skins are the two ways to customize the agent
+> avatar.
+
 > A pet is a self-contained pack of images plus a small JSON manifest. Pets are
 > **pure data** — frames + numbers, never code. The renderer is dependency-free
 > (Android `BitmapFactory` + a rate-capped Compose `Canvas`), so a pet is just a
@@ -26,7 +30,7 @@ as chips alongside the Sphere; selecting one switches every surface at once.
 
 ## Where pets live
 
-Each pet is a **subdirectory** of the app's private `pets/` directory, holding a
+Each pet is a **subdirectory** of the app's `pets/` directory, holding a
 `pet.json` manifest beside its image assets:
 
 ```
@@ -36,13 +40,20 @@ Each pet is a **subdirectory** of the app's private `pets/` directory, holding a
 ...
 ```
 
-The app creates the `pets/` folder on first launch. The easiest way to add a
-pack today (sideload flavor shown):
+This lives in **app-scoped external storage**
+(`/sdcard/Android/data/<applicationId>/files/pets/`), which is reachable by
+`adb push` (or a file manager) with **no runtime permission** on API 19+; the
+app falls back to internal storage only if external storage is unavailable. The
+app creates the `pets/` folder on first launch. The easiest way to add a pack
+today (sideload flavor shown):
 
 ```bash
 # push a whole pack directory
 adb push blob/ /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/pets/
 ```
+
+On the **googlePlay** flavor, drop the `.sideload` suffix from the package —
+`/sdcard/Android/data/com.axiomlabs.hermesrelay/files/pets/`.
 
 Then reopen **Settings → Appearance → Agent avatar** — valid pets appear in the
 picker. Invalid/incomplete packs are skipped (check logcat, tag `PetLoader`);
@@ -126,8 +137,17 @@ speaking loops); `voice` adds the only extra motion the renderer applies today.
 - PNG with alpha is recommended (transparent background composites cleanly).
 - Frames are **contain-fit and centered** in the avatar area, preserving aspect
   ratio — they don't have to match the screen's shape.
-- Keep frames reasonably small (e.g. 64–256 px) and clip lengths modest; only
-  the **selected** pet's **current** clip is decoded, off the main thread.
+- A referenced image that **exists but isn't a decodable image** (a corrupt or
+  non-PNG file with a `.png` name) is **not** caught at load time — the pet still
+  appears valid in the picker but renders **blank**. Verify your images actually
+  open before shipping a pack.
+- **Memory:** while a pet is selected, every frame of its current clip is decoded
+  into memory at **full resolution** (there is no downscaling). Many large frames
+  can use a lot of RAM, and a single very large image can fail to decode. As an
+  authoring best practice (not an enforced cap), keep frames ≲256 px and clip
+  lengths modest (≤ ~30 frames); for many frames prefer a **sprite sheet** over a
+  long frame sequence — a sheet decodes as one bitmap. Only the **selected**
+  pet's **current** clip is decoded, off the main thread.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
 

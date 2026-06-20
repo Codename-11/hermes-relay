@@ -420,6 +420,17 @@ fun AppearanceSettingsScreen(
                         }
                     }
 
+                    // Discoverability: tell users a custom animated "pet" avatar
+                    // is possible even when none are installed yet (mirrors the
+                    // sphere-skin pointer below).
+                    Text(
+                        text = "Add your own: drop an animated \"pet\" pack into the " +
+                            "app's pets/ folder, then reopen this screen. See " +
+                            "docs/pet-spec.md for the format.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
                     // Second level of the model: skin chips, shown only when the
                     // sphere avatar is active (a pet carries no skins).
                     if (activeAvatar.id == SphereAvatar.id) {

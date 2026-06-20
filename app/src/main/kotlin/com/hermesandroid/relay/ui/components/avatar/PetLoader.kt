@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.ui.components.SphereReactivity
 import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.UserContentDir
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -167,9 +168,9 @@ private fun safeChild(dir: File, name: String): File? {
  * line) so one bad pack can't break the picker — an empty result means
  * "sphere only".
  *
- * The directory is app-private internal storage (no runtime permission). Users
+ * The directory is app-scoped external storage (no runtime permission). Users
  * place packs there via ADB (`adb push pet-dir/ $(...)/files/pets/`) or a future
- * in-app import. See `docs/pet-spec.md`.
+ * in-app import. Resolved via [UserContentDir]. See `docs/pet-spec.md`.
  */
 object PetLoader {
     private const val TAG = "PetLoader"
@@ -181,16 +182,18 @@ object PetLoader {
     }
 
     /** The directory users drop `<id>/pet.json` pet packs into. Created if absent. */
-    fun userDir(context: Context): File =
-        File(context.filesDir, DIR).apply { if (!exists()) mkdirs() }
+    fun userDir(context: Context): File = UserContentDir.resolve(context, DIR)
+
+    /** Convenience overload resolving the pet directory from [context]. */
+    fun loadPets(context: Context): List<PetAvatar> = loadPets(userDir(context))
 
     /**
-     * Parse every `<pack>/pet.json` under [userDir] into a [PetAvatar], skipping
-     * any pack that fails to parse or validate. Returns avatars sorted by pack
-     * directory name for a stable picker order.
+     * Parse every `<pack>/pet.json` under [dir] into a [PetAvatar], skipping any
+     * pack that fails to parse or validate. Returns avatars sorted by pack
+     * directory name for a stable picker order. Pure (no Android Context), so the
+     * discovery/skip-invalid behavior is unit-testable against a temp directory.
      */
-    fun loadPets(context: Context): List<PetAvatar> {
-        val dir = userDir(context)
+    fun loadPets(dir: File): List<PetAvatar> {
         val packs = dir.listFiles { file -> file.isDirectory } ?: return emptyList()
         return packs.sortedBy { it.name }.mapNotNull { packDir ->
             val manifest = File(packDir, "pet.json")

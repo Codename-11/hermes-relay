@@ -11,10 +11,10 @@ import java.io.File
  * executed. Invalid files are skipped (with a log line) so one bad spec can't
  * break the picker.
  *
- * The directory is app-private internal storage, so no runtime permission is
+ * The directory is app-scoped external storage, so no runtime permission is
  * needed. Users place files there via the system file picker / "Save to app"
  * flows, ADB (`adb push file.json $(...)/files/spheres/`), or a future in-app
- * import button. See `docs/sphere-spec.md`.
+ * import button. Resolved via [UserContentDir]. See `docs/sphere-spec.md`.
  */
 object SphereSkinLoader {
     private const val TAG = "SphereSkinLoader"
@@ -26,16 +26,18 @@ object SphereSkinLoader {
     }
 
     /** The directory users drop `*.json` sphere specs into. Created if absent. */
-    fun userDir(context: Context): File =
-        File(context.filesDir, DIR).apply { if (!exists()) mkdirs() }
+    fun userDir(context: Context): File = UserContentDir.resolve(context, DIR)
+
+    /** Convenience overload resolving the sphere-skin directory from [context]. */
+    fun loadUserSkins(context: Context): List<SphereSkin> = loadUserSkins(userDir(context))
 
     /**
-     * Parse every `*.json` in [userDir] into a [SphereSkin], skipping any file
-     * that fails to parse or validate. Returns skins sorted by filename for a
-     * stable picker order.
+     * Parse every `*.json` in [dir] into a [SphereSkin], skipping any file that
+     * fails to parse or validate. Returns skins sorted by filename for a stable
+     * picker order. Pure (no Android Context), so the discovery/skip-invalid
+     * behavior is unit-testable against a temp directory.
      */
-    fun loadUserSkins(context: Context): List<SphereSkin> {
-        val dir = userDir(context)
+    fun loadUserSkins(dir: File): List<SphereSkin> {
         val files = dir.listFiles { file ->
             file.isFile && file.name.endsWith(".json", ignoreCase = true)
         } ?: return emptyList()
