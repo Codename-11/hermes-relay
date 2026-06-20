@@ -22,7 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,7 +33,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -38,9 +45,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -81,6 +94,36 @@ fun AppearanceSettingsScreen(
     val selectedTheme = AppThemes.byId(appThemeId)
     val isDarkTheme = LocalBrand.current.isDark
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    var pendingDelete by remember { mutableStateOf<AgentAvatar?>(null) }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { connectionViewModel.importPetFromZip(it) } }
+
+    // Re-scan pets/ when this screen opens (surfaces a pack added out-of-band,
+    // e.g. via adb), and relay add/remove results as snackbars.
+    LaunchedEffect(Unit) { connectionViewModel.refreshAgentAvatars() }
+    LaunchedEffect(Unit) {
+        connectionViewModel.avatarEvents.collect { snackbarHostState.showSnackbar(it) }
+    }
+
+    pendingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Remove pet?") },
+            text = { Text("Remove “${target.label}”? You can re-import it later.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    connectionViewModel.deleteUserAvatar(target.id, target.label)
+                    pendingDelete = null
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -98,6 +141,7 @@ fun AppearanceSettingsScreen(
                 ),
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -360,9 +404,9 @@ fun AppearanceSettingsScreen(
                 }
             }
 
-            // Agent avatar section — choose the avatar first (sphere today;
-            // user "pets" arrive in C3). When the sphere avatar is selected its
-            // skin chips remain nested below: avatar → skin.
+            // Agent avatar section — choose the avatar first (the built-in sphere
+            // plus any imported "pets"; add/remove pets in-app below). When the
+            // sphere avatar is selected its skin chips nest below: avatar → skin.
             Text(
                 text = "Agent avatar",
                 style = MaterialTheme.typography.titleMedium,
@@ -420,16 +464,72 @@ fun AppearanceSettingsScreen(
                         }
                     }
 
-                    // Discoverability: tell users a custom animated "pet" avatar
-                    // is possible even when none are installed yet (mirrors the
-                    // sphere-skin pointer below).
+                    // Add / manage user pets in-app — the reliable alternative to
+                    // adb push (scoped storage blocks or stalls it on many devices).
+                    val userAvatars = availableAvatars.filter { it.source == AvatarSource.USER }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                importLauncher.launch(
+                                    arrayOf("application/zip", "application/octet-stream", "*/*")
+                                )
+                            },
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = "Add a pet",
+                                modifier = Modifier.padding(start = 6.dp),
+                            )
+                        }
+                        TextButton(onClick = { connectionViewModel.refreshAgentAvatars() }) {
+                            Text("Rescan")
+                        }
+                    }
+
                     Text(
-                        text = "Add your own: drop an animated \"pet\" pack into the " +
-                            "app's pets/ folder, then reopen this screen. See " +
-                            "docs/pet-spec.md for the format.",
+                        text = "Import an animated \"pet\" pack (.zip). Generate one " +
+                            "with AI or hand-author it — see docs/pet-spec.md.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    // Installed-pet management: a labeled list with per-pet remove.
+                    if (userAvatars.isNotEmpty()) {
+                        Text(
+                            text = "Installed pets",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        userAvatars.forEach { pet ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = pet.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(onClick = { pendingDelete = pet }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Delete,
+                                        contentDescription = "Remove ${pet.label}",
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // Second level of the model: skin chips, shown only when the
                     // sphere avatar is active (a pet carries no skins).

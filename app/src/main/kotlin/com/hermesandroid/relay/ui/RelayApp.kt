@@ -798,9 +798,14 @@ fun RelayApp() {
     // LocalAgentAvatar without per-call-site threading. An unknown selected id
     // (e.g. a pet pack was removed) falls back to the sphere.
     val agentAvatarId by connectionViewModel.agentAvatar.collectAsState()
+    // Re-scans the pets/ dir whenever the tick bumps (in-app import/delete, or the
+    // Appearance screen opening), so newly added/removed pets appear everywhere
+    // without an app restart.
+    val avatarsRefreshTick by connectionViewModel.avatarsRefreshTick.collectAsState()
     val availableAgentAvatars by produceState(
         initialValue = listOf<AgentAvatar>(SphereAvatar),
         key1 = sphereContext,
+        key2 = avatarsRefreshTick,
     ) {
         value = listOf<AgentAvatar>(SphereAvatar) +
             withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }

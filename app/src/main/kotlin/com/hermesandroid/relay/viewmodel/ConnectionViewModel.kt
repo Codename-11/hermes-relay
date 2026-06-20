@@ -12,6 +12,10 @@ import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.components.avatar.PetImporter
+import com.hermesandroid.relay.ui.components.avatar.PetImportResult
+import com.hermesandroid.relay.ui.components.avatar.PetLoader
+import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
@@ -71,6 +75,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -953,6 +958,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             preferences[KEY_AGENT_AVATAR] ?: "sphere"
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "sphere")
+
+    // Bumped to force the Compose root to re-scan the pets/ directory — after an
+    // in-app import or delete, or when the Appearance screen opens (so a pack
+    // added out-of-band, e.g. via adb, shows without an app restart). RelayApp
+    // keys the avatar produceState on this.
+    private val _avatarsRefreshTick = MutableStateFlow(0)
+    val avatarsRefreshTick: StateFlow<Int> = _avatarsRefreshTick.asStateFlow()
+
+    // One-shot, user-facing results of avatar add/remove for a snackbar.
+    private val _avatarEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val avatarEvents: SharedFlow<String> = _avatarEvents.asSharedFlow()
+
+    fun refreshAgentAvatars() {
+        _avatarsRefreshTick.value = _avatarsRefreshTick.value + 1
+    }
 
     // Global font scale (1.0 = system default). Applied at the Compose theme
     // root via LocalDensity.fontScale and pushed into the xterm WebView via
@@ -5022,6 +5042,38 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_AGENT_AVATAR] = avatarId
+            }
+        }
+    }
+
+    /** Import a pet pack from a user-picked `.zip`, then refresh the picker. */
+    fun importPetFromZip(uri: Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                PetImporter.importZip(getApplication<Application>(), uri)
+            }
+            when (result) {
+                is PetImportResult.Success -> {
+                    refreshAgentAvatars()
+                    _avatarEvents.tryEmit("Imported “${result.label}”")
+                }
+                is PetImportResult.Failure -> _avatarEvents.tryEmit(result.reason)
+            }
+        }
+    }
+
+    /** Delete a user pet by id; if it was the selected avatar, fall back to the sphere. */
+    fun deleteUserAvatar(avatarId: String, label: String) {
+        viewModelScope.launch {
+            val deleted = withContext(Dispatchers.IO) {
+                PetLoader.deletePet(getApplication<Application>(), avatarId)
+            }
+            if (deleted) {
+                if (agentAvatar.value == avatarId) setAgentAvatar(SphereAvatar.id)
+                refreshAgentAvatars()
+                _avatarEvents.tryEmit("Removed “$label”")
+            } else {
+                _avatarEvents.tryEmit("Couldn’t remove “$label”")
             }
         }
     }

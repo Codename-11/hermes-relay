@@ -374,4 +374,55 @@ class PetLoaderTest {
 
         assertEquals(listOf("apple", "zebra"), ids)
     }
+
+    @Test
+    fun `deletePet removes the matching pack and leaves the rest`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "lucy",
+            """{ "id": "lucy", "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+        writePack(
+            dir,
+            "blob",
+            """{ "id": "blob", "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+
+        assertTrue(PetLoader.deletePet(dir, "lucy"))
+
+        assertEquals(listOf("blob"), PetLoader.loadPets(dir).map { it.id })
+    }
+
+    @Test
+    fun `deletePet matches by manifest id even when the directory name differs`() {
+        val dir = tempDir()
+        // Pack directory "pack-a" but manifest id "lucy" — delete must resolve the
+        // id, not assume dir == id.
+        writePack(
+            dir,
+            "pack-a",
+            """{ "id": "lucy", "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+
+        assertTrue(PetLoader.deletePet(dir, "lucy"))
+        assertTrue(PetLoader.loadPets(dir).isEmpty())
+    }
+
+    @Test
+    fun `deletePet returns false when nothing matches`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "blob",
+            """{ "id": "blob", "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+
+        assertFalse(PetLoader.deletePet(dir, "nope"))
+        assertEquals(1, PetLoader.loadPets(dir).size)
+    }
 }

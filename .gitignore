@@ -31,6 +31,10 @@ local.properties
 /app/release/
 *.apk
 *.aab
+
+# Scratch / working directory (local pet packs, generated test assets, etc.)
+/tmp/
+/build-pet-ui.log
 *.jks
 *.keystore
 /captures

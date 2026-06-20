@@ -235,4 +235,28 @@ object PetLoader {
             }
         }
     }
+
+    /**
+     * Remove the user pet pack whose resolved id matches [avatarId]. The id is the
+     * manifest `id` (or the pack directory name when blank), mirroring [loadPets];
+     * the pack directory may not equal the id, so we resolve rather than assume.
+     * Returns true iff a matching pack was found and deleted.
+     */
+    fun deletePet(context: Context, avatarId: String): Boolean = deletePet(userDir(context), avatarId)
+
+    /** Pure overload (no Android Context) for tests against a temp directory. */
+    fun deletePet(dir: File, avatarId: String): Boolean {
+        val packs = dir.listFiles { file -> file.isDirectory } ?: return false
+        for (packDir in packs) {
+            val manifest = File(packDir, "pet.json")
+            if (!manifest.isFile) continue
+            val resolvedId = try {
+                json.decodeFromString(PetSpec.serializer(), manifest.readText()).id.ifBlank { packDir.name }
+            } catch (t: Throwable) {
+                packDir.name
+            }
+            if (resolvedId == avatarId) return packDir.deleteRecursively()
+        }
+        return false
+    }
 }
