@@ -119,6 +119,13 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
     // keeps its base-state clip during tool use, exactly as before).
     val workingClip = states["working"]?.toClip(dir)
 
+    // Opt-in one-shot reaction clips, by friendly alias — resolved from explicit
+    // keys only (no fallback). Absent reactions simply don't play.
+    val oneShots = buildMap {
+        resolveAliasClip(listOf("greet", "wake"), dir)?.let { put(PetOneShot.Greet, it) }
+        resolveAliasClip(listOf("done", "celebrate"), dir)?.let { put(PetOneShot.Done, it) }
+    }
+
     return PetAvatar(
         id = id,
         label = resolvedLabel,
@@ -136,7 +143,14 @@ fun PetSpec.toAvatar(dir: File): PetAvatar {
         ),
         clips = clips,
         workingClip = workingClip,
+        oneShots = oneShots,
     )
+}
+
+/** First usable clip among [keys] (friendly aliases), or null. No fallback. */
+private fun PetSpec.resolveAliasClip(keys: List<String>, dir: File): PetClip? {
+    for (key in keys) states[key]?.toClip(dir)?.let { return it }
+    return null
 }
 
 private fun PetSpec.resolveStateClip(state: SphereState, dir: File): PetClip? {

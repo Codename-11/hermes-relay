@@ -1,5 +1,16 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet one-shot reaction layer (Android)
+
+**Why.** The behavior model's event tier: transient "reactions" that play once over the base loop, then return — the touch that turns a status display into a character (cf. the Peon Pet's celebrate-on-finish). Distinct from the sustained per-state loops and the `working` overlay.
+
+- **Pet-local triggers, zero host plumbing (`PetAvatar`).** One-shots are derived from the activity-state transitions the avatar already observes each frame — no new `AvatarRenderState` edge from the host. `PetOneShot.Greet` fires on first composition (the pet appears); `PetOneShot.Done` fires when a *productive* turn ends (a `Streaming`/`Speaking` → `Idle` transition; `Thinking → Idle` and `Error → Idle` don't celebrate). Both are opt-in (only if the pet ships the clip) and require ≥2 frames.
+- **Play-once-then-revert (`PetAvatar.Render`).** The frame loop gained a `playOnce` mode: a reaction clip plays 0→end (no modulo wrap), parks on its last frame, clears `activeOneShot`, and recomposition hands back to the base loop. A live reaction overlays everything (including `working`). Suppressed under reduced motion (`paused`). An `ONE_SHOT_MAX_MS` (4s) backstop guarantees a reaction never lingers on decode failure / single frame / pause.
+- **Friendly aliases (`PetLoader.toAvatar`).** Resolves `greet`/`wake` → `PetOneShot.Greet` and `done`/`celebrate` → `PetOneShot.Done` from explicit `states` keys only (no fallback); absent reactions just don't play. One-shots are reactions, **not** a reactivity signal, so they don't touch the picker badge.
+- **Tests.** `PetLoaderTest`: a pack with `greet`/`done` keys loads cleanly and the badge stays `Voice` (no accidental Tools/Activity coupling). Render-time playback (the actual one-shot animation) is on-device/Compose-test territory — flagged in TODO.
+- **Docs (`docs/pet-spec.md`).** New "One-shot reactions" section (Greet/Done table, opt-in, play-once, reduced-motion), an Expressive tier on the authoring ladder, and the Loop-vs-one-shot note updated. `attention`-on-notification stays in "Forthcoming" — it needs a host event the avatar doesn't receive yet.
+- **Verification.** Code + loader test authored to the established patterns; not run here (Studio-side). On-device checks (greet on appear, celebrate on turn-finish, overlay-over-working) recorded in TODO.md.
+
 ## 2026-06-20 — Pet `working`/tool-use behavior (Android)
 
 **Why.** The behavior-model spec called for a distinct "agent is running a tool" pose — the strongest cross-system convention (Microsoft Agent splits `Think` from `Process`/`Search`; the `pi-animations` indicator splits Thinking · Working · Tool) is that *acting* should look different from *thinking*. Our six `SphereState`s folded tool-use into thinking/streaming.

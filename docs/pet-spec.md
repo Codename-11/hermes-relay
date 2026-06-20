@@ -149,20 +149,39 @@ what lights the **Tools** badge — no separate flag needed.
   (mic open), so chat-output vs. voice-output vs. mic-open read at a glance.
 - **Rich — 7 clips:** add `error` and `working` (the tool-use overlay, so the
   user sees *thinking* vs. *running a tool* vs. *writing*). The full story.
+- **Expressive — + reactions:** add one-shot `greet` and `done` clips (below) for
+  personality on top of the sustained loops.
 
-> **Loop vs. one-shot.** Every clip here is a **looping base** for a sustained
-> state — including `working`, shown while the agent runs a tool. Transient
-> *reaction* one-shots (a wave on connect, a celebrate when a turn finishes) are a
-> planned next tier — see *Forthcoming behavior* below.
+### One-shot reactions
+
+Beyond the sustained per-state loops, a pet can play a brief **reaction** that
+fires once and returns to the base loop — the touch that turns a status display
+into a character (cf. the Peon Pet's celebrate-on-finish). Both are **opt-in**
+(play only if you ship the clip) and **multi-frame** (a single-frame reaction is
+skipped). They're suppressed under reduced motion.
+
+| Reaction | Clip (alias) | Fires when |
+|----------|--------------|-----------|
+| **Greet** | `greet` *(or `wake`)* | the pet first appears on screen |
+| **Done** | `done` *(or `celebrate`)* | a productive turn finishes (streaming/speaking → idle) |
+
+Triggers are derived from the agent activity the pet already observes, so no
+extra setup is needed — drop in a `done` clip and the pet celebrates each time a
+reply completes. A reaction overlays whatever else would show (including
+`working`), plays start→end once, then hands back to the base state.
+
+> **Loop vs. one-shot.** Per-state clips (`idle`/`thinking`/`working`/`writing`/
+> `speaking`/…) are **looping bases**; `greet`/`done` are **one-shots** layered
+> over them.
 
 ### Forthcoming behavior (designed, not yet rendered)
 
 These are specified so authors can plan, but the renderer doesn't drive them
 yet — they're tracked in `TODO.md`. Authoring the clips/flags now is harmless.
 
-- **One-shot reactions** — transient overlays that play once and return to the
-  base loop: `greet`/`wake` on connect, `celebrate`/`done` on turn completion,
-  `attention` on a notification. Cf. the Peon Pet's celebrate-on-finish.
+- **`attention` reaction** — a one-shot when a notification arrives. Reserved: it
+  needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which
+  ride activity-state transitions).
 - **`intensity` continuous modulation** — stream rate / activity driving extra
   idle and working liveliness, which would un-clamp the `intensity` badge flag.
 

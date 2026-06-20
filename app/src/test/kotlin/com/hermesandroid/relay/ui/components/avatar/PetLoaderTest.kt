@@ -146,6 +146,30 @@ class PetLoaderTest {
     }
 
     @Test
+    fun `one-shot reaction clips load without affecting the badge`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "blob",
+            """{ "id": "blob", "states": {
+                 "idle": { "frames": ["idle.png"], "fps": 6 },
+                 "greet": { "frames": ["wave_0.png", "wave_1.png"], "fps": 8 },
+                 "done": { "frames": ["cheer_0.png", "cheer_1.png"], "fps": 8 }
+            } }""",
+            imageFiles = listOf("idle.png", "wave_0.png", "wave_1.png", "cheer_0.png", "cheer_1.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        // One-shots are reactions, not a reactivity signal — they load fine but
+        // don't light Tools/Activity on the badge.
+        assertEquals("blob", avatar.id)
+        assertFalse(avatar.reactivity.tools)
+        assertFalse(avatar.reactivity.intensity)
+        assertEquals("Voice", avatar.reactivity.summary())
+    }
+
+    @Test
     fun `unknown json keys are tolerated`() {
         val dir = tempDir()
         writePack(

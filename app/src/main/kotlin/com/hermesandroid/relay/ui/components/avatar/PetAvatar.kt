@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +40,13 @@ private const val PET_BOUNCE = 0.12f
 private const val WORKING_BURST_THRESHOLD = 0.5f
 
 /**
+ * Safety ceiling for a one-shot reaction overlay: even if its clip fails to
+ * decode or can't animate, the pet returns to its base loop after this. Real
+ * reactions finish far sooner and clear themselves on their final frame.
+ */
+private const val ONE_SHOT_MAX_MS = 4000L
+
+/**
  * The live reactive signals the pet renderer actually consumes **today**. A pet's
  * effective [AgentAvatar.reactivity] is clamped to this in [PetSpec.toAvatar]
  * (declared-AND-supported), so a `pet.json` can never advertise reactivity on the
@@ -59,6 +67,22 @@ internal val PET_RENDERER_CAPABILITIES: SphereReactivity = SphereReactivity(
     intensity = false,
     gaze = false,
 )
+
+/**
+ * Transient "reaction" overlays a pet can play **once** over its base loop, then
+ * return — the event tier of avatar behavior (vs. the sustained per-state clips).
+ * Each is **opt-in**: the pet plays it only if it ships the matching clip.
+ * Resolved by [PetSpec.toAvatar]; fired by [PetAvatar.Render] off the
+ * activity-state transitions it already observes, so no host plumbing is needed.
+ *
+ * - [Greet] — when the pet first appears (clip key `greet`/`wake`).
+ * - [Done] — when a productive turn finishes, i.e. streaming/speaking → idle
+ *   (clip key `done`/`celebrate`).
+ *
+ * `attention` (on a notification) is reserved — it needs a host event the avatar
+ * doesn't yet receive.
+ */
+enum class PetOneShot { Greet, Done }
 
 /**
  * A resolved, ready-to-render animation clip for one agent state. Holds file
@@ -109,6 +133,9 @@ data class SpriteSheetClip(
  *   clip while [AvatarRenderState.toolCallBurst] is high during a thinking/
  *   writing turn — so tool-use reads differently from contemplation. Null →
  *   tool-use looks like the base state (the pre-working behavior).
+ * @property oneShots optional [PetOneShot] → clip map. Each plays **once** over
+ *   the base loop on its trigger, then returns. Empty → no reactions (today's
+ *   behavior). Triggers are derived from activity-state transitions in [Render].
  */
 class PetAvatar(
     override val id: String,
@@ -117,20 +144,54 @@ class PetAvatar(
     override val reactivity: SphereReactivity,
     private val clips: Map<SphereState, PetClip>,
     private val workingClip: PetClip? = null,
+    private val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
 ) : AgentAvatar {
     override val source: AvatarSource = AvatarSource.USER
 
+    /** A one-shot is fireable only if it ships a clip that can actually play. */
+    private fun fireable(kind: PetOneShot): Boolean = (oneShots[kind]?.frameCount ?: 0) > 1
+
     @Composable
     override fun Render(state: AvatarRenderState, modifier: Modifier) {
+        // ── One-shot reactions ──────────────────────────────────────────────
+        // A reaction clip plays ONCE over the base loop, then releases. Triggers
+        // are derived from the activity-state transitions this avatar already
+        // sees — no host plumbing. Suppressed under reduced motion (`paused`).
+        var activeOneShot by remember { mutableStateOf<PetOneShot?>(null) }
+
+        // Greet on first appearance.
+        LaunchedEffect(Unit) {
+            if (!state.paused && fireable(PetOneShot.Greet)) activeOneShot = PetOneShot.Greet
+        }
+        // Celebrate when a productive turn ends: streaming/speaking → idle.
+        var prevState by remember { mutableStateOf(state.state) }
+        LaunchedEffect(state.state) {
+            val ended = state.state == SphereState.Idle &&
+                (prevState == SphereState.Streaming || prevState == SphereState.Speaking)
+            prevState = state.state
+            if (ended && !state.paused && fireable(PetOneShot.Done)) activeOneShot = PetOneShot.Done
+        }
+        // Backstop: never let a reaction linger (decode failure / paused / single
+        // frame). The play-once loop clears it far sooner on success.
+        LaunchedEffect(activeOneShot) {
+            if (activeOneShot != null) {
+                delay(ONE_SHOT_MAX_MS)
+                activeOneShot = null
+            }
+        }
+
         // While a tool runs mid-turn (thinking/writing), show the distinct
-        // `working` clip if the pet ships one; otherwise fall through to the
-        // base-state clip. toolCallBurst is ~0 outside tool activity, and Error
-        // keeps its own clip, so this only fires when the agent is actually
-        // operating a tool.
+        // `working` clip if the pet ships one; otherwise the base-state clip.
+        // toolCallBurst is ~0 outside tool activity, and Error keeps its own clip,
+        // so this only fires while the agent actually operates a tool.
         val toolActive = workingClip != null &&
             state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
             (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
-        val clip = if (toolActive) workingClip else (clips[state.state] ?: clips[SphereState.Idle])
+        // A live reaction overlays everything; otherwise working overlays the base.
+        val oneShotClip = activeOneShot?.let { oneShots[it] }
+        val baseClip = if (toolActive) workingClip else (clips[state.state] ?: clips[SphereState.Idle])
+        val clip = oneShotClip ?: baseClip
+        val playOnce = oneShotClip != null
 
         // Decode the active clip off the main thread; null until ready / on
         // decode failure (graceful — the avatar just renders nothing).
@@ -148,7 +209,9 @@ class PetAvatar(
 
         if (animate) {
             // Rate-capped frame advance. Cancels when this leaves composition.
-            LaunchedEffect(current) {
+            // A one-shot (playOnce) runs 0→end then releases to the base loop;
+            // the base loop wraps with modulo.
+            LaunchedEffect(current, playOnce) {
                 val f = current ?: return@LaunchedEffect
                 val fps = f.fps.coerceIn(1f, PET_MAX_FPS)
                 val frameDurSec = 1f / fps
@@ -161,7 +224,14 @@ class PetAvatar(
                     last = now
                     if (acc >= frameDurSec) {
                         val steps = (acc / frameDurSec).toInt()
-                        frameIndex = (frameIndex + steps) % f.frameCount
+                        if (playOnce && frameIndex + steps >= f.frameCount) {
+                            // Reaction finished: park on the last frame and hand
+                            // back to the base loop (clearing recomposes).
+                            frameIndex = f.frameCount - 1
+                            activeOneShot = null
+                            return@LaunchedEffect
+                        }
+                        frameIndex = (frameIndex + steps).let { if (playOnce) it else it % f.frameCount }
                         acc -= steps * frameDurSec
                     }
                     delay(capMs)
