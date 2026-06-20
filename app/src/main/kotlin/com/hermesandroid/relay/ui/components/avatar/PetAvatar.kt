@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
@@ -30,6 +31,13 @@ private const val PET_MAX_FPS = 60f
 
 /** voiceAmplitude (0..1) → up to this extra scale, for a subtle "talking" bounce. */
 private const val PET_BOUNCE = 0.12f
+
+/**
+ * intensity (0..1) → up to this fraction *faster* clip playback, so a base/working
+ * loop visibly "works harder" as the agent ramps. At a typical streaming intensity
+ * (~0.7) that is ~1.4×; at full intensity 1.6×, capped at [PET_MAX_FPS].
+ */
+private const val PET_INTENSITY_RATE = 0.6f
 
 /**
  * toolCallBurst (0..1; ramps to ~1 within 200ms of a tool call, decays over
@@ -56,15 +64,16 @@ private const val ONE_SHOT_MAX_MS = 4000L
  * [Render] learns to consume that signal, and every manifest that already declared
  * it lights up with no other change.
  *
- * Honored today: [SphereReactivity.voice] (`voiceAmplitude` → bounce) and
+ * Honored today: [SphereReactivity.voice] (`voiceAmplitude` → bounce),
  * [SphereReactivity.tools] (`toolCallBurst` → swap to the `working` clip, gated
- * per-pet on it shipping one — see [PetSpec.toAvatar]). [SphereReactivity.intensity]
- * is delivered to [Render] but not yet consumed; `gaze` is never fed.
+ * per-pet on it shipping one — see [PetSpec.toAvatar]), and
+ * [SphereReactivity.intensity] (`intensity` → faster clip playback, opt-in via the
+ * declared flag). `gaze` is never fed.
  */
 internal val PET_RENDERER_CAPABILITIES: SphereReactivity = SphereReactivity(
     voice = true,
     tools = true,
-    intensity = false,
+    intensity = true,
     gaze = false,
 )
 
@@ -207,21 +216,32 @@ class PetAvatar(
         val current = frames
         val animate = current != null && current.frameCount > 1 && !state.paused
 
+        // Live activity level + opt-in speedup, read inside the loop so playback
+        // tracks the agent without restarting it. One-shots play at authored rate.
+        val intensityState = rememberUpdatedState(state.intensity)
+        val modulateIntensity = reactivity.intensity && !playOnce
+
         if (animate) {
             // Rate-capped frame advance. Cancels when this leaves composition.
             // A one-shot (playOnce) runs 0→end then releases to the base loop;
-            // the base loop wraps with modulo.
+            // the base loop wraps with modulo. With intensity modulation on, fps
+            // is recomputed each tick from the live activity level.
             LaunchedEffect(current, playOnce) {
                 val f = current ?: return@LaunchedEffect
-                val fps = f.fps.coerceIn(1f, PET_MAX_FPS)
-                val frameDurSec = 1f / fps
-                val capMs = (1000f / fps).toLong().coerceIn(16L, 1000L)
+                val baseFps = f.fps.coerceIn(1f, PET_MAX_FPS)
                 var acc = 0f
                 var last = withFrameNanos { it }
                 while (true) {
                     val now = withFrameNanos { it }
                     acc += (now - last).coerceAtLeast(0L) / 1_000_000_000f
                     last = now
+                    val fps = if (modulateIntensity) {
+                        (baseFps * (1f + intensityState.value.coerceIn(0f, 1f) * PET_INTENSITY_RATE))
+                            .coerceAtMost(PET_MAX_FPS)
+                    } else {
+                        baseFps
+                    }
+                    val frameDurSec = 1f / fps
                     if (acc >= frameDurSec) {
                         val steps = (acc / frameDurSec).toInt()
                         if (playOnce && frameIndex + steps >= f.frameCount) {
@@ -234,7 +254,7 @@ class PetAvatar(
                         frameIndex = (frameIndex + steps).let { if (playOnce) it else it % f.frameCount }
                         acc -= steps * frameDurSec
                     }
-                    delay(capMs)
+                    delay((1000f / fps).toLong().coerceIn(16L, 1000L))
                 }
             }
         }

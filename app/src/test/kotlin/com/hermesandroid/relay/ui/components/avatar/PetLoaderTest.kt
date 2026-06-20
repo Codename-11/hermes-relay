@@ -90,24 +90,40 @@ class PetLoaderTest {
     }
 
     @Test
-    fun `declared tools and intensity reactivity are clamped out of the badge`() {
+    fun `declared tools without a working clip is not advertised`() {
         val dir = tempDir()
         writePack(
             dir,
             "blob",
-            """{ "id": "blob", "reactive": { "voice": true, "tools": true, "intensity": true }, "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
+            """{ "id": "blob", "reactive": { "voice": true, "tools": true }, "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
             imageFiles = listOf("idle.png"),
         )
 
         val avatar = PetLoader.loadPets(dir).single()
 
         // `tools` reactivity is driven by shipping a `working` clip (this pack has
-        // none), and `intensity` is still unsupported — so a bare declaration of
-        // either must NOT advertise on the picker badge.
+        // none), so a bare declaration must NOT advertise on the picker badge.
         assertTrue(avatar.reactivity.voice)
         assertFalse(avatar.reactivity.tools)
-        assertFalse(avatar.reactivity.intensity)
         assertEquals("Voice", avatar.reactivity.summary())
+    }
+
+    @Test
+    fun `declared intensity reactivity is honored on the badge`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "blob",
+            """{ "id": "blob", "reactive": { "intensity": true }, "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        // The renderer consumes intensity (faster playback), so a declared flag
+        // is honored and shows as "Activity".
+        assertTrue(avatar.reactivity.intensity)
+        assertEquals("Voice · Activity", avatar.reactivity.summary())
     }
 
     @Test

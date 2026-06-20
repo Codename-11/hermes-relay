@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet intensity modulation (Android)
+
+**Why.** The last continuous-reactivity gap: a pet's clip looped at a fixed rate regardless of how hard the agent was working. `intensity` (the activity ramp already fed to every avatar — ~0.7 while streaming) was plumbed to `PetAvatar.Render` but ignored. Wiring it completes the reactivity story (voice ✓ · tools ✓ · activity ✓) and un-clamps the last reserved badge flag — and unlike the deferred `attention`, the signal needed no host plumbing.
+
+- **Live playback-rate modulation (`PetAvatar.Render`).** Opt-in via `reactive.intensity`. The active base/working loop's fps is scaled by `1 + intensity·PET_INTENSITY_RATE` (0.6 → ~1.4× at typical streaming, 1.6× peak, capped at `PET_MAX_FPS`), so it visibly "works harder" as output streams. Read **live** inside the frame loop via `rememberUpdatedState(state.intensity)` so the speed tracks the agent mid-clip without restarting the long-lived loop (re-keying on a continuously-animated float would thrash). One-shot reactions are excluded (`!playOnce`) so `greet`/`done` play at their authored rate.
+- **Badge un-clamp (`PET_RENDERER_CAPABILITIES.intensity` → true).** The loader's existing `reactive.intensity && capability` formula now lets a declared `intensity:true` through, so the pet advertises **Activity** honestly. No loader change needed beyond the flag.
+- **Tests.** `PetLoaderTest`: a declared `intensity:true` is now honored (`Voice · Activity`); the prior clamp test was split — `tools` without a `working` clip still stays off the badge.
+- **Docs (`docs/pet-spec.md`).** Reactivity table's `intensity` row rewritten from "Reserved" to the speedup behavior; removed from "Forthcoming" (now only `attention` remains there). Reactivity is now Voice · Tools · Activity complete.
+- **Verification.** Code + loader tests authored to the established patterns; not run here (Studio-side). On-device check (a writing/working loop quickening while streaming) recorded in TODO.md.
+
 ## 2026-06-20 — Pet one-shot reaction layer (Android)
 
 **Why.** The behavior model's event tier: transient "reactions" that play once over the base loop, then return — the touch that turns a status display into a character (cf. the Peon Pet's celebrate-on-finish). Distinct from the sustained per-state loops and the `working` overlay.

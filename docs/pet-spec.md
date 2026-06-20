@@ -182,8 +182,6 @@ yet — they're tracked in `TODO.md`. Authoring the clips/flags now is harmless.
 - **`attention` reaction** — a one-shot when a notification arrives. Reserved: it
   needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which
   ride activity-state transitions).
-- **`intensity` continuous modulation** — stream rate / activity driving extra
-  idle and working liveliness, which would un-clamp the `intensity` badge flag.
 
 ## Reactivity — optional and detectable
 
@@ -194,13 +192,13 @@ summary so users see what a pet does before selecting it.
 |------|---------|--------------------|
 | `voice` | `true` | Voice amplitude gives a subtle scale "bounce" while speaking/listening. |
 | `tools` | *auto* | **Driven by the `working` clip, not this flag.** A pet that ships a usable `working` clip reacts to tool use (swaps to it while a tool runs) and advertises **Tools**; one without it doesn't — so the flag is ignored and can't over-promise. |
-| `intensity` | `false` | **Reserved.** Clamped off the badge until the renderer consumes activity intensity. |
+| `intensity` | `false` | The active clip plays **faster** as agent activity ramps (up to ~1.6× at peak) — a base/working loop visibly "works harder" while output streams. Advertises **Activity**. |
 
 The badge only ever advertises what the renderer actually delivers: a declared
 flag the renderer doesn't honor is dropped, so a pet can't over-promise. The
 clips carry most of a pet's expressiveness (idle vs. thinking vs. working vs.
-writing vs. speaking loops); `voice` (bounce) and the `working` overlay add the
-extra motion today.
+writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
+`intensity` (playback speed) add the live motion on top.
 
 ## Frames and images
 
