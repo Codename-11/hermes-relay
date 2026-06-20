@@ -660,8 +660,18 @@ private class PdfDoc(
     val pfd: ParcelFileDescriptor,
     val mutex: Mutex,
 ) {
-    val pageCount: Int get() = renderer.pageCount
+    @Volatile
+    private var closed = false
+    val isClosed: Boolean get() = closed
+
+    // Captured ONCE at open time. A PDF's page count is immutable, and reading
+    // it from the renderer lazily races onDispose: a late LazyColumn measure
+    // pass calls getPageCount() AFTER close() ran → IllegalStateException
+    // "Document already closed" (observed crash 2026-06-20).
+    val pageCount: Int = runCatching { renderer.pageCount }.getOrDefault(0)
+
     fun close() {
+        closed = true
         runCatching { renderer.close() }
         runCatching { pfd.close() }
     }
@@ -716,6 +726,7 @@ private fun PdfPage(doc: PdfDoc, index: Int, widthPx: Int) {
         if (widthPx <= 0) return@LaunchedEffect
         val rendered = withContext(Dispatchers.IO) {
             doc.mutex.withLock {
+                if (doc.isClosed) return@withLock null
                 runCatching {
                     doc.renderer.openPage(index).use { page ->
                         val w = widthPx
