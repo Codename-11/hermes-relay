@@ -57,7 +57,13 @@ jobs:
   publish-listing:
     name: Publish Listing Metadata
     needs: validate
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_listing }}
+    # Auto-publish the listing when its assets change on `main` (the release
+    # branch; the path filters above already scope this to screenshot/graphic/
+    # text changes). `dev` pushes and PRs validate only. A manual dispatch with
+    # `publish_listing` still works as an on-demand republish.
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.publish_listing)
+          || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -75,16 +81,22 @@ jobs:
           cache-read-only: false
 
       - name: Write Play service account
+        id: sa
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not configured."
-            exit 1
+            # Skip gracefully (no red CI) when the secret isn't configured — e.g.
+            # an auto-publish push to main before the service account is set up.
+            echo "::notice::PLAY_SERVICE_ACCOUNT_JSON not configured — skipping listing publish."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > play-service-account.json
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
-          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > play-service-account.json
 
       - name: Publish Play Store listing
+        if: ${{ steps.sa.outputs.configured == 'true' }}
         run: ./gradlew publishGooglePlayReleaseListing
 
       - name: Remove Play service account
