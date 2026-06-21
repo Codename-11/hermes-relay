@@ -658,6 +658,8 @@ fun AgentInfoSheet(
     // reads as "checking", not "you don't have this". Only a definitively
     // unreachable gateway (SSE-only connection) hides them.
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    // Capability snapshot for the transport-tier ladder in SessionPathDetails.
+    val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
 
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
@@ -1539,6 +1541,9 @@ fun AgentInfoSheet(
                     capabilities = sessionCaps,
                     apiServerUrl = apiServerUrl,
                     relayUrl = relayUrl,
+                    streamingEndpoint = streamingEndpoint,
+                    gatewayAvailability = gatewayAvailability,
+                    serverCapabilities = serverCapabilities,
                 )
             }
 

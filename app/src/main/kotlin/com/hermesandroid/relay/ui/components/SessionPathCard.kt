@@ -3,12 +3,15 @@ package com.hermesandroid.relay.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -35,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.ServerCapabilities
 
 // ---------------------------------------------------------------------------
 // Session-path summary — the glanceable "which transport/route am I on" view
@@ -278,6 +282,9 @@ internal fun SessionPathDetails(
     capabilities: List<SessionCapability>,
     apiServerUrl: String,
     relayUrl: String,
+    streamingEndpoint: String,
+    gatewayAvailability: GatewayAvailability,
+    serverCapabilities: ServerCapabilities,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -323,11 +330,137 @@ internal fun SessionPathDetails(
                     CapabilityDetailRow(cap)
                 }
 
+                Spacer(modifier = Modifier.size(4.dp))
+
+                // Transport tier ladder (basic → best) — shows every chat path,
+                // which one is active and why, and which the server doesn't expose.
+                TransportTierStepper(
+                    streamingEndpoint = streamingEndpoint,
+                    gatewayAvailability = gatewayAvailability,
+                    serverCapabilities = serverCapabilities,
+                )
+
                 Spacer(modifier = Modifier.size(2.dp))
 
                 DetailRow(label = "API", value = apiServerUrl, monospace = true)
                 DetailRow(label = "Relay", value = relayUrl, monospace = true)
             }
+        }
+    }
+}
+
+/**
+ * Vertical "transport path" ladder, basic → best:
+ * Completions → Runs → Sessions → Gateway. The active tier is filled +
+ * highlighted; tiers the server doesn't expose render muted; the resolver's
+ * reason ("auto → Gateway (best)" / "gateway unavailable → Sessions") is shown
+ * beneath. Uses the same [resolveChatTransportStatus] the status badge does, so
+ * the drawer and the badge can never disagree.
+ */
+@Composable
+internal fun TransportTierStepper(
+    streamingEndpoint: String,
+    gatewayAvailability: GatewayAvailability,
+    serverCapabilities: ServerCapabilities,
+    modifier: Modifier = Modifier,
+) {
+    val status = remember(streamingEndpoint, gatewayAvailability, serverCapabilities) {
+        resolveChatTransportStatus(streamingEndpoint, gatewayAvailability, serverCapabilities)
+    }
+    // basic → best, paired with whether THIS server exposes the tier.
+    val tiers = listOf(
+        Triple(ChatTransportTier.Completions, "Chat Completions", serverCapabilities.portable),
+        Triple(ChatTransportTier.Runs, "Runs API", serverCapabilities.runs),
+        Triple(ChatTransportTier.Sessions, "Sessions API", serverCapabilities.sessionsChatStream),
+        Triple(
+            ChatTransportTier.Gateway,
+            "Gateway · live thinking",
+            gatewayAvailability == GatewayAvailability.Ready,
+        ),
+    )
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = "Transport path  ·  basic → best",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.size(6.dp))
+        tiers.forEachIndexed { index, (tier, name, available) ->
+            TransportTierRow(
+                name = name,
+                available = available,
+                isActive = status.tier == tier,
+                isLast = index == tiers.lastIndex,
+            )
+        }
+        Spacer(modifier = Modifier.size(2.dp))
+        Text(
+            text = status.reason,
+            style = MaterialTheme.typography.labelSmall,
+            color = when (status.tone) {
+                ChatTransportTone.Active -> MaterialTheme.colorScheme.primary
+                ChatTransportTone.Fallback -> MaterialTheme.colorScheme.tertiary
+                ChatTransportTone.Unavailable -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+@Composable
+private fun TransportTierRow(
+    name: String,
+    available: Boolean,
+    isActive: Boolean,
+    isLast: Boolean,
+) {
+    val nodeFill = when {
+        isActive -> MaterialTheme.colorScheme.primary
+        available -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+    }
+    Row(verticalAlignment = Alignment.Top) {
+        // Rail: tier node + connector down to the next tier.
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(if (isActive) 12.dp else 9.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(nodeFill),
+            )
+            if (!isLast) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(16.dp)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.size(10.dp))
+        Column(modifier = Modifier.padding(bottom = if (isLast) 0.dp else 6.dp)) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (available || isActive) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = when {
+                    isActive -> "active"
+                    available -> "available"
+                    else -> "not exposed by this server"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isActive) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
         }
     }
 }

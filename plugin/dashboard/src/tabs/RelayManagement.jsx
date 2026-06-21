@@ -38,6 +38,15 @@ const {
 const AGENT_CONTEXT_MASTER_KEY = "RELAY_AGENT_CONTEXT_ENABLED";
 const AGENT_CONTEXT_MEDIA_KEY = "RELAY_CONTEXT_MEDIA_SENSITIVITY";
 
+// Mirror plugin/config.py strict_bool: recognized true tokens → true, anything
+// else → false, and UNSET (undefined/null) → the default. These gates default
+// ON, so an absent env var must read as enabled (not a stale "off").
+const AGENT_CONTEXT_TRUE_TOKENS = new Set(["1", "true", "yes", "on"]);
+function coerceAgentContextFlag(value, dflt) {
+  if (value === undefined || value === null) return dflt;
+  return AGENT_CONTEXT_TRUE_TOKENS.has(String(value).trim().toLowerCase());
+}
+
 function valueText(value) {
   if (value === null || value === undefined) return "";
   if (Array.isArray(value)) return value.join(" ");
@@ -241,16 +250,17 @@ function AgentContextCard({ data, saving, onToggle }) {
   const settings = (data && data.settings) || {};
   const injected = (data && data.injected) || {};
   const blocks = Array.isArray(injected.blocks) ? injected.blocks : [];
-  const masterEnabled = !!settings[AGENT_CONTEXT_MASTER_KEY];
-  const mediaEnabled = !!settings[AGENT_CONTEXT_MEDIA_KEY];
+  const masterEnabled = coerceAgentContextFlag(settings[AGENT_CONTEXT_MASTER_KEY], true);
+  const mediaEnabled = coerceAgentContextFlag(settings[AGENT_CONTEXT_MEDIA_KEY], true);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Agent context</CardTitle>
         <CardDescription>
-          Experimental — injects an instruction into the agent's system prompt (server-side).
-          Removable by uninstalling the relay plugin.
+          On by default for relay installs — injects an instruction into the agent's system
+          prompt (server-side) so it can mark sensitive media. Turn off to opt out; removable
+          by uninstalling the relay plugin.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
