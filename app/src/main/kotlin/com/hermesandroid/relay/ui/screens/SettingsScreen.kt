@@ -70,6 +70,7 @@ import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
@@ -614,15 +615,10 @@ private fun ActiveAgentCard(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.primary,
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = if (agentName.isNotBlank()) {
-                                    agentName.first().uppercase()
-                                } else "H",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
+                        AgentAvatarFace(
+                            name = agentName,
+                            letterStyle = MaterialTheme.typography.labelMedium,
+                        )
                     }
                 }
             }

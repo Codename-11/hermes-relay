@@ -2066,13 +2066,10 @@ private fun AgentSheetHeader(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.primary,
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = agentName.firstOrNull()?.uppercase() ?: "H",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
+                AgentAvatarFace(
+                    name = agentName,
+                    letterStyle = MaterialTheme.typography.titleMedium,
+                )
             }
         }
         Column(modifier = Modifier.weight(1f)) {

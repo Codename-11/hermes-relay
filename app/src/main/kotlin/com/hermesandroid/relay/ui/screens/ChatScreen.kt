@@ -164,7 +164,11 @@ import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
+import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayPrimaryMode
@@ -1436,26 +1440,36 @@ fun ChatScreen(
                                 if (isChatConnecting) {
                                     ChatConnectingAvatarGlyph()
                                 } else {
-                                    // Cross-fade the letter when the
-                                    // effective agent (profile or personality)
-                                    // changes so the avatar feels alive on a
-                                    // profile switch instead of snapping.
-                                    val avatarLetter = if (agentDisplayName.isNotBlank()) {
-                                        agentDisplayName.first().uppercase()
-                                    } else "H"
-                                    AnimatedContent(
-                                        targetState = avatarLetter,
-                                        transitionSpec = {
-                                            fadeIn(tween(220)) togetherWith fadeOut(tween(220))
-                                        },
-                                        label = "chatAvatarLetter",
-                                    ) { letter ->
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = letter,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                color = MaterialTheme.colorScheme.onPrimary
-                                            )
+                                    val agentIconPath = LocalAgentIconPath.current
+                                    if (!agentIconPath.isNullOrBlank()) {
+                                        AsyncImage(
+                                            model = File(agentIconPath),
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    } else {
+                                        // Cross-fade the letter when the
+                                        // effective agent (profile or personality)
+                                        // changes so the avatar feels alive on a
+                                        // profile switch instead of snapping.
+                                        val avatarLetter = if (agentDisplayName.isNotBlank()) {
+                                            agentDisplayName.first().uppercase()
+                                        } else "H"
+                                        AnimatedContent(
+                                            targetState = avatarLetter,
+                                            transitionSpec = {
+                                                fadeIn(tween(220)) togetherWith fadeOut(tween(220))
+                                            },
+                                            label = "chatAvatarLetter",
+                                        ) { letter ->
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = letter,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    color = MaterialTheme.colorScheme.onPrimary
+                                                )
+                                            }
                                         }
                                     }
                                 }
