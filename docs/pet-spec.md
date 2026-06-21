@@ -97,7 +97,8 @@ A **clip** is one animation loop, defined as **either**:
 - a **frame sequence** — `"frames": ["a.png", "b.png", ...]`, or
 - a **sprite sheet** — `"sheet": "atlas.png"` plus `"frameWidth"`,
   `"frameHeight"`, and `"frameCount"` (cells are read left-to-right,
-  top-to-bottom).
+  top-to-bottom; any rectangular grid works — a 4×4 sheet holds 16 frames,
+  decoded as one bitmap regardless of cell count).
 
 Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
 `8`). All clips **loop** while their state is active. Smoothness comes from frame

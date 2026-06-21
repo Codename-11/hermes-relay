@@ -1,5 +1,12 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet kit defaults to 4×4 (16-frame) sheets (docs)
+
+**Why.** A 4-frame (2×2) sheet reads steppy no matter the fps — the on-device Lucy made that obvious. The renderer already slices any N×M grid (`decodeClip` derives `cols`/`rows` from sheet size ÷ cell size; `drawPetFrame` indexes `col = i%cols`, `row = i/cols`), so "support 4×4" is an authoring-default change, not a renderer one.
+
+- **Kit + spec default to a 4×4 grid (16 frames).** The prompt template, the manifest example, and `pet-prompt-kit.txt` now use `frameCount: 16` with fps matched to the higher count (idle ~8 → a calm ~2 s loop); 2×2 / 4 frames stays documented as the easier-to-keep-consistent fallback. `docs/pet-spec.md` states any rectangular grid works (a 4×4 sheet holds 16 frames, decoded as one bitmap regardless of cell count). Added a `PetLoaderTest` case for a 16-frame sheet.
+- **Diagnosis note.** The "still fast" report was tracked to the *installed* `pet.json` still carrying `fps 6` (the tuned `fps 3` zip post-dated the import); `intensity` was ruled out by tracing `streamingIntensity` → `0f` at idle. Audited by `adb shell cat`-ing the on-device manifest, not the repo copy.
+
 ## 2026-06-20 — Pet frame-loop smoothness fix (Android)
 
 **Why.** First on-device pet (Lucy) animated with a periodic hitch and felt a touch fast. Root cause: `PetAvatar.Render`'s frame loop awaited `withFrameNanos` (one vsync ≈16ms) **and** `delay(1000/fps)` each iteration, so every frame waited ~16ms longer than its `frameDurSec`; the surplus accumulated until the loop forced a 2-frame skip to catch up — a visible hitch, worst at low fps.

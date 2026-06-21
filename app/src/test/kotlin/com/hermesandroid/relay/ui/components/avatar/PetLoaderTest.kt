@@ -285,6 +285,21 @@ class PetLoaderTest {
     }
 
     @Test
+    fun `sprite sheet clip with a 4x4 16-frame grid loads`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "grid",
+            """{ "id": "grid", "states": { "idle": { "sheet": "idle.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 } } }""",
+            imageFiles = listOf("idle.png"),
+        )
+
+        // The renderer slices any rectangular grid (cols×rows derived from sheet
+        // size ÷ cell size), so a 16-frame 4×4 sheet is a first-class clip.
+        assertEquals(1, PetLoader.loadPets(dir).size)
+    }
+
+    @Test
     fun `pack with idle and speaking clips loads`() {
         val dir = tempDir()
         writePack(

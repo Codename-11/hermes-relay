@@ -112,7 +112,7 @@ Paste this template into any capable image model. Fill in the `{braces}` — kee
 A sprite sheet of {YOUR AVATAR — e.g. "the character in the attached reference image; keep the face, hair, and outfit identical"},
 drawn as {STYLE — e.g. "a clean flat-shaded illustration with crisp outlines, half-body, facing forward"}.
 Give it a signature {ACCENT — e.g. "soft teal-to-violet aura"} that reads as "alive" and grows brighter when it is more active.
-Lay out 4 frames in a 2x2 grid, evenly spaced, each cell exactly the same size, the character centered in every cell.
+Lay out 16 frames in a 4x4 grid, evenly spaced, each cell exactly the same size, the character centered in every cell.
 Animate across the frames: {MOTION FOR THIS STATE — see the table below}.
 It must be the exact same character in every cell — identical face, colors, shapes, and proportions — only the pose/expression and the accent change.
 Transparent background. No background, no text, no labels, no grid lines, no frame borders, no shadow.
@@ -136,7 +136,7 @@ Only `idle` is required — start there for a one-clip pet, then add as many sta
 
 #### 3. Wire the sheets into a manifest
 
-Each generated sheet becomes one clip. This manifest wires up **all nine** — save it as `pet.json` beside the PNGs in a folder (e.g. `my-pet/`). For a **2×2 grid of 128 px cells** (a 256×256 image holding four frames), each clip looks like this:
+Each generated sheet becomes one clip. This manifest wires up **all nine** — save it as `pet.json` beside the PNGs in a folder (e.g. `my-pet/`). For a **4×4 grid of 128 px cells** (a 512×512 image holding 16 frames), each clip looks like this:
 
 ```json
 {
@@ -146,27 +146,27 @@ Each generated sheet becomes one clip. This manifest wires up **all nine** — s
   "label": "My Pet",
   "reactive": { "voice": true, "intensity": true },
   "states": {
-    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
-    "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
-    "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
-    "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
-    "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 },
-    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
-    "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
-    "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
-    "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 }
+    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
+    "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
+    "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
+    "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
+    "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
+    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
+    "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
+    "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
+    "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 }
   }
 }
 ```
 
-`frameWidth`/`frameHeight` are the size of **one cell**, and `frameCount` is how many cells the model drew (rows × columns). A `1×4` strip works just as well — same numbers, just a wider image. Shipping the `working` clip is what lights the **Tools** badge, and `intensity: true` lights **Activity**; together with the default voice bounce this pet advertises **Voice · Tools · Activity** — every reactive signal lit. Then push the folder exactly as shown above and reopen Appearance.
+`frameWidth`/`frameHeight` are the size of **one cell**, and `frameCount` is how many cells the model drew (rows × columns). Any rectangular grid works — `4×4` (16 frames), `3×3` (9), even a `1×16` strip — as long as `frameCount` matches and the sheet measures `cols×frameWidth` by `rows×frameHeight`. Shipping the `working` clip is what lights the **Tools** badge, and `intensity: true` lights **Activity**; together with the default voice bounce this pet advertises **Voice · Tools · Activity** — every reactive signal lit. Then push the folder exactly as shown above and reopen Appearance.
 
 ::: tip Validate as you author
 The example above starts with a `$schema` line pointing at the published [pet schema](https://codename-11.github.io/hermes-relay/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
 :::
 
 ::: tip Smoothness: frames vs. fps
-Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed. A 2×2 grid (4 frames) is the easy-to-keep-consistent minimum but reads steppy; for fluid motion ask for **9 (3×3) or 16 (4×4)** frames — consistency gets a little harder, so lean on the reference image. And **match fps to frame count**: a 4-frame loop at `fps: 6` cycles in under a second (busy), so keep calm states like `idle`/`listening` at `fps: 3–4` and reserve higher rates for `speaking`/`done`.
+Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed — which is why this kit defaults to a **4×4 grid (16 frames)**. Fewer frames are easier to keep consistent, so if the character drifts between cells, drop to a **2×2 grid (4 frames)** and set `frameCount: 4` — it'll just read steppier. And **match fps to frame count** so the loop length stays sane: 16 frames at `fps: 8` is a calm ~2 s cycle, while *4* frames at `fps: 8` is a frantic half-second. Keep calm states (`idle`/`listening`) a little slower than active ones (`speaking`/`done`).
 :::
 
 ::: warning Two things AI image models get wrong

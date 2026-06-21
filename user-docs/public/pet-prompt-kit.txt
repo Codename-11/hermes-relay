@@ -33,7 +33,7 @@ identical every time; change ONLY the "Animate across the frames" line.
   outlines, half-body, facing forward"}.
   Give it a signature {ACCENT — e.g. "soft teal-to-violet aura"} that reads as
   "alive" and grows brighter when it is more active.
-  Lay out 4 frames in a 2x2 grid, evenly spaced, each cell exactly the same
+  Lay out 16 frames in a 4x4 grid, evenly spaced, each cell exactly the same
   size, the character centered in every cell.
   Animate across the frames: {MOTION — see the list below}.
   It must be the exact same character in every cell — identical face, colors,
@@ -74,20 +74,21 @@ STEP 3 — pet.json   (save beside the PNGs in a folder, e.g. my-pet/)
   "label": "My Pet",
   "reactive": { "voice": true, "intensity": true },
   "states": {
-    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
-    "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
-    "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
-    "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
-    "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 },
-    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 4 },
-    "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 8 },
-    "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 10 },
-    "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 4, "fps": 12 }
+    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
+    "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
+    "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
+    "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
+    "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
+    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
+    "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
+    "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
+    "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 }
   }
 }
 
 frameWidth/frameHeight = the size of ONE cell. frameCount = number of cells
-(rows x cols). A 1x4 strip works too — same numbers, wider image.
+(rows x cols). Any grid works — 4x4 (16), 3x3 (9), even 1x16 — as long as
+frameCount matches and the sheet is cols*frameWidth by rows*frameHeight.
 Shipping "working" lights the Tools badge; "intensity": true lights Activity.
 Only idle is required; delete the rows you didn't make.
 
@@ -117,9 +118,10 @@ GOTCHAS
 • CONSISTENCY: reuse the reference image every time, keep the character/style/
   accent lines identical, lock a fixed seed if you can. Fewer frames (2–4)
   stay consistent more easily.
-• SMOOTHNESS: comes from frame COUNT, not fps. 4 frames (2x2) is the
-  consistent-but-steppy minimum; for fluid motion ask for 9 (3x3) or 16 (4x4)
-  frames. Match fps to count — keep idle/listening at fps 3-4; 6+ looks busy.
+• SMOOTHNESS: comes from frame COUNT, not fps. This kit defaults to 4x4 (16
+  frames) for fluid motion; if the character drifts between cells, drop to 2x2
+  (4 frames), set frameCount 4, and accept a steppier look. Match fps to count
+  so the loop stays sane: 16 frames at fps 8 ≈ 2s; 4 frames at fps 8 ≈ 0.5s.
 • FASTEST FIRST PASS: generate one 3x3 image (nine cells, one per state),
   slice it into nine single-frame PNGs, and reference each as
   "frames": ["idle.png"] instead of a sheet. No in-state motion, but it
