@@ -72,6 +72,7 @@ import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -599,7 +600,7 @@ private fun ActiveAgentCard(
                     modifier = Modifier
                         .size(32.dp)
                         .then(
-                            if (isCustomized) {
+                            if (isCustomized && LocalAgentIconPath.current.isNullOrBlank()) {
                                 Modifier.border(
                                     width = ringWidth,
                                     color = MaterialTheme.colorScheme.primary,

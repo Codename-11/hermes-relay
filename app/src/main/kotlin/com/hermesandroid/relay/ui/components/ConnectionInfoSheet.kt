@@ -2050,7 +2050,7 @@ private fun AgentSheetHeader(
             modifier = Modifier
                 .size(48.dp)
                 .then(
-                    if (isCustomized) {
+                    if (isCustomized && LocalAgentIconPath.current.isNullOrBlank()) {
                         Modifier.border(
                             width = 2.dp,
                             color = MaterialTheme.colorScheme.primary,
