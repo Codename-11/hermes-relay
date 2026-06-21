@@ -13,6 +13,8 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 - [ ] - analytics and diagnostics pages need cleaned up, improved, enhancements for UI/UX/layout. Diagnostics should have timeline vertical status checks with failure reason etc
 
+- [x] **Per-profile agent icon + static-image avatar (shipped 2026-06-20 — `d827e46`, see DEVLOG).** Per-profile icon: client-side `ProfileIconStore` (per `(connection, profile)`, never sent to Hermes; stores a copied-file path) → small Coil image beside the agent name in `MessageBubble` via `LocalAgentIconPath`; picker is `AgentIconRow` under the local-name row in `ConnectionInfoSheet`. Static image: "Add a pet" accepts a single image (magic-byte detect → one-frame static pet). Scope shipped: small name-adjacent icon only; big avatar stays global. Follow-ups: on-device smoke (import an image as a pet; set a profile icon, confirm it shows by the name + persists across restart); optionally also show the icon in the profile picker.
+
 ## Hands-free agentic voice backlog
 
 Goal: make Hermes usable for hands-free work without leaving the operator blind

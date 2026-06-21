@@ -34,7 +34,7 @@ local.properties
 
 # Scratch / working directory (local pet packs, generated test assets, etc.)
 /tmp/
-/build-pet-*.log
+/build-*.log
 *.jks
 *.keystore
 /captures
