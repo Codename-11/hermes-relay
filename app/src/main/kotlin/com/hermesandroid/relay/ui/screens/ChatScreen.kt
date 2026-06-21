@@ -4,7 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,10 +40,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
@@ -52,6 +55,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -64,6 +69,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -98,10 +104,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
-import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.RealtimeVoiceConfig
-import com.hermesandroid.relay.network.VoiceOutputConfig
+import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -127,6 +134,7 @@ import android.provider.Settings
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.Close
@@ -137,20 +145,30 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.MessageRole
-import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
+import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.CleanChatMode
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
+import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
+import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
+import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
-import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
+import com.hermesandroid.relay.ui.components.LocalAgentIconPath
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayPrimaryMode
@@ -166,10 +184,7 @@ import com.hermesandroid.relay.ui.theme.RelayRefresh
 import kotlin.math.abs
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import kotlin.math.roundToInt
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ChatConnectState
@@ -369,6 +384,9 @@ fun ChatScreen(
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    // Voice mode gear button → full Voice Settings screen. Default no-op so
+    // existing test/preview call sites keep compiling.
+    onNavigateToVoiceSettings: () -> Unit = {},
     onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
@@ -428,6 +446,7 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    val turnStatus by chatViewModel.turnStatus.collectAsState()
     val voiceStats by voiceViewModel.voiceStats.collectAsState()
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
@@ -476,6 +495,12 @@ fun ChatScreen(
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
+    val recentPrompts by chatViewModel.recentPrompts.collectAsState()
+    val recentPromptsEnabled by connectionViewModel.chatRecentPromptsEnabled.collectAsState()
+    // Effective approval-bypass (server-computed: ORs global approvals.mode=off,
+    // the --yolo env, and the per-session flag). Drives a subtle status-strip
+    // marker so the user knows approvals are off without opening the agent drawer.
+    val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
     val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
@@ -483,6 +508,9 @@ fun ChatScreen(
     // === Gateway desktop-parity state ===
     val serverCommands by chatViewModel.serverCommands.collectAsState()
     val contextUsage by chatViewModel.contextUsage.collectAsState()
+    val contextWindow by chatViewModel.contextWindow.collectAsState()
+    // Injected-context audit sheet (opened by tapping the context meter).
+    var showContextSheet by remember { mutableStateOf(false) }
     val steerableTurn by chatViewModel.steerableTurn.collectAsState()
     val steerNotice by chatViewModel.steerNotice.collectAsState()
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
@@ -513,6 +541,27 @@ fun ChatScreen(
         }
     }
 
+    // Cold-open recovery: the dashboard probe that flips gatewayAvailability to
+    // Ready (and with it isGatewayTransport, which gates the model + reasoning-
+    // effort controls) is otherwise only retried on the 30s periodic health
+    // tick. So a freshly-opened chat — especially when the dashboard route
+    // resolves a beat after the API client is built — can sit up to ~30s
+    // showing the model pill but no effort chip. Nudge a few quick probes
+    // until the verdict settles, then fall back to the slow cadence. Cheap
+    // (a public GET /api/status), bounded, and self-disarming.
+    LaunchedEffect(appForeground, chatReady) {
+        if (!appForeground || !chatReady) return@LaunchedEffect
+        var tries = 0
+        while (
+            tries < 5 &&
+            connectionViewModel.gatewayAvailability.value == GatewayAvailability.Unknown
+        ) {
+            connectionViewModel.refreshStandardVoice()
+            tries++
+            delay(1_500)
+        }
+    }
+
     // Edit-and-resend mode: long-press a user bubble → "Edit & resend"
     // prefills the input; submit rewinds the conversation from that message.
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
@@ -520,7 +569,11 @@ fun ChatScreen(
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
-    var ambientMode by remember { mutableStateOf(false) } // fullscreen sphere, hides chat
+    var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
+    // Clean-mode discoverability hint: a persistent pill shown ONLY on the
+    // empty / new-chat view (no messages) — it teaches the long-press entry
+    // without nagging mid-conversation. Derived directly from the message list
+    // at the pill below; no one-shot timer, no auto-dismiss.
 
     // Sphere state with debounced Thinking→Streaming (min 1.5s in Thinking)
     val rawSphereState by remember {
@@ -561,6 +614,7 @@ fun ChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
+    var showModelSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
 
     // Server command dispatch can ask the composer to prefill (e.g. /undo).
@@ -568,6 +622,21 @@ fun ChatScreen(
         chatViewModel.composerPrefill.collect { text ->
             editingMessage = null
             inputText = text.take(charLimit)
+        }
+    }
+
+    // A bare `/personality` opens the agent sheet (its Personality section is the
+    // mobile equivalent of the desktop's inline arg-picker for picker commands).
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.openPersonalityPicker.collect {
+            showAgentInfo = true
+        }
+    }
+
+    // A bare `/model` opens the model picker — the sibling picker command.
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.openModelPicker.collect {
+            showModelSheet = true
         }
     }
 
@@ -598,6 +667,15 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Ephemeral notices from the VM (model-switch warnings/errors, etc.) →
+    // transient snackbar, never a chat bubble.
+    LaunchedEffect(Unit) {
+        chatViewModel.transientNotice.collect { msg ->
+            snackbarHostState.showSnackbar(message = msg, duration = SnackbarDuration.Short)
+        }
+    }
+
     val realtimeAgentActive = voiceStats.voiceEngineMode == "realtime_agent"
     val activeVoiceProvider = if (realtimeAgentActive) {
         realtimeAgentConfig?.default_provider
@@ -733,32 +811,97 @@ fun ChatScreen(
         }
     }
 
-    // File picker for attachments (any file type)
+    // Outbound attach launchers — Files / Photos / Camera all funnel through
+    // the top-level ingestAttachmentFromUri helper so the read → size-cap →
+    // base64 → addAttachment pipeline lives in exactly one place. The "+" button
+    // surfaces them as a small Photos / Files / Camera menu; clipboard paste
+    // reuses the same pipeline for desktop `/paste` parity.
+
+    // Files: arbitrary types via the Storage Access Framework (multi-select).
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        for (uri in uris) {
-            try {
-                val contentResolver = context.contentResolver
-                val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
-                val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: continue
-                val maxSize = maxAttachmentMb * 1024 * 1024
-                if (bytes.size > maxSize) {
-                    Toast.makeText(context, "File too large (max $maxAttachmentMb MB)", Toast.LENGTH_SHORT).show()
-                    continue
-                }
-                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                chatViewModel.addAttachment(
-                    Attachment(
-                        contentType = mimeType,
-                        content = base64,
-                        fileName = fileName,
-                        fileSize = bytes.size.toLong()
-                    )
+        uris.forEach { uri ->
+            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        }
+    }
+
+    // Photos: modern permissionless Android Photo Picker (images, multi-select).
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        uris.forEach { uri ->
+            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        }
+    }
+
+    // Camera: capture into a FileProvider temp uri (held across the launcher
+    // round-trip), then ingest on success. CAMERA is declared in the manifest,
+    // so the system enforces the runtime grant before ACTION_IMAGE_CAPTURE will
+    // launch — hence the permission gate below, mirroring the mic flow.
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (success && uri != null) {
+            ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+        }
+    }
+    val launchCamera: () -> Unit = {
+        runCatching {
+            val uri = createCameraCaptureUri(context)
+            pendingCameraUri = uri
+            cameraLauncher.launch(uri)
+        }.onFailure {
+            pendingCameraUri = null
+            Toast.makeText(context, "Couldn't open the camera", Toast.LENGTH_SHORT).show()
+        }
+    }
+    var pendingCameraAfterPermission by remember { mutableStateOf(false) }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val wanted = pendingCameraAfterPermission
+        pendingCameraAfterPermission = false
+        if (granted && wanted) {
+            launchCamera()
+        } else if (!granted) {
+            Toast.makeText(
+                context,
+                "Camera permission needed to take a photo",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+    val requestCameraCapture: () -> Unit = {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.CAMERA,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            launchCamera()
+        } else {
+            pendingCameraAfterPermission = true
+            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+        }
+    }
+
+    // Clipboard image paste (desktop `/paste` parity). The Compose Clipboard
+    // API is suspend-based, so the read rides scope.launch; on a miss we hint
+    // the user rather than fail silently.
+    val pasteImageFromClipboard: () -> Unit = {
+        scope.launch {
+            val clip = clipboard.getClipEntry()?.clipData
+            val handled = ingestClipboardImage(context, clip, maxAttachmentMb) {
+                chatViewModel.addAttachment(it)
+            }
+            if (!handled) {
+                snackbarHostState.showSnackbar(
+                    message = "No image on the clipboard",
+                    duration = SnackbarDuration.Short,
                 )
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -802,29 +945,48 @@ fun ChatScreen(
         }
     }
 
-    // Watch the user's scroll state. Any drag/fling that ends with the list
-    // not at the bottom flips userScrolledAway = true. Returning to the
-    // bottom (manually or via the FAB) resets it to false.
+    // Decide "is the user reading history" from GENUINE scroll gestures only.
+    // A bare isAtBottom flip — the streaming bubble grew and pushed content
+    // below the fold — must NOT count as the user scrolling away. That false
+    // signal was the bounce: it popped the scroll-to-bottom FAB and (worse)
+    // aborted auto-follow even though the user never touched the screen.
+    // Content growth never sets isScrollInProgress, so keying off the scroll's
+    // falling edge ignores it; only a real drag/fling that ENDS above the
+    // bottom flips userScrolledAway. (Programmatic animated scrolls also set
+    // isScrollInProgress, so they're excluded via programmaticBottomScroll.)
     LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress to isAtBottom }
-            .distinctUntilChanged()
-            .collectLatest { (scrolling, atBottom) ->
-                if (programmaticBottomScroll) {
-                    if (atBottom) userScrolledAway = false
-                    return@collectLatest
+        var wasScrolling = false
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (wasScrolling && !scrolling && !programmaticBottomScroll) {
+                    userScrolledAway = !isAtBottom
                 }
-                if (atBottom) {
-                    userScrolledAway = false
-                } else if (!scrolling) {
-                    // Scroll gesture ended above the bottom — user is reading.
-                    userScrolledAway = true
-                }
+                wasScrolling = scrolling
             }
     }
+    // Reaching the bottom by any means (user, follow-pin, content shrank)
+    // always re-arms auto-follow.
+    LaunchedEffect(isAtBottom) {
+        if (isAtBottom) userScrolledAway = false
+    }
 
-    // Scroll-to-bottom FAB visibility
+    // Scroll-to-bottom FAB visibility. The button means "you've scrolled up —
+    // tap to catch up", so it must NOT flash while we're auto-pinning to the
+    // bottom. Suppress it when:
+    //   • a programmatic scroll is in flight (we're actively settling), or
+    //   • we're streaming-and-following (smoothAutoScroll on, not scrolled
+    //     away) — a content burst can momentarily make the list scrollable-
+    //     forward for a frame before the re-pin, which would otherwise blink
+    //     the FAB on every token.
+    // Once the user genuinely scrolls up (userScrolledAway), the streaming
+    // suppression lifts and the button appears.
     val showScrollToBottom by remember {
-        derivedStateOf { messages.isNotEmpty() && !isAtBottom }
+        derivedStateOf {
+            messages.isNotEmpty() &&
+                !isAtBottom &&
+                !programmaticBottomScroll &&
+                !(isStreaming && smoothAutoScroll && !userScrolledAway)
+        }
     }
 
     // Build all commands dynamically: built-in + personalities + server
@@ -867,8 +1029,15 @@ fun ChatScreen(
                 SlashCommand("/profile", "Show active profile", "info"),
             )
 
-            // Dynamic personality commands from server
-            val personalities = personalityNames.map { name ->
+            // Dynamic personality commands from server, plus the upstream
+            // "none" (clear the overlay) option that completions list first.
+            val personalities = listOf(
+                SlashCommand(
+                    command = "/personality none",
+                    description = "Clear the personality overlay",
+                    category = "personality"
+                )
+            ) + personalityNames.map { name ->
                 SlashCommand(
                     command = "/personality $name",
                     description = name.replaceFirstChar { it.uppercase() } + " personality",
@@ -1042,12 +1211,24 @@ fun ChatScreen(
                 val isSameTurnGrowth = prev != null
                     && snapshot.messageCount == prev.messageCount
 
-                // scrollOffset = Int.MAX_VALUE → Compose clamps to the
-                // deepest valid offset. The helper waits for LazyColumn
-                // layout and retries across a few frames so a history load
-                // or late markdown/code-block measurement cannot leave us
-                // anchored above the real bottom.
-                scrollConversationToBottom(animated = !(isListRebuild || isSameTurnGrowth))
+                if (isSameTurnGrowth) {
+                    // Tail-follow: a single atomic pin to the clamped bottom.
+                    // The helper's multi-frame settle loop gets cancelled by
+                    // collectLatest on the very next token (streaming arrives
+                    // ~every frame), stranding the viewport mid-settle → the
+                    // bounce. One withFrameNanos to let the grown content lay
+                    // out, then one scrollToItem — instant and cancellation-safe.
+                    withFrameNanos { }
+                    val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                    if (lastIndex >= 0) listState.scrollToItem(lastIndex, Int.MAX_VALUE)
+                } else {
+                    // Discrete events (new bubble, list rebuild, history load):
+                    // scrollOffset = Int.MAX_VALUE clamps to the deepest offset;
+                    // the helper retries across frames so late markdown/code
+                    // measurement can't leave us anchored above the real bottom.
+                    // Instant for a rebuild (avoids fighting animateItem()).
+                    scrollConversationToBottom(animated = !isListRebuild)
+                }
             }
     }
 
@@ -1120,6 +1301,10 @@ fun ChatScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        // Disable the drawer's edge-swipe while voice mode is up so the
+        // overlay reads as a true modal — the swipe gesture lives on the
+        // drawer itself, so the overlay's pointer scrim alone can't block it.
+        gesturesEnabled = !voiceUiState.voiceMode,
         drawerContent = {
             val drawerTitle = if (selectedProfile != null) {
                 "$agentDisplayName sessions"
@@ -1159,7 +1344,7 @@ fun ChatScreen(
             )
         }
     ) {
-        val isDarkTheme = isSystemInDarkTheme()
+        val isDarkTheme = LocalBrand.current.isDark
 
         Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -1197,32 +1382,40 @@ fun ChatScreen(
                     // at once. Before the server config lands (or while
                     // disconnected) we fall back to the connection status.
                     //
-                    // Model priority: profile.model (explicit or default
-                    // profile pick) trumps /api/config's `serverModelName`.
-                    // The profile picker is the more specific intent.
-                    val personalityLabel = AgentDisplay.personalityLabel(
-                        selectedPersonality = selectedPersonality,
-                        defaultPersonality = defaultPersonality,
-                    )
-                    val modelName = AgentDisplay.displayModelName(effectiveProfile?.model)
+                    // Model priority mirrors the input chip (currentModelForInput)
+                    // so header, chip, and footer agree on ONE model: the SESSION's
+                    // live model wins — the in-chat pick, then the gateway
+                    // session.info model — so a mid-session switch shows here
+                    // instead of a stale profile/global default. Profile model and
+                    // /api/config's serverModelName are the fallbacks.
+                    val modelName = AgentDisplay.displayModelName(selectedModelOverride)
+                        ?: AgentDisplay.displayModelName(gatewayCurrentModel)
+                        ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                         ?: AgentDisplay.displayModelName(serverModelName)
                     // Subtext: a NON-default personality shown BEFORE the model
-                    // (e.g. "Catgirl \u00B7 gpt-5.5"); the default personality is
-                    // implied, so it's just the model. Falls back to the
-                    // personality label when there's no model name yet.
+                    // (e.g. "Catgirl \u00B7 gpt-5.5"). A CLEARED overlay (default /
+                    // none / neutral / blank) \u2014 or one that just matches the
+                    // server default \u2014 contributes NOTHING; the active identity
+                    // already lives in the agent name above, so the subtitle is
+                    // just the model. Using isClearedPersonality (not a bare
+                    // `!= "default"`) is what keeps "none"/"neutral" from leaking
+                    // through as a literal "None" token.
                     val nonDefaultPersonality = selectedPersonality
                         .takeIf {
-                            it.isNotBlank() &&
-                                it != "default" &&
+                            !AgentDisplay.isClearedPersonality(it) &&
                                 !it.equals(defaultPersonality, ignoreCase = true)
                         }
                         ?.replaceFirstChar { it.uppercase() }
+                    // When neither a real personality nor a model name is known
+                    // yet (server config still loading), fall back to the plain
+                    // connection status \u2014 never the literal "None"/"Default"
+                    // personality label.
                     val subtitleText = when {
                         !headerApiReachable -> statusText
                         else -> listOfNotNull(
                             nonDefaultPersonality,
                             modelName?.takeIf { it.isNotBlank() },
-                        ).joinToString(" \u00B7 ").ifBlank { personalityLabel }
+                        ).joinToString(" \u00B7 ").ifBlank { statusText }
                     }
                     val subtitleColor = if (headerApiReachable) {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -1247,26 +1440,36 @@ fun ChatScreen(
                                 if (isChatConnecting) {
                                     ChatConnectingAvatarGlyph()
                                 } else {
-                                    // Cross-fade the letter when the
-                                    // effective agent (profile or personality)
-                                    // changes so the avatar feels alive on a
-                                    // profile switch instead of snapping.
-                                    val avatarLetter = if (agentDisplayName.isNotBlank()) {
-                                        agentDisplayName.first().uppercase()
-                                    } else "H"
-                                    AnimatedContent(
-                                        targetState = avatarLetter,
-                                        transitionSpec = {
-                                            fadeIn(tween(220)) togetherWith fadeOut(tween(220))
-                                        },
-                                        label = "chatAvatarLetter",
-                                    ) { letter ->
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = letter,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                color = MaterialTheme.colorScheme.onPrimary
-                                            )
+                                    val agentIconPath = LocalAgentIconPath.current
+                                    if (!agentIconPath.isNullOrBlank()) {
+                                        AsyncImage(
+                                            model = File(agentIconPath),
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    } else {
+                                        // Cross-fade the letter when the
+                                        // effective agent (profile or personality)
+                                        // changes so the avatar feels alive on a
+                                        // profile switch instead of snapping.
+                                        val avatarLetter = if (agentDisplayName.isNotBlank()) {
+                                            agentDisplayName.first().uppercase()
+                                        } else "H"
+                                        AnimatedContent(
+                                            targetState = avatarLetter,
+                                            transitionSpec = {
+                                                fadeIn(tween(220)) togetherWith fadeOut(tween(220))
+                                            },
+                                            label = "chatAvatarLetter",
+                                        ) { letter ->
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = letter,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    color = MaterialTheme.colorScheme.onPrimary
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1324,36 +1527,35 @@ fun ChatScreen(
                                             maxLines = 1,
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
-                                        // Context escalation: >=85% the subtitle
-                                        // gains a context suffix in the caution
-                                        // ladder color. The ambient strip below
-                                        // the app bar covers the 50-85% range.
-                                        val ctxFraction = contextUsage
-                                        val subtitleAnnotated = buildAnnotatedString {
-                                            append(subtitleText)
-                                            if (headerApiReachable &&
-                                                ctxFraction != null &&
-                                                ctxFraction >= 0.85f
-                                            ) {
-                                                val ctxColor = if (ctxFraction >= 0.9f) {
-                                                    RelayRefresh.Danger
-                                                } else {
-                                                    RelayRefresh.Amber
-                                                }
-                                                withStyle(SpanStyle(color = ctxColor)) {
-                                                    append(
-                                                        " · ${(ctxFraction * 100).roundToInt()}% ctx"
-                                                    )
-                                                }
-                                            }
+                                        // Context % lives in the per-session
+                                        // ContextMeterBar, and the approval-bypass
+                                        // marker now rides a compact ⚡ icon in the
+                                        // app bar actions (full detail in the agent
+                                        // sheet) instead of being appended here —
+                                        // so the subtitle stays a clean single line
+                                        // (`personality · model`) and no longer gets
+                                        // squeezed out by the trailing action icons.
+                                        // Fade the subtitle whenever it changes
+                                        // — most importantly the honest
+                                        // "Connected" → confirmed-model reveal
+                                        // once /api/config lands (the model
+                                        // arrives later than the identity, and
+                                        // used to pop in). AnimatedContent doesn't
+                                        // animate its initial state, so this only
+                                        // smooths real changes, not first paint.
+                                        AnimatedContent(
+                                            targetState = subtitleText,
+                                            transitionSpec = { loadedContentTransform() },
+                                            label = "chatHeaderSubtitle",
+                                        ) { line ->
+                                            Text(
+                                                text = line,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = subtitleColor,
+                                                maxLines = 1,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            )
                                         }
-                                        Text(
-                                            text = subtitleAnnotated,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = subtitleColor,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        )
                                     }
                                 }
                             }
@@ -1361,41 +1563,30 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    // ADR 24 — compact chip surfacing which endpoint role is
-                    // currently serving the relay (LAN / Tailscale / Public /
-                    // Custom). Only rendered when the active connection
-                    // actually has a resolved endpoint; invisible for single-
-                    // endpoint legacy pairings where the Settings row already
-                    // spells the host out. Tap → Connections CRUD so the
-                    // user can re-probe / pin / re-pair without leaving chat.
-                    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
-                    activeEndpoint?.let { ep ->
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = RelayRefresh.Navy3.copy(alpha = 0.78f),
-                            modifier = Modifier
-                                .padding(end = 4.dp)
-                                .clickable { onNavigateToConnections() },
-                        ) {
-                            Text(
-                                text = ep.displayLabel(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = RelayRefresh.Relay,
-                                modifier = Modifier.padding(
-                                    horizontal = 8.dp,
-                                    vertical = 4.dp,
-                                ),
-                            )
-                        }
-                    }
-                    if (messages.isNotEmpty()) {
+                    // Approval-bypass marker, demoted from the subtitle to a
+                    // single amber ⚡ icon: present only when approvals are
+                    // effectively off, tapping into the agent sheet where the
+                    // full explanation (global mode / --yolo / per-session)
+                    // lives. Keeps the risk visible without eating subtitle
+                    // width on every turn.
+                    if (yoloEnabled == true) {
                         RelayChromeIconButton(
-                            icon = Icons.Filled.Share,
-                            contentDescription = "Share conversation",
-                            onClick = { shareConversation(context, messages) },
+                            icon = Icons.Filled.Bolt,
+                            contentDescription = "Approvals off — tap for details",
+                            onClick = { showAgentInfo = true },
+                            tint = RelayRefresh.Amber,
+                            borderColor = RelayRefresh.Amber.copy(alpha = 0.5f),
                             modifier = Modifier.padding(end = 4.dp),
                         )
                     }
+                    // (The ADR-24 LAN/Tailscale/Public endpoint-role chip that
+                    // used to live here was redundant with the global footer
+                    // status strip, which already renders "<status> / <route>"
+                    // from the same activeEndpoint.displayLabel() — and shows it
+                    // on every screen, not just chat. The footer strip is now
+                    // tappable → Connections, so the affordance moved with the
+                    // info. Dropping it here declutters the actions row and frees
+                    // width for the title subtitle.)
                     RelayChromeIconButton(
                         icon = Icons.Filled.Code,
                         contentDescription = "Terminal",
@@ -1408,18 +1599,70 @@ fun ChatScreen(
                         onClick = onNavigateToSettings,
                         modifier = Modifier.padding(end = 4.dp),
                     )
-                    // Ambient mode (fullscreen sphere) has no top-bar toggle —
-                    // it's a quiet gesture: long-press the conversation
-                    // background to enter, tap anywhere to return. A hint pill
-                    // on entry teaches the way back.
+                    // Share is the least-used trailing action (and only valid
+                    // once there's a conversation), so it folds into a ⋮
+                    // overflow instead of competing for width with Terminal +
+                    // Settings — which is what was squeezing the title subtitle.
+                    // The overflow only appears when there's something to share.
+                    if (messages.isNotEmpty()) {
+                        var showOverflowMenu by remember { mutableStateOf(false) }
+                        Box {
+                            RelayChromeIconButton(
+                                icon = Icons.Filled.MoreVert,
+                                contentDescription = "More actions",
+                                onClick = { showOverflowMenu = true },
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                            DropdownMenu(
+                                expanded = showOverflowMenu,
+                                onDismissRequest = { showOverflowMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Share conversation") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Filled.Share,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        shareConversation(context, messages)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    // Clean text-flow mode has no top-bar toggle — it's a quiet
+                    // gesture: long-press the conversation background to enter.
+                    // Exit is the in-mode dismiss control or system back (not
+                    // any-tap, since the mode carries its own composer). A
+                    // first-run hint teaches the entry.
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
-            // Ambient context-window meter — 2dp strip at the seam between
-            // the app bar and the mode strip; composes to nothing below 50%.
-            ContextMeterBar(usedFraction = contextUsage)
+            // Per-session context-window gauge at the seam between the app bar
+            // and the mode strip — slim bar + `NN% · used/max` token readout,
+            // color-graded by fullness. Composes to nothing until the server
+            // reports a context_max for the session.
+            ContextMeterBar(
+                usedFraction = contextUsage,
+                usedTokens = contextWindow?.usedTokens,
+                maxTokens = contextWindow?.maxTokens,
+                onClick = { showContextSheet = true },
+            )
+            if (showContextSheet) {
+                // Live audit of the exact extra context the agent will be
+                // injected with on the next turn (transparency / auditability).
+                InjectedContextSheet(
+                    context = remember(showContextSheet) {
+                        chatViewModel.previewInjectedContext()
+                    },
+                    onDismiss = { showContextSheet = false },
+                )
+            }
             RelayModeStrip(
                 selected = RelayPrimaryMode.Chat,
                 onModeSelected = { mode ->
@@ -1457,8 +1700,12 @@ fun ChatScreen(
                 }
             }
 
-            // Loading history indicator
-            if (isLoadingHistory && !isChatConnecting) {
+            // Loading history indicator — only when there's nothing already on
+            // screen. During a profile/session switch the previous transcript is
+            // held visible while the new history loads (see
+            // ChatViewModel.switchProfileContext), so a spinner over real
+            // content would read as noise; the list cross-fades instead.
+            if (isLoadingHistory && !isChatConnecting && messages.isEmpty()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1476,55 +1723,13 @@ fun ChatScreen(
                 }
             }
 
-            // Ambient mode: fullscreen sphere visualization. Tap (or
-            // long-press) anywhere to return; a transient hint pill teaches
-            // the exit on every entry.
-            if (ambientMode && animationEnabled) {
-                var showAmbientHint by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) {
-                    kotlinx.coroutines.delay(2_800)
-                    showAmbientHint = false
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { ambientMode = false },
-                                onLongPress = { ambientMode = false },
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    MorphingSphere(
-                        modifier = Modifier.fillMaxSize(),
-                        state = sphereState,
-                        intensity = streamingIntensity,
-                        toolCallBurst = toolCallBurst
-                    )
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = showAmbientHint,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 18.dp),
-                        enter = fadeIn(),
-                        exit = fadeOut(),
-                    ) {
-                        Text(
-                            text = "tap to return to chat",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
-                                .padding(horizontal = 12.dp, vertical = 5.dp),
-                        )
-                    }
-                }
-            }
+            // Clean text-flow mode is rendered as a full-screen overlay (a
+            // sibling of this Column, below) so it can own its own minimal
+            // composer and explicit-dismiss control. The Column always renders
+            // the normal chat underneath; the overlay covers it when active.
+
             // Message list or empty state
-            else if (messages.isEmpty() && !isStreaming && (!isLoadingHistory || isChatConnecting)) {
+            if (messages.isEmpty() && !isStreaming && (!isLoadingHistory || isChatConnecting)) {
                 AnimatedContent(
                     targetState = chatConnectState,
                     modifier = Modifier
@@ -1585,11 +1790,13 @@ fun ChatScreen(
                                         .aspectRatio(1f)
                                         .weight(0.7f, fill = false)
                                 ) {
-                                    MorphingSphere(
+                                    LocalAgentAvatar.current.Render(
+                                        state = AvatarRenderState(
+                                            state = if (error != null) SphereState.Error else SphereState.Idle,
+                                            intensity = streamingIntensity,
+                                            toolCallBurst = toolCallBurst,
+                                        ),
                                         modifier = Modifier.fillMaxSize(),
-                                        state = if (error != null) SphereState.Error else SphereState.Idle,
-                                        intensity = streamingIntensity,
-                                        toolCallBurst = toolCallBurst
                                     )
                                 }
 
@@ -1645,7 +1852,7 @@ fun ChatScreen(
                                             verticalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
                                             Text(
-                                                text = "Chat needs a Standard Hermes API connection.",
+                                                text = "Chat needs a Vanilla Hermes API connection.",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -1653,7 +1860,7 @@ fun ChatScreen(
                                                 onClick = onNavigateToConnect,
                                                 modifier = Modifier.fillMaxWidth(),
                                             ) {
-                                                Text("Connect Standard Hermes")
+                                                Text("Connect Vanilla Hermes")
                                             }
                                         }
                                     }
@@ -1672,7 +1879,15 @@ fun ChatScreen(
                                     ) {
                                         suggestions.forEach { suggestion ->
                                             AssistChip(
-                                                onClick = { inputText = suggestion },
+                                                onClick = {
+                                                    // Send on tap — a casual user expects a
+                                                    // suggestion to start the conversation, not
+                                                    // prefill the composer for a second tap.
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    chatViewModel.sendMessage(suggestion)
+                                                    inputText = ""
+                                                    finishSuccessfulSend()
+                                                },
                                                 label = {
                                                     Text(
                                                         text = suggestion,
@@ -1699,30 +1914,47 @@ fun ChatScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        // Quiet entry to ambient mode: long-press the
+                        // Quiet entry to clean mode: long-press the
                         // conversation background. Bubbles keep their own
                         // long-press (copy) — they consume the gesture first,
-                        // so only presses on empty space land here.
-                        .pointerInput(animationEnabled) {
+                        // so only presses on empty space land here. Enters
+                        // regardless of animationEnabled — clean mode degrades
+                        // to static text when motion is suppressed, so the
+                        // conversation is never gated on animation.
+                        .pointerInput(Unit) {
                             detectTapGestures(
                                 onLongPress = {
-                                    if (animationEnabled) ambientMode = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    ambientMode = true
                                 },
                             )
                         }
                 ) {
-                    // Ambient sphere behind messages
+                    // Ambient avatar behind messages
                     if (animationEnabled && animationBehindChat && !ambientMode) {
-                        MorphingSphere(
+                        LocalAgentAvatar.current.Render(
+                            state = AvatarRenderState(
+                                state = sphereState,
+                                intensity = streamingIntensity,
+                                toolCallBurst = toolCallBurst,
+                            ),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .alpha(0.65f),
-                            state = sphereState,
-                            intensity = streamingIntensity,
-                            toolCallBurst = toolCallBurst
                         )
                     }
 
+                    // Let assistant markdown images that point at server-local
+                    // paths (`![](/abs/path)`) render through the relay's
+                    // /media/by-path route when a relay session is paired,
+                    // instead of degrading to the "image is on the server"
+                    // notice. Null when no relay (standard no-plugin) → notice.
+                    val relayServerImageResolver = remember(chatViewModel) {
+                        RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
+                    }
+                    CompositionLocalProvider(
+                        LocalRelayServerImageResolver provides relayServerImageResolver,
+                    ) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -1890,6 +2122,7 @@ fun ChatScreen(
                         // placement animation.
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
+                    } // CompositionLocalProvider(LocalRelayServerImageResolver)
 
                     ChatScrollTicker(
                         listState = listState,
@@ -1954,27 +2187,97 @@ fun ChatScreen(
             }
 
             // Queue indicator
+            // Recent-prompt recall — a soft keyboard has no up-arrow, so surface
+            // your last prompts as tappable chips while the composer is empty.
+            // Tapping prefills (not auto-sends) so you can tweak before resending;
+            // the row vanishes the moment you type or a queue/fresh-chat shows.
+            AnimatedVisibility(
+                visible = recentPromptsEnabled && messages.isNotEmpty() && inputText.isBlank() &&
+                    queuedMessages.isEmpty() && recentPrompts.isNotEmpty(),
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                ) {
+                    recentPrompts.take(6).forEach { prompt ->
+                        AssistChip(
+                            onClick = { inputText = prompt },
+                            label = {
+                                Text(
+                                    text = if (prompt.length > 40) prompt.take(40) + "…" else prompt,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
+                }
+            }
+
             AnimatedVisibility(visible = queuedMessages.isNotEmpty()) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "${queuedMessages.size} message${if (queuedMessages.size > 1) "s" else ""} queued",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    TextButton(
-                        onClick = { chatViewModel.clearQueue() },
-                        modifier = Modifier.height(28.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "Clear",
-                            style = MaterialTheme.typography.labelSmall
+                            text = "${queuedMessages.size} message${if (queuedMessages.size > 1) "s" else ""} queued · delivers after this turn",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
+                        TextButton(
+                            onClick = { chatViewModel.clearQueue() },
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text(
+                                "Clear",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                    // Per-item: tap the text to pull it back into the composer
+                    // for editing; ✕ to drop just that one. (Reorder omitted —
+                    // low value vs. drag-handle complexity on a transient queue.)
+                    queuedMessages.forEachIndexed { index, msg ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        chatViewModel.takeQueuedForEdit(index)?.let { t ->
+                                            inputText = if (inputText.isBlank()) t else "$inputText $t"
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp),
+                            )
+                            TextButton(
+                                onClick = { chatViewModel.removeQueuedAt(index) },
+                                modifier = Modifier.height(28.dp),
+                            ) {
+                                Text("✕", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 }
             }
@@ -2130,6 +2433,13 @@ fun ChatScreen(
             val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                 ?: AgentDisplay.displayModelName(serverModelName)
+            // The TRUE server/global default for the "Server default" row caption.
+            // Deliberately EXCLUDES gatewayCurrentModel: selectModel() force-sets
+            // that to the active OVERRIDE, so using it here mislabeled the user's
+            // override as the server default. serverModelName comes from /api/config
+            // (never touched by overrides) — the same source the agent drawer uses.
+            val serverDefaultModelDetail = AgentDisplay.displayModelName(serverModelName)
+                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
             val hasModelChoices = modelProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
             val modelPickerOptions = remember(
                 modelProviders,
@@ -2137,6 +2447,7 @@ fun ChatScreen(
                 selectedModelOverride,
                 gatewayCurrentModel,
                 fallbackModelDetail,
+                serverDefaultModelDetail,
                 hasModelChoices,
             ) {
                 if (!hasModelChoices && fallbackModelDetail.isNullOrBlank()) {
@@ -2147,20 +2458,34 @@ fun ChatScreen(
                             ChatInputPickerOption(
                                 label = "Server default",
                                 value = null,
-                                secondary = fallbackModelDetail?.let { "Current: ${compactModelChipLabel(it)}" },
+                                secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it) },
                                 selected = selectedModelOverride == null,
                             ),
                         )
                         if (modelProviders.any { it.models.isNotEmpty() }) {
-                            modelProviders.forEach { provider ->
+                            // Current provider first — matches the desktop picker,
+                            // which defaults the selection to is_current, so the
+                            // user's authenticated/current provider leads.
+                            modelProviders.sortedByDescending { it.isCurrent }.forEach { provider ->
                                 provider.models.distinct().forEach { model ->
+                                    // Respect upstream's per-provider availability:
+                                    // unavailable_models are paid models the account
+                                    // can't pick (free-tier / no credits) — disable
+                                    // them so a switch can't 400 / credits-fail.
+                                    val unavailable = model in provider.unavailableModels
                                     add(
                                         ChatInputPickerOption(
                                             label = model,
                                             value = model,
                                             provider = provider.slug,
                                             group = provider.name,
+                                            secondary = when {
+                                                unavailable -> "Not on your plan"
+                                                !provider.authenticated -> provider.warning ?: "Needs setup"
+                                                else -> null
+                                            },
                                             selected = selectedModelOverride == model,
+                                            enabled = !unavailable,
                                         ),
                                     )
                                 }
@@ -2197,12 +2522,21 @@ fun ChatScreen(
                     )
                 }
             }
-            val effortControl = if (isGatewayTransport) {
+            // Show the effort chip as soon as the gateway IS the transport or is
+            // still being probed (Unknown) — so it appears alongside the model
+            // pill instead of popping in seconds later when the dashboard
+            // /api/status verdict flips to Ready (see the cold-open-recovery note
+            // above). Interactive only once the gateway is confirmed Ready
+            // (config.set reasoning needs a live gateway), so during the probe it
+            // shows the current effort but disabled. Hidden only when the gateway
+            // is definitively unreachable (SSE-only) — the agent sheet carries the
+            // disabled-with-reason version there.
+            val effortControl = if (chatGatewayAvailability != GatewayAvailability.Unreachable) {
                 ChatInputPickerControl(
                     value = reasoningEffortChipLabel(normalizedEffort),
                     contentDescription = "Select reasoning effort",
                     options = effortPickerOptions,
-                    enabled = chatReady && !isStreaming,
+                    enabled = isGatewayTransport && chatReady && !isStreaming,
                 )
             } else {
                 null
@@ -2256,11 +2590,31 @@ fun ChatScreen(
                         ).show()
                     }
                 },
-                onStop = { chatViewModel.cancelStream() },
-                onAttach = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onStop = {
+                    chatViewModel.cancelStream()
+                    // Firm haptic (LongPress — TextHandleMove was near-
+                    // imperceptible) plus a "Stopped" badge stamped on the turn
+                    // (see ChatViewModel.cancelStream) so the cancel is
+                    // unmistakable, not just a transient toast.
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Stopped",
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                },
+                onAttachPhotos = {
+                    photoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                onAttachFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onAttachCamera = requestCameraCapture,
+                onPasteImage = pasteImageFromClipboard,
                 onLongPressAttach = { showCommandPalette = true },
                 charLimit = charLimit,
-                caption = inputCaption,
+                caption = turnStatus ?: inputCaption,
                 voiceReady = voiceReady,
                 showVoiceHint = !voiceHintSeen,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
@@ -2274,7 +2628,19 @@ fun ChatScreen(
                     option.value?.let { chatViewModel.selectReasoningEffort(it) }
                 },
                 enabled = chatReady,
+                onModelPickerClick = { showModelSheet = true },
             )
+
+            if (showModelSheet) {
+                ModelPickerSheet(
+                    options = modelPickerOptions,
+                    onSelect = { option ->
+                        showModelSheet = false
+                        chatViewModel.selectModel(option.value, option.provider)
+                    },
+                    onDismiss = { showModelSheet = false },
+                )
+            }
         } // end Column
 
         // Mic permission denied banner — title + body + Open Settings action.
@@ -2327,6 +2693,54 @@ fun ChatScreen(
             }
         }
 
+        // Clean-mode discoverability hint — a quiet, persistent pill teaching
+        // the long-press entry. Shown ONLY on the empty / new-chat view; it
+        // disappears the moment a conversation exists or clean mode is entered.
+        AnimatedVisibility(
+            visible = messages.isEmpty() && !ambientMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 96.dp),
+        ) {
+            Text(
+                text = "Hold the chat for a clean, focused view",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+
+        // Clean text-flow mode — full-screen overlay covering the whole Box.
+        // Owns its own minimal composer + explicit dismiss; exit is never
+        // any-tap. Renders static text when motion is suppressed.
+        AnimatedVisibility(
+            visible = ambientMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            CleanChatMode(
+                messages = messages,
+                isStreaming = isStreaming,
+                sphereState = sphereState,
+                streamingIntensity = streamingIntensity,
+                toolCallBurst = toolCallBurst,
+                animationEnabled = animationEnabled,
+                enabled = chatReady,
+                onSend = { text ->
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    chatViewModel.sendMessage(text)
+                },
+                onExit = { ambientMode = false },
+            )
+        }
+
         // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
         AnimatedVisibility(
             visible = voiceUiState.voiceMode,
@@ -2363,6 +2777,10 @@ fun ChatScreen(
                 voiceOutputEnabled = activeVoiceEnabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
                 onOverlayRequest = showVoiceSystemOverlay,
+                // Gear button in the overlay's expanded controls. The overlay
+                // exits voice mode before invoking this, so navigation lands
+                // on Voice Settings with no overlay left on top.
+                onOpenSettings = onNavigateToVoiceSettings,
                 onCompactModeChange = { compact ->
                     voiceCompactMode = compact
                 },
@@ -2508,13 +2926,15 @@ private fun ChatColdStartLoadingState(
         contentAlignment = Alignment.Center,
     ) {
         if (animationEnabled) {
-            MorphingSphere(
+            LocalAgentAvatar.current.Render(
+                state = AvatarRenderState(
+                    state = SphereState.Thinking,
+                    intensity = streamingIntensity.coerceAtLeast(0.18f),
+                    toolCallBurst = toolCallBurst,
+                ),
                 modifier = Modifier
                     .fillMaxSize()
                     .alpha(0.44f),
-                state = SphereState.Thinking,
-                intensity = streamingIntensity.coerceAtLeast(0.18f),
-                toolCallBurst = toolCallBurst,
             )
         }
 
@@ -2791,6 +3211,134 @@ private fun formatFileSize(bytes: Long): String = when {
     bytes < 1024 -> "${bytes} B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+}
+
+/**
+ * Read an attachment from a content [uri], enforce the [maxAttachmentMb] cap,
+ * base64-encode the bytes, and hand a built [Attachment] to [onAttachment].
+ * Shared by the Files / Photos / Camera launchers and clipboard paste so the
+ * read → cap → encode → add pipeline lives in exactly one place. Best-effort:
+ * surfaces a Toast and returns on any failure (unreadable stream, over-cap)
+ * rather than throwing. [mimeOverride] lets clipboard paste supply the MIME
+ * when the resolver can't (some providers don't resolve a type until read).
+ */
+private fun ingestAttachmentFromUri(
+    context: android.content.Context,
+    uri: Uri,
+    maxAttachmentMb: Int,
+    mimeOverride: String? = null,
+    onAttachment: (Attachment) -> Unit,
+) {
+    try {
+        val resolver = context.contentResolver
+        val mimeType = mimeOverride ?: resolver.getType(uri) ?: "application/octet-stream"
+        val fileName = resolveDisplayName(resolver, uri)
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+        val maxSize = maxAttachmentMb * 1024 * 1024
+        if (bytes.size > maxSize) {
+            Toast.makeText(
+                context,
+                "File too large (max $maxAttachmentMb MB)",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        onAttachment(
+            Attachment(
+                contentType = mimeType,
+                content = base64,
+                fileName = fileName,
+                fileSize = bytes.size.toLong(),
+            )
+        )
+    } catch (e: Exception) {
+        Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/**
+ * Resolve a human-readable file name for [uri]. Prefers the provider's
+ * `OpenableColumns.DISPLAY_NAME` — content-picker and photo-picker URIs rarely
+ * carry a usable last path segment — and falls back to the last path segment,
+ * then a generic "file".
+ */
+private fun resolveDisplayName(
+    resolver: android.content.ContentResolver,
+    uri: Uri,
+): String {
+    runCatching {
+        resolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) {
+                    cursor.getString(idx)?.takeIf { it.isNotBlank() }?.let { return it }
+                }
+            }
+        }
+    }
+    return uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+}
+
+/**
+ * Pull the first image item off a clipboard [clip] into a pending attachment
+ * (desktop `/paste` parity). Returns true when an image was found and ingested,
+ * false otherwise (empty clipboard / no image item) so the caller can hint the
+ * user. Images ride the clipboard as content URIs; raw bitmaps aren't carried
+ * in ClipData, so URI items are the only source.
+ */
+private fun ingestClipboardImage(
+    context: android.content.Context,
+    clip: ClipData?,
+    maxAttachmentMb: Int,
+    onAttachment: (Attachment) -> Unit,
+): Boolean {
+    if (clip == null || clip.itemCount == 0) return false
+    // Some providers expose the image MIME only on the ClipDescription, not via
+    // resolver.getType — capture it once as a fallback for each item.
+    val descriptionImageMime = clip.description?.let { description ->
+        (0 until description.mimeTypeCount)
+            .map { description.getMimeType(it) }
+            .firstOrNull { it.startsWith("image/") }
+    }
+    for (i in 0 until clip.itemCount) {
+        val uri = clip.getItemAt(i).uri ?: continue
+        val resolvedMime = context.contentResolver.getType(uri)
+        val mime = resolvedMime?.takeIf { it.startsWith("image/") } ?: descriptionImageMime
+        if (mime != null) {
+            ingestAttachmentFromUri(
+                context,
+                uri,
+                maxAttachmentMb,
+                mimeOverride = mime,
+                onAttachment = onAttachment,
+            )
+            return true
+        }
+    }
+    return false
+}
+
+/**
+ * Create a FileProvider content URI backed by a fresh temp file in the shared
+ * `hermes-media/` cache dir (already exported by `file_provider_paths.xml`) for
+ * the camera to write its capture into. Reusing that path keeps the manifest
+ * unchanged; the authority mirrors MediaCacheWriter / MediaSaver.
+ */
+private fun createCameraCaptureUri(context: android.content.Context): Uri {
+    val dir = java.io.File(context.cacheDir, "hermes-media").apply { mkdirs() }
+    val file = java.io.File.createTempFile("camera-", ".jpg", dir)
+    return androidx.core.content.FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file,
+    )
 }
 
 private val CHAT_INPUT_REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")

@@ -1,20 +1,20 @@
 # Voice Mode
 
 Real-time voice conversation with your Hermes agent. Tap the mic in chat, speak,
-and the agent speaks back. **No Relay required**: on a standard connection,
+and the agent speaks back. **No Relay required**: on a vanilla connection,
 speech runs through your Hermes dashboard's audio routes — the same path the
 official Hermes Desktop voice mode uses — with the server's configured STT/TTS
 providers.
 
 ::: tip Two speech routes, picked automatically
-- **Standard** — works on a vanilla Hermes install. The phone talks to your
+- **Vanilla Hermes** — works on a vanilla Hermes install. The phone talks to your
   Hermes dashboard; if the dashboard requires sign-in, signing in once under
   **Manage** also unlocks voice for that connection.
 - **Relay** — when the optional Relay is paired, voice prefers it: per-profile
   voice providers, streaming voice output, and the Realtime Agent engine.
 
 You can pin either route under **Settings → Voice → Stable STT/TTS Route**;
-the default *Auto* uses Relay when paired, otherwise Standard.
+the default *Auto* uses Relay when paired, otherwise Vanilla Hermes.
 :::
 
 The stable default engine is **Hermes Chat + Voice Output**: Hermes owns the
@@ -48,7 +48,7 @@ happened.
 
 **On your server:**
 
-- **Standard route (no Relay):** a current hermes-agent whose dashboard
+- **Vanilla Hermes route (no Relay):** a current hermes-agent whose dashboard
   exposes the audio endpoints, with `stt:` and `tts:` configured in
   `~/.hermes/config.yaml`. If the dashboard is auth-gated, sign in once under
   **Manage** on the phone. Older builds without dashboard audio routes show
@@ -87,7 +87,7 @@ Five STT providers are supported:
 **On your phone:**
 
 - Microphone permission (requested the first time you tap the mic).
-- For Standard voice: a saved dashboard URL and dashboard sign-in when the
+- For Vanilla Hermes voice: a saved dashboard URL and dashboard sign-in when the
   dashboard requires auth.
 - For Relay voice extras or Realtime Agent: a reachable relay at `:8767` with
   the voice routes available.
@@ -205,8 +205,49 @@ Saving while a profile is selected writes that profile's experimental
 **Save & test**
 persists the choice and plays the sample through the active profile voice.
 
+When the streaming provider is **xAI Grok TTS**, an **Expressive speech tags**
+switch appears here. With it on, the relay injects xAI's inline/wrapping tone
+markers (whisper, laugh, sigh, build/decrease intensity, pitch shifts) into the
+streamed speech — the streaming-renderer equivalent of the per-request tone tags.
+It saves per-profile with the other voice-output settings.
+
 The older Hermes `tts:` config is still shown as fallback provider information
 and is still used if streaming voice output fails before audio starts.
+
+### Enhanced Voice (Gemini & xAI)
+
+When the relay's basic TTS provider supports per-request enhanced control, an
+**Enhanced Voice** card appears, titled for the provider (e.g. *Enhanced Voice
+(Gemini)*). It lets you steer voice and tone **per request** without editing
+server config — the relay maps your choices onto the active provider and never
+writes them to `~/.hermes/config.yaml`. Leave any field on **Server default** to
+defer to the saved config.
+
+- **Gemini** — pick a prebuilt voice, choose the model, and turn on
+  **Expressive tone tags** (requires a Gemini 3.1 TTS model). With tags on, a
+  hidden rewrite adds cues like `[whispers]` or `[excitedly]` to the spoken
+  script; if your server can't run that rewrite it falls back silently to plain
+  speech. An optional **Voice direction** field takes free-form performance
+  notes ("Warm, calm narrator; unhurried pace.").
+- **xAI / Grok** — type a voice id and turn on **Expressive speech tags** (xAI's
+  inline/wrapping markers: whisper, laugh, sigh, build/decrease intensity, pitch
+  shifts), with an optional language hint.
+
+Two scoping notes:
+
+- **Relay-only.** On the Vanilla Hermes (no-plugin) path the dashboard
+  `/api/audio/speak` endpoint accepts only the text to speak, so enhanced voice
+  there is whatever the server's `tts.<provider>.*` config sets — change it under
+  **Manage**, and it applies to every voice turn, not per utterance.
+- **Which path it drives.** This card's per-request overrides ride
+  `/voice/synthesize`, used when the streaming voice-output renderer above is off
+  or unavailable (and as the fallback when streaming fails). For the **streaming**
+  renderer — the default for relay playback — xAI's expressive speech tags are
+  controlled by the **Expressive speech tags** switch in the **Hermes Chat +
+  Voice Output** card above (saved per-profile via `voice_output:`), and voice is
+  the voice-output provider voice. Gemini is synthesize-only (the streaming
+  renderer has no Gemini provider). Providers without an enhanced surface
+  (ElevenLabs, MiniMax, Mistral, OpenAI, local engines) stay config-only.
 
 Stable streaming playback can resume during short connection changes. If the
 phone moves from Wi-Fi to cellular or from LAN to Tailscale while audio is in
@@ -373,7 +414,7 @@ script automates a quick end-to-end check of the lab routes.
 
 **"Microphone permission is required for voice mode"** — tap the mic FAB again. If Android doesn't show a permission prompt (you denied twice), go to Android Settings → Apps → Hermes-Relay → Permissions → Microphone and enable it.
 
-**No audio plays when the agent speaks** — check Settings → Voice → Hermes Chat + Voice Output. If the provider shows "Unknown" or the profile scope is not what you expected, the relay's `/voice/output/config` or `/voice/config` endpoint returned an error or fell back. Try Test Current Engine; the error message will tell you what's wrong.
+**No audio plays when the agent speaks** — check Settings → Voice → Hermes Chat + Voice Output. The **Render path** row tells you which path renders speech: *streaming (/voice/output)* when the renderer is active, or *basic synthesize (/voice/synthesize)* when it's off or unavailable (the streaming "Expressive speech tags" toggle only applies on the streaming path). If the provider shows "Unknown" or the profile scope is not what you expected, the relay's `/voice/output/config` or `/voice/config` endpoint returned an error or fell back. Try Test Current Engine; the error message will tell you what's wrong. Settings → Diagnostics also logs the active render path per session.
 
 **Transcript comes back empty or garbled** — check Settings → Voice → Speech-to-Text. Same diagnostic: Test Current Engine won't catch stable STT issues, but you can verify by speaking a slow, clear phrase and watching the transcribed text appear in the overlay. If it's wrong, your STT model or language setting is off.
 
@@ -389,4 +430,4 @@ script automates a quick end-to-end check of the lab routes.
 
 Voice audio is uploaded to your relay server and from there to whichever provider you configured. If you're using a cloud provider (ElevenLabs, OpenAI, Groq, Mistral), your audio goes to them. If you're using local providers (faster-whisper, NeuTTS, Edge TTS), nothing leaves your network.
 
-The mp3 files returned from `/voice/synthesize` are cached briefly in the app's cache directory and cleared automatically as new ones arrive (capped at 6 at a time). On the server side, `~/voice-memos/` accumulates TTS outputs — Hermes agent manages this directory, not the relay plugin.
+The mp3 files returned from `/voice/synthesize` are cached briefly in the app's cache directory and cleared automatically as new ones arrive (capped at 6 at a time). On the server side, the relay writes each `/voice/synthesize` render to a private temp file and deletes it after streaming, so relay synthesis no longer accumulates files in `~/voice-memos/` (other Hermes agent voice features may still use that directory).

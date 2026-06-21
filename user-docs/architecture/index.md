@@ -1,8 +1,14 @@
+<script setup>
+import { withBase } from 'vitepress'
+</script>
+
 # Architecture
+
+<img :src="withBase('/architecture-homepage.svg')" alt="How Hermes-Relay connects: Vanilla Hermes runs chat, Manage and voice with no plugin; the optional Relay plugin adds terminal, bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build." style="width:100%;margin:0.5rem 0 1.75rem;" />
 
 ## Connection Model
 
-The app maintains independent connection paths — chat over the standard Hermes surfaces (preferring the dashboard gateway, falling back to API-server SSE), and persistent WSS for the optional relay channels.
+The app maintains independent connection paths — chat over the vanilla Hermes surfaces (preferring the dashboard gateway, falling back to API-server SSE), and persistent WSS for the optional relay channels.
 
 For a compact shareable reference covering connection paths, transport boundaries, pairing/session lifecycle, and operator controls, see the [Relay Architecture Spec](/architecture/relay-architecture-spec).
 
@@ -75,11 +81,11 @@ The relay connection (bridge/terminal) uses a pairing code for initial setup, th
 
 Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim) on the Hermes host mints the code and pre-registers it with the relay via a loopback-only `/pairing/register` endpoint before embedding it in the QR — so the phone never types a code by hand. Session tokens are stored in EncryptedSharedPreferences backed by Android Keystore.
 
-## Standard chat vs Relay
+## Vanilla Hermes chat vs Relay
 
-Chat uses standard upstream Hermes either way (gateway preferred, API-server SSE as fallback); the relay is a separate, optional surface for bridge/terminal/notifications.
+Chat uses vanilla upstream Hermes either way (gateway preferred, API-server SSE as fallback); the relay is a separate, optional surface for bridge/terminal/notifications.
 
-| Aspect | Standard Chat (gateway / API fallback) | Relay (Bridge/Terminal/Notifications) |
+| Aspect | Vanilla Hermes Chat (gateway / API fallback) | Relay (Bridge/Terminal/Notifications) |
 |--------|----------------------------------------|------------------------|
 | Protocol | WS (`/api/ws`) preferred · HTTP/SSE fallback | WSS |
 | Connection | Persistent gateway socket · per-request on SSE fallback | Persistent |

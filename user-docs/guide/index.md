@@ -1,6 +1,6 @@
 # Hermes-Relay — Android
 
-This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com): standard API/dashboard setup, chat, Manage, voice, optional Relay pairing, terminal/TUI relay, notifications, and optional sideload Device Control.
+This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com): Vanilla Hermes API/dashboard setup, chat, Manage, voice, optional Relay pairing, terminal/TUI relay, notifications, and optional sideload Device Control.
 
 ::: tip Want the agent to have hands on your other machines too?
 The Hermes-Relay CLI (Windows today; macOS / Linux coming soon) gives your Hermes agent consent-gated filesystem, terminal, and screenshot access on any machine you pair — plus a terminal escape hatch for you: **[CLI →](/desktop/)**. Both surfaces share the same relay pairing and `~/.hermes/remote-sessions.json`.
@@ -12,7 +12,7 @@ Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nou
 
 1. Install Hermes and run the API server/dashboard on your host.
 2. Install the Android app.
-3. Choose **Standard Hermes** and enter the API URL/key.
+3. Choose **Vanilla Hermes** and enter the API URL/key.
 4. Add Relay pairing later only if you want Terminal, Bridge, Relay sessions, or device-control power tools.
 
 See [Installation & Setup](/guide/getting-started) for copy/paste host commands and upstream Hermes links.
@@ -43,7 +43,7 @@ The uninstaller is idempotent and never touches state shared with other Hermes t
 ```
 Phone (WS)       → Hermes dashboard (:9119)    [gateway chat with live thinking]
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat fallback, sessions, runs]
-Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + standard voice]
+Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + Vanilla Hermes voice]
 Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, media, relay voice]
 ```
 

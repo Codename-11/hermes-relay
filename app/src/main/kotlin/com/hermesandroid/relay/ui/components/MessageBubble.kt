@@ -8,7 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,18 +18,25 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -44,10 +54,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
+import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
+import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
+import kotlinx.coroutines.delay
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -153,7 +168,7 @@ fun MessageBubble(
     val locale = LocalLocale.current.platformLocale
     val timeFormat = remember(locale) { SimpleDateFormat("h:mm a", locale) }
     val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     // Pull generated/inline image links (`![alt](src)`) out of assistant
     // content so they render as real images (remote URLs via Coil) or a
@@ -167,18 +182,45 @@ fun MessageBubble(
         }
     }
 
+    // Provide the sensitive-media blur mode to the attachment / inline-image
+    // renderers below, sourced as locally as possible (here, not threaded
+    // through ChatScreen). One collector per visible bubble — DataStore
+    // shares the underlying read, and the static default (FLAGGED) keeps
+    // behavior safe until the first emission lands.
+    val context = LocalContext.current
+    val blurRepo = remember(context) { MediaSettingsRepository(context.applicationContext) }
+    val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
+
+    CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
-        // Agent name label (above assistant bubbles, only first in group)
+        // Agent name label (above assistant bubbles, only first in group), with
+        // the active profile's local icon (if set) — a small avatar by the name.
         if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
-            Text(
-                text = message.agentName,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 2.dp, start = 4.dp)
-            )
+            val agentIconPath = LocalAgentIconPath.current
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
+            ) {
+                if (!agentIconPath.isNullOrBlank()) {
+                    AsyncImage(
+                        model = File(agentIconPath),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape),
+                    )
+                }
+                Text(
+                    text = message.agentName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
 
         if (!isUser && !isSystem && message.badges.isNotEmpty()) {
@@ -190,7 +232,18 @@ fun MessageBubble(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 message.badges.take(4).forEach { badge ->
-                    MessagePathBadge(text = badge)
+                    MessagePathBadge(
+                        text = badge,
+                        // Speaker glyph = the shared "spoken" modality marker.
+                        // Both the standard voice-mode chip ("Voice") and the
+                        // realtime engine chip ("Realtime Agent") are spoken
+                        // turns, so they share it; only the text differs.
+                        leadingIcon = if (badge == "Voice" || badge == "Realtime Agent") {
+                            Icons.Filled.VolumeUp
+                        } else {
+                            null
+                        },
+                    )
                 }
             }
         }
@@ -394,10 +447,33 @@ fun MessageBubble(
 
                 // Streaming indicator
                 if (message.isStreaming) {
-                    StreamingDots(
-                        color = textColor.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                    // After a few seconds with no content yet, escalate the bare
+                    // dots to a labeled "Still working…" so a slow first token
+                    // never reads as a hang on the SSE / sessions paths.
+                    val awaitingFirstToken = message.content.isBlank()
+                    var showStillWorking by remember(message.id) { mutableStateOf(false) }
+                    LaunchedEffect(message.id, awaitingFirstToken) {
+                        showStillWorking = false
+                        if (awaitingFirstToken) {
+                            delay(4_000)
+                            showStillWorking = true
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StreamingDots(
+                            color = textColor.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        if (showStillWorking && awaitingFirstToken) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Still working…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = textColor.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                    }
                 }
 
                 // Timestamp
@@ -421,22 +497,36 @@ fun MessageBubble(
         } // end Row (bubble + optional leading accent bar)
         } // end if (showBubble)
     }
+    } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
 
 @Composable
-private fun MessagePathBadge(text: String) {
+private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {
     Surface(
         shape = RoundedCornerShape(6.dp),
         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f),
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        ) {
+            leadingIcon?.let { icon ->
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

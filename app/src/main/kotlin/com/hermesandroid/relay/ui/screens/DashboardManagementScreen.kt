@@ -7,6 +7,7 @@ import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -90,13 +91,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
-import com.hermesandroid.relay.network.DashboardApiClient
-import com.hermesandroid.relay.network.DashboardCookieStore
-import com.hermesandroid.relay.network.DashboardAuthProvider
-import com.hermesandroid.relay.network.DashboardAuthSession
-import com.hermesandroid.relay.network.DashboardStatus
-import com.hermesandroid.relay.network.importDashboardCookieHeader
+import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
+import com.hermesandroid.relay.network.upstream.DashboardAuthSession
+import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayMetricCard
 import com.hermesandroid.relay.ui.components.RelayModeStrip
@@ -1133,7 +1134,16 @@ fun DashboardManagementScreen(
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                         Box(modifier = Modifier.weight(1f)) {
-                            when (val state = payloadState) {
+                            // Crossfade Loading→Loaded (and →Error) so the body
+                            // fades in rather than snapping. Keyed on the payload
+                            // state, so a stale-while-revalidate refresh also
+                            // cross-dissolves instead of flashing.
+                            Crossfade(
+                                targetState = payloadState,
+                                animationSpec = tween(200),
+                                label = "managePayload",
+                            ) { state ->
+                            when (state) {
                                 DashboardPayloadState.Idle,
                                 DashboardPayloadState.Loading -> LoadingBody(section.label)
                                 is DashboardPayloadState.Error -> ErrorBody(
@@ -1192,6 +1202,7 @@ fun DashboardManagementScreen(
                                         }
                                     },
                                 )
+                            }
                             }
                         }
                     }

@@ -1,0 +1,89 @@
+# Hermes-Relay — Vanilla-Upstream Route Contract (ADR 34)
+#
+# Proves the Android *standard path* (no-plugin) route surface exists on
+# UNMODIFIED NousResearch/hermes-agent — the invariant CLAUDE.md asserts but
+# that was never tested. Source-parses upstream's declared routes (no server
+# boot, no pip install, no model keys); see scripts/check-upstream-route-contract.py
+# for the design + tradeoff (catches renamed/removed routes; not runtime auth).
+#
+# PR/push runs check a pinned ref (non-flaky); the weekly schedule tracks
+# upstream `main` as a drift siren so a route rename surfaces on our clock.
+
+name: CI — Upstream Contract
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "scripts/check-upstream-route-contract.py"
+      - ".github/workflows/ci-contract.yml"
+      - "app/src/main/kotlin/com/hermesandroid/relay/network/upstream/**"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "scripts/check-upstream-route-contract.py"
+      - ".github/workflows/ci-contract.yml"
+      - "app/src/main/kotlin/com/hermesandroid/relay/network/upstream/**"
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — upstream-drift siren (tracks main)
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "NousResearch/hermes-agent ref to check (branch, tag, or SHA)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ci-contract-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+jobs:
+  route-contract:
+    name: Vanilla-upstream route contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout hermes-relay
+        uses: actions/checkout@v6
+
+      - name: Resolve upstream ref
+        id: ref
+        run: |
+          # PR/push runs use a known-good NousResearch/hermes-agent commit so
+          # normal CI is stable. The weekly schedule below intentionally tracks
+          # main as the upstream-drift siren.
+          DEFAULT_REF="ef4b897a1843cd32c4f141f55db60f0f0602cc98"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            REF="main"                                   # weekly drift siren
+          elif [ -n "${{ github.event.inputs.upstream_ref }}" ]; then
+            REF="${{ github.event.inputs.upstream_ref }}" # manual override
+          else
+            REF="$DEFAULT_REF"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Checking standard-path route contract against upstream ref: $REF"
+
+      - name: Checkout vanilla upstream (no plugin, no bootstrap)
+        uses: actions/checkout@v6
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ steps.ref.outputs.ref }}
+          path: _upstream
+          fetch-depth: 1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Assert upstream checkout is vanilla (no relay bootstrap/plugin)
+        run: |
+          if [ -e "_upstream/hermes_relay_bootstrap" ] || \
+             [ -e "_upstream/plugin/hermes_relay_bootstrap" ] || \
+             find _upstream -name "hermes_relay_bootstrap.pth" 2>/dev/null | grep -q .; then
+            echo "FAIL: upstream checkout contains a relay bootstrap — not vanilla."; exit 1
+          fi
+          echo "OK: upstream checkout carries no relay plugin/bootstrap."
+
+      - name: Run route-surface contract
+        run: python scripts/check-upstream-route-contract.py "_upstream"

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "description": "Canonical screenshot/export plan for README, docs, and Google Play listing assets.",
+  "outputs": {
+    "play": {
+      "playDir": "app/src/googlePlay/play",
+      "graphicsDir": "app/src/googlePlay/play/listings/en-US/graphics",
+      "phoneScreenshotsDir": "app/src/googlePlay/play/listings/en-US/graphics/phone-screenshots",
+      "maxAspectRatio": 2.0,
+      "screenshotCrop": {
+        "anchor": "top",
+        "width": 1080,
+        "height": 2160
+      },
+      "assets": {
+        "icon": {
+          "source": "assets/play-store-icon-512.png",
+          "file": "1.png"
+        },
+        "feature-graphic": {
+          "source": "assets/play-store-feature-1024x500.png",
+          "file": "1.png"
+        }
+      }
+    }
+  },
+  "scenes": [
+    {
+      "id": "01_startup",
+      "title": "Cold start",
+      "source": "assets/screenshots/01_startup.png",
+      "readme": "assets/screenshots/01_startup.png",
+      "play": "1.png",
+      "captureNote": "Fresh launch or first-viewport app state."
+    },
+    {
+      "id": "02_chat",
+      "title": "Streaming chat",
+      "source": "assets/screenshots/02_chat.png",
+      "readme": "assets/screenshots/02_chat.png",
+      "play": "2.png",
+      "captureNote": "Clean session with live assistant output and no private host data."
+    },
+    {
+      "id": "03_voice",
+      "title": "Hands-free voice",
+      "source": "assets/screenshots/03_voice.png",
+      "readme": "assets/screenshots/03_voice.png",
+      "play": "3.png",
+      "captureNote": "Voice mode overlay with neutral transcript text."
+    },
+    {
+      "id": "04_sessions",
+      "title": "Session history",
+      "source": "assets/screenshots/04_sessions.png",
+      "readme": "assets/screenshots/04_sessions.png",
+      "play": "4.png",
+      "captureNote": "Session drawer or session management surface."
+    },
+    {
+      "id": "05_themes",
+      "title": "App themes",
+      "source": "assets/screenshots/05_themes.png",
+      "readme": "assets/screenshots/05_themes.png",
+      "play": "5.png",
+      "captureNote": "Theme picker (Settings → Appearance) showing the eight looks plus light/dark and font controls."
+    },
+    {
+      "id": "06_manage",
+      "title": "Manage your agent",
+      "source": "assets/screenshots/06_manage.png",
+      "readme": "assets/screenshots/06_manage.png",
+      "play": "6.png",
+      "captureNote": "Dashboard management surface with masked/neutral settings."
+    },
+    {
+      "id": "07_connections",
+      "title": "Connections and routes",
+      "source": "assets/screenshots/07_connections.png",
+      "readme": "assets/screenshots/07_connections.png",
+      "play": "7.png",
+      "captureNote": "Connection/routes view using generic LAN/Tailscale/public labels."
+    },
+    {
+      "id": "08_appearance",
+      "title": "Agent avatar & skins",
+      "source": "assets/screenshots/08_appearance.png",
+      "readme": "assets/screenshots/08_appearance.png",
+      "play": "8.png",
+      "captureNote": "Appearance: agent-avatar picker (Add a pet) + sphere-skin grid with honest capability badges."
+    }
+  ]
+}

@@ -1,12 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -14,8 +9,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -26,6 +25,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.ui.theme.LocalBrand
 
 /**
  * ASCII morphing sphere — the visual embodiment of the AI agent.
@@ -37,8 +37,26 @@ import androidx.compose.ui.unit.dp
  * renderer (Compose Desktop, terminal TUI).
  *
  * This file is the Android/Compose renderer only — it owns animation state
- * (`animateFloatAsState`, `rememberInfiniteTransition`) and text drawing.
+ * (`animateFloatAsState` for state transitions, a throttled per-frame loop for
+ * the continuous drift) and text drawing.
+ *
+ * As of the avatar seam (WP-C2) this is the renderer behind the default
+ * [com.hermesandroid.relay.ui.components.avatar.SphereAvatar]; app surfaces no
+ * longer call it directly but go through `LocalAgentAvatar.current.Render(...)`.
+ * It stays a public composable (previews + onboarding still call it directly),
+ * and its rendering is intentionally unchanged.
  */
+
+// Continuous-drift speeds, matched to the legacy infinite-transition tweens so
+// the orb moves at exactly the same pace as before:
+//   time:  0..1000 over the old 1_000_000ms loop == 1.0 unit/sec
+//   color: 0..2π   over the old 8_000ms loop      == 0.7854 rad/sec
+private const val SPHERE_TIME_UNITS_PER_SEC = 1f
+private const val SPHERE_TWO_PI = 6.2832f
+private const val SPHERE_COLOR_RADIANS_PER_SEC = 0.7854f
+
+// Idle cadence: this delay plus the next frame wait nets a ~33ms period (~30fps).
+private const val SPHERE_IDLE_FRAME_INTERVAL_MS = 25L
 
 @Composable
 fun MorphingSphere(
@@ -48,16 +66,26 @@ fun MorphingSphere(
     toolCallBurst: Float = 0f,
     voiceAmplitude: Float = 0f,
     voiceMode: Boolean = false,
+    skin: SphereSkin = LocalSphereSkin.current,
     fixedTime: Float? = null,
     fixedColorPhase: Float? = null
 ) {
-    val amp = voiceAmplitude.coerceIn(0f, 1f)
-    val targetP = remember(state) { paramsFor(state) }
-    val targetC = remember(state) { colorsFor(state) }
+    val brand = LocalBrand.current
+    // Gate reactive inputs on what the skin declares it honors — this is the
+    // "optional + detectable" reactivity contract. A skin that opts out of an
+    // input renders as if that input were neutral, and the same flags drive the
+    // capability badges in the picker.
+    val effIntensity = if (skin.reactivity.intensity) intensity else 0f
+    val effToolBurst = if (skin.reactivity.tools) toolCallBurst else 0f
+    val effVoiceMode = voiceMode && skin.reactivity.voice
+    val amp = (if (skin.reactivity.voice) voiceAmplitude else 0f).coerceIn(0f, 1f)
+
+    val targetP = remember(state, skin) { skin.paramsForState(state) }
+    val targetC = remember(state, skin, brand) { skin.colorsFor(state, brand) }
     val spec = tween<Float>(800, easing = FastOutSlowInEasing)
 
     val voiceRadiusScale by animateFloatAsState(
-        targetValue = if (voiceMode) 1.08f else 1.0f,
+        targetValue = if (effVoiceMode) 1.08f else 1.0f,
         animationSpec = tween(600, easing = FastOutSlowInEasing),
         label = "voiceExpand"
     )
@@ -80,28 +108,38 @@ fun MorphingSphere(
     val cg2 by animateFloatAsState(targetC.g2, spec, label = "cg2")
     val cb2 by animateFloatAsState(targetC.b2, spec, label = "cb2")
 
-    val transition = rememberInfiniteTransition(label = "sphere")
-    val animatedTime by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1000f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1_000_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "time"
-    )
-    val animatedColorPhase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.2832f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 8000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "colorPulse"
-    )
+    // Continuous motion is driven by a manual frame loop rather than
+    // rememberInfiniteTransition so the redraw rate can follow the orb's
+    // activity. An infinite transition pins the Canvas at the display refresh
+    // (120Hz) forever — even when Idle — which needlessly drains battery and,
+    // on Android 15, makes the platform log `setRequestedFrameRate` on every
+    // frame. Here we advance every frame while ACTIVE (full-smoothness
+    // thinking/streaming/voice pulse) and throttle to ~30fps while Idle, where
+    // the slower cadence is imperceptible for the chunky ASCII glyphs.
+    // dt-based accumulation keeps the animation speed identical at either rate.
+    val animatedTime = remember { mutableFloatStateOf(0f) }
+    val animatedColorPhase = remember { mutableFloatStateOf(0f) }
+    val driveAnimation = fixedTime == null || fixedColorPhase == null
+    val fullFrameRate = state != SphereState.Idle || effVoiceMode
+    if (driveAnimation) {
+        LaunchedEffect(fullFrameRate) {
+            var lastNanos = withFrameNanos { it }
+            while (true) {
+                val now = withFrameNanos { it }
+                val dtSec = (now - lastNanos).coerceAtLeast(0L) / 1_000_000_000f
+                lastNanos = now
+                animatedTime.floatValue =
+                    (animatedTime.floatValue + dtSec * SPHERE_TIME_UNITS_PER_SEC) % 1000f
+                animatedColorPhase.floatValue =
+                    (animatedColorPhase.floatValue + dtSec * SPHERE_COLOR_RADIANS_PER_SEC) %
+                    SPHERE_TWO_PI
+                if (!fullFrameRate) delay(SPHERE_IDLE_FRAME_INTERVAL_MS)
+            }
+        }
+    }
 
-    val time = fixedTime ?: animatedTime
-    val colorPhase = fixedColorPhase ?: animatedColorPhase
+    val time = fixedTime ?: animatedTime.floatValue
+    val colorPhase = fixedColorPhase ?: animatedColorPhase.floatValue
 
     val cols = 58
     val rows = 34
@@ -132,8 +170,8 @@ fun MorphingSphere(
             heartbeatSpeed = heartbeatSpeed, radialFlowSpeed = radialFlowSpeed,
             cr1 = cr1, cg1 = cg1, cb1 = cb1,
             cr2 = cr2, cg2 = cg2, cb2 = cb2,
-            intensity = intensity, toolCallBurst = toolCallBurst,
-            voiceAmplitude = amp, voiceMode = voiceMode,
+            intensity = effIntensity, toolCallBurst = effToolBurst,
+            voiceAmplitude = amp, voiceMode = effVoiceMode,
             voiceRadiusScale = voiceRadiusScale
         )
 

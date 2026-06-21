@@ -1,8 +1,10 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,6 +49,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,19 +58,19 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
+import com.hermesandroid.relay.ui.components.ActiveCardFeaturesSection
 import com.hermesandroid.relay.ui.components.ActiveCardSecurityPosture
-import com.hermesandroid.relay.ui.components.ActiveCardRelayStatusSection
-import com.hermesandroid.relay.ui.components.ActiveCardStandardStatusSection
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.EndpointsCard
 import com.hermesandroid.relay.ui.components.RouteEditorDialog
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
-import com.hermesandroid.relay.network.RelayUrlDeriver
-import com.hermesandroid.relay.network.RouteProbeOutcome
+import com.hermesandroid.relay.network.relay.RelayUrlDeriver
+import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.statusText
 import java.util.concurrent.TimeUnit
 
@@ -126,7 +129,7 @@ fun ConnectionsSettingsScreen(
     connectionViewModel: ConnectionViewModel? = null,
 ) {
     val context = LocalContext.current
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     // Feature flag for the entire relay surface (WSS, voice, bridge).
     // When off, Status section hides the Relay + Session rows and the
@@ -204,7 +207,7 @@ fun ConnectionsSettingsScreen(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = "Tap Add connection to connect to Standard Hermes.",
+                    text = "Tap Add connection to connect to Vanilla Hermes.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -449,14 +452,22 @@ private fun ConnectionCard(
                 overflow = TextOverflow.Ellipsis,
             )
 
-            ConnectionSurfaceSummary(
-                connection = connection,
-                isActive = isActive,
-                liveState = liveState,
-                activeConnectionViewModel = activeConnectionViewModel,
-                relayConfigured = relayConfigured,
-                onOpenDashboard = onOpenDashboard,
-            )
+            // Health glance. On NON-active cards this 4-fact summary is the
+            // only window into the connection's health (the deep Features
+            // section is active-only), so it stays. On the ACTIVE card it is
+            // intentionally omitted — the Features list below is the single
+            // source of truth for API/Dashboard/Voice/Relay status, and
+            // rendering both was the duplication users called "ugly".
+            if (!isActive) {
+                ConnectionSurfaceSummary(
+                    connection = connection,
+                    isActive = isActive,
+                    liveState = liveState,
+                    activeConnectionViewModel = activeConnectionViewModel,
+                    relayConfigured = relayConfigured,
+                    onOpenDashboard = onOpenDashboard,
+                )
+            }
 
             // ── Single-endpoint nudge (active only) ──────────────────────
             if (isActive && connection.pairedAt != null && endpoints.size == 1) {
@@ -519,31 +530,20 @@ private fun ConnectionCard(
             if (isActive && activeConnectionViewModel != null) {
                 HorizontalDivider()
 
-                // ── Standard section ─────────────────────────────────────
-                SectionHeader(text = "API + Dashboard")
+                // ── Features section ────────────────────────────────────
+                SectionHeader(text = "Features")
                 SectionCaption(
-                    text = "Standard Hermes setup for Chat, Manage, sessions, and dashboard voice.",
+                    text = "What this connection can do. Routes only choose how the phone reaches Hermes.",
                 )
 
-                ActiveCardStandardStatusSection(
+                ActiveCardFeaturesSection(
                     connectionViewModel = activeConnectionViewModel,
+                    relayEnabled = relayEnabled,
                     onOpenApiInfo = onOpenApiInfo,
                     onOpenDashboard = onOpenDashboard,
+                    onOpenRelayInfo = onOpenRelayInfo,
+                    onOpenSessionInfo = onOpenSessionInfo,
                 )
-
-                if (relayEnabled) {
-                    HorizontalDivider()
-                    SectionHeader(text = "Relay pairing")
-                    SectionCaption(
-                        text = "Optional power tools: Terminal, Bridge, relay sessions, " +
-                            "media, notifications, and grants.",
-                    )
-                    ActiveCardRelayStatusSection(
-                        connectionViewModel = activeConnectionViewModel,
-                        onOpenRelayInfo = onOpenRelayInfo,
-                        onOpenSessionInfo = onOpenSessionInfo,
-                    )
-                }
 
                 // ── Routes section (conditional on having endpoints) ─────
                 // ADR 24 behavior preserved verbatim from pre-refactor;
@@ -551,10 +551,9 @@ private fun ConnectionCard(
                 // "Endpoints" per the shared-vocabulary pass.
                 if (endpoints.isNotEmpty()) {
                     HorizontalDivider()
-                    SectionHeader(text = "Routes (${endpoints.size})")
+                    SectionHeader(text = "Route")
                     SectionCaption(
-                        text = "The app uses the highest-priority reachable route " +
-                            "and switches when Android reports a network change.",
+                        text = "Choose how this phone reaches Hermes. Features stay separate from the selected route.",
                     )
 
                     var preferredRole by remember(connection.id) {
@@ -608,42 +607,55 @@ private fun ConnectionCard(
                         ?: "Using saved URL: ${
                             connection.apiServerUrl.ifBlank { connection.relayUrl }
                         }"
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    // Current-route fact wrapped in the same light grouped
+                    // surface the Features list uses — gives the Route section
+                    // a clear "here's the path in use" panel without another
+                    // dark-blue filled card.
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "Current: $activeRouteLabel",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (probeCameUpEmpty) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                )
+                                if (isRouteProbing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                }
+                            }
                             Text(
-                                text = "Current: $activeRouteLabel",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (probeCameUpEmpty) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
+                                text = activeRouteHost,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            if (isRouteProbing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp,
+                            if (probeCameUpEmpty) {
+                                Text(
+                                    text = "None of the saved routes answered a health " +
+                                        "probe. Expand the routes below for per-route " +
+                                        "reasons.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
                                 )
                             }
-                        }
-                        Text(
-                            text = activeRouteHost,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (probeCameUpEmpty) {
-                            Text(
-                                text = "None of the saved routes answered a health " +
-                                    "probe. Expand the routes below for per-route " +
-                                    "reasons.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
                         }
                     }
                     if (showTailscaleUnavailableHint) {
@@ -771,8 +783,8 @@ private fun ConnectionCard(
                             .padding(vertical = 4.dp),
                     ) {
                         Text(
-                            text = if (endpointsExpanded) "Hide routes"
-                            else "Show routes",
+                            text = if (endpointsExpanded) "Hide available routes"
+                            else "Show available routes (${endpoints.size})",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f),
@@ -856,7 +868,7 @@ private fun ConnectionCard(
                 SectionHeader(text = "Advanced")
                 SectionCaption(
                     text = "Manual setup — most people don't need this " +
-                        "after Standard Hermes setup.",
+                        "after Vanilla Hermes setup.",
                 )
 
                 // Advanced expander: manual URL config + insecure toggle
@@ -975,6 +987,19 @@ private fun ConnectionSurfaceSummary(
     } else {
         null
     }
+    val activeVoiceReady: Boolean? = if (activeConnectionViewModel != null) {
+        val ready by activeConnectionViewModel.voiceReady.collectAsState()
+        ready
+    } else {
+        null
+    }
+    val standardVoiceAvailability: StandardVoiceAvailability? =
+        if (activeConnectionViewModel != null) {
+            val availability by activeConnectionViewModel.standardVoiceAvailability.collectAsState()
+            availability
+        } else {
+            null
+        }
     val dashboardStatus = (activeConnection ?: connection).dashboardLastStatus
     val dashboardSignInRequired =
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
@@ -1021,84 +1046,118 @@ private fun ConnectionSurfaceSummary(
         else -> SummaryTone.Info
     }
 
-    Row(
+    val voiceText = when {
+        activeVoiceReady == true -> "Ready"
+        standardVoiceAvailability == StandardVoiceAvailability.SignInRequired -> "Sign in"
+        standardVoiceAvailability == StandardVoiceAvailability.Unsupported -> "Unsupported"
+        standardVoiceAvailability == StandardVoiceAvailability.Unreachable -> "Offline"
+        standardVoiceAvailability == StandardVoiceAvailability.Unknown && isActive -> "Checking"
+        relayConfigured -> "Relay"
+        else -> "Optional"
+    }
+    val voiceTone = when (voiceText) {
+        "Ready" -> SummaryTone.Good
+        "Sign in", "Relay" -> SummaryTone.Info
+        "Unsupported", "Offline" -> SummaryTone.Warning
+        else -> SummaryTone.Neutral
+    }
+
+    // Lightened from two rows of filled tiles to a single grouped surface
+    // with dot + label + value rows — matches the active card's Features
+    // list so a collapsed (non-active) card reads as a quieter version of
+    // the same vocabulary, not a competing block of dark-blue cards.
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ConnectionSurfacePill(
-            label = "API",
-            value = apiText,
-            tone = apiTone,
-            modifier = Modifier.weight(1f),
-        )
-        ConnectionSurfacePill(
-            label = "Dashboard",
-            value = dashboardText,
-            tone = dashboardTone,
-            modifier = Modifier.weight(1f),
-            onClick = if (dashboardSignInRequired) onOpenDashboard else null,
-        )
-        ConnectionSurfacePill(
-            label = "Relay",
-            value = relayText,
-            tone = relayTone,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+            ConnectionSurfaceRow(label = "API", value = apiText, tone = apiTone)
+            SurfaceRowDivider()
+            ConnectionSurfaceRow(
+                label = "Dashboard",
+                value = dashboardText,
+                tone = dashboardTone,
+                onClick = if (dashboardSignInRequired) onOpenDashboard else null,
+            )
+            SurfaceRowDivider()
+            ConnectionSurfaceRow(
+                label = "Voice",
+                value = voiceText,
+                tone = voiceTone,
+                onClick = if (voiceText == "Sign in") onOpenDashboard else null,
+            )
+            SurfaceRowDivider()
+            ConnectionSurfaceRow(label = "Relay", value = relayText, tone = relayTone)
+        }
     }
 }
 
 private enum class SummaryTone { Neutral, Good, Info, Warning }
 
+/** Hairline divider between summary rows — inset so it reads as a list. */
 @Composable
-private fun ConnectionSurfacePill(
+private fun SurfaceRowDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 12.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+    )
+}
+
+/**
+ * One non-active-card health line: status dot + label + value. Mirrors the
+ * active card's CapabilityRow so both surfaces share a vocabulary; the dot
+ * carries the tone so the value text stays short and the row stays light.
+ */
+@Composable
+private fun ConnectionSurfaceRow(
     label: String,
     value: String,
     tone: SummaryTone,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
-    val container = when (tone) {
-        SummaryTone.Good -> MaterialTheme.colorScheme.primaryContainer
-        SummaryTone.Info -> MaterialTheme.colorScheme.tertiaryContainer
-        SummaryTone.Warning -> MaterialTheme.colorScheme.errorContainer
-        SummaryTone.Neutral -> MaterialTheme.colorScheme.surface
+    val dotColor = when (tone) {
+        SummaryTone.Good -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+        SummaryTone.Info -> MaterialTheme.colorScheme.primary
+        SummaryTone.Warning -> MaterialTheme.colorScheme.error
+        SummaryTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
     }
-    val content = when (tone) {
-        SummaryTone.Good -> MaterialTheme.colorScheme.onPrimaryContainer
-        SummaryTone.Info -> MaterialTheme.colorScheme.onTertiaryContainer
-        SummaryTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
+    val valueColor = when (tone) {
+        SummaryTone.Good -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+        SummaryTone.Info -> MaterialTheme.colorScheme.primary
+        SummaryTone.Warning -> MaterialTheme.colorScheme.error
         SummaryTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Surface(
-        modifier = modifier.then(
-            if (onClick != null) {
-                Modifier.clickable(onClick = onClick)
-            } else {
-                Modifier
-            },
-        ),
-        color = container,
-        shape = RoundedCornerShape(8.dp),
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 8.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = content,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodySmall,
-                color = content,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(dotColor),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

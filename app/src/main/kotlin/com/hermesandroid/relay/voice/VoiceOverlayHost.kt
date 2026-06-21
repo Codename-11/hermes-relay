@@ -76,7 +76,6 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
-import com.hermesandroid.relay.util.ComposeArrWorkaround
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
@@ -184,7 +183,6 @@ class VoiceOverlayHost(context: Context) {
             return false
         }
 
-        compose.post { ComposeArrWorkaround.disableForViewTree(compose) }
         overlayView = compose
         overlayParams = params
         return true

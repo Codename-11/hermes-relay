@@ -1,23 +1,25 @@
 # Hermes-Relay-Plugin v__VERSION__
 
-**Release Date:** June 16, 2026
-**Since the previous plugin release:** Easier setup and a fixed dashboard panel — plus mid-conversation `/relay` controls and a relay-status widget.
+**Release Date:** June 20, 2026
+**Since the previous plugin release:** A new, removable **enhancement layer** that lets the relay teach the agent things only the relay knows — starting with sensitive-media classification — plus provider-aware enhanced voice and an isolated, TUI-tuned tmux for relay terminals.
 
-This release makes the relay plugin easier to install and live with. Setup now prompts for the optional voice-provider keys instead of asking you to hand-edit `.env`, tools-only hosts can install through the native `hermes plugins install` path, and the installer no longer breaks on `uv`-managed Hermes cores. The dashboard panel — which previously rendered as blank boxes on the host's design system — now displays correctly, and a header widget plus `/relay` slash commands surface relay state from anywhere. The standard no-plugin path needs none of this.
+This release adds a clean way for the relay to extend the agent without forking or touching the user's soul/memory. The first use is **sensitive-media classification**: the relay appends a small, auditable system-prompt block teaching the agent to mark private/NSFW media so the paired phone can blur it — with sensitivity staying model-emitted. It's on by default for relay installs (installing the relay is the opt-in), reversible from the dashboard or an env flag, fully visible over a new audit route, and a complete no-op on vanilla upstream. Voice gains provider-aware controls for Gemini and xAI, and relay terminals now run on a dedicated, correctly-configured tmux.
 
 ## What's changed
 
 ### Added
-- **Guided env-key setup.** The plugin declares its optional voice-provider keys (`XAI_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`) in its manifest, so `hermes plugins install` prompts for them (masked, with a "get yours" link) instead of requiring a hand-edited `.env`. The standard no-plugin path needs none.
-- **Native install path.** Tools-only setups can install via `hermes plugins install Codename-11/hermes-relay/plugin`; the full relay still uses the curl `install.sh`.
-- **`/relay` slash commands.** `relay status · devices · pair` are usable mid-conversation from any platform (CLI / Discord / TUI).
-- **Dashboard relay-status widget.** A `Relay · connected / offline / unpaired` badge in the dashboard header, visible on every page.
-- **Session-start relay health check.** A minimal, fully-guarded `on_session_start` hook records relay reachability without slowing the gateway.
+- **Relay enhancement layer + agent-context injection.** A reusable, removable layer that injects auditable, fenced blocks into the agent's system prompt at plugin-load. Fail-open at every step (seam absent / block build throws ⇒ base prompt unchanged), config-gated, and a byte-for-byte no-op on vanilla upstream. Built to be retired per-surface as upstream adds a context hook — the same pattern as the bootstrap route shims. See `docs/plans/2026-06-20-relay-enhancement-layer.md`.
+- **Sensitive-media classification (first block).** Teaches the agent to mark private/NSFW media with the client's spoiler convention so the phone blurs it per the user's setting. **On by default for relay installs**; opt out with `RELAY_AGENT_CONTEXT_ENABLED=0` or the dashboard toggle. Sensitivity stays model-emitted — no relay-side or on-device classifier. No soul/memory is touched.
+- **`GET /context/injected` audit route.** The relay exposes exactly what it would inject (loopback-open, bearer-gated remotely), so the injection is never hidden — surfaced in the Android chat "What the agent sees" sheet as "Relay context (server-side)".
+- **Dashboard Agent-context controls.** The Relay management tab gained a master toggle and per-block toggles (labeled experimental / server-side / removable), shown on-by-default for relay installs.
+- **Provider-aware enhanced voice (Gemini + xAI).** `/voice/synthesize` accepts per-request overrides so a paired client can steer a Gemini voice/model with expressive tone tags, or an xAI voice with expressive speech tags, without changing the server's global voice config.
+
+### Changed
+- **Relay terminals run on an isolated, TUI-tuned tmux.** Sessions spawn on a dedicated tmux server/socket with a generated config — `escape-time 0`, truecolor `tmux-256color`, `mouse`/`focus-events` on, `status off` — so editors and full-screen tools behave correctly without touching the user's personal tmux.
 
 ### Fixed
-- **Installer failed on uv-managed Hermes hosts.** `install.sh` assumed `pip` lived in the hermes-agent virtualenv, but environments created by `uv` (the upstream default) ship no `pip` module, so the editable install aborted at step 2. The installer now bootstraps `pip` via `ensurepip`, or falls back to `uv pip`, so the plugin installs cleanly on uv-managed cores.
-- **Dashboard buttons rendered as blank boxes.** The host dashboard's Nous design-system `Button` / `Badge` use boolean variant flags (`outlined` / `ghost` / `invert`) and a `tone` prop — not the shadcn-style `variant` prop the plugin passed — so every button collapsed to a solid near-white fill with an invisible label. The plugin now translates its props to the design-system contract via an adapter and drops a label-hiding CSS reset.
-- **Unreadable button labels.** Solid buttons in the relay dashboard panel inherited the container text colour, which matched their background; solid button variants now keep their proper contrast colour.
+- **Relay voice synthesis no longer leaves temporary audio files behind** on the server.
+- **Clearer voice errors.** Standard voice rejects an over-long recording before uploading and returns a helpful message for audio the server can't read, instead of a generic HTTP error.
 
 ## Install
 

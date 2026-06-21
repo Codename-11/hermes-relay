@@ -1,0 +1,62 @@
+Hermes-Relay is the native Android client for the Hermes agent platform. Point it at your own Hermes instance and chat with your agent, talk to it hands-free, and manage models, keys, skills, and profiles from anywhere.
+
+It is not a hosted AI service. It is a companion app for the Hermes agent you run, and it talks only to the instances you configure.
+
+QUICK START
+
+1. Run hermes-agent with its API server and dashboard enabled on your computer or home server.
+2. Install Hermes-Relay and enter your server address, for example http://192.168.1.100:8642.
+3. The setup wizard checks what your server supports and shows a readiness card, then you are ready to chat.
+
+A plain Hermes install is enough. Chat, management, and voice work with no plugin or extra service.
+
+HOW IT WORKS
+
+Chat streams directly from your Hermes API Server or dashboard gateway in real time. Manage and voice use your Hermes dashboard with one sign-in. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and additional voice engines.
+
+GOOGLE PLAY BUILD
+
+The Google Play build ships Hermes Bridge Core only. It has no AccessibilityService Device Control: it cannot read your screen, tap, type, swipe, screenshot, send SMS, place calls, or access contacts or location. Device Control is reserved for sideload builds distributed outside Google Play.
+
+FEATURES
+
+- Streaming Chat: real-time responses with reasoning, markdown, tool-call visibility, attachments, mid-turn steering, edit-and-resend, and a searchable command palette.
+
+- Manage Your Agent: use your Hermes dashboard from your phone to switch models, manage provider keys, edit profiles, and browse, install, and update skills.
+
+- Voice Mode: talk hands-free using your server's speech providers. Relay-paired setups add per-profile voices and an experimental realtime engine.
+
+- Works Away From Home: add LAN, Tailscale, or public routes and the app chooses the best available path on connect.
+
+- Sessions: create, switch, rename, and delete chats. Message history loads on demand.
+
+- Multiple Servers and Profiles: connect to more than one server and switch in a tap; overlay an agent profile or personality per conversation.
+
+- Relay Power Tools: optional QR pairing for remote terminal, relay-session management, media handoff, and per-feature grants.
+
+- Notification Companion: optionally forward notification metadata to your paired relay so your assistant can summarize it. Toggle it anytime in system settings.
+
+- Stats for Nerds: local-only counters for response timing, token usage, cost, and stream health.
+
+- Material You: Material 3 dynamic color, light/dark/system themes, and haptics.
+
+SECURITY AND PRIVACY
+
+- API keys and relay tokens are stored in encrypted Android storage.
+- HTTPS is enforced for remote connections; cleartext is limited to localhost or LAN setups.
+- No telemetry, ads, tracking, or third-party analytics SDKs.
+- Notification access and the microphone are optional and user-controlled.
+- All app traffic goes only to servers you configure.
+
+REQUIREMENTS
+
+- Android 8.0 or later.
+- A running Hermes agent for chat, management, and voice.
+- Optional Hermes relay service for power tools such as terminal, notifications, and media.
+- Network access to your server by local network, VPN, or internet.
+
+OPEN SOURCE
+
+Hermes-Relay is MIT licensed. Source, docs, and issue tracking are on GitHub.
+
+This app is a community project and is not affiliated with or endorsed by NousResearch.

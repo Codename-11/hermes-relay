@@ -17,6 +17,8 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +69,8 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
@@ -92,6 +97,11 @@ fun VoiceModeOverlay(
     onInterrupt: () -> Unit,
     onPauseAutoMode: () -> Unit = {},
     onDismiss: () -> Unit,
+    // Navigates to the full Voice Settings screen from the overlay's gear
+    // button. Default no-op so existing call sites/previews still compile;
+    // the gear button exits voice mode before invoking this so the overlay
+    // isn't left floating over the settings screen.
+    onOpenSettings: () -> Unit = {},
     onModeChange: (InteractionMode) -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier,
@@ -163,6 +173,26 @@ fun VoiceModeOverlay(
         modifier = modifier
             .fillMaxSize()
             .background(if (focusMode) surface.copy(alpha = 0.96f) else Color.Transparent)
+            // Click-through fix: in focus mode the overlay is a true modal.
+            // Consume any pointer event a child (mic button, transcript,
+            // chips, pill) didn't handle so stray taps/swipes don't fall
+            // through to the chat + session drawer behind it. Children run on
+            // the same Main pass leaf-first, so this only catches the gaps.
+            // In compact mode the overlay is intentionally transparent and the
+            // chat stays interactive, so no scrim is installed.
+            .then(
+                if (focusMode) {
+                    Modifier.pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent().changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            )
     ) {
         VoiceSessionPill(
             uiState = uiState,
@@ -184,6 +214,7 @@ fun VoiceModeOverlay(
             onInterrupt = onInterrupt,
             onPauseAutoMode = onPauseAutoMode,
             onOverlayRequest = onOverlayRequest,
+            onOpenSettings = onOpenSettings,
             onExit = onDismiss,
             modifier = Modifier
                 .fillMaxWidth()
@@ -271,11 +302,13 @@ fun VoiceModeOverlay(
                         .weight(1.0f),
                     contentAlignment = Alignment.Center,
                 ) {
-                    MorphingSphere(
+                    LocalAgentAvatar.current.Render(
+                        state = AvatarRenderState(
+                            state = voiceStateToSphereState(uiState.state),
+                            voiceAmplitude = uiState.amplitude,
+                            voiceMode = true,
+                        ),
                         modifier = Modifier.fillMaxSize(),
-                        state = voiceStateToSphereState(uiState.state),
-                        voiceAmplitude = uiState.amplitude,
-                        voiceMode = true,
                     )
                 }
 
@@ -653,6 +686,7 @@ private fun InteractionMode.label(): String = when (this) {
     InteractionMode.Continuous -> "Continuous"
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VoiceSessionPill(
     uiState: VoiceUiState,
@@ -674,6 +708,7 @@ private fun VoiceSessionPill(
     onInterrupt: () -> Unit,
     onPauseAutoMode: () -> Unit,
     onOverlayRequest: () -> Unit,
+    onOpenSettings: () -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -717,11 +752,10 @@ private fun VoiceSessionPill(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                if (focusMode) {
-                    StatusPill(uiState.interactionMode.label())
-                } else {
-                    StatusPill(engineText, emphasized = true)
-                }
+                // Collapsed header trimmed to icon + "Voice" + a single
+                // weighted title + chevron + close so the top bar can never
+                // wrap on narrow screens. The status pill and inline mic
+                // control moved into the expanded body below.
                 Text(
                     text = headlineText,
                     style = MaterialTheme.typography.labelSmall,
@@ -730,15 +764,6 @@ private fun VoiceSessionPill(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                if (!focusMode) {
-                    CompactVoiceMicButton(
-                        uiState = uiState,
-                        onMicTap = onMicTap,
-                        onMicRelease = onMicRelease,
-                        onInterrupt = onInterrupt,
-                        onPauseAutoMode = onPauseAutoMode,
-                    )
-                }
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = if (expanded) "Collapse voice controls" else "Expand voice controls",
@@ -773,6 +798,28 @@ private fun VoiceSessionPill(
                         .padding(top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    // Moved out of the collapsed header (4a): the current
+                    // interaction-mode pill plus the inline mic control. The
+                    // compact mic only appears in compact mode, where the
+                    // full-size bottom mic button is hidden.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        StatusPill(uiState.interactionMode.label())
+                        Spacer(Modifier.weight(1f))
+                        if (!focusMode) {
+                            CompactVoiceMicButton(
+                                uiState = uiState,
+                                onMicTap = onMicTap,
+                                onMicRelease = onMicRelease,
+                                onInterrupt = onInterrupt,
+                                onPauseAutoMode = onPauseAutoMode,
+                            )
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -787,20 +834,23 @@ private fun VoiceSessionPill(
                         }
                     }
 
-                    Row(
+                    // Status pills use a FlowRow so they wrap to a second line
+                    // on narrow screens instead of being squeezed into equal
+                    // weighted columns that truncate every label (4a).
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        StatusPill(engineText, emphasized = true, modifier = Modifier.weight(1f))
-                        StatusPill(profileText, modifier = Modifier.weight(1f))
-                        scopeText?.let {
-                            StatusPill(it, modifier = Modifier.weight(1f))
-                        }
-                        StatusPill(providerText, modifier = Modifier.weight(1f))
+                        StatusPill(engineText, emphasized = true)
+                        StatusPill(profileText)
+                        scopeText?.let { StatusPill(it) }
+                        StatusPill(providerText)
                     }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         TextButton(
@@ -823,6 +873,21 @@ private fun VoiceSessionPill(
                             modifier = Modifier.weight(1f),
                         ) {
                             Text("Exit")
+                        }
+                        // Settings link (4c): exit voice mode before navigating
+                        // so the overlay isn't left floating over the Voice
+                        // Settings screen.
+                        IconButton(
+                            onClick = {
+                                onExit()
+                                onOpenSettings()
+                            },
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Voice settings",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }

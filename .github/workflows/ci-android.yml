@@ -3,7 +3,9 @@
 # Runs on pushes to main/dev and on PRs targeting main/dev, scoped to
 # Android-affecting paths so Python-only changes don't spin up the JVM.
 #
-# Pipeline: lint -> build + test (parallel) -> upload artifacts
+# Pipeline: lint, build, and focused tests run concurrently. PRs build debug
+# APKs before merge; dev pushes keep lint/tests only to avoid duplicate
+# post-merge packaging. Main pushes keep APK artifacts.
 
 name: CI — Android
 
@@ -38,11 +40,12 @@ concurrency:
 
 jobs:
   # ──────────────────────────────────────────────
-  # Android Lint — gate for build and test jobs
+  # Android Lint
   # ──────────────────────────────────────────────
   lint:
     name: Lint (Android)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -55,25 +58,20 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
-      # Prefer ktlintCheck if configured; fall back to Android lint
-      - name: Run lint checks
-        run: |
-          if ./gradlew tasks --all 2>/dev/null | grep -q "ktlintCheck"; then
-            echo "Running ktlintCheck..."
-            ./gradlew ktlintCheck
-          else
-            echo "ktlintCheck not found, falling back to Android lint..."
-            ./gradlew lint
-          fi
+      - name: Run Android lint
+        run: ./gradlew lint --console=plain
 
   # ──────────────────────────────────────────────
-  # Android Build — assembleDebug + upload APK
+  # Android Build — assembleDebug for PRs and main pushes
   # ──────────────────────────────────────────────
   build:
     name: Build (Android)
-    needs: lint
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -86,12 +84,15 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --console=plain
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
+        if: ${{ github.ref == 'refs/heads/main' }}
         with:
           name: debug-apk
           # Product flavors (googlePlay, sideload) nest APKs under
@@ -109,7 +110,6 @@ jobs:
   # ──────────────────────────────────────────────
   test:
     name: Test (Android)
-    needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Advisory on dev, strict on main. Evaluates to false (= strict) for
@@ -128,6 +128,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
       # The broad Gradle `test` aggregate currently hangs in deferred JVM test
       # suites tracked by issue #32. Keep CI release-relevant until that suite is
@@ -136,14 +138,16 @@ jobs:
       - name: Run focused Android unit tests
         run: |
           ./gradlew :app:testSideloadDebugUnitTest \
-            --tests com.hermesandroid.relay.network.RelayUrlDeriverTest \
+            --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
+            --tests com.hermesandroid.relay.network.relay.RelayUrlDeriverTest \
             --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
             --console=plain
 
-      # Upload test reports even if tests fail, for debugging
+      # Upload reports only for failures. Successful PR report uploads add
+      # noticeable latency and are rarely inspected.
       - name: Upload test reports
         uses: actions/upload-artifact@v7
-        if: always()
+        if: failure()
         with:
           name: test-reports
           path: app/build/reports/tests/

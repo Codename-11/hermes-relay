@@ -62,6 +62,7 @@ from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
 from .realtime_voice import RealtimeVoiceHandler
 from .realtime_agent import RealtimeAgentHandler
+from ..enhancements.context_injection import injected_context_payload
 
 logger = logging.getLogger("hermes_relay")
 
@@ -1167,6 +1168,93 @@ async def handle_clipboard_inbox(request: web.Request) -> web.Response:
 
 # ── Media handlers ───────────────────────────────────────────────────────────
 
+# Canonical image MIME for each magic-byte format key. Used by the optional
+# content re-sniff (D6) to correct a mislabeled image content-type before it
+# reaches the phone's renderer. "jpg"/"jpeg" both normalize to image/jpeg.
+_IMAGE_MAGIC_MIME = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "gif": "image/gif",
+}
+
+_SENSITIVE_TRUE_STRINGS = frozenset({"1", "true", "yes", "on"})
+
+
+def _coerce_sensitive(value: object) -> bool:
+    """Coerce a JSON/query ``sensitive`` value into a strict bool.
+
+    Accepts the shapes a producer or query string might supply: ``bool``,
+    ``int`` (nonzero → True), or a string (``"1"``/``"true"``/``"yes"``/``"on"``,
+    case-insensitive → True). Anything else — including ``None`` and unknown
+    strings — is False. This keeps the sensitivity bit a faithful one-way
+    transport: when in doubt, don't blur.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in _SENSITIVE_TRUE_STRINGS
+    return False
+
+
+def _sniff_image_mime(path: str) -> str | None:
+    """Best-effort magic-byte sniff of ``path`` → canonical image MIME.
+
+    Reuses the ``_IMAGE_MAGIC`` table (the same one the clipboard inbox uses)
+    to identify PNG / JPEG / GIF / WEBP from the file's leading bytes. Returns
+    the canonical ``image/*`` MIME on a confident match, or ``None`` when the
+    bytes don't match any known image signature (or the file can't be read).
+
+    Used only to *correct* a mislabeled image content-type on serve — never to
+    reject. Peek-only (16 bytes); all I/O errors collapse to ``None`` so a
+    sniff glitch can never fail an otherwise-valid media fetch.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return None
+    if not head:
+        return None
+    # WEBP carries a 12-byte signature (RIFF....WEBP) — check it explicitly
+    # before the simple startswith() formats so a bare "RIFF" (e.g. a WAV)
+    # doesn't get mislabeled as an image.
+    if head[:4] == b"RIFF" and len(head) >= 12 and head[8:12] == b"WEBP":
+        return _IMAGE_MAGIC_MIME["webp"]
+    for fmt, magics in _IMAGE_MAGIC.items():
+        if fmt == "webp":
+            continue
+        if any(head.startswith(magic) for magic in magics):
+            return _IMAGE_MAGIC_MIME[fmt]
+    return None
+
+
+def _resniffed_image_content_type(declared: str, path: str) -> str:
+    """Return the content-type to serve for ``path``, re-sniffed when it's an image.
+
+    If ``declared`` claims an image type but the file's magic bytes clearly
+    say otherwise, return the sniffed canonical MIME (and let the caller log
+    the correction). Non-image declarations, unreadable files, and confident
+    matches all pass ``declared`` through unchanged — this only ever *fixes*
+    an image type, never downgrades a non-image one.
+    """
+    if not declared.lower().startswith("image/"):
+        return declared
+    sniffed = _sniff_image_mime(path)
+    if sniffed is None or sniffed == declared.lower().split(";", 1)[0].strip():
+        return declared
+    logger.info(
+        "Media content re-sniff: declared %r but magic bytes say %r — "
+        "serving sniffed type (path=%s)",
+        declared,
+        sniffed,
+        path,
+    )
+    return sniffed
+
 
 async def handle_media_register(request: web.Request) -> web.Response:
     """Register a local file with the MediaRegistry and return an opaque token.
@@ -1205,6 +1293,9 @@ async def handle_media_register(request: web.Request) -> web.Response:
     path = payload.get("path")
     content_type = payload.get("content_type")
     file_name = payload.get("file_name")
+    # Model-emitted sensitivity hint — transported verbatim. Absent/falsey
+    # → not sensitive (back-compat with older callers that never send it).
+    sensitive = _coerce_sensitive(payload.get("sensitive"))
 
     server: RelayServer = request.app["server"]
     try:
@@ -1212,6 +1303,7 @@ async def handle_media_register(request: web.Request) -> web.Response:
             path=path,
             content_type=content_type,
             file_name=file_name,
+            sensitive=sensitive,
         )
     except MediaRegistrationError as exc:
         logger.info("Media registration rejected: %s", exc)
@@ -1224,6 +1316,7 @@ async def handle_media_register(request: web.Request) -> web.Response:
             "ok": True,
             "token": entry.token,
             "expires_at": entry.expires_at,
+            "sensitive": entry.sensitive,
         }
     )
 
@@ -1413,10 +1506,19 @@ async def handle_media_get(request: web.Request) -> web.StreamResponse:
     if entry is None:
         raise web.HTTPNotFound(text="media token not found or expired")
 
+    # Optional content re-sniff (D6): correct a mislabeled image type so the
+    # phone renders it right. No-op for non-image types and confident matches.
+    content_type = _resniffed_image_content_type(entry.content_type, entry.path)
+
     headers = {
-        "Content-Type": entry.content_type,
+        "Content-Type": content_type,
         "Cache-Control": "private, max-age=3600",
     }
+    # Model-emitted sensitivity bit, transported verbatim. Header is present
+    # only when sensitive — absence means "not sensitive" (back-compat: old
+    # clients ignore the header, new clients blur per the user's setting).
+    if entry.sensitive:
+        headers["X-Media-Sensitive"] = "1"
     if entry.file_name:
         # Quote the filename to survive weird characters. RFC 6266 inline
         # disposition with quoted filename is the broadest-compat form.
@@ -1426,10 +1528,11 @@ async def handle_media_get(request: web.Request) -> web.StreamResponse:
         headers["Content-Disposition"] = "inline"
 
     logger.debug(
-        "Serving media token=%s... path=%s size=%d to session=%s...",
+        "Serving media token=%s... path=%s size=%d sensitive=%s to session=%s...",
         token[:8],
         entry.path,
         entry.size,
+        entry.sensitive,
         bearer[:8],
     )
     return web.FileResponse(entry.path, headers=headers)
@@ -1459,13 +1562,18 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
         the phone renders a "Path not allowed" card. Operators who want the
         tighter default back can opt in via env.
 
-    GET /media/by-path?path=<urlencoded-abs-path>&content_type=<optional-type>
+    GET /media/by-path?path=<urlencoded-abs-path>&content_type=<optional-type>&sensitive=<0|1>
       → 200 file bytes
       → 400 missing path query param
       → 401 missing/invalid bearer
       → 403 path not absolute / other validation failure (or outside allowlist in strict mode)
       → 404 file does not exist or is not a regular file
       → 413 file exceeds RELAY_MEDIA_MAX_SIZE_MB
+
+    The optional ``sensitive`` query hint mirrors the token path's stored
+    metadata: there's no registration step for bare-path markers, so the
+    sensitivity bit (if any) must ride the query string. When truthy the
+    response carries ``X-Media-Sensitive: 1``. Absent → not sensitive.
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -1495,6 +1603,10 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
 
     # Hint: phone may pass content_type=; if not, guess from extension.
     content_type_hint = request.query.get("content_type", "").strip() or None
+
+    # Optional model-emitted sensitivity hint. Bare-path markers have no
+    # registration step, so the bit (if any) rides the query string.
+    sensitive = _coerce_sensitive(request.query.get("sensitive"))
 
     # Strict mode → enforce allowlist. Default mode → None skips root check.
     roots_for_check = (
@@ -1527,6 +1639,10 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
         guessed, _ = mimetypes.guess_type(real_path)
         content_type = guessed or "application/octet-stream"
 
+    # Optional content re-sniff (D6): correct a mislabeled image type (whether
+    # it came from the phone hint or the extension guess) so it renders right.
+    content_type = _resniffed_image_content_type(content_type, real_path)
+
     # Extract a display file name from the path for Content-Disposition.
     file_name = os.path.basename(real_path)
     safe_name = file_name.replace('"', "")
@@ -1536,12 +1652,15 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
         "Cache-Control": "private, max-age=3600",
         "Content-Disposition": f'inline; filename="{safe_name}"',
     }
+    if sensitive:
+        headers["X-Media-Sensitive"] = "1"
 
     logger.debug(
-        "Serving media by-path %s size=%d type=%s to session=%s...",
+        "Serving media by-path %s size=%d type=%s sensitive=%s to session=%s...",
         real_path,
         size,
         content_type,
+        sensitive,
         bearer[:8],
     )
     return web.FileResponse(real_path, headers=headers)
@@ -3050,6 +3169,25 @@ async def handle_notifications_recent(request: web.Request) -> web.Response:
 # === END PHASE3-notif-listener ===
 
 
+async def handle_context_injected(request: web.Request) -> web.Response:
+    """Return the relay-owned system-prompt context audit shape.
+
+    Loopback callers skip bearer auth, matching ``/notifications/recent``.
+    Remote callers must present a valid relay session bearer.
+
+    GET /context/injected
+      -> 200 {"enabled": <bool>, "blocks": [{"name": ..., "text": ...}]}
+      -> 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+
+    if not is_loopback:
+        _server, _session = _require_bearer_session(request)
+
+    return web.json_response(injected_context_payload())
+
+
 # ── WebSocket handler ────────────────────────────────────────────────────────
 
 
@@ -3763,6 +3901,9 @@ def create_app(config: RelayConfig) -> web.Application:
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
+
+    # Relay-owned agent context audit.
+    app.router.add_get("/context/injected", handle_context_injected)
 
     # Profile-scoped read-only config + skills (§22).
     app.router.add_get(

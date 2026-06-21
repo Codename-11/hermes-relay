@@ -43,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,14 +67,31 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.CrashReportGate
+import com.hermesandroid.relay.ui.components.LocalAgentIconPath
+import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
+import com.hermesandroid.relay.ui.components.LocalSphereSkin
+import com.hermesandroid.relay.ui.components.SphereRegistry
+import com.hermesandroid.relay.ui.components.SphereSkinLoader
+import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
+import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
+import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
+import com.hermesandroid.relay.ui.components.avatar.PetLoader
+import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
+import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
+import com.hermesandroid.relay.ui.components.ChatTransportTier
 import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
 import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
+import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
 import com.hermesandroid.relay.update.UpdateCheckResult
 import com.hermesandroid.relay.viewmodel.UpdateViewModel
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
@@ -81,13 +99,16 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.data.displayLabel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
@@ -106,6 +127,7 @@ import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
+import com.hermesandroid.relay.ui.screens.PermissionsStatusScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
@@ -113,16 +135,17 @@ import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
+import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
-import com.hermesandroid.relay.network.RelayProfileInspectorClient
-import com.hermesandroid.relay.network.AutoVoiceAudioClient
-import com.hermesandroid.relay.network.DynamicDashboardCookieJar
-import com.hermesandroid.relay.network.RelayVoiceAudioClientAdapter
+import com.hermesandroid.relay.network.relay.RelayProfileInspectorClient
+import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
+import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
+import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
@@ -132,8 +155,8 @@ import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.StandardHermesVoiceClient
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
 import com.hermesandroid.relay.auth.AuthState
 import androidx.lifecycle.viewModelScope
 
@@ -233,6 +256,7 @@ sealed class Screen(
     data object NotificationCompanionSettings :
         Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
     // === END PHASE3-notif-listener-followup ===
+    data object PermissionsSettings : Screen("settings/permissions", "Permissions", Icons.Filled.Settings)
     // === PHASE3-safety-rails: bridge safety route ===
     data object BridgeSafetySettings :
         Screen("settings/bridge_safety", "Bridge safety", Icons.Filled.Settings)
@@ -387,6 +411,9 @@ fun RelayApp() {
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
     val standardVoiceReadyState = rememberUpdatedState(standardVoiceReady)
     val relayVoiceReadyState = rememberUpdatedState(relayVoiceReady)
+    // Latest enhanced-voice overrides (null when nothing is set). Read lazily by
+    // the relay TTS adapter so changes apply without rebuilding it.
+    val enhancedOverridesState = rememberUpdatedState(EnhancedVoiceOverrides.fromSettings(voiceSettings))
 
     // Voice pipeline wiring — mirrors ChatViewModel.initializeMedia (above).
     // We build a dedicated OkHttpClient so voice requests don't contend with
@@ -433,12 +460,21 @@ fun RelayApp() {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
+            // Live read (null for the default profile) — sent defensively on
+            // /api/audio/speak; upstream ignores it, so standard voice stays the
+            // host's global TTS. Same live source the relay voice client uses.
+            profileProvider = {
+                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
+            },
         )
     }
     val voiceAudioClient = remember {
         AutoVoiceAudioClient(
             standardClient = standardVoiceClient,
-            relayClient = RelayVoiceAudioClientAdapter(voiceClient),
+            relayClient = RelayVoiceAudioClientAdapter(
+                voiceClient,
+                enhancedOverridesProvider = { enhancedOverridesState.value },
+            ),
             routeProvider = { selectedAudioRouteState.value },
             standardReadyProvider = { standardVoiceReadyState.value },
             relayReadyProvider = { relayVoiceReadyState.value },
@@ -692,6 +728,12 @@ fun RelayApp() {
         connectionViewModel.chatHandler.parseToolAnnotations = parseAnnotations
     }
 
+    // Sync "show system messages" debug toggle to ChatHandler
+    val showSystemMessages by connectionViewModel.showSystemMessages.collectAsState()
+    LaunchedEffect(showSystemMessages) {
+        connectionViewModel.chatHandler.showSystemMarkers = showSystemMessages
+    }
+
     // Sync streaming endpoint preference to chat. Resolves "auto" against the
     // current server capabilities so vanilla upstream + bootstrap-injected
     // sessions API picks /v1/chat/completions for portable SSE chat while
@@ -732,9 +774,74 @@ fun RelayApp() {
 
     // Observe theme preference
     val themePreference by connectionViewModel.theme.collectAsState()
+    val appThemeId by connectionViewModel.appTheme.collectAsState()
     val fontScale by connectionViewModel.fontScale.collectAsState()
 
-    HermesRelayTheme(themePreference = themePreference, fontScale = fontScale) {
+    // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
+    // publish it + the full available set so every MorphingSphere picks it up
+    // via LocalSphereSkin without per-call-site threading. Adaptive skins read
+    // the brand lazily inside MorphingSphere, so this can sit outside the theme.
+    val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+    val sphereContext = androidx.compose.ui.platform.LocalContext.current
+    val availableSphereSkins by produceState(
+        initialValue = SphereRegistry.builtIns,
+        key1 = sphereContext,
+    ) {
+        value = SphereRegistry.builtIns +
+            withContext(Dispatchers.IO) { SphereSkinLoader.loadUserSkins(sphereContext) }
+    }
+    val activeSphereSkin = remember(sphereSkinId, appThemeId, availableSphereSkins) {
+        SphereRegistry.resolve(
+            selectedId = sphereSkinId,
+            themeDefaultSkinId = AppThemes.byId(appThemeId).defaultSphereSkinId,
+            available = availableSphereSkins,
+        )
+    }
+
+    // Agent avatar seam (P2/P3): the built-in sphere plus any user-loaded "pets"
+    // (P3). The sphere nests the skin system one level below (avatar → skin).
+    // Published beside the skin locals so every avatar call site resolves it via
+    // LocalAgentAvatar without per-call-site threading. An unknown selected id
+    // (e.g. a pet pack was removed) falls back to the sphere.
+    val agentAvatarId by connectionViewModel.agentAvatar.collectAsState()
+    // Re-scans the pets/ dir whenever the tick bumps (in-app import/delete, or the
+    // Appearance screen opening), so newly added/removed pets appear everywhere
+    // without an app restart.
+    val avatarsRefreshTick by connectionViewModel.avatarsRefreshTick.collectAsState()
+    val availableAgentAvatars by produceState(
+        initialValue = listOf<AgentAvatar>(SphereAvatar),
+        key1 = sphereContext,
+        key2 = avatarsRefreshTick,
+    ) {
+        value = listOf<AgentAvatar>(SphereAvatar) +
+            withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
+    }
+    val activeAgentAvatar = remember(agentAvatarId, availableAgentAvatars) {
+        availableAgentAvatars.firstOrNull { it.id == agentAvatarId } ?: SphereAvatar
+    }
+    val petSpeed by connectionViewModel.petSpeed.collectAsState()
+    val petStabilize by connectionViewModel.petStabilize.collectAsState()
+    val agentIconPath by connectionViewModel.profileIcon.collectAsState()
+
+    CompositionLocalProvider(
+        LocalSphereSkin provides activeSphereSkin,
+        LocalAvailableSphereSkins provides availableSphereSkins,
+        LocalAgentAvatar provides activeAgentAvatar,
+        LocalAvailableAvatars provides availableAgentAvatars,
+        LocalPetPlaybackSpeed provides petSpeed,
+        LocalPetStabilize provides petStabilize,
+        LocalAgentIconPath provides agentIconPath,
+    ) {
+    HermesRelayTheme(
+        appThemeId = appThemeId,
+        themePreference = themePreference,
+        fontScale = fontScale,
+    ) {
+        // Surface a crash report from a previous session, if any. Renders a
+        // platform Dialog (own window) so tree position is z-order-agnostic;
+        // it just needs to be inside the theme for Material colors.
+        CrashReportGate()
+
         val navController = rememberNavController()
         var postOnboardingRoute by remember { mutableStateOf<String?>(null) }
 
@@ -963,7 +1070,7 @@ fun RelayApp() {
                 // (or there was none), and the checklist has visibly
                 // finished ticking. Anything weaker (e.g. the resolver's
                 // earlier health evidence) reveals a chat screen that still
-                // shows "Connect Standard Hermes" for the few hundred ms
+                // shows "Connect Vanilla Hermes" for the few hundred ms
                 // until the client-based verdict catches up.
                 (chatReady && initialChatSettled && startupNarrationComplete) ||
                 // Error path: a settled unreachable reveals the normal UI,
@@ -1232,19 +1339,19 @@ fun RelayApp() {
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (!suppressGlobalChrome && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
-                    val leading = when {
-                        apiReachable -> "api online"
-                        relayReady -> "relay connected"
-                        else -> "offline"
-                    }
-                    val leadingColor = when {
-                        apiReachable -> RelayRefresh.Green
-                        relayReady -> RelayRefresh.Relay
-                        else -> RelayRefresh.Danger
-                    }
                     val routeLabel = activeEndpoint?.displayLabel()
                         ?: activeConnection?.label
                         ?: "no route"
+                    val transportStatus = resolveChatTransportStatus(
+                        streamingEndpoint = streamingEndpoint,
+                        gatewayAvailability = gatewayAvailability,
+                        serverCapabilities = serverCapabilities,
+                    )
+                    val transportRouteLabel = if (transportStatus.tier == ChatTransportTier.Offline) {
+                        ""
+                    } else {
+                        routeLabel
+                    }
                     val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() } ?: "default"
                     val displayProfile = AgentDisplay.effectiveDisplayProfile(
                         selectedProfile = selectedProfile,
@@ -1259,10 +1366,24 @@ fun RelayApp() {
                     } else {
                         "profile: $profileLabel"
                     }
+                    val openConnections = {
+                        navController.navigate(Screen.ConnectionsSettings.route) {
+                            launchSingleTop = true
+                        }
+                    }
                     RelayStatusStrip(
-                        leading = "$leading / $routeLabel",
+                        leadingBadge = {
+                            ChatTransportStatusBadge(
+                                status = transportStatus,
+                                onClick = openConnections,
+                            )
+                        },
+                        routeLabel = transportRouteLabel,
                         trailing = "$modelLabel / $safetyLabel",
-                        leadingColor = leadingColor,
+                        // Tap the persistent status/route readout to open
+                        // Connections — preserves the affordance the dropped
+                        // header endpoint chip used to provide.
+                        onClick = openConnections,
                     )
                 }
             }
@@ -1311,7 +1432,10 @@ fun RelayApp() {
                         onManageSignIn = {
                             postOnboardingRoute = Screen.Manage.route
                             connectionViewModel.completeOnboarding()
-                        }
+                        },
+                        onOpenPermissions = {
+                            navController.navigate(Screen.PermissionsSettings.route)
+                        },
                     )
                 }
                 composable(
@@ -1394,6 +1518,11 @@ fun RelayApp() {
                         },
                         onNavigateToSettings = {
                             navController.navigate(Screen.Settings.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onNavigateToVoiceSettings = {
+                            navController.navigate(Screen.VoiceSettings.route) {
                                 launchSingleTop = true
                             }
                         },
@@ -1613,6 +1742,9 @@ fun RelayApp() {
                         onNavigateToNotificationCompanion = {
                             navController.navigate(Screen.NotificationCompanionSettings.route)
                         },
+                        onNavigateToPermissions = {
+                            navController.navigate(Screen.PermissionsSettings.route)
+                        },
                         // === PHASE3-safety-rails: bridge safety route ===
                         onNavigateToBridgeSafety = {
                             navController.navigate(Screen.BridgeSafetySettings.route)
@@ -1663,6 +1795,16 @@ fun RelayApp() {
                     )
                 }
                 // === END PHASE3-notif-listener-followup ===
+                composable(Screen.PermissionsSettings.route) {
+                    PermissionsStatusScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenBridge = {
+                            navController.navigate(Screen.Bridge.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                    )
+                }
                 // === PHASE3-safety-rails: bridge safety route ===
                 composable(Screen.BridgeSafetySettings.route) {
                     if (BuildFlavor.isSideload) {
@@ -2099,8 +2241,12 @@ fun RelayApp() {
                     .relayGridTexture(alpha = 0.14f),
                 contentAlignment = Alignment.Center
             ) {
-                // Sphere fills background
-                MorphingSphere(modifier = Modifier.fillMaxSize())
+                // Avatar fills background (sphere by default; routed through the
+                // seam so a future pet appears on the startup screen too).
+                LocalAgentAvatar.current.Render(
+                    state = AvatarRenderState(state = SphereState.Idle),
+                    modifier = Modifier.fillMaxSize(),
+                )
 
                 // Branding overlaid at bottom third
                 Column(
@@ -2160,6 +2306,7 @@ fun RelayApp() {
         }
         } // end Box
     }
+    } // end CompositionLocalProvider (sphere skin)
 }
 
 /** One line of the startup sphere's progress narration. */

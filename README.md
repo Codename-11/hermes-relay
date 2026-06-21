@@ -38,6 +38,10 @@ Hermes-Relay puts your [Hermes agent](https://github.com/NousResearch/hermes-age
 
 A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough — chat, management, and voice need **no plugin**. Add the optional relay only when you want terminal, phone control, or the CLI's tools. **Pair once from either surface; both work.**
 
+<p align="center">
+  <img src="docs/diagrams/architecture-homepage.png" alt="How Hermes-Relay connects — Vanilla Hermes (Chat, Manage, Voice) runs with no plugin; the optional Relay plugin adds Terminal, Bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build." width="900">
+</p>
+
 ## Quick Start (Android)
 
 Install → connect → talk, in about two minutes.
@@ -51,7 +55,7 @@ Sideload builds check GitHub for updates and show a one-tap banner when you're b
 
 ### 2 · Have Hermes running
 
-The app needs your Hermes **API server enabled and reachable from your phone**, plus an **API key** — the token the app sends to authenticate Chat (pick any value you like). Installing Hermes and choosing a provider is standard Hermes setup; the [full walkthrough](https://codename-11.github.io/hermes-relay/guide/getting-started) covers Windows, the dashboard for **Manage**, LAN scan, and QR setup.
+The app needs your Hermes **API server enabled and reachable from your phone**, plus an **API key** — the token the app sends to authenticate Chat (pick any value you like). Installing Hermes and choosing a provider is vanilla Hermes setup; the [full walkthrough](https://codename-11.github.io/hermes-relay/guide/getting-started) covers Windows, the dashboard for **Manage**, LAN scan, and QR setup.
 
 ```bash
 hermes setup --portal                      # install / log in / pick a provider — skip if already done
@@ -78,8 +82,8 @@ hermes gateway
 
 Open the app and pick how to connect — any of:
 
-- **Standard Hermes** → tap **Scan for Hermes on LAN** to auto-find the server, then enter your key.
-- **Standard Hermes** → type the address (`http://<host>:8642`) and key by hand.
+- **Vanilla Hermes** → tap **Scan for Hermes on LAN** to auto-find the server, then enter your key.
+- **Vanilla Hermes** → type the address (`http://<host>:8642`) and key by hand.
 - **Scan setup QR** → ask your Hermes agent to generate a QR with your URL + key (e.g. `{"api_url":"http://<host>:8642","api_key":"<key>","dashboard_url":"http://<host>:9119"}`) and scan it. `dashboard_url` is optional when the dashboard uses the conventional same-host `:9119` URL.
 
 The wizard probes everything and finishes with a capability card:
@@ -92,7 +96,7 @@ The wizard probes everything and finishes with a capability card:
 | **Remote** | Fallback route configured — keeps working away from home |
 | **Relay** | Optional power tools — fine to leave unpaired |
 
-If your dashboard requires sign-in, do it once under the **Manage** tab — the same session unlocks voice. That's the whole standard setup.
+If your dashboard requires sign-in, do it once under the **Manage** tab — the same session unlocks voice. That's the whole Vanilla Hermes setup.
 
 > **Going places?** Put your server's Tailscale URL in the setup form's *Remote access* field (or add a route any time under **Settings → Connections → Routes**). The app uses LAN at home and switches routes automatically when you leave. See [Remote access](https://codename-11.github.io/hermes-relay/guide/remote-access).
 
@@ -140,10 +144,10 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
     <td align="center" width="25%"><img src="assets/screenshots/04_sessions.png" alt="Session history" width="100%"><br><sub><b>Session history</b></sub></td>
   </tr>
   <tr>
-    <td align="center" width="25%"><img src="assets/screenshots/05_commands.png" alt="Command palette" width="100%"><br><sub><b>Command palette</b></sub></td>
+    <td align="center" width="25%"><img src="assets/screenshots/05_themes.png" alt="App themes" width="100%"><br><sub><b>App themes</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/06_manage.png" alt="Manage your agent" width="100%"><br><sub><b>Manage your agent</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/07_connections.png" alt="Connections and routes" width="100%"><br><sub><b>Connections &amp; routes</b></sub></td>
-    <td align="center" width="25%"><img src="assets/screenshots/08_settings.png" alt="Settings" width="100%"><br><sub><b>Settings</b></sub></td>
+    <td align="center" width="25%"><img src="assets/screenshots/08_appearance.png" alt="Agent avatar &amp; skins" width="100%"><br><sub><b>Avatars &amp; skins</b></sub></td>
   </tr>
 </table>
 
@@ -153,7 +157,7 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
 
 ### Android
 
-- **Streaming chat** — rides standard Hermes, preferring the dashboard gateway (`/api/ws`, live thinking) when signed in to Manage and falling back to API-server SSE otherwise, with live markdown, tool-call cards, session history, a searchable command palette, file attachments, quote-in-reply, conversation share, and send-while-streaming queuing.
+- **Streaming chat** — rides vanilla Hermes, preferring the dashboard gateway (`/api/ws`, live thinking) when signed in to Manage and falling back to API-server SSE otherwise, with live markdown, tool-call cards, session history, a searchable command palette, file attachments, quote-in-reply, conversation share, and send-while-streaming queuing.
 - **Manage your agent** — the full Hermes dashboard, native: switch models from your provider catalog, manage keys (write-only, masked, rate-limited reveal), create and edit profiles including `SOUL.md`, and browse/install/update skills. One dashboard sign-in covers it all.
 - **Hands-free voice** — talk on a vanilla install: speech rides your server's configured providers, unlocked by the same Manage sign-in. Relay-paired setups add per-profile voice and an opt-in provider-native Realtime Agent with background task handoff.
 - **Works away from home** — add a Tailscale or public URL and the app roams automatically (LAN at home, fallback elsewhere). An unreachable server gets a diagnosis, not just a red dot.
@@ -189,14 +193,14 @@ It pairs against the **same relay and credential store** as the Android app — 
 ## How It Works
 
 ```
-Phone        (HTTP/WSS) --> Hermes Dashboard  (:9119)   [chat gateway, manage, standard voice]
+Phone        (HTTP/WSS) --> Hermes Dashboard  (:9119)   [chat gateway, manage, vanilla voice]
 Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [chat fallback, sessions, runs]
 Phone        (WSS/HTTP) --> Relay             (:8767)   [terminal, bridge, media, relay voice, sessions]
 CLI          (WSS)      --> Relay             (:8767)   [machine tools, tui, terminal]
 ```
 
 Chat prefers the Hermes dashboard gateway when Manage auth is ready, then falls
-back to the upstream API server SSE path with the API key. Manage and standard
+back to the upstream API server SSE path with the API key. Manage and Vanilla Hermes
 voice ride the Hermes dashboard with its own one-time sign-in, so a vanilla
 install needs no plugin for either. The optional relay on `:8767` adds the power
 surfaces: terminal, bridge phone control, media handoff, machine tools, and
@@ -232,7 +236,7 @@ Read the canonical setup recipe before acting:
 Then guide me through:
 - Verifying hermes-agent is already installed (it's a prerequisite — Hermes-Relay is a plugin, not standalone)
 - Running the server-plugin install one-liner: `curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash`
-- Connecting my phone by Standard Hermes API URL/key first, then optionally pairing Relay via `hermes pair` or `/hermes-relay-pair` for power tools; OR pairing my laptop via the Hermes-Relay CLI (`irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex` on Windows, then `hermes-relay pair --remote ws://<host>:8767`)
+- Connecting my phone by Vanilla Hermes API URL/key first, then optionally pairing Relay via `hermes pair` or `/hermes-relay-pair` for power tools; OR pairing my laptop via the Hermes-Relay CLI (`irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex` on Windows, then `hermes-relay pair --remote ws://<host>:8767`)
 - Verifying with `hermes-status` (server) or `hermes-relay doctor` (CLI)
 
 Always confirm before running shell commands. Never restart hermes-gateway without asking. If any step fails, consult the Troubleshooting section in the SKILL.md and ask me for the exact error.

@@ -31,8 +31,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.DropdownMenu
@@ -99,9 +103,12 @@ data class ChatInputPickerControl(
  * button. Replaces ChatScreen's Row of attach / slash / OutlinedTextField /
  * Stop / smart-swap.
  *
- *  - "+" tap = file picker ([onAttach]); long-press = CommandPalette
- *    ([onLongPressAttach]) — the app's quiet-gesture idiom. The dedicated
- *    slash button is gone; typing "/" still surfaces InlineAutocomplete.
+ *  - "+" tap opens the attach menu — Photos ([onAttachPhotos], the modern
+ *    permissionless Photo Picker), Files ([onAttachFiles], arbitrary types),
+ *    Camera ([onAttachCamera], capture), and Paste image ([onPasteImage],
+ *    clipboard). Long-press = CommandPalette ([onLongPressAttach]) — the app's
+ *    quiet-gesture idiom. The dedicated slash button is gone; typing "/" still
+ *    surfaces InlineAutocomplete.
  *  - Pill [BasicTextField] (surfaceContainerHigh, hairline border, grows
  *    to 5 lines) instead of OutlinedTextField chrome.
  *  - ONE trailing slot morphing through [ChatInputTrailing] with
@@ -135,7 +142,10 @@ fun ChatInputBar(
     onSend: () -> Unit,
     onVoice: () -> Unit,
     onStop: () -> Unit,
-    onAttach: () -> Unit,
+    onAttachPhotos: () -> Unit,
+    onAttachFiles: () -> Unit,
+    onAttachCamera: () -> Unit,
+    onPasteImage: () -> Unit,
     onLongPressAttach: () -> Unit,
     charLimit: Int,
     caption: String?,
@@ -145,6 +155,7 @@ fun ChatInputBar(
     isDarkTheme: Boolean,
     modelControl: ChatInputPickerControl? = null,
     onModelOptionSelected: (ChatInputPickerOption) -> Unit = {},
+    onModelPickerClick: (() -> Unit)? = null,
     effortControl: ChatInputPickerControl? = null,
     onEffortOptionSelected: (ChatInputPickerOption) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -270,23 +281,73 @@ fun ChatInputBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    // "+" tap attaches, long-press opens the command palette.
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .combinedClickable(
-                                onClick = onAttach,
-                                onLongClick = onLongPressAttach,
-                                onLongClickLabel = "Browse commands",
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = "Attach file; hold for commands",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    // "+" tap opens the attach menu (Photos / Files / Camera /
+                    // Paste image); long-press opens the command palette.
+                    var attachMenuExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .combinedClickable(
+                                    onClick = { attachMenuExpanded = true },
+                                    onClickLabel = "Add attachment",
+                                    onLongClick = onLongPressAttach,
+                                    onLongClickLabel = "Browse commands",
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = "Add attachment; hold for commands",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = attachMenuExpanded,
+                            onDismissRequest = { attachMenuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Photos") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onAttachPhotos()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Files") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.InsertDriveFile, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onAttachFiles()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Camera") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onAttachCamera()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Paste image") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onPasteImage()
+                                },
+                            )
+                        }
                     }
 
                     if (modelControl != null) {
@@ -294,6 +355,7 @@ fun ChatInputBar(
                             control = modelControl,
                             onSelect = onModelOptionSelected,
                             modifier = Modifier.widthIn(max = 126.dp),
+                            onClickOverride = onModelPickerClick,
                         )
                     }
 
@@ -422,6 +484,9 @@ private fun ChatInputPickerChip(
     control: ChatInputPickerControl,
     onSelect: (ChatInputPickerOption) -> Unit,
     modifier: Modifier = Modifier,
+    // When set, tapping the chip opens this instead of the inline dropdown —
+    // used by the model chip to open the full searchable ModelPickerSheet.
+    onClickOverride: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val enabled = control.enabled && control.options.isNotEmpty()
@@ -439,7 +504,9 @@ private fun ChatInputPickerChip(
             modifier = Modifier
                 .heightIn(min = 32.dp)
                 .clip(ChatInputChipShape)
-                .clickable(enabled = enabled) { expanded = true },
+                .clickable(enabled = enabled) {
+                    if (onClickOverride != null) onClickOverride() else expanded = true
+                },
         ) {
             Row(
                 modifier = Modifier.padding(start = 10.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),

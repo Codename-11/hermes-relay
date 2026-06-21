@@ -1,7 +1,9 @@
 package com.hermesandroid.relay.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentDisplayTest {
@@ -160,6 +162,49 @@ class AgentDisplayTest {
                 connectionLabel = "",
             ),
         )
+    }
+
+    @Test
+    fun isClearedPersonality_coversUpstreamClearAliases() {
+        assertTrue(AgentDisplay.isClearedPersonality("none"))
+        assertTrue(AgentDisplay.isClearedPersonality("None"))
+        assertTrue(AgentDisplay.isClearedPersonality(" NEUTRAL "))
+        assertTrue(AgentDisplay.isClearedPersonality("default"))
+        assertTrue(AgentDisplay.isClearedPersonality(""))
+        assertFalse(AgentDisplay.isClearedPersonality("pirate"))
+    }
+
+    @Test
+    fun agentName_treatsNoneAsClearedOverlay() {
+        // "none" must NOT render as the literal agent name — it falls through to
+        // the server default, then the connection label, then Hermes.
+        assertEquals(
+            "Concise",
+            AgentDisplay.agentName(
+                profile = null,
+                selectedPersonality = "none",
+                defaultPersonality = "concise",
+                connectionLabel = "Lab",
+            ),
+        )
+        assertEquals(
+            "Lab",
+            AgentDisplay.agentName(
+                profile = null,
+                selectedPersonality = "none",
+                defaultPersonality = "",
+                connectionLabel = "Lab",
+            ),
+        )
+    }
+
+    @Test
+    fun personalityLabel_showsNoneWhenClearedWithNoConfiguredDefault() {
+        assertEquals("None", AgentDisplay.personalityLabel("none", ""))
+        // A configured server default still wins the header label.
+        assertEquals("Concise", AgentDisplay.personalityLabel("none", "concise"))
+        assertEquals("Pirate", AgentDisplay.personalityLabel("pirate", ""))
+        assertEquals("Default", AgentDisplay.personalityLabel("default", ""))
     }
 
     @Test

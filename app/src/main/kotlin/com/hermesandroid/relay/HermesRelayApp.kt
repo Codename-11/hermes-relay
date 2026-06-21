@@ -10,6 +10,7 @@ import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.power.WakeLockManager
 import com.hermesandroid.relay.util.AppForegroundTracker
+import com.hermesandroid.relay.util.CrashReporter
 
 class HermesRelayApp : Application(), SingletonImageLoader.Factory {
 
@@ -28,6 +29,9 @@ class HermesRelayApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Install the crash handler FIRST so any failure in the rest of app
+        // init (or anywhere later) is captured and surfaced on next launch.
+        CrashReporter.install(this)
         AppAnalytics.initialize(this)
         // A8 — wire the bridge-gesture wake-lock wrapper so
         // ActionExecutor.tap/tapText/typeText/swipe/scroll can hold

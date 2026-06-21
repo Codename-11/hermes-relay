@@ -160,6 +160,17 @@ private fun TerminalTabChip(
                 style = MaterialTheme.typography.labelMedium,
             )
         }
+        // Unread-output dot on a hidden tab that moved while you were on
+        // another tab. Only on inactive tabs (the active tab is what you're
+        // watching); cleared by selecting the tab.
+        if (!isActive && tab.unreadOutput) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+        }
         // Show a small × on the active tab so users can close it without
         // discovering the long-press gesture. Hidden when canClose is false
         // (last remaining tab) or on background tabs to keep the strip

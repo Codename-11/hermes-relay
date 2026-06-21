@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "title": "Hermes-Relay pet manifest",
+  "description": "Schema for pet.json — a side-loaded still or animated avatar ('pet') pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. Visual QA rules such as PNG alpha, safe-box padding, and frame registration are documented in docs/pet-spec.md.",
+  "type": "object",
+  "required": ["states"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1,
+      "default": 1,
+      "description": "Manifest schema version. This build supports 1."
+    },
+    "id": {
+      "type": "string",
+      "description": "Stable identity + persistence key. Falls back to the pack directory name if blank."
+    },
+    "label": {
+      "type": "string",
+      "description": "Display name in the avatar picker. Falls back to id."
+    },
+    "description": {
+      "type": "string",
+      "description": "Free-text description, shown in the picker."
+    },
+    "reactive": { "$ref": "#/definitions/reactive" },
+    "states": {
+      "type": "object",
+      "description": "Animation clips keyed by state/reaction name. An 'idle' clip is required; every other state falls back through it. A one-item frames list is valid and displays a still for that state.",
+      "required": ["idle"],
+      "properties": {
+        "idle":      { "$ref": "#/definitions/clip", "description": "Required. Shown when waiting between turns; the fallback for every other state." },
+        "thinking":  { "$ref": "#/definitions/clip", "description": "Reasoning before output." },
+        "working":   { "$ref": "#/definitions/clip", "description": "Tool-use overlay. Shipping this clip is what lights the Tools badge." },
+        "writing":   { "$ref": "#/definitions/clip", "description": "Producing output text (streaming). Preferred alias for the streaming state." },
+        "streaming": { "$ref": "#/definitions/clip", "description": "Producing output text. 'writing' is the friendlier alias." },
+        "speaking":  { "$ref": "#/definitions/clip", "description": "Talking via TTS (voice)." },
+        "listening": { "$ref": "#/definitions/clip", "description": "Mic open (voice)." },
+        "error":     { "$ref": "#/definitions/clip", "description": "A turn failed." },
+        "greet":     { "$ref": "#/definitions/clip", "description": "One-shot reaction when the pet first appears." },
+        "wake":      { "$ref": "#/definitions/clip", "description": "One-shot greet alias." },
+        "done":      { "$ref": "#/definitions/clip", "description": "One-shot reaction when a productive turn finishes (streaming/speaking -> idle)." },
+        "celebrate": { "$ref": "#/definitions/clip", "description": "One-shot done alias." }
+      },
+      "additionalProperties": { "$ref": "#/definitions/clip" }
+    },
+    "defaults": {
+      "$ref": "#/definitions/clip",
+      "description": "Fallback clip for any state with no usable clip in 'states'."
+    }
+  },
+  "definitions": {
+    "reactive": {
+      "type": "object",
+      "description": "Which live signals the pet honors. Drives the picker capability badge.",
+      "properties": {
+        "voice":     { "type": "boolean", "default": true,  "description": "Voice amplitude gives a subtle scale 'bounce' while speaking/listening. Advertises Voice." },
+        "tools":     { "type": "boolean", "default": false, "description": "Ignored: tool reactivity is driven by shipping a 'working' clip, not this flag. The badge follows the clip, so a bare declaration can't over-promise." },
+        "intensity": { "type": "boolean", "default": false, "description": "The active clip plays faster as agent activity ramps (up to ~1.6x at peak). Advertises Activity." }
+      }
+    },
+    "clip": {
+      "type": "object",
+      "description": "One animation clip: either a 'frames' list (one image per frame) OR a 'sheet' grid (one image, sliced into cells). Loops while its state is active; a one-frame clip displays as a still. For sheets, frameWidth/frameHeight are cell canvas dimensions; visible art should leave internal transparent padding.",
+      "properties": {
+        "frames": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Frame image files, in play order. A one-item list is a valid static clip. Paths must stay inside the pack directory."
+        },
+        "sheet": {
+          "type": "string",
+          "description": "A single sprite-sheet image, sliced left-to-right, top-to-bottom into a grid of cells. Path must stay inside the pack directory."
+        },
+        "frameWidth":  { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell canvas width, in pixels. This is not the visible character width; leave safe transparent padding inside each cell." },
+        "frameHeight": { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell canvas height, in pixels. This is not the visible character height; leave safe transparent padding inside each cell." },
+        "frameCount":  { "type": "integer", "minimum": 1, "description": "Number of cells in the sheet (rows x columns). Clamped to the sheet's real capacity at load." },
+        "fps": {
+          "type": "number",
+          "default": 8,
+          "description": "Frames per second; clamped to 1-60 at load."
+        }
+      },
+      "anyOf": [
+        {
+          "title": "Frame sequence",
+          "required": ["frames"],
+          "properties": { "frames": { "type": "array", "items": { "type": "string" }, "minItems": 1 } }
+        },
+        {
+          "title": "Sprite sheet",
+          "required": ["sheet", "frameWidth", "frameHeight", "frameCount"],
+          "properties": {
+            "sheet": { "type": "string", "minLength": 1 },
+            "frameWidth": { "type": "integer", "minimum": 1 },
+            "frameHeight": { "type": "integer", "minimum": 1 },
+            "frameCount": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

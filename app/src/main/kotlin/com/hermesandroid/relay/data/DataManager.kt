@@ -8,8 +8,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.ConnectionAuthSecrets
-import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
-import com.hermesandroid.relay.network.StoredDashboardCookie
+import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
+import com.hermesandroid.relay.network.upstream.StoredDashboardCookie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -147,6 +147,7 @@ class DataManager(
                 dashboardCookies = EncryptedDashboardCookieStore(
                     context = context,
                     connectionId = connection.id,
+                    tokenStoreKey = connection.tokenStoreKey,
                 ).load().map { it.toBackup() },
             )
         }
@@ -185,6 +186,7 @@ class DataManager(
             EncryptedDashboardCookieStore(
                 context = context,
                 connectionId = connection.id,
+                tokenStoreKey = connection.tokenStoreKey,
             ).save(secret.dashboardCookies.map { it.toStoredCookie() })
         }
     }

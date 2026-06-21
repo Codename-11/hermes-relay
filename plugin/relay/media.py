@@ -61,6 +61,12 @@ class _MediaEntry:
     created_at: float
     expires_at: float
     last_accessed: float = field(default_factory=time.time)
+    # Model-emitted sensitivity hint. The relay NEVER classifies media —
+    # this bit is transported verbatim from whatever the registering tool /
+    # agent declared, so the phone can blur it per the user's setting. Absent
+    # at registration → False (not sensitive). See
+    # docs/plans/2026-06-18-attachment-experience.md §C4.
+    sensitive: bool = False
 
     @property
     def is_expired(self) -> bool:
@@ -236,8 +242,15 @@ class MediaRegistry:
         path: str,
         content_type: str,
         file_name: str | None = None,
+        sensitive: bool = False,
     ) -> _MediaEntry:
         """Validate ``path`` and register a new media entry.
+
+        ``sensitive`` is a model-emitted hint stored verbatim on the entry —
+        the relay performs no classification of its own. It surfaces to the
+        phone as the ``X-Media-Sensitive`` response header on
+        ``GET /media/{token}`` so the client can blur per the user's setting.
+        Defaults to ``False`` for back-compat with existing callers.
 
         Raises :class:`MediaRegistrationError` with a clear message on any
         validation failure (bad path, not under allowed roots, missing,
@@ -261,6 +274,7 @@ class MediaRegistry:
             created_at=now,
             expires_at=now + self.ttl_seconds,
             last_accessed=now,
+            sensitive=bool(sensitive),
         )
 
         async with self._lock:
@@ -276,11 +290,12 @@ class MediaRegistry:
                 )
 
         logger.info(
-            "Registered media token=%s... path=%s size=%d type=%s",
+            "Registered media token=%s... path=%s size=%d type=%s sensitive=%s",
             token[:8],
             real_path,
             size,
             content_type,
+            entry.sensitive,
         )
         return entry
 

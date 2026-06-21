@@ -34,7 +34,7 @@ import kotlinx.serialization.json.putJsonObject
  *     splice into its request body verbatim.
  *
  * Splitting these into a top-level pure function keeps
- * [com.hermesandroid.relay.network.HermesApiClient] free of voice-mode
+ * [com.hermesandroid.relay.network.upstream.HermesApiClient] free of voice-mode
  * coupling and makes the synthesis trivially testable from a JVM unit
  * test (no Android dependencies, no Looper, no MockK).
  *
@@ -71,7 +71,7 @@ import kotlinx.serialization.json.putJsonObject
  *
  * The builder is a pure function — it does NOT mutate the input messages.
  * The caller (`ChatViewModel.startStream`) is responsible for invoking
- * [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
+ * [com.hermesandroid.relay.network.upstream.ChatHandler.markVoiceIntentsSynced]
  * after the request payload has been handed to the API client, which
  * flips [VoiceIntentTrace.syncedToServer] to true on each affected
  * message. Subsequent calls to [buildSyntheticMessages] will skip those
@@ -89,7 +89,7 @@ object VoiceIntentSyncBuilder {
      * order.
      *
      * @param history Chat history snapshot from
-     *   [com.hermesandroid.relay.network.handlers.ChatHandler.messages].
+     *   [com.hermesandroid.relay.network.upstream.ChatHandler.messages].
      *   Order matters — the builder walks the list in-place so synthetic
      *   messages appear in the same chronological position they had in the
      *   user's chat scroll.
@@ -157,7 +157,7 @@ object VoiceIntentSyncBuilder {
 
     /**
      * Build a JSON-string payload value for a successful dispatch. Mirrors
-     * the shape of [com.hermesandroid.relay.network.handlers.LocalDispatchResult.resultJson]
+     * the shape of [com.hermesandroid.relay.network.shared.LocalDispatchResult.resultJson]
      * but ensures `ok:true` is always present so the synthetic tool message
      * reads cleanly to the LLM. Used by call sites that capture the local
      * dispatch outcome and need to materialize a [VoiceIntentTrace.resultJson]

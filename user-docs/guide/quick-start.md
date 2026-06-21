@@ -42,7 +42,7 @@ That same session also unlocks voice for the connection.
 
 ## 5. Talk
 
-Type a message, or tap the mic and speak. That's the whole standard setup.
+Type a message, or tap the mic and speak. That's the whole Vanilla Hermes setup.
 
 ::: details Want more? Power tools via Relay
 Pairing the optional [Hermes-Relay plugin](./getting-started#relay-server-optional)

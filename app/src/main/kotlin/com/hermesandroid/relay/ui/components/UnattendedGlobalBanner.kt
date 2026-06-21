@@ -1,13 +1,8 @@
 package com.hermesandroid.relay.ui.components
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -81,7 +76,7 @@ fun UnattendedGlobalBanner(
     // background in both themes:
     //  - Dark: #FFD180 on #2A1F0A ≈ 10.3:1
     //  - Light: #7A3E00 on #FFF3E0 ≈ 9.2:1
-    val isDark = isSystemInDarkTheme()
+    val isDark = LocalBrand.current.isDark
     val amberBg = if (isDark) Color(0xFF2A1F0A) else Color(0xFFFFF3E0)
     val amberOn = if (isDark) Color(0xFFFFD180) else Color(0xFF7A3E00)
     val amberFill = if (isDark) Color(0xFFFFA000) else Color(0xFFE65100)
@@ -137,16 +132,12 @@ fun UnattendedGlobalBanner(
  */
 @Composable
 private fun PulsingStatusDot(color: Color) {
-    val infinite = rememberInfiniteTransition(label = "unattended-banner-pulse")
-    val alpha by infinite.animateFloat(
-        initialValue = 0.4f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "unattended-banner-pulse-alpha",
-    )
+    // Throttled to ~30fps (this banner can sit on screen for the whole
+    // unattended-access session). Reverse ping-pong over 1.2s each way → a
+    // 2.4s linear phase folded into a 0→1→0 triangle. See [rememberAmbientPhase].
+    val phase = rememberAmbientPhase(periodMillis = 2400)
+    val triangle = 1f - kotlin.math.abs(2f * phase - 1f)
+    val alpha = 0.4f + 0.6f * triangle
     Box(
         modifier = Modifier
             .size(8.dp)

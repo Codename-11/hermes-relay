@@ -104,27 +104,27 @@ fun BridgeSafetySummaryCard(
             }
 
             SafetySummaryRow(
-                label = "Apps blocked",
+                label = "Apps the agent can't touch",
                 value = "${settings.blocklist.size}",
             )
             SafetySummaryRow(
-                label = "Destructive verbs",
+                label = "Words that always ask first",
                 value = "${settings.destructiveVerbs.size}",
             )
             SafetySummaryRow(
-                label = "Auto-disable",
+                label = "Turns itself off when idle",
                 value = if (autoDisableAtMs != null) {
                     val remainMs = (autoDisableAtMs - nowMs).coerceAtLeast(0L)
                     val remainMin = (remainMs / 60_000L).toInt()
                     val remainSec = ((remainMs % 60_000L) / 1000L).toInt()
                     "in ${remainMin}:${remainSec.toString().padStart(2, '0')}"
                 } else {
-                    "${settings.autoDisableMinutes} min idle"
+                    "${settings.autoDisableMinutes} min"
                 },
             )
 
             Text(
-                text = "Tap Manage to edit blocklist, destructive verbs, and timers.",
+                text = "These guardrails keep Hermes in bounds. Tap to adjust.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -4,7 +4,7 @@ import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
-import com.hermesandroid.relay.network.ConnectionManager
+import com.hermesandroid.relay.network.relay.ConnectionManager
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every

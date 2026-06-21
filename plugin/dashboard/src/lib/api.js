@@ -15,6 +15,13 @@ function fetchJSON(path, opts) {
   return SDK.fetchJSON(`${BASE}${path}`, opts);
 }
 
+function fetchHostJSON(path, opts) {
+  if (!SDK || typeof SDK.fetchJSON !== "function") {
+    return Promise.reject(new Error("Hermes plugin SDK unavailable"));
+  }
+  return SDK.fetchJSON(path, opts);
+}
+
 export function getOverview() {
   return fetchJSON("/overview");
 }
@@ -35,6 +42,18 @@ export function getMedia({ includeExpired = false } = {}) {
 
 export function getPush() {
   return fetchJSON("/push");
+}
+
+export function getAgentContext() {
+  return fetchJSON("/agent-context");
+}
+
+export function putEnvSetting(key, value) {
+  return fetchHostJSON("/api/env", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value: String(value) }),
+  });
 }
 
 export function mintPairing(body = {}) {

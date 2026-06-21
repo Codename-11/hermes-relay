@@ -377,6 +377,63 @@ class RealtimeAgentHandler:
             }
         )
 
+    async def _handle_common_client_message(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        msg_type: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        """Dispatch client→server messages whose semantics are identical across
+        the native and non-native message loops.
+
+        Returns ``True`` if the message was handled here (the caller must skip
+        its own provider-specific branches), ``False`` if the loop must handle
+        it.
+
+        Keeping these branches in ONE place is deliberate. The two loops drifted
+        once: the non-native loop silently lacked a ``playback.drained`` branch,
+        so a normal end-of-turn ack fell through to the unsupported-message
+        error and tore the session down. Anything genuinely identical for both
+        transports lives here so it cannot drift again.
+        """
+        if msg_type == CLIENT_MSG_SESSION_START:
+            if _str_option(payload, "resume_token") or session.detached_at is not None:
+                await self._handle_resume_message(ws, session, payload)
+            else:
+                await self._send(ws, session, self._ready_event(session))
+            return True
+        if msg_type == CLIENT_MSG_SESSION_RESUME:
+            await self._handle_resume_message(ws, session, payload)
+            return True
+        if msg_type == CLIENT_MSG_CLIENT_ACK:
+            self._handle_client_ack(session, payload)
+            return True
+        if msg_type == CLIENT_MSG_PLAYBACK_DRAINED:
+            # Playback ack. The native loop additionally releases the provider
+            # backpressure event; it is ``None`` on the non-native path, so this
+            # is a plain cursor ack there.
+            self._handle_client_ack(session, payload)
+            if session.native_playback_drained is not None:
+                session.native_playback_drained.set()
+            return True
+        if msg_type == CLIENT_MSG_HERMES_CONFIRM:
+            # Echo-only forward in BOTH paths today: the realtime model answers
+            # confirmations via the hermes_confirm tool, which itself returns
+            # status "forwarded_to_hermes_ui". This client message is the UI
+            # affordance that surfaces the same answer. Not a divergence.
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "hermes.confirmation.forwarded",
+                    "confirmation_id": _str_option(payload, "confirmation_id"),
+                    "answer": _str_option(payload, "answer"),
+                },
+            )
+            return True
+        return False
+
     async def handle_ws(self, request: web.Request) -> web.StreamResponse:
         if not self.enabled:
             raise web.HTTPNotFound(text="realtime agent voice is disabled")
@@ -421,18 +478,9 @@ class RealtimeAgentHandler:
                     continue
 
                 msg_type = str(payload.get("type", "")).strip()
-                if msg_type == CLIENT_MSG_SESSION_START:
-                    if _str_option(payload, "resume_token"):
-                        await self._handle_resume_message(ws, session, payload)
-                    elif session.detached_at is not None:
-                        await self._handle_resume_message(ws, session, payload)
-                    else:
-                        await self._send(ws, session, self._ready_event(session))
-                elif msg_type == CLIENT_MSG_SESSION_RESUME:
-                    await self._handle_resume_message(ws, session, payload)
-                elif msg_type == CLIENT_MSG_CLIENT_ACK:
-                    self._handle_client_ack(session, payload)
-                elif msg_type == CLIENT_MSG_INPUT_AUDIO_APPEND:
+                if await self._handle_common_client_message(ws, session, msg_type, payload):
+                    continue
+                if msg_type == CLIENT_MSG_INPUT_AUDIO_APPEND:
                     byte_count, input_sample_rate = await self._handle_input_audio(
                         ws,
                         session,
@@ -440,6 +488,10 @@ class RealtimeAgentHandler:
                         input_audio_bytes,
                     )
                     input_audio_bytes += byte_count
+                elif msg_type == CLIENT_MSG_INPUT_AUDIO_CLEAR:
+                    # No provider connection on the non-native path; reset the
+                    # accumulated input so a re-record starts clean.
+                    input_audio_bytes = 0
                 elif msg_type in {CLIENT_MSG_INPUT_AUDIO_COMMIT, CLIENT_MSG_RESPONSE_CREATE}:
                     if running is not None and not running.done():
                         await self._send_error(ws, session, "response already running")
@@ -460,16 +512,6 @@ class RealtimeAgentHandler:
                         ws,
                         session,
                         {"type": "hermes.run.cancelled", "session_id": session.chat_session_id},
-                    )
-                elif msg_type == CLIENT_MSG_HERMES_CONFIRM:
-                    await self._send(
-                        ws,
-                        session,
-                        {
-                            "type": "hermes.confirmation.forwarded",
-                            "confirmation_id": _str_option(payload, "confirmation_id"),
-                            "answer": _str_option(payload, "answer"),
-                        },
                     )
                 elif msg_type == CLIENT_MSG_SESSION_CLOSE:
                     session.explicit_close_requested = True
@@ -550,17 +592,8 @@ class RealtimeAgentHandler:
                     continue
 
                 msg_type = str(payload.get("type", "")).strip()
-                if msg_type == CLIENT_MSG_SESSION_START:
-                    if _str_option(payload, "resume_token"):
-                        await self._handle_resume_message(ws, session, payload)
-                    elif session.detached_at is not None:
-                        await self._handle_resume_message(ws, session, payload)
-                    else:
-                        await self._send(ws, session, self._ready_event(session))
-                elif msg_type == CLIENT_MSG_SESSION_RESUME:
-                    await self._handle_resume_message(ws, session, payload)
-                elif msg_type == CLIENT_MSG_CLIENT_ACK:
-                    self._handle_client_ack(session, payload)
+                if await self._handle_common_client_message(ws, session, msg_type, payload):
+                    pass
                 elif msg_type == CLIENT_MSG_INPUT_AUDIO_APPEND:
                     decoded = await self._decode_input_audio_payload(ws, session, payload)
                     if decoded is None:
@@ -648,20 +681,6 @@ class RealtimeAgentHandler:
                             "chat_session_id": session.chat_session_id,
                             "run_id": session.hermes_run_id,
                             "cancelled": True,
-                        },
-                    )
-                elif msg_type == CLIENT_MSG_PLAYBACK_DRAINED:
-                    self._handle_client_ack(session, payload)
-                    if session.native_playback_drained is not None:
-                        session.native_playback_drained.set()
-                elif msg_type == CLIENT_MSG_HERMES_CONFIRM:
-                    await self._send(
-                        ws,
-                        session,
-                        {
-                            "type": "hermes.confirmation.forwarded",
-                            "confirmation_id": _str_option(payload, "confirmation_id"),
-                            "answer": _str_option(payload, "answer"),
                         },
                     )
                 elif msg_type == CLIENT_MSG_SESSION_CLOSE:

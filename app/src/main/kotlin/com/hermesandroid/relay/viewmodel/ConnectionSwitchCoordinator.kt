@@ -5,10 +5,10 @@ import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.ConnectionManager
-import com.hermesandroid.relay.network.HermesApiClient
-import com.hermesandroid.relay.network.RelayUrlDeriver
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.relay.ConnectionManager
+import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow

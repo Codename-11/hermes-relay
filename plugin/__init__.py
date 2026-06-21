@@ -8,12 +8,16 @@ to `plugins.enabled` in ~/.hermes/config.yaml, then restart hermes.
 Run `hermes pair` to generate a QR code for pairing clients.
 """
 
+import logging
+
 from .tools.android_tool import _SCHEMAS, _HANDLERS, _check_requirements
 from .tools.desktop_tool import (
     _SCHEMAS as _DESKTOP_SCHEMAS,
     _HANDLERS as _DESKTOP_HANDLERS,
     _check_tool as _desktop_check_tool,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def register(ctx):
@@ -64,6 +68,15 @@ def register(ctx):
     except Exception:
         # The lifecycle hook is best-effort; never block plugin load.
         pass
+
+    # Apply relay-owned host enhancements. This is intentionally guarded so
+    # older Hermes hosts without the system-prompt seam still load tools/CLI.
+    try:
+        from .enhancements import apply_phase
+
+        apply_phase("plugin_load")
+    except Exception:
+        logger.debug("Relay plugin-load enhancements failed; continuing", exc_info=True)
 
     # Register plugin-native CLI sub-commands: hermes pair + hermes relay.
     # Wrapped in try/except so the plugin still works on older hermes-agent

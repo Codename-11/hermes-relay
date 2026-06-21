@@ -4,9 +4,10 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -46,8 +49,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.network.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.ServerCapabilities
+import com.hermesandroid.relay.ui.components.ChatTransportStatus
+import com.hermesandroid.relay.ui.components.ChatTransportTier
+import com.hermesandroid.relay.ui.components.ChatTransportTone
+import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
+import com.hermesandroid.relay.ui.components.textColor
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -71,11 +82,12 @@ fun ChatSettingsScreen(
     val appContextSafetyStatus by connectionViewModel.appContextSafetyStatus.collectAsState()
     // === END PHASE3-status ===
     val parseToolAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
+    val showSystemMessages by connectionViewModel.showSystemMessages.collectAsState()
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val maxMessageLength by connectionViewModel.maxMessageLength.collectAsState()
 
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     Scaffold(
         topBar = {
@@ -164,6 +176,32 @@ fun ChatSettingsScreen(
                         Switch(
                             checked = closeDrawerOnSend,
                             onCheckedChange = { connectionViewModel.setCloseDrawerOnSend(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    val recentPromptsEnabled by
+                        connectionViewModel.chatRecentPromptsEnabled.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Recent prompt chips",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Show your recent messages as tappable chips above the composer to send them again. Off by default.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = recentPromptsEnabled,
+                            onCheckedChange = { connectionViewModel.setChatRecentPromptsEnabled(it) }
                         )
                     }
 
@@ -428,6 +466,17 @@ fun ChatSettingsScreen(
                     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
                     val resolvedStreamingEndpoint =
                         connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
+                    val transportStatus = remember(
+                        streamingEndpoint,
+                        gatewayAvailability,
+                        serverCaps,
+                    ) {
+                        resolveChatTransportStatus(
+                            streamingEndpoint = streamingEndpoint,
+                            gatewayAvailability = gatewayAvailability,
+                            serverCapabilities = serverCaps,
+                        )
+                    }
 
                     // Parse tool annotations toggle (text-stream endpoints only)
                     val isTextAnnotationMode = resolvedStreamingEndpoint == "sessions" ||
@@ -479,6 +528,51 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
+                    // Show system messages (debug) — render the server's hidden
+                    // role:system steering markers ("[System: …]" model /
+                    // personality-change notes). Off by default for desktop/TUI
+                    // parity; on to inspect what the server injects.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "Show system messages",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "Debug",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiary,
+                                    modifier = Modifier
+                                        .background(
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            Text(
+                                text = "Show the server's hidden \"[System: …]\" markers " +
+                                    "(model / personality changes). Off matches the desktop/TUI.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = showSystemMessages,
+                            onCheckedChange = { connectionViewModel.setShowSystemMessages(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
                     // Streaming endpoint selector
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
@@ -515,13 +609,14 @@ fun ChatSettingsScreen(
                         if (gatewayAvailability == GatewayAvailability.SignInRequired &&
                             (streamingEndpoint == "gateway" || streamingEndpoint == "auto")
                         ) {
-                            Text(
-                                text = "Sign in via the Manage tab to enable Gateway streaming " +
-                                    "(live thinking).",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.tertiary
-                            )
+                            GatewaySignInCallout()
                         }
+
+                        TransportTierLadder(
+                            status = transportStatus,
+                            serverCapabilities = serverCaps,
+                            gatewayAvailability = gatewayAvailability,
+                        )
 
                         val endpointOptions = listOf("auto", "gateway", "sessions", "completions", "runs")
                         val endpointLabels = listOf("Auto", "Gateway", "Sessions", "Chat", "Runs")
@@ -680,3 +775,145 @@ fun ChatSettingsScreen(
         }
     }
 }
+
+@Composable
+private fun TransportTierLadder(
+    status: ChatTransportStatus,
+    serverCapabilities: ServerCapabilities,
+    gatewayAvailability: GatewayAvailability,
+) {
+    val tiers = listOf(
+        ChatTransportTier.Completions,
+        ChatTransportTier.Runs,
+        ChatTransportTier.Sessions,
+        ChatTransportTier.Gateway,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            tiers.forEach { tier ->
+                TransportTierCell(
+                    tier = tier,
+                    active = status.tier == tier,
+                    available = tierAvailable(
+                        tier = tier,
+                        serverCapabilities = serverCapabilities,
+                        gatewayAvailability = gatewayAvailability,
+                    ),
+                    fallback = status.tier == tier && status.tone == ChatTransportTone.Fallback,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        Text(
+            text = status.reason,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+            color = status.textColor(),
+        )
+    }
+}
+
+@Composable
+private fun TransportTierCell(
+    tier: ChatTransportTier,
+    active: Boolean,
+    available: Boolean,
+    fallback: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val contentColor = when {
+        active && fallback -> MaterialTheme.colorScheme.onTertiaryContainer
+        active -> MaterialTheme.colorScheme.onPrimaryContainer
+        available -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+    }
+    val containerColor = when {
+        active && fallback -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f)
+        active -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+        available -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+        else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.28f)
+    }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(7.dp),
+        color = containerColor,
+        contentColor = contentColor,
+        border = BorderStroke(
+            width = 1.dp,
+            color = when {
+                active && fallback -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.62f)
+                active -> MaterialTheme.colorScheme.primary.copy(alpha = 0.62f)
+                else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.36f)
+            },
+        ),
+    ) {
+        Text(
+            text = tier.ladderLabel(),
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (active) {
+                FontWeight.Bold
+            } else {
+                FontWeight.Medium
+            }),
+            color = contentColor,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 7.dp),
+        )
+    }
+}
+
+@Composable
+private fun GatewaySignInCallout() {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.58f),
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Info,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "Gateway needs Manage sign-in",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                )
+                Text(
+                    text = "Sign in once from the Manage tab to unlock live thinking over /api/ws.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+private fun tierAvailable(
+    tier: ChatTransportTier,
+    serverCapabilities: ServerCapabilities,
+    gatewayAvailability: GatewayAvailability,
+): Boolean =
+    when (tier) {
+        ChatTransportTier.Completions -> serverCapabilities.healthy && serverCapabilities.portable
+        ChatTransportTier.Runs -> serverCapabilities.healthy && serverCapabilities.runs
+        ChatTransportTier.Sessions -> serverCapabilities.healthy && serverCapabilities.sessionsChatStream
+        ChatTransportTier.Gateway -> gatewayAvailability == GatewayAvailability.Ready
+        ChatTransportTier.Offline -> false
+    }
+
+private fun ChatTransportTier.ladderLabel(): String =
+    when (this) {
+        ChatTransportTier.Gateway -> "Gateway"
+        ChatTransportTier.Sessions -> "Sessions"
+        ChatTransportTier.Completions -> "Completions"
+        ChatTransportTier.Runs -> "Runs"
+        ChatTransportTier.Offline -> "offline"
+    }

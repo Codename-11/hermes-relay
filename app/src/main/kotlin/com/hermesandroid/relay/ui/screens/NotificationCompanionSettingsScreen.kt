@@ -118,33 +118,7 @@ fun NotificationCompanionSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
 
-            // --- About ---
-            NotifSectionCard(title = "About") {
-                Text(
-                    text = (
-                        "Lets your Hermes assistant help you triage " +
-                            "notifications. When enabled, your phone " +
-                            "forwards each notification's app, title, " +
-                            "and text to your paired Hermes server " +
-                            "through the Relay pairing used by phone tools."
-                        ),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = (
-                        "Requires Android's notification access " +
-                            "permission. You can grant or revoke it " +
-                            "at any time in Android Settings. This is " +
-                            "the same permission Wear OS, Android " +
-                            "Auto, and Tasker use."
-                        ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            // --- Status ---
+            // --- Status --- (action first: the user came to turn it on)
             NotifSectionCard(title = "Status") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -207,6 +181,32 @@ fun NotificationCompanionSettingsScreen(
                         if (granted) "Manage in Android Settings" else "Open Android Settings",
                     )
                 }
+            }
+
+            // --- About ---
+            NotifSectionCard(title = "About") {
+                Text(
+                    text = (
+                        "Lets your Hermes assistant help you triage " +
+                            "notifications. When enabled, your phone " +
+                            "forwards each notification's app, title, " +
+                            "and text to your paired Hermes server " +
+                            "through the Relay pairing used by phone tools."
+                        ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = (
+                        "Requires Android's notification access " +
+                            "permission. You can grant or revoke it " +
+                            "at any time in Android Settings. This is " +
+                            "the same permission Wear OS, Android " +
+                            "Auto, and Tasker use."
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             // --- Test (last received) ---

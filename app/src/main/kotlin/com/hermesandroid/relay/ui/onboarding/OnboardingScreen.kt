@@ -25,6 +25,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Terminal
@@ -54,9 +55,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.ConnectionWizard
+import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
+import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -100,6 +102,7 @@ fun OnboardingScreen(
     connectionViewModel: ConnectionViewModel,
     onComplete: () -> Unit,
     onManageSignIn: () -> Unit = onComplete,
+    onOpenPermissions: () -> Unit = {},
 ) {
     val pages = remember {
         buildList {
@@ -182,7 +185,9 @@ fun OnboardingScreen(
                         OnboardingPage.Welcome -> WelcomePage()
                         OnboardingPage.Chat -> ChatPage()
                         OnboardingPage.Manage -> ManagePage()
-                        OnboardingPage.Power -> PowerToolsPage()
+                        OnboardingPage.Power -> PowerToolsPage(
+                            onOpenPermissions = onOpenPermissions,
+                        )
                         OnboardingPage.Connect -> ConnectPage(
                             connectionViewModel = connectionViewModel,
                             onComplete = onComplete,
@@ -262,12 +267,14 @@ private fun WelcomePage() {
         transparentHero = true,
         heroContent = {
             Box(modifier = Modifier.fillMaxSize()) {
-                MorphingSphere(
+                LocalAgentAvatar.current.Render(
+                    state = AvatarRenderState(
+                        state = SphereState.Idle,
+                        intensity = 0.12f,
+                    ),
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 4.dp, vertical = 2.dp),
-                    state = SphereState.Idle,
-                    intensity = 0.12f,
                 )
 
                 Box(
@@ -315,11 +322,11 @@ private fun WelcomePage() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SetupPathSummary(
-                label = "Standard",
+                label = "Chat & Manage",
                 description = "Connect to your running Hermes dashboard and API. No Relay install or pairing required.",
             )
             SetupPathSummary(
-                label = "Advanced",
+                label = "Power tools",
                 description = "Add Hermes-Relay for Terminal, Bridge, relay sessions, and channel grants.",
             )
         }
@@ -402,7 +409,7 @@ private fun SetupPathSummary(
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.width(78.dp),
+                modifier = Modifier.width(96.dp),
             )
             Text(
                 text = description,
@@ -469,7 +476,9 @@ private fun ManagePage() {
 }
 
 @Composable
-private fun PowerToolsPage() {
+private fun PowerToolsPage(
+    onOpenPermissions: () -> Unit,
+) {
     OnboardingPage(
         icon = Icons.Outlined.Terminal,
         title = "Power tools",
@@ -491,6 +500,18 @@ private fun PowerToolsPage() {
                 label = "Realtime",
                 description = "Provider-native realtime voice agent and profile-aware voice providers.",
             )
+            OutlinedButton(
+                onClick = onOpenPermissions,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Security,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Review permissions")
+            }
         }
     }
 }

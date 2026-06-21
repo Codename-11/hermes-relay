@@ -1551,7 +1551,7 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
      * googlePlay as a dialer-opener" per the plan.
      *
      * The destructive-verb confirmation modal is fired in
-     * [com.hermesandroid.relay.network.handlers.BridgeCommandHandler]
+     * [com.hermesandroid.relay.network.relay.BridgeCommandHandler]
      * before we even get here — by the time this method runs, the user
      * has explicitly approved the call.
      */

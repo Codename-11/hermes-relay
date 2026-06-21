@@ -13,11 +13,12 @@ then `docs/spec.md` and `docs/decisions.md`.
 - Release process → **[RELEASE.md](RELEASE.md)**
 - Contributor setup → **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - `android_*` toolset + MCP → **[docs/mcp-tooling.md](docs/mcp-tooling.md)**
+- Follow-ups / deferred work / known gaps → **[TODO.md](TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
 
 ## Non-negotiables (the short list)
 
-- **Standard path = vanilla upstream only.** The default (no-plugin) connection —
-  chat via the API server, standard voice via the Hermes dashboard — must work
+- **Vanilla Hermes path = upstream-only.** The default (no-plugin) connection —
+  chat via the API server, Vanilla Hermes voice via the Hermes dashboard — must work
   against unmodified upstream hermes-agent. Server-side needs go through upstream
   PRs or the optional relay plugin, never fork patches.
 - **Verify endpoints against upstream** (`gateway/platforms/api_server.py` /
@@ -26,6 +27,10 @@ then `docs/spec.md` and `docs/decisions.md`.
   `--no-ff` merges, version bumps at release-prep on `dev`, tags cut from `main`.
 - **Android:** Jetpack Compose only (no XML), kotlinx.serialization (no Gson),
   OkHttp (no Ktor), `wss://` only. Run `./gradlew lint` before pushing Kotlin.
+- **Plugin (Python 3.11+):** aiohttp + asyncio (no threading), type hints
+  everywhere, structured `logging` (no `print`). **Desktop CLI (Node ≥21):**
+  zero runtime deps, strict TS + ES modules, ship compiled `dist/`. Full
+  per-language style and the dev loop live in CLAUDE.md → "Code Style".
 
 ## Public-repo writing hygiene
 

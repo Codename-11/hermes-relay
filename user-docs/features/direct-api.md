@@ -1,6 +1,6 @@
-# Standard Chat Transport
+# Vanilla Hermes Chat Transport
 
-Hermes-Relay talks to your Hermes server's own surfaces for chat — no Hermes-Relay relay plugin is ever in the chat path. By default it **prefers the dashboard gateway** (`/api/ws`, the same `tui_gateway` transport hermes-desktop and the TUI speak) when your Manage sign-in is ready, because that's the only standard path with **live thinking/reasoning** as it streams. When the gateway isn't available — no dashboard auth yet, an older server, or a forced override — it **falls back to the API server's SSE routes**.
+Hermes-Relay talks to your Hermes server's own surfaces for chat — no Hermes-Relay relay plugin is ever in the chat path. By default it **prefers the dashboard gateway** (`/api/ws`, the same `tui_gateway` transport hermes-desktop and the TUI speak) when your Manage sign-in is ready, because that's the only Vanilla Hermes path with **live thinking/reasoning** as it streams. When the gateway isn't available — no dashboard auth yet, an older server, or a forced override — it **falls back to the API server's SSE routes**.
 
 ## How It Works
 
@@ -9,7 +9,7 @@ Phone (WS)       → Hermes dashboard (:9119)    [preferred — gateway chat, li
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [fallback — sessions / runs / completions]
 ```
 
-Both paths are **standard upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The optional Relay plugin is never involved in chat — it only adds terminal, device control, media, and the like.
+Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The optional Relay plugin is never involved in chat — it only adds terminal, device control, media, and the like.
 
 When it falls back, the app uses the Hermes `/api/sessions` REST API:
 
@@ -57,4 +57,4 @@ On the API-server fallback, chat responses stream via Server-Sent Events with th
 
 ## Why two paths?
 
-Chat always rides standard upstream Hermes — never the Hermes-Relay relay plugin. The gateway `/api/ws` path is preferred because it's the only standard surface with **live** reasoning streaming and full attachment support, matching what hermes-desktop and the Hermes TUI use. The API-server SSE path is the resilient fallback: it needs only the API server (no dashboard sign-in), works on older builds, and aligns with how other Hermes frontends talk to the API. The app probes both and picks the best available on each connect, so you get live thinking when your server can serve it and a working chat either way.
+Chat always rides vanilla upstream Hermes — never the Hermes-Relay relay plugin. The gateway `/api/ws` path is preferred because it's the only Vanilla Hermes surface with **live** reasoning streaming and full attachment support, matching what hermes-desktop and the Hermes TUI use. The API-server SSE path is the resilient fallback: it needs only the API server (no dashboard sign-in), works on older builds, and aligns with how other Hermes frontends talk to the API. The app probes both and picks the best available on each connect, so you get live thinking when your server can serve it and a working chat either way.

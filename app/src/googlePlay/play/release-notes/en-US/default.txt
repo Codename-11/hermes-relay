@@ -1,0 +1,7 @@
+v1.2.0 — Make it yours.
+
+• Eight app themes, swappable sphere skins, and animated agent "pets" that react to what your agent is doing.
+• See which streaming path you're on, plus a "What the agent sees" sheet showing the agent's exact context.
+• ~3× faster cold start and honest loading states.
+• In-app crash reporting with one-tap bug reports.
+• Fixes: QR pairing on foldables, server-image & PDF crashes, in-chat model picks now apply.

@@ -2,7 +2,13 @@ const SDK = window.__HERMES_PLUGIN_SDK__;
 const { React } = SDK;
 const { useState, useEffect, useCallback } = SDK.hooks;
 
-import { getOverview, getSessions, revokeSession } from "../lib/api.js";
+import {
+  getAgentContext,
+  getOverview,
+  getSessions,
+  putEnvSetting,
+  revokeSession,
+} from "../lib/api.js";
 import { relativeTime, ttlCountdown, uptime, shortToken } from "../lib/formatters.js";
 import PairDialog from "../components/PairDialog.jsx";
 import {
@@ -12,6 +18,7 @@ import {
   CardDescription,
   Button,
   Badge,
+  Switch,
   Table,
   TableHeader,
   TableBody,
@@ -25,7 +32,20 @@ const {
   CardHeader,
   CardTitle,
   CardContent,
+  Label,
 } = SDK.components;
+
+const AGENT_CONTEXT_MASTER_KEY = "RELAY_AGENT_CONTEXT_ENABLED";
+const AGENT_CONTEXT_MEDIA_KEY = "RELAY_CONTEXT_MEDIA_SENSITIVITY";
+
+// Mirror plugin/config.py strict_bool: recognized true tokens → true, anything
+// else → false, and UNSET (undefined/null) → the default. These gates default
+// ON, so an absent env var must read as enabled (not a stale "off").
+const AGENT_CONTEXT_TRUE_TOKENS = new Set(["1", "true", "yes", "on"]);
+function coerceAgentContextFlag(value, dflt) {
+  if (value === undefined || value === null) return dflt;
+  return AGENT_CONTEXT_TRUE_TOKENS.has(String(value).trim().toLowerCase());
+}
 
 function valueText(value) {
   if (value === null || value === undefined) return "";
@@ -205,23 +225,112 @@ function StatCard({ label, value, hint }) {
   );
 }
 
+function ToggleRow({ id, title, description, checked, disabled, onChange }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-md border border-border/70 p-3">
+      <div className="space-y-1">
+        <Label htmlFor={id} className="text-sm font-medium">
+          {title}
+        </Label>
+        {description ? (
+          <div className="text-xs text-muted-foreground">{description}</div>
+        ) : null}
+      </div>
+      <Switch
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
+      />
+    </div>
+  );
+}
+
+function AgentContextCard({ data, saving, onToggle }) {
+  const settings = (data && data.settings) || {};
+  const injected = (data && data.injected) || {};
+  const blocks = Array.isArray(injected.blocks) ? injected.blocks : [];
+  const masterEnabled = coerceAgentContextFlag(settings[AGENT_CONTEXT_MASTER_KEY], true);
+  const mediaEnabled = coerceAgentContextFlag(settings[AGENT_CONTEXT_MEDIA_KEY], true);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Agent context</CardTitle>
+        <CardDescription>
+          On by default for relay installs — injects an instruction into the agent's system
+          prompt (server-side) so it can mark sensitive media. Turn off to opt out; removable
+          by uninstalling the relay plugin.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ToggleRow
+          id="relay-agent-context-enabled"
+          title="Enable Agent context injection"
+          description="Master toggle for relay-owned server-side prompt blocks."
+          checked={masterEnabled}
+          disabled={saving === AGENT_CONTEXT_MASTER_KEY}
+          onChange={(value) => onToggle(AGENT_CONTEXT_MASTER_KEY, value)}
+        />
+        <ToggleRow
+          id="relay-context-media-sensitivity"
+          title="Media sensitivity block"
+          description="Ask the agent to mark private, NSFW, or spoiler media with client-visible sensitivity markers."
+          checked={mediaEnabled}
+          disabled={saving === AGENT_CONTEXT_MEDIA_KEY}
+          onChange={(value) => onToggle(AGENT_CONTEXT_MEDIA_KEY, value)}
+        />
+        <div className="rounded-md border border-border/70 p-3">
+          <div className="text-sm font-medium">Server-side audit</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {injected.enabled ? "Context injection enabled." : "Context injection disabled."}
+          </div>
+          {blocks.length === 0 ? (
+            <div className="mt-2 text-xs text-muted-foreground">
+              No blocks would be injected on the next turn.
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {blocks.map((block) => (
+                <div key={block.name} className="rounded-md bg-muted/40 p-2">
+                  <div className="text-xs font-medium">{block.name}</div>
+                  <pre className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+                    {block.text}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function RelayManagement({ autoRefresh }) {
   const [overview, setOverview] = useState(null);
   const [sessions, setSessions] = useState(null);
+  const [agentContext, setAgentContext] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [pairOpen, setPairOpen] = useState(false);
   const [revoking, setRevoking] = useState(null);
   const [copied, setCopied] = useState(null);
+  const [contextSaving, setContextSaving] = useState(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [ov, se] = await Promise.all([getOverview(), getSessions()]);
+      const [ov, se, ctx] = await Promise.all([
+        getOverview(),
+        getSessions(),
+        getAgentContext(),
+      ]);
       setOverview(ov || null);
       // Relay /sessions returns either {sessions:[...]} or [...] — handle both.
       const list = Array.isArray(se) ? se : (se && se.sessions) || [];
       setSessions(list);
+      setAgentContext(ctx || null);
     } catch (err) {
       setError(err && err.message ? err.message : String(err));
     } finally {
@@ -271,6 +380,19 @@ export default function RelayManagement({ autoRefresh }) {
     }
   }, []);
 
+  const onToggleAgentContext = useCallback(async (key, checked) => {
+    setContextSaving(key);
+    try {
+      await putEnvSetting(key, checked ? "1" : "0");
+      const ctx = await getAgentContext();
+      setAgentContext(ctx || null);
+    } catch (err) {
+      window.alert(`Agent context update failed: ${err && err.message ? err.message : err}`);
+    } finally {
+      setContextSaving(null);
+    }
+  }, []);
+
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading overview…</div>;
   }
@@ -310,6 +432,12 @@ export default function RelayManagement({ autoRefresh }) {
           hint="pending commands / media tokens"
         />
       </div>
+
+      <AgentContextCard
+        data={agentContext}
+        saving={contextSaving}
+        onToggle={onToggleAgentContext}
+      />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

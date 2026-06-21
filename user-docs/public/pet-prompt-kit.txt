@@ -1,0 +1,290 @@
+==================================================================
+HERMES-RELAY — PET PROMPT KIT
+Turn your own avatar into a reactive animated "pet" for the agent.
+Full guide: docs site → "Custom Avatars", or in-app Settings → Appearance.
+==================================================================
+
+A pet is pure data: PNG still frames or sprite sheets plus a small pet.json
+manifest. An AI image model can make every image for you, starting from a
+picture of your own avatar. No drawing app required.
+
+
+------------------------------------------------------------------
+STEP 1 — LOCK YOUR CHARACTER  (two moves that make any avatar work)
+------------------------------------------------------------------
+• USE A REFERENCE IMAGE. Attach a picture of your avatar to the image model
+  and tell it to keep the face/outfit identical across every still or sheet.
+  This is the #1 lever for consistency — without it the character drifts between
+  states or frames.
+
+• PICK ONE SIGNATURE ACCENT. Choose a single glow/outline color that brightens
+  when the agent is busy (a soft aura works well). That makes the pet look
+  reactive without redrawing it — only the accent changes between states.
+
+
+------------------------------------------------------------------
+STEP 2A — EASIER: GENERATE EXPRESSIVE STILL FRAMES
+------------------------------------------------------------------
+Use this path for maximum character fidelity and minimum setup. A still pack has
+no animation loop, so make each state read through expression, hand pose,
+contained props/accent placement, and accent brightness while keeping the
+character identical.
+
+Paste this prompt once per state. Keep CHARACTER / STYLE lines identical every
+time; change ONLY STATE and STILL CUE.
+
+  Create one square portrait PNG of {YOUR AVATAR — e.g. "the character in the
+  attached reference image; keep the face, hair, outfit, colors, and proportions
+  identical"},
+  drawn as {STYLE — e.g. "a clean flat-shaded illustration with crisp outlines,
+  half-body, facing forward"}.
+  This is a single still frame for the agent state: {STATE}.
+  Make the state visually legible through expression, eye direction, hand pose,
+  contained prop/accent placement, and accent brightness: {STILL CUE — see the
+  list below}.
+  Keep the character's identity and anchor identical to the reference and to the
+  other states — same face, colors, proportions, size, outfit, canvas crop, and
+  head/shoulder position. Do not change body scale or framing between states.
+  Use a square final canvas. For the sharpest full-width mobile rendering,
+  generate native 2048x2048 art; 1024x1024 is a lighter default. Do not generate
+  a tiny 256x256 still and upscale it afterward.
+  Keep all visible pixels inside a centered safe art box with transparent/chroma
+  margin on every side: roughly 75-85% of the canvas for the character/effects,
+  leaving at least 10-12% empty margin (about 192-256 px on a 2048 canvas, or
+  96-128 px on a 1024 canvas). Hair, hands, props, sparkles, glow, aura, and
+  shadows all count as visible pixels and must stay inside that safe box.
+  Use a flat #00ff00 chroma-key background so it can be removed cleanly after
+  generation. No scenic background, no text, no labels, no frame borders.
+
+STILL CUE lines — remove the chroma key, save each result as PNG with alpha, and
+put it under the given file name:
+
+  idle.png      (required) calm neutral expression, relaxed shoulders, soft low
+                accent
+  thinking.png  thoughtful eyes, hand near chin or temple, small contained
+                spark/accent
+  working.png   focused expression, small contained gear/tool/light held close
+                to the body, brightest accent     [lights the Tools badge]
+  writing.png   eyes down, hand poised as if writing/typing, short contained
+                light stroke near the hand
+  speaking.png  mouth visibly speaking, direct engaged expression, subtle
+                contained accent near the face
+  listening.png attentive expression, hand near ear, accent pulled inward like a
+                listening ring
+  error.png     concerned or startled expression, small contained warning
+                accent, no huge symbols
+  greet.png     (one-shot) friendly raised-hand wave, warm smile, contained
+                accent bloom
+  done.png      (one-shot) celebratory smile, open hands or small contained
+                sparkle/accent near the shoulders
+
+
+------------------------------------------------------------------
+STEP 2B — ANIMATED: GENERATE ONE SPRITE SHEET PER STATE
+------------------------------------------------------------------
+Paste this prompt once per state. Keep the CHARACTER / STYLE / ACCENT lines
+identical every time; change ONLY the "Animate across the frames" line.
+
+  A sprite sheet of {YOUR AVATAR — e.g. "the character in the attached
+  reference image; keep the face, hair, and outfit identical"},
+  drawn as {STYLE — e.g. "a clean flat-shaded illustration with crisp
+  outlines, half-body, facing forward"}.
+  Give it a signature {ACCENT — e.g. "soft teal-to-violet aura"} that reads as
+  "alive" and grows brighter when it is more active.
+  Lay out 16 frames in a 4x4 grid, evenly spaced, with each cell exactly
+  256x256 px.
+  Treat each cell as the final transparent canvas, not as the full art box: keep
+  all visible pixels inside a centered 200-208 px safe art box, leaving at least
+  24 px of empty margin on every side (28 px preferred). Hair, hands, props,
+  sparkles, glow, aura, and shadows all count as visible pixels and must stay
+  inside that safe box.
+  Animate across the frames: {MOTION — see the list below}.
+  Keep the character's identity and anchor identical in every cell — same face,
+  colors, proportions, size, and head/shoulder position (it never drifts up/down
+  or grows/shrinks and always stays fully inside its cell). But the 16 cells are
+  an ANIMATION, not copies: the moving parts (eyes, mouth, hands, hair, accent)
+  must visibly change from cell to cell, sweeping smoothly through the full
+  motion below across all 16 frames (a blink goes open->half->shut->half->open;
+  breathing clearly rises then settles). Adjacent frames must be noticeably
+  different in the animated areas — never repeat a pose.
+  Use a flat #00ff00 chroma-key background in every cell so it can be removed
+  cleanly after generation. No scenic background, no text, no labels, no grid
+  lines, no frame borders.
+
+MOTION lines — remove the chroma key, save each result as PNG with alpha, and
+put it under the given file name:
+
+  idle.png      (required) a calm breathing loop: tiny chest/coat expansion
+                and one blink; the head/shoulder anchor stays locked; the
+                accent pulses softly
+  thinking.png  eyes glancing upward in thought, a tiny glowing spark contained
+                near the temple; a cooler, dimmer accent
+  working.png   a focused, busy pose turning a small glowing gear/tool held
+                close to the body inside the safe box; the accent at its
+                brightest and steady     [lights the Tools badge]
+  writing.png   a quick scribbling/typing motion, eyes down, short contained
+                light strokes close to the hand
+  speaking.png  mouth opening and closing as if talking, no head bob; contained
+                accent rings ripple near the face in time
+  listening.png attentive eyes, a hand near the ear without leaning the body;
+                the accent drawing inward into a soft contained ring
+  error.png     a small startled "oops": wide eyes, a tiny sweat-drop, the
+                accent flickering briefly to a dim red
+  greet.png     (one-shot) a small friendly wave that stays inside the safe box;
+                head/shoulders locked; accent blooms gently
+  done.png      (one-shot) a happy celebration: brighter smile, small contained
+                sparkles near the shoulders or hands; accent blooms without
+                reaching the cell edge
+
+Only idle is required. Add as many of the others as you want.
+
+
+------------------------------------------------------------------
+STEP 3 — pet.json   (save beside the PNGs in a folder, e.g. my-pet/)
+------------------------------------------------------------------
+
+STATIC PER-STATE MANIFEST:
+
+{
+  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "schemaVersion": 1,
+  "id": "my-pet",
+  "label": "My Pet",
+  "reactive": { "voice": true, "intensity": true },
+  "states": {
+    "idle":      { "frames": ["idle.png"],      "fps": 1 },
+    "thinking":  { "frames": ["thinking.png"],  "fps": 1 },
+    "working":   { "frames": ["working.png"],   "fps": 1 },
+    "writing":   { "frames": ["writing.png"],   "fps": 1 },
+    "speaking":  { "frames": ["speaking.png"],  "fps": 1 },
+    "listening": { "frames": ["listening.png"], "fps": 1 },
+    "error":     { "frames": ["error.png"],     "fps": 1 },
+    "greet":     { "frames": ["greet.png"],     "fps": 1 },
+    "done":      { "frames": ["done.png"],      "fps": 1 }
+  }
+}
+
+The sustained states (idle, thinking, working, writing, speaking, listening,
+error) stay visible for as long as the app is actually in that state. Still
+greet/done reactions are event clips, so the app holds one-frame reactions for
+about 1.8 seconds before returning to the current sustained state.
+
+ANIMATED SPRITE-SHEET MANIFEST:
+
+{
+  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "schemaVersion": 1,
+  "id": "my-pet",
+  "label": "My Pet",
+  "reactive": { "voice": true, "intensity": true },
+  "states": {
+    "idle":      { "sheet": "idle.png",      "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 8 },
+    "thinking":  { "sheet": "thinking.png",  "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "working":   { "sheet": "working.png",   "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "writing":   { "sheet": "writing.png",   "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "speaking":  { "sheet": "speaking.png",  "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "listening": { "sheet": "listening.png", "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 8 },
+    "error":     { "sheet": "error.png",     "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "greet":     { "sheet": "greet.png",     "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "done":      { "sheet": "done.png",      "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 }
+  }
+}
+
+For sheets, frameWidth/frameHeight = the size of ONE cell. frameCount = number
+of cells (rows x cols). Any grid works — 4x4 (16), 3x3 (9), even 1x16 — as long
+as frameCount matches and the sheet is cols*frameWidth by rows*frameHeight.
+In either manifest style, shipping "working" lights the Tools badge;
+"intensity": true lights Activity. Only idle is required; delete the rows you
+didn't make.
+
+The "$schema" line is optional: it gives editors (and AI agents) autocomplete
+and validation against the published pet schema. The app ignores it.
+
+
+------------------------------------------------------------------
+STEP 4 — PACKAGE FOR IMPORT
+------------------------------------------------------------------
+The app imports a .zip pet pack. The safest shape is one top-level folder:
+
+  my-pet.zip
+    my-pet/
+      pet.json
+      idle.png
+      thinking.png
+      ...
+
+From this repository, build that zip with:
+
+  node scripts/package-pet.mjs my-pet/ --out my-pet.zip
+
+The packer validates pet.json, checks that referenced files exist, and leaves
+unreferenced QA/temp files out of the zip. The Custom Avatars docs page also has
+a browser-only Pet Pack Builder that does the same thing without uploading files.
+
+
+------------------------------------------------------------------
+STEP 5 — INSTALL
+------------------------------------------------------------------
+In the app, go to Settings -> Appearance -> Agent avatar -> Add a pet, then pick
+my-pet.zip. The app also accepts a single PNG/JPG as a one-frame static avatar.
+Pet zips may put pet.json at the archive root or inside one top-level folder.
+
+For adb/manual testing, you can still push the unpacked folder:
+
+  # sideload flavor
+  adb push my-pet/ /sdcard/Android/data/com.axiomlabs.hermesrelay.sideload/files/pets/
+
+  # googlePlay flavor: drop the .sideload suffix
+  adb push my-pet/ /sdcard/Android/data/com.axiomlabs.hermesrelay/files/pets/
+
+Restart the app, then: Settings -> Appearance -> Agent avatar -> pick your pet.
+
+
+------------------------------------------------------------------
+GOTCHAS
+------------------------------------------------------------------
+• TRANSPARENCY: if the model bakes a background in, remove it and re-save as a
+  PNG WITH ALPHA, or the pet renders inside an opaque box. For generation, ask
+  for a flat #00ff00 chroma-key background and remove it afterward; that is more
+  reliable than asking the model for true transparency.
+• SAFE BOX / CLIPPING: a 256px cell is the canvas, not the character size. Keep
+  all visible pixels inside a centered 200-208px art box, with at least 24px
+  empty margin on every side (28px preferred). Hair, hands, props, glow, aura,
+  sparkles, and shadows count as visible pixels.
+• CONSISTENCY + REGISTRATION: reuse the reference image, keep the character/
+  style/accent lines identical, lock a fixed seed. Beyond appearance, keep the
+  character REGISTERED — same position, scale, and framing in every cell — or it
+  floats/jumps as it plays and the next frame's edge bleeds in. Stress "lock the
+  head and shoulders in place." If a generated 4x4 drifts, keep the 16 cells and
+  use a locked-base hybrid pass first: one stable state-specific frame, then
+  animate only blink, mouth, glow, sparkles, or a contained prop. Reduce to 3x3
+  or 2x2 only when frame count is negotiable.
+• NO MOTION IN AN ANIMATED SHEET: the opposite failure — over-stress "identical/locked" and
+  the model copies one pose 16x, so the pet looks frozen even though it cycles.
+  The 16 cells are an ANIMATION, not copies: the moving parts (eyes, mouth, hands,
+  hair, accent) must visibly change cell to cell, sweeping the full arc (blink
+  open->shut->open; breath rise->settle). Adjacent frames must be noticeably
+  different. If a contact sheet looks like 16 identical tiles, regenerate
+  demanding clearer per-frame change.
+• RESOLUTION: one asset set serves every surface (contain-fit), so size for the
+  BIGGEST one — the full-screen chat background. For static per-state packs,
+  1024x1024 stills are a light default and native 2048x2048 stills are the
+  sharper target for full-width, high-DPI phones. Do not generate a 256px still
+  and upscale it afterward; that makes a bigger file, not real detail. For
+  animated sheets, 256px cells (1024x1024 sheet for 4x4) are a good default, and
+  512px cells (2048x2048 sheet) add crispness. A sheet decodes as one bitmap, so
+  big cells are cheaper there than as many separate frame files. (Voice mode is
+  small, so it's always sharp.) Speed is also tunable live in Settings ->
+  Appearance.
+• SMOOTHNESS: comes from frame COUNT, not fps. This kit defaults to 4x4 (16
+  frames) for fluid motion. If the character drifts between cells, do not try to
+  hide it with fps; fix registration with the locked-base hybrid approach above.
+  Match fps to count so the loop stays sane: 16 frames at fps 8 ≈ 2s; 4 frames
+  at fps 8 ≈ 0.5s.
+• STATIC PER-STATE PACKS: one-frame "frames" clips are first-class. Generate
+  nine expressive still PNGs and reference each as "frames": ["idle.png"]
+  instead of a sheet. Use 1024x1024 for a light pack or native 2048x2048 for
+  crisp expanded mobile rendering. No in-state motion, but every state is
+  visibly distinct, including brief still greet/done reactions.
+• An invalid/incomplete pack is simply skipped in the picker (check logcat,
+  tag PetLoader) — one bad pack never breaks the rest.

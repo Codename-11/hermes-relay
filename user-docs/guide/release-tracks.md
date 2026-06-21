@@ -4,9 +4,31 @@ Hermes-Relay ships in **two flavors** built from the same codebase. Most users w
 
 ## TL;DR
 
-- **Google Play** — easy install, automatic updates, every chat/profile/voice feature, terminal/TUI relay, media handoff, notification companion, relay sessions, and diagnostics. It has **no AccessibilityService** and cannot read the screen, tap, type, swipe, capture screenshots, send SMS, make calls, access contacts/location, or perform unattended phone control.
+- **Google Play** — easy install, automatic updates, every chat/profile/voice feature, terminal/TUI relay, media handoff, notification companion, relay sessions, and diagnostics. The relay-backed ones (terminal, media, notifications) need the [Relay plugin](#how-the-pieces-combine) paired to your Hermes host. It has **no AccessibilityService** and cannot read the screen, tap, type, swipe, capture screenshots, send SMS, make calls, access contacts/location, or perform unattended phone control.
 - **Sideload** — manual install from GitHub Releases, all of the above plus AccessibilityService-backed Device Control: screen reading, taps, typing, gestures, screenshots, voice-routed bridge intents ("text Sam I'll be late", "open Chrome"), direct SMS/call dispatch, file sharing/MMS attachment handoff, vision-driven navigation, and the full `android_*` bridge toolset. The toggle is labeled "Agent Control."
 - They coexist on a device — you can install both side-by-side and try them both.
+
+## How the pieces combine
+
+It's easy to read this page as "Google Play vs Sideload" and miss that two
+*independent* things decide what your agent can do:
+
+- **The Relay plugin** (server-side) — an optional plugin on the machine running
+  Hermes. Pairing it unlocks terminal/TUI, relay & enhanced voice, notification
+  forwarding, media handoff, desktop tools, **and** the device-control channel.
+- **The build flavor** (app-side) — Google Play or Sideload. This only decides
+  whether AccessibilityService **Device Control** is compiled into the APK.
+
+Chat, Manage, and Vanilla Hermes voice need neither — they run on unmodified upstream
+Hermes. Everything else is additive:
+
+<CombineModel />
+
+So **Device Control needs both**: the Relay plugin paired *and* the sideload
+build. A sideload app with no paired relay still can't drive your phone, and a
+paired relay on the Google Play build still has no phone-control surface. The
+flavor table below assumes a paired relay — it isolates the one axis this page
+is about (which build), not whether the plugin is installed.
 
 ## Why two tracks?
 

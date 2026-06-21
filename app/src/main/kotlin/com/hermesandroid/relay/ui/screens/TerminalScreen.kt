@@ -10,16 +10,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -27,15 +30,12 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -51,8 +51,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.ExtraKeysToolbar
 import com.hermesandroid.relay.ui.components.TerminalSearchBar
@@ -67,7 +68,6 @@ import org.json.JSONObject
 // WebView content don't flash against each other.
 private val TerminalBackground = Color(0xFF1A1A2E)
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(
     terminalViewModel: TerminalViewModel,
@@ -117,108 +117,140 @@ fun TerminalScreen(
             .fillMaxSize()
             .background(TerminalBackground)
     ) {
-        TopAppBar(
-            navigationIcon = {
-                if (onBack != null) {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                        )
-                    }
+        // Compact custom header (replaces Material's fixed 64dp TopAppBar):
+        // one ~52dp row that shows status ONCE — a connection dot + a single
+        // concise word inline with the title, the whole block tappable for the
+        // full session info sheet — plus a tidy action cluster. statusBarsPadding
+        // clears the system status bar (TopAppBar used to own that inset).
+        val current = activeTab
+        // One concise status line. When attached we show the user's display
+        // name if set, else "ready"; the full `hermes-<deviceId>-tabN` wire id
+        // lives in the tappable info sheet, not the header.
+        val statusWord = when {
+            current == null -> "starting…"
+            current.attached -> current.displayName ?: "ready"
+            current.attaching -> "attaching…"
+            !isConnected -> "disconnected"
+            current.error != null -> current.error!!
+            else -> "ready"
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .statusBarsPadding()
+                .height(52.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                    )
                 }
-            },
-            title = {
-                // Title is wrapped in a Row + .clickable so the entire title
-                // area opens the session info sheet — same UX as Chat's
-                // tappable agent header (ChatScreen.kt around line 612).
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { showInfoSheet = true },
-                ) {
-                    Column {
-                        Text(
-                            text = "Terminal",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        val current = activeTab
-                        val subtitle = when {
-                            current == null -> "starting…"
-                            current.attached -> current.sessionName
-                            current.attaching -> "attaching…"
-                            !isConnected -> "relay disconnected"
-                            current.error != null -> current.error!!
-                            else -> "ready"
-                        }
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-            },
-            actions = {
+            } else {
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+
+            // Title + inline status (dot + word). Whole block opens the info
+            // sheet. weight(1f) lets the status word ellipsize instead of
+            // pushing the action icons off-screen.
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { showInfoSheet = true }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Terminal",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                )
                 ConnectionStatusBadge(
                     isConnected = isConnected && (activeTab?.attached == true),
                     isConnecting = isConnecting || (activeTab?.attaching == true),
-                    modifier = Modifier.padding(end = 4.dp)
+                    size = 8.dp,
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                IconButton(
-                    onClick = {
-                        showSearch = !showSearch
-                        if (!showSearch) {
-                            // Clear decorations on the active tab when the
-                            // user toggles search closed via the action icon
-                            // (the bar's own X button does this too).
-                            webViewByTab[activeTabId]?.evaluateJavascript(
-                                "if (window.clearSearch) { window.clearSearch(); }",
-                                null,
-                            )
-                        }
-                    },
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Search,
-                        contentDescription = "Search scrollback",
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        activeTab?.let { terminalViewModel.reattach(it.tabId) }
-                    },
-                    // Refresh is only meaningful for a tab that has actually
-                    // been started — re-attaching a never-started tab would
-                    // spawn a shell without flipping userStarted, leaving the
-                    // UI confused about whether the Start overlay should show.
-                    enabled = isConnected &&
-                        (activeTab?.attaching != true) &&
-                        (activeTab?.userStarted == true)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Refresh,
-                        contentDescription = "Reattach terminal"
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            )
-        )
+                Text(
+                    text = statusWord,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
 
-        // Tab strip directly under the app bar — Chrome-style, primary-color
-        // active tab + plus button.
-        TerminalTabBar(
-            tabs = tabs,
-            activeTabId = activeTabId,
-            onSelectTab = { terminalViewModel.selectTab(it) },
-            onCloseTab = { closeConfirmTabId = it },
-            onNewTab = { terminalViewModel.openNewTab() },
-        )
+            // New-tab action while the tab strip is hidden (single-tab case);
+            // with 2+ tabs the strip shows its own "+".
+            if (tabs.size <= 1) {
+                IconButton(
+                    onClick = { terminalViewModel.openNewTab() },
+                    enabled = tabs.size < TerminalViewModel.MAX_TABS,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "New terminal tab",
+                    )
+                }
+            }
+            IconButton(
+                onClick = {
+                    showSearch = !showSearch
+                    if (!showSearch) {
+                        // Clear decorations on the active tab when the user
+                        // toggles search closed via the action icon.
+                        webViewByTab[activeTabId]?.evaluateJavascript(
+                            "if (window.clearSearch) { window.clearSearch(); }",
+                            null,
+                        )
+                    }
+                },
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = "Search scrollback",
+                )
+            }
+            IconButton(
+                onClick = {
+                    activeTab?.let { terminalViewModel.reattach(it.tabId) }
+                },
+                // Refresh is only meaningful for a tab that has actually been
+                // started — re-attaching a never-started tab would spawn a
+                // shell without flipping userStarted.
+                enabled = isConnected &&
+                    (activeTab?.attaching != true) &&
+                    (activeTab?.userStarted == true),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = "Reattach terminal",
+                )
+            }
+        }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+        // Tab strip — only with 2+ tabs. A single tab makes the strip pure
+        // overhead (one chip + a plus), so we hide it and surface the new-tab
+        // "+" in the app bar instead; it reappears the moment a second tab
+        // opens. Most sessions use a single tab.
+        if (tabs.size > 1) {
+            TerminalTabBar(
+                tabs = tabs,
+                activeTabId = activeTabId,
+                onSelectTab = { terminalViewModel.selectTab(it) },
+                onCloseTab = { closeConfirmTabId = it },
+                onNewTab = { terminalViewModel.openNewTab() },
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+        }
 
         if (showSearch) {
             TerminalSearchBar(
@@ -315,8 +347,36 @@ fun TerminalScreen(
                     modifier = Modifier.zIndex(2f),
                 )
             }
+
+            // "Jump to latest" pill — shows when the user has scrolled up off
+            // the live tail (xterm onScroll → bridge). Tap snaps back to the
+            // bottom. Hidden while an overlay owns the surface.
+            if (activeTab?.scrolledUp == true && !showBlockingOverlay && !tabNotStarted) {
+                androidx.compose.material3.Surface(
+                    onClick = {
+                        webViewByTab[activeTabId]?.evaluateJavascript(
+                            "window.scrollTerminalToBottom && window.scrollTerminalToBottom();",
+                            null,
+                        )
+                    },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .zIndex(2f),
+                ) {
+                    Text(
+                        text = "↓ Jump to latest",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
         }
 
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
         ExtraKeysToolbar(
             ctrlActive = activeTab?.ctrlActive == true,
             altActive = activeTab?.altActive == true,
@@ -337,7 +397,76 @@ fun TerminalScreen(
                 activeTab?.let { terminalViewModel.toggleAlt(it.tabId) }
             },
             onArrow = { key ->
-                activeTab?.let { terminalViewModel.sendKey(it.tabId, key) }
+                // Encode arrows in JS where xterm's DECCKM (application cursor
+                // keys) mode is known, so they match a real keypress (\eOA vs
+                // \e[A) inside TUIs like vim/less. ESC/TAB stay on the direct
+                // path via onEsc/onTab — they're mode-independent.
+                val keyName = when (key) {
+                    TerminalViewModel.SpecialKey.ARROW_UP -> "ArrowUp"
+                    TerminalViewModel.SpecialKey.ARROW_DOWN -> "ArrowDown"
+                    TerminalViewModel.SpecialKey.ARROW_LEFT -> "ArrowLeft"
+                    TerminalViewModel.SpecialKey.ARROW_RIGHT -> "ArrowRight"
+                    TerminalViewModel.SpecialKey.HOME -> "Home"
+                    TerminalViewModel.SpecialKey.END -> "End"
+                    TerminalViewModel.SpecialKey.PAGE_UP -> "PageUp"
+                    TerminalViewModel.SpecialKey.PAGE_DOWN -> "PageDown"
+                    else -> null
+                }
+                if (keyName != null) {
+                    webViewByTab[activeTabId]?.evaluateJavascript(
+                        "window.termSendKey('$keyName');",
+                        null,
+                    )
+                } else {
+                    activeTab?.let { terminalViewModel.sendKey(it.tabId, key) }
+                }
+            },
+            onPaste = {
+                val pasted = clipboardManager.getText()?.text
+                if (!pasted.isNullOrEmpty()) {
+                    // Route through xterm's term.paste() so the text is wrapped
+                    // in bracketed-paste markers (\e[200~ … \e[201~) when the
+                    // running app enabled bracketed paste — stops a multi-line
+                    // paste from auto-executing each newline in shells/editors.
+                    val js = "window.pasteToTerminal(${JSONObject.quote(pasted)});"
+                    webViewByTab[activeTabId]?.evaluateJavascript(js, null)
+                }
+            },
+            // Copy the current xterm selection to the system clipboard. The
+            // selection lives in JS, so read it back asynchronously and only
+            // commit a non-empty result. WebView long-press copy is unreliable;
+            // this is the dependable path (pairs with PASTE).
+            onCopy = {
+                webViewByTab[activeTabId]?.evaluateJavascript(
+                    "window.getSelectionText && window.getSelectionText();"
+                ) { result ->
+                    val text = runCatching {
+                        org.json.JSONTokener(result).nextValue() as? String
+                    }.getOrNull()
+                    if (!text.isNullOrEmpty()) {
+                        clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
+                    }
+                }
+            },
+            // Show/hide the soft keyboard for the active tab — tapping the
+            // terminal doesn't reliably raise the IME on phones. Toggle off the
+            // current IME visibility; on show, focus xterm first so keystrokes land.
+            onToggleKeyboard = {
+                webViewByTab[activeTabId]?.let { wv ->
+                    val imeType = androidx.core.view.WindowInsetsCompat.Type.ime()
+                    val visible = androidx.core.view.ViewCompat
+                        .getRootWindowInsets(wv)?.isVisible(imeType) == true
+                    val controller = androidx.core.view.ViewCompat.getWindowInsetsController(wv)
+                    if (visible) {
+                        controller?.hide(imeType)
+                    } else {
+                        wv.requestFocus()
+                        wv.evaluateJavascript(
+                            "window.focusTerminal && window.focusTerminal();", null,
+                        )
+                        controller?.show(imeType)
+                    }
+                }
             },
             // Scroll callbacks bypass the ViewModel — they're pure JS calls
             // against the active WebView, not envelopes to the relay.
@@ -362,9 +491,11 @@ fun TerminalScreen(
                     null,
                 )
             },
-            modifier = Modifier
-                .navigationBarsPadding()
-                .imePadding()
+            // No navigationBarsPadding here: this screen lives inside the app
+            // Scaffold whose bottomBar already owns the nav-bar inset, so
+            // padding again left a dead gap below the keys. imePadding alone
+            // keeps the bar above the soft keyboard when it's open.
+            modifier = Modifier.imePadding()
         )
     }
 

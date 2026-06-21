@@ -271,11 +271,11 @@ On first launch:
 
 1. Tap through the onboarding pages.
 2. On **Connect**, pick whichever is easiest:
-   - **Standard Hermes** → tap **Scan for Hermes on LAN** to auto-find the
+   - **Vanilla Hermes** → tap **Scan for Hermes on LAN** to auto-find the
      server, then enter your key; or type the API URL
      (`http://192.168.1.100:8642`) and key by hand.
    - **Scan setup QR** → scan a QR containing your URL and key. There's no
-     upstream mobile-pairing command for the standard path yet, so the handy
+     upstream mobile-pairing command for the Vanilla Hermes path yet, so the handy
      trick is to ask your **Hermes agent to generate one** — a QR encoding
      `{"api_url":"http://192.168.1.100:8642","api_key":"<your-key>","dashboard_url":"http://192.168.1.100:9119"}`
      is accepted. `dashboard_url` is optional when the dashboard uses the
@@ -355,7 +355,7 @@ curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/insta
 ```
 
 The optional compatibility monkeypatch is separate from normal Relay pairing.
-Modern standard chat, Manage, and dashboard voice do not need it. Check it with
+Modern Vanilla Hermes chat, Manage, and dashboard voice do not need it. Check it with
 `hermes relay compat status`; install it only for older Hermes builds or
 compatibility-only route gaps:
 
@@ -447,7 +447,7 @@ back to API-server SSE when it is not.
 ::: details Manual connection setup (no QR)
 **During onboarding:**
 
-1. On the **Connect** page, tap **Standard Hermes**.
+1. On the **Connect** page, tap **Vanilla Hermes**.
 2. Type your API server URL — e.g. `http://192.168.1.100:8642` — scan for Hermes
    on LAN, or scan a generic QR containing the API URL/key.
 3. Enter the value you set in `API_SERVER_KEY` if the QR didn't include it.
@@ -460,10 +460,10 @@ the active card expands inline to show status rows, route details, and an
 insecure-mode toggle, and the manual Relay pairing-code fallback. The per-card
 **Pair Relay** / **Re-pair** button scans a Relay QR when you need power tools.
 
-For Standard setup there is no built-in upstream mobile pairing command yet, so
+For Vanilla Hermes setup there is no built-in upstream mobile pairing command yet, so
 use LAN scan, copy/paste, or a generic QR with the API URL/key. If a QR includes
 a Relay block, Android shows the Relay pairing confirmation and TTL/grants picker;
-if it's API-only, Android saves the standard API/dashboard connection.
+if it's API-only, Android saves the Vanilla Hermes API/dashboard connection.
 :::
 
 ::: details Uninstall the Relay plugin

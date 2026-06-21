@@ -94,6 +94,17 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
             body = "The server refused this action",
             retryable = false,
         )
+        // Version skew: the relay's strict allow-list rejected a field this
+        // (newer) app sent — e.g. "unsupported voice output config field(s):
+        // auto_speech_tags". Distinct from a bad *value* ("unsupported codec"),
+        // which carries no "field", so requiring both avoids mislabeling real
+        // input errors. Tell the user to update the relay, not to retry.
+        "400" in msg && "unsupported" in msg && "field" in msg -> HumanError(
+            title = "Relay update needed",
+            body = "This feature needs a newer Hermes Relay plugin on your " +
+                "server. Update the relay, then try again.",
+            retryable = false,
+        )
         "404" in msg -> HumanError(
             title = "Endpoint not found",
             body = if (context == "voice_config")

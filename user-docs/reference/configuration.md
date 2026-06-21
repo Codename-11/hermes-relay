@@ -8,9 +8,9 @@ These are configured during onboarding or from the **Settings → Connections** 
 
 Hermes-Relay now treats connection auth as three related but separate contexts:
 
-- **Dashboard sign-in** (`:9119`) — upstream-preferred remote identity for the standard dashboard/desktop path. Manage uses dashboard cookies; dashboard-gateway chat uses short-lived `/api/ws` tickets minted from those cookies. Android supports username/password and redirect providers such as Nous/OIDC for this surface.
+- **Dashboard sign-in** (`:9119`) — upstream-preferred remote identity for the vanilla dashboard/desktop path. Manage uses dashboard cookies; dashboard-gateway chat uses short-lived `/api/ws` tickets minted from those cookies. Android supports username/password and redirect providers such as Nous/OIDC for this surface.
 - **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for API-server SSE fallback paths.
-- **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for standard dashboard/API use, but it is required for relay power tools.
+- **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for vanilla dashboard/API use, but it is required for relay power tools.
 
 The default bottom navigation is **Chat**, **Manage**, and **Settings**. Terminal and Bridge are still available from **Settings → Power tools** and deep links, but unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
 
@@ -23,8 +23,8 @@ The **Manage** tab uses the dashboard session, not relay pairing. It covers Skil
 **On the active card — a deep body below the action row.** Each section is headed by a labelMedium header and a one-line caption so the card self-narrates:
 
 - **Connection health** (always visible) — *"Tap any row for details."* Three tappable rows (API / Relay / Session) open detail sheets with token, endpoint, health, and session info.
-- **Routes (N)** (when Standard setup saved a LAN/Tailscale URL or pairing carried multi-endpoint candidates) — *"The app picks the fastest reachable network automatically and switches when you change networks."* Expander reveals one row per route with role chip (LAN / Tailscale / Public / Custom VPN), per-row Secure/Plain security chip, state chip (Active / Fallback), probe-now button, per-candidate *Prefer this route* override, and per-candidate TOFU pin inspection.
-- **Advanced** (collapsible) — *"Manual setup — most people don't need this after Standard Hermes setup."* Holds:
+- **Routes (N)** (when Vanilla Hermes setup saved a LAN/Tailscale URL or pairing carried multi-endpoint candidates) — *"The app picks the fastest reachable network automatically and switches when you change networks."* Expander reveals one row per route with role chip (LAN / Tailscale / Public / Custom VPN), per-row Secure/Plain security chip, state chip (Active / Fallback), probe-now button, per-candidate *Prefer this route* override, and per-candidate TOFU pin inspection.
+- **Advanced** (collapsible) — *"Manual setup — most people don't need this after Vanilla Hermes setup."* Holds:
   - **Manual URL config** — API Server URL, API Key, Relay URL, each with **Save & Test**. This preserves the direct host/API-key path for custom networks, proxies, and compatibility installs.
   - **Allow plain (unencrypted) connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is stored for later but the Transport Security badge usually derives a more accurate label from the live active-route role. Operator intent is the trust model — the toggle gates the UI's ability to save `ws://` / `http://` URLs, nothing server-side.
   - **Disconnect** button — drops the active WSS without clearing the session token.
@@ -200,7 +200,7 @@ For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.co
 ### Compatibility Hook
 
 The legacy `hermes_relay_bootstrap.pth` hook is optional. It fills route gaps for
-older Hermes builds and installs slash-command middleware, but modern standard
+older Hermes builds and installs slash-command middleware, but modern Vanilla Hermes
 chat, Manage, and dashboard voice do not depend on it.
 
 ```bash

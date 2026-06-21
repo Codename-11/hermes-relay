@@ -46,7 +46,7 @@ data class ChatMessage(
     /**
      * Rich content cards emitted by the agent via `CARD:{json}` line
      * markers in the text stream. Parsed in
-     * [com.hermesandroid.relay.network.handlers.ChatHandler.scanForCardMarkers]
+     * [com.hermesandroid.relay.network.upstream.ChatHandler.scanForCardMarkers]
      * and rendered inline by
      * [com.hermesandroid.relay.ui.components.HermesCardBubble]. Mirrors
      * [attachments]' lifecycle — the marker line is stripped from
@@ -76,7 +76,7 @@ data class ChatMessage(
      * The sync builder treats messages with [voiceIntent] != null and
      * [VoiceIntentTrace.syncedToServer] == false as the inputs to its
      * synthesis pass; on a successful send we flip [VoiceIntentTrace.syncedToServer]
-     * to true via [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
+     * to true via [com.hermesandroid.relay.network.upstream.ChatHandler.markVoiceIntentsSynced]
      * so they're not re-sent on the next turn.
      */
     val voiceIntent: VoiceIntentTrace? = null,
@@ -89,12 +89,33 @@ data class ChatMessage(
      * the durable session turn; the provider's spoken summary is UI/runtime
      * provenance, not another canonical assistant message.
      */
-    val realtimeTurn: RealtimeTurnTrace? = null
+    val realtimeTurn: RealtimeTurnTrace? = null,
+    /**
+     * True for bubbles that exist ONLY on the client and have no server-side
+     * row — slash-command notices, voice-intent traces, the steer echo, gateway
+     * ask cards, an errored turn the server never persisted, and a provider-only
+     * (non-Hermes-backed) realtime turn. The post-turn history reload
+     * ([com.hermesandroid.relay.network.upstream.ChatHandler.loadMessageHistory])
+     * preserves any client-only message whose id is absent from the reloaded
+     * server transcript; without the flag those orphans would be silently
+     * wiped by the reconcile.
+     *
+     * Replaces the old id-prefix whitelist (`voice-intent-`/`steer-`/`ask-`/
+     * `system-notice-`) + "Error"-badge sniffing: each creator now declares its
+     * own provenance instead of the reconcile having to know every id
+     * convention. Defaults false so every server-backed message and existing
+     * call site stays correct.
+     *
+     * NOTE: an "Error" badge alone does NOT make a message preservable — a turn
+     * can error *after* persisting server-side, and that message must still
+     * reconcile normally. Only [clientOnly] gates orphan preservation.
+     */
+    val clientOnly: Boolean = false,
 )
 
 /**
  * Structured details about a phone-local voice intent that was dispatched
- * in-process via [com.hermesandroid.relay.network.handlers.BridgeCommandHandler.handleLocalCommand].
+ * in-process via [com.hermesandroid.relay.network.relay.BridgeCommandHandler.handleLocalCommand].
  *
  * Captured on a [ChatMessage] (id prefix `voice-intent-`) so the next chat
  * payload can include synthetic OpenAI-format `assistant` + `tool` message
@@ -123,12 +144,12 @@ data class ChatMessage(
  *   includes an `error` field.
  * @property resultJson Compact JSON object describing the dispatch outcome.
  *   On success, typically `{"ok":true,...}` with any tool-specific fields
- *   from [com.hermesandroid.relay.network.handlers.LocalDispatchResult.resultJson].
+ *   from [com.hermesandroid.relay.network.shared.LocalDispatchResult.resultJson].
  *   On failure, an error envelope including `ok:false`, `error`, optionally
  *   `error_code`. Stored as a string and rendered verbatim into the
  *   synthetic `tool`-role message's `content` field.
  * @property syncedToServer Idempotency guard. Flipped to true by
- *   [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
+ *   [com.hermesandroid.relay.network.upstream.ChatHandler.markVoiceIntentsSynced]
  *   the moment we hand the request payload to the API client. Once true,
  *   the trace is excluded from future sync passes — the server-side
  *   session has already absorbed it.
@@ -186,7 +207,23 @@ data class Attachment(
     /** Opaque token from `MEDIA:hermes-relay://<token>` — identifies the file on the relay. */
     val relayToken: String? = null,
     /** content:// URI from the FileProvider once bytes are cached to disk. */
-    val cachedUri: String? = null
+    val cachedUri: String? = null,
+    /**
+     * Whether this attachment was flagged sensitive (NSFW / spoiler) and should
+     * render blurred until the user taps to reveal — honored per the user's
+     * `MediaSettings.blurMode`.
+     *
+     * The flag is **model-emitted metadata, never an on-device or relay-side
+     * classifier** (see `docs/plans/2026-06-18-attachment-experience.md` §C): the
+     * agent annotates media it surfaces, the relay transports the bit
+     * authoritatively via the `X-Media-Sensitive` response header, and the
+     * client merely renders the blur. Populated for inbound attachments from
+     * [com.hermesandroid.relay.network.relay.RelayHttpClient.FetchedMedia.sensitive]
+     * when the bytes flip to [AttachmentState.LOADED]. Defaults false so every
+     * existing outbound/inbound call site stays valid and unflagged media
+     * renders exactly as before.
+     */
+    val sensitive: Boolean = false
 ) {
     val isImage: Boolean get() = contentType.startsWith("image/")
 

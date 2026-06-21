@@ -122,11 +122,12 @@ export const CardDescription = C.CardDescription || (({ children, className = ""
   <p className={`text-sm text-muted-foreground ${className}`}>{children}</p>
 ));
 
-export const Switch = C.Switch || (({ checked, onCheckedChange, id }) => (
+export const Switch = C.Switch || (({ checked, onCheckedChange, id, disabled }) => (
   <input
     id={id}
     type="checkbox"
     checked={!!checked}
+    disabled={!!disabled}
     onChange={(e) => onCheckedChange && onCheckedChange(e.target.checked)}
     className="h-4 w-4"
   />

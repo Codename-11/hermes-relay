@@ -30,7 +30,7 @@ data class DashboardConnectionStatus(
  *    open the token store.
  *
  * Switching connection is a HEAVY context swap — caller is expected to tear down
- * the current [com.hermesandroid.relay.network.ConnectionManager],
+ * the current [com.hermesandroid.relay.network.relay.ConnectionManager],
  * [com.hermesandroid.relay.auth.AuthManager], and API client, then construct
  * fresh ones pointed at the new connection's `tokenStoreKey`.
  *
@@ -290,6 +290,8 @@ data class Connection(
                 role = role.ifBlank { inferRouteRole(apiServerUrl) },
                 priority = priority,
                 api = ApiEndpoint(host = host, port = port, tls = tls),
+                dashboard = deriveDefaultDashboardUrl(apiServerUrl)
+                    ?.let { DashboardEndpoint(url = it) },
                 relay = RelayEndpoint(url = resolvedRelayUrl, transportHint = transportHint),
             )
         }

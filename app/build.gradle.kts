@@ -179,6 +179,10 @@ android {
         // Robolectric (VoicePlayerTest) needs merged Android resources +
         // manifest on the unit-test classpath to bootstrap its sandbox.
         unitTests.isIncludeAndroidResources = true
+        // [POC] Roborazzi runs without its Gradle plugin (the plugin needs AGP's
+        // removed TestedExtension). Force record mode via the test-JVM system
+        // property the plugin would otherwise inject, so captureRoboImage writes.
+        unitTests.all { it.systemProperty("roborazzi.test.record", "true") }
     }
 }
 
@@ -196,6 +200,17 @@ play {
 
 kotlin {
     jvmToolchain(17)
+}
+
+// [screenshots] Host-side screenshot tests render MessageBubble -> MarkdownContent,
+// whose code-highlighter (dev.snipme.highlights) ships Java-21 bytecode. The build
+// toolchain pins test execution to JDK 17, which can't load class-file v65, so run
+// unit tests on a 21 JVM. Compile target stays 17; on-device (dexed) is unaffected.
+// foojay (settings.gradle.kts) auto-provisions the 21 JDK if absent.
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(
+        javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }
+    )
 }
 
 dependencies {
@@ -283,8 +298,19 @@ dependencies {
     // across priority groups against real local sockets so the behavior we
     // validate matches on-device.
     testImplementation(libs.okhttp.mockwebserver)
+    // Konsist — enforces the ADR 34 upstream/relay/shared package fence as a JUnit test
+    testImplementation(libs.konsist)
     androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
+
+    // [POC] Roborazzi host-side screenshot rendering (src/test, Robolectric).
+    // Renders real composables on the JVM at an exact canvas — no device, no
+    // status bar, no clipping. See StoreScreenshotTest.
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.43.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.43.1")
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.compose.ui.test.manifest)
+    testImplementation("androidx.test.ext:junit:1.2.1")
 }
 

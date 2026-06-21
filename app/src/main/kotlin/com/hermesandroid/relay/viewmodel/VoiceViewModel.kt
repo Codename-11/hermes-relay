@@ -24,16 +24,16 @@ import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
-import com.hermesandroid.relay.network.ChannelMultiplexer
-import com.hermesandroid.relay.network.RelayVoiceClient
-import com.hermesandroid.relay.network.RelayVoiceAudioClientAdapter
-import com.hermesandroid.relay.network.RealtimeAgentSessionControl
-import com.hermesandroid.relay.network.RealtimeTurnInput
-import com.hermesandroid.relay.network.RealtimeVoiceSummary
-import com.hermesandroid.relay.network.RealtimeVoiceEvent
-import com.hermesandroid.relay.network.VoiceHandoffEvent
-import com.hermesandroid.relay.network.VoiceAudioClient
-import com.hermesandroid.relay.network.handlers.LocalDispatchResult
+import com.hermesandroid.relay.network.relay.ChannelMultiplexer
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
+import com.hermesandroid.relay.network.relay.RealtimeAgentSessionControl
+import com.hermesandroid.relay.network.relay.RealtimeTurnInput
+import com.hermesandroid.relay.network.relay.RealtimeVoiceSummary
+import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
+import com.hermesandroid.relay.network.relay.VoiceHandoffEvent
+import com.hermesandroid.relay.network.shared.VoiceAudioClient
+import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
@@ -291,7 +291,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 "- Active route: Android mic -> selected Hermes STT route -> " +
                 "normal Hermes chat stream -> selected Hermes TTS route playback.\n" +
                 "- This is not Realtime Agent mode. If the user asks which " +
-                "interface, path, or mode is active, answer from this context."
+                "interface, path, or mode is active, answer from this context.\n" +
+                "- Your reply will be spoken aloud by text-to-speech, so format " +
+                "for the ear, not the eye: write short, conversational sentences; " +
+                "avoid markdown (headings, bullet lists, tables, code blocks), " +
+                "emoji, and raw URLs; describe structure in prose instead of " +
+                "lists; and keep answers concise unless the user asks for detail."
 
         /**
          * Idle interval after which the chunker will force-flush whatever
@@ -842,48 +847,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             this.voicePreferences = voicePreferences
             voicePreferencesJob?.cancel()
             voicePreferencesJob = viewModelScope.launch {
+                // The repository's `settings` flow is now scope-aware (WP-V2):
+                // it re-emits whenever the DataStore OR the active
+                // (connection, profile) scope changes, so a profile switch
+                // (see [onProfileChanged]) flows the new profile's
+                // engine/route/enhanced picks through here automatically.
                 voicePreferences.settings.collect { settings ->
-                    val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
-                    if (
-                        voiceEngineMode != nextEngineMode ||
-                        realtimeTraceDetails != settings.realtimeTraceDetails
-                    ) {
-                        Log.i(
-                            TAG,
-                            "Voice prefs updated engine=${nextEngineMode.storageValue} " +
-                                "interaction=${settings.interactionMode} " +
-                                "realtimeTraceDetails=${settings.realtimeTraceDetails}",
-                        )
-                    }
-                    // Switching engine away from Realtime Agent (or disabling the
-                    // persistent toggle) must drop any open persistent session.
-                    if (
-                        (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
-                            nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
-                        (realtimePersistentSession && !settings.realtimePersistentSession)
-                    ) {
-                        closeRealtimeSession()
-                    }
-                    voiceEngineMode = nextEngineMode
-                    realtimeTraceDetails = settings.realtimeTraceDetails
-                    realtimePersistentSession = settings.realtimePersistentSession
-                    val mode = when (settings.interactionMode.lowercase()) {
-                        "hold" -> InteractionMode.HoldToTalk
-                        "continuous" -> InteractionMode.Continuous
-                        else -> InteractionMode.TapToTalk
-                    }
-                    if (_uiState.value.interactionMode != mode) {
-                        _uiState.update { it.copy(interactionMode = mode) }
-                    }
-                    // Mirror the user-facing settings into the voiceStats
-                    // snapshot so StatsForNerds → Voice reflects live values.
-                    _voiceStats.update {
-                        it.copy(
-                            vadThresholdMs = settings.silenceThresholdMs,
-                            interactionMode = settings.interactionMode,
-                            voiceEngineMode = settings.engineMode,
-                        )
-                    }
+                    applyVoiceSettingsSnapshot(settings)
                 }
             }
         } else {
@@ -1056,6 +1026,132 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceOutputProfileName = normalized
         voiceOutputAvailable = null
         resetRealtimeSpeechCoalescer()
+        // WP-V2: re-point the voice prefs at this (connection, profile) scope
+        // and re-seed the VM's engine/route from the per-profile values so the
+        // *next* turn speaks with this profile's voice, not the prior one's.
+        // The repository's scope-aware `settings` flow also re-emits to the
+        // initialize() collector; the explicit re-read below guarantees the
+        // engine mode is correct even before that collector is rescheduled.
+        applyVoicePrefsScope(normalized)
+        maybeNoteStandardVoiceProfileLimitation(normalized)
+    }
+
+    /**
+     * WP-V2 seam: the active connection id used to namespace per-profile voice
+     * prefs (`_<connectionId>_<profile>`, mirroring `ProfileSelectionStore`).
+     *
+     * Null until an integration wires `ConnectionViewModel.activeConnectionId`
+     * in via [setVoicePrefsConnection] (RelayApp owns that wiring today and
+     * passes only the profile name to [onProfileChanged]). While null,
+     * per-profile keys degrade to profile-only namespacing — still enough to
+     * isolate profiles within a single connection; it just can't disambiguate
+     * two connections that both expose a same-named profile.
+     */
+    private var voicePrefsConnectionId: String? = null
+
+    /**
+     * WP-V2 seam: set the active connection id for per-profile voice-pref
+     * namespacing and re-apply the current scope. Lets a connection switch
+     * (with the profile unchanged) re-target the right namespaced keys. Safe
+     * to call before [initialize]; a no-op when the value is unchanged.
+     */
+    fun setVoicePrefsConnection(connectionId: String?) {
+        val normalized = connectionId?.trim()?.takeIf { it.isNotBlank() }
+        if (voicePrefsConnectionId == normalized) return
+        voicePrefsConnectionId = normalized
+        applyVoicePrefsScope(voiceOutputProfileName)
+    }
+
+    /**
+     * Push the current (connection, profile) scope to the voice-prefs
+     * repository and re-seed the VM's cached engine/route from the resolved
+     * per-profile values. The explicit [firstOrNull] read shares
+     * [applyVoiceSettingsSnapshot] with the reactive collector in
+     * [initialize], so running both converges on the same values with no
+     * duplicated engine-transition side effects (the first to run handles a
+     * realtime-session close; the second sees no transition).
+     */
+    private fun applyVoicePrefsScope(profileName: String?) {
+        val prefs = voicePreferences ?: return
+        prefs.setActiveScope(voicePrefsConnectionId, profileName)
+        viewModelScope.launch {
+            prefs.settings.firstOrNull()?.let { applyVoiceSettingsSnapshot(it) }
+        }
+    }
+
+    /**
+     * Apply a [VoiceSettings] snapshot to the VM's cached engine/route/diag
+     * state and the [VoiceStats] mirror. Shared by the [initialize] settings
+     * collector and the per-profile re-seed ([applyVoicePrefsScope]); idempotent
+     * so it is safe to call repeatedly with the same snapshot.
+     */
+    private fun applyVoiceSettingsSnapshot(settings: com.hermesandroid.relay.data.VoiceSettings) {
+        val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
+        if (
+            voiceEngineMode != nextEngineMode ||
+            realtimeTraceDetails != settings.realtimeTraceDetails
+        ) {
+            Log.i(
+                TAG,
+                "Voice prefs updated engine=${nextEngineMode.storageValue} " +
+                    "interaction=${settings.interactionMode} " +
+                    "realtimeTraceDetails=${settings.realtimeTraceDetails}",
+            )
+        }
+        // Switching engine away from Realtime Agent (or disabling the
+        // persistent toggle) must drop any open persistent session.
+        if (
+            (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
+                nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
+            (realtimePersistentSession && !settings.realtimePersistentSession)
+        ) {
+            closeRealtimeSession()
+        }
+        voiceEngineMode = nextEngineMode
+        realtimeTraceDetails = settings.realtimeTraceDetails
+        realtimePersistentSession = settings.realtimePersistentSession
+        val mode = when (settings.interactionMode.lowercase()) {
+            "hold" -> InteractionMode.HoldToTalk
+            "continuous" -> InteractionMode.Continuous
+            else -> InteractionMode.TapToTalk
+        }
+        if (_uiState.value.interactionMode != mode) {
+            _uiState.update { it.copy(interactionMode = mode) }
+        }
+        // Mirror the user-facing settings into the voiceStats snapshot so
+        // StatsForNerds → Voice reflects live values.
+        _voiceStats.update {
+            it.copy(
+                vadThresholdMs = settings.silenceThresholdMs,
+                interactionMode = settings.interactionMode,
+                voiceEngineMode = settings.engineMode,
+            )
+        }
+    }
+
+    /**
+     * Standard (no-plugin dashboard) voice rides upstream `POST /api/audio/speak`,
+     * which is text-only GLOBAL TTS: `TTSSpeakRequest` has no profile field and
+     * `text_to_speech_tool` has no profile scope (web_server.py) — so switching
+     * the chat profile does NOT change the spoken voice on standard-only installs.
+     * The RELAY voice path IS profile-aware, so this notice is scoped strictly to
+     * the EFFECTIVE Standard route + a non-default profile (the [profileName] arg
+     * is already null for the default/launch profile). Quiet by design: a Voice
+     * diagnostics line, not an interrupting toast.
+     */
+    private fun maybeNoteStandardVoiceProfileLimitation(profileName: String?) {
+        val profile = profileName ?: return
+        // Only when standard voice is what a call would actually use — never
+        // claim the relay path has this limitation.
+        if (voiceAudioClient?.effectiveRoute != VoiceAudioRoute.Standard) return
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Voice,
+            severity = DiagnosticSeverity.Info,
+            title = "Vanilla Hermes voice uses the host's global TTS",
+            detail = "Profile \"$profile\" changes the chat agent, but standard " +
+                "(no-plugin) voice speaks with the host's global TTS config, not " +
+                "the profile's voice. Pair the Relay plugin for profile-aware voice.",
+        )
     }
 
     // ---------------------------------------------------------------------
@@ -2929,13 +3025,33 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         if (voiceOutputAvailable == null) {
             val config = client.getVoiceOutputConfig()
-            voiceOutputAvailable = config.getOrNull()?.enabled == true
+            val cfg = config.getOrNull()
+            voiceOutputAvailable = cfg?.enabled == true
             if (voiceOutputAvailable != true) {
                 Log.i(TAG, "Voice output unavailable; using basic /voice/synthesize fallback")
+                // Surface the active render path for troubleshooting — otherwise
+                // the streaming-vs-synthesize choice is invisible (e.g. why the
+                // streaming "Expressive speech tags" toggle has no effect here).
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Voice,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Voice render path: basic synthesize",
+                    detail = "Streaming /voice/output is disabled or unavailable — rendering via " +
+                        "the /voice/synthesize fallback. Per-request enhanced voice applies here; " +
+                        "the streaming renderer's speech-tags setting does not.",
+                )
                 pendingInTtsQueue.decrementAndGet()
                 enqueueSentenceForLegacyTts(sentence)
                 return
             }
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Voice,
+                severity = DiagnosticSeverity.Info,
+                title = "Voice render path: streaming output",
+                detail = "Streaming /voice/output renderer active" +
+                    (cfg?.default_provider?.takeIf { it.isNotBlank() }?.let { " (provider $it)" }.orEmpty()) +
+                    (if (cfg?.auto_speech_tags == true) "; expressive speech tags on" else "") + ".",
+            )
         }
 
         val audioSeen = AtomicBoolean(false)

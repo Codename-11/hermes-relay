@@ -1,11 +1,5 @@
 package com.hermesandroid.relay.ui.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -107,33 +101,14 @@ fun ConnectionStatusBadge(
         }
     }
 
-    val pulseScale: Float
-    val pulseAlpha: Float
-
-    if (showPulse) {
-        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-        pulseScale = infiniteTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 1.8f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = pulseDurationMs, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "pulseScale"
-        ).value
-        pulseAlpha = infiniteTransition.animateFloat(
-            initialValue = 0.35f,
-            targetValue = 0f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = pulseDurationMs, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "pulseAlpha"
-        ).value
-    } else {
-        pulseScale = 1f
-        pulseAlpha = 0f
-    }
+    // Heartbeat ring driven by a throttled ambient phase rather than an
+    // infinite transition: the badge is always on screen while connected, so a
+    // full-refresh transition would pin the whole window at 120Hz forever (and
+    // log setRequestedFrameRate every frame on Android 15). ~30fps is plenty
+    // for a 0.8–1.5s pulse. Phase 0→1 maps to the old linear scale/alpha ramps.
+    val pulsePhase = rememberAmbientPhase(periodMillis = pulseDurationMs, running = showPulse)
+    val pulseScale = if (showPulse) 1f + 0.8f * pulsePhase else 1f
+    val pulseAlpha = if (showPulse) 0.35f * (1f - pulsePhase) else 0f
 
     Box(
         modifier = modifier

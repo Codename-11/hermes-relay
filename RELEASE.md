@@ -405,6 +405,13 @@ the new app version and a higher `appVersionCode`.
   shown in the settings/about screen. Update with the version number
   and a brief feature summary. Gets stale silently if forgotten
   (v0.4.0 shipped with 0.1.0 content until caught post-release).
+- `app/src/googlePlay/play/release-notes/en-US/default.txt` — the Play
+  Console **"What's new"** text, which gradle-play-publisher reads at
+  upload to fill the Production-draft release notes. This is **separate**
+  from `RELEASE_NOTES.md` (that one is only the GitHub Release body) — if
+  this file is missing or stale, the Play draft ships with empty/wrong
+  notes (shipped empty in v1.1.0 until caught post-release). Keep it
+  **≤500 chars per language**, user-facing, Android-only.
 - `docs/play-store-listing.md` — Play Store listing copy. Update
   the version reference and the "Release Notes" section that gets
   pasted into the Play Console "What's new" field. Keep the Play
@@ -533,6 +540,12 @@ Release named `Hermes-Relay-Plugin v<version>` for the plugin package.
 > Production **draft** — skip to the Play Console, confirm the draft, and click
 > **Start rollout**. The manual path below is the fallback when the secret is
 > unset (or for staging on a non-production track).
+>
+> This automated tag path is intentionally bundle-only. It uploads the
+> `googlePlayRelease` AAB and release-scoped "What's new" notes, but it does
+> not republish static listing assets such as screenshots, title, description,
+> icon, or feature graphic. Use the Play Store Listing workflow when those
+> assets change.
 
 **Pick the track first.** The AAB is track-agnostic — the same
 `-googlePlay-release.aab` goes to whichever track you publish on. Choose by intent,

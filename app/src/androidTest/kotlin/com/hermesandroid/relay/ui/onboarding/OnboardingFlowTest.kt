@@ -126,7 +126,7 @@ class OnboardingFlowTest {
         navigateToPage(4)
 
         composeTestRule
-            .onNodeWithText("Standard Hermes")
+            .onNodeWithText("Vanilla Hermes")
             .assertIsDisplayed()
     }
 
@@ -135,7 +135,7 @@ class OnboardingFlowTest {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Standard Hermes").performClick()
+        composeTestRule.onNodeWithText("Vanilla Hermes").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
@@ -151,7 +151,7 @@ class OnboardingFlowTest {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Standard Hermes").performClick()
+        composeTestRule.onNodeWithText("Vanilla Hermes").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
@@ -170,6 +170,17 @@ class OnboardingFlowTest {
         composeTestRule
             .onNodeWithText("Power-user path for Terminal, Bridge, Relay sessions, and grants")
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun powerPage_linksToPermissionReview() {
+        setOnboardingContent()
+        navigateToPage(3)
+
+        composeTestRule
+            .onNodeWithText("Review permissions")
+            .assertIsDisplayed()
+            .assertIsEnabled()
     }
 
     @Test

@@ -5,15 +5,11 @@ on:
     branches: [main, dev]
     paths:
       - "plugin/dashboard/**"
-      - "scripts/check-plugin-version-sync.py"
-      - "scripts/check-server-version-sync.py"
       - ".github/workflows/ci-dashboard.yml"
   pull_request:
     branches: [main, dev]
     paths:
       - "plugin/dashboard/**"
-      - "scripts/check-plugin-version-sync.py"
-      - "scripts/check-server-version-sync.py"
       - ".github/workflows/ci-dashboard.yml"
 
 permissions:
@@ -55,7 +51,11 @@ jobs:
         run: python scripts/check-plugin-version-sync.py
 
       - name: Install dashboard API test deps
-        run: pip install -r relay_server/requirements.txt fastapi httpx pytest requests
+        # The suite imports the `plugin` package transitively: __init__ loads
+        # android_tool/desktop_tool (`import requests`), and one test imports
+        # `plugin.relay`, whose server.py needs `aiohttp` (+ pyyaml) from
+        # relay_server/requirements.txt. fastapi+httpx cover plugin_api itself.
+        run: pip install -r relay_server/requirements.txt fastapi httpx requests
 
       - name: Run dashboard API tests
         run: python -m unittest plugin.dashboard.test_plugin_api

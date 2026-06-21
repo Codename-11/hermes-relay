@@ -3,7 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,7 +70,9 @@ import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -129,6 +131,7 @@ fun SettingsScreen(
     onNavigateToAnalytics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
+    onNavigateToPermissions: () -> Unit,
     // === PHASE3-safety-rails: bridge safety entry-point ===
     onNavigateToBridgeSafety: () -> Unit,
     // === END PHASE3-safety-rails ===
@@ -144,7 +147,7 @@ fun SettingsScreen(
     onNavigateToProfileInspector: (profileName: String) -> Unit,
 ) {
     val context = LocalContext.current
-    val isDarkTheme = isSystemInDarkTheme()
+    val isDarkTheme = LocalBrand.current.isDark
 
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     // Active Agent card inputs — personality + profile drive the title,
@@ -208,6 +211,10 @@ fun SettingsScreen(
         )
         RelayUiState.Stale -> SettingsStatusPillModel(
             label = "Relay stale",
+            tone = SettingsStatusTone.Warning,
+        )
+        RelayUiState.Expired -> SettingsStatusPillModel(
+            label = "Pairing expired",
             tone = SettingsStatusTone.Warning,
         )
         RelayUiState.Disconnected -> SettingsStatusPillModel(
@@ -442,6 +449,14 @@ fun SettingsScreen(
             SettingsSectionHeader("App")
 
             SettingsCategoryRow(
+                icon = Icons.Filled.Security,
+                title = "Permissions",
+                subtitle = "Android grants, optional features, and sideload capability status",
+                onClick = onNavigateToPermissions,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
                 icon = Icons.Filled.Palette,
                 title = "Appearance",
                 subtitle = "Theme, font size, animations",
@@ -585,7 +600,7 @@ private fun ActiveAgentCard(
                     modifier = Modifier
                         .size(32.dp)
                         .then(
-                            if (isCustomized) {
+                            if (isCustomized && LocalAgentIconPath.current.isNullOrBlank()) {
                                 Modifier.border(
                                     width = ringWidth,
                                     color = MaterialTheme.colorScheme.primary,
@@ -601,15 +616,10 @@ private fun ActiveAgentCard(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.primary,
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = if (agentName.isNotBlank()) {
-                                    agentName.first().uppercase()
-                                } else "H",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
+                        AgentAvatarFace(
+                            name = agentName,
+                            letterStyle = MaterialTheme.typography.labelMedium,
+                        )
                     }
                 }
             }

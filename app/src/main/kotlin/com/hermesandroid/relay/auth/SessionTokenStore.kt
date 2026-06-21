@@ -6,6 +6,44 @@ import android.os.Build
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Process-global cache for encrypted stores, keyed by prefs-file name.
+ *
+ * `EncryptedSharedPreferences.create()` unwraps a Tink keyset via a KeyStore op
+ * (~0.6–1 s on StrongBox), and Tink serializes those process-globally — so a
+ * second build of the SAME file is pure waste (the measured cold-start
+ * `Long monitor contention … AndroidKeysetManager.build()` with `waiters=1..4`).
+ *
+ * Caching by file name means each file's keyset builds ONCE process-wide. The
+ * cache is **synchronous** ([ConcurrentHashMap.computeIfAbsent], which holds a
+ * per-key lock so the build runs at most once per file) precisely so the SAME
+ * instance serves both the suspend token path (callers wrap this in
+ * [kotlinx.coroutines.Dispatchers.IO]) AND the synchronous OkHttp cookie-jar
+ * path — which is how the dashboard cookies now ride the connection's
+ * already-built token keyset instead of building a second one.
+ *
+ * The build is ~1 s on StrongBox: call only from IO / OkHttp threads, never the
+ * main thread.
+ */
+internal object SecureStoreCache {
+    private val instances = ConcurrentHashMap<String, SessionTokenStore>()
+
+    fun getOrBuild(prefsName: String, build: () -> SessionTokenStore): SessionTokenStore =
+        instances.computeIfAbsent(prefsName) { build() }
+}
+
+/**
+ * Build the raw encrypted store for [prefsName] — Keystore-backed when possible,
+ * self-healing legacy fallback, in-memory last resort. No migration. Shared by
+ * the token store and the dashboard cookie store so a given file always yields
+ * the SAME backend, via [SecureStoreCache].
+ */
+internal fun buildRawTokenStore(context: Context, prefsName: String): SessionTokenStore =
+    KeystoreTokenStore.tryCreate(context, prefsName)
+        ?: runCatching { LegacyEncryptedPrefsTokenStore(context, prefsName) }
+            .getOrElse { InMemoryTokenStore() }
 
 /**
  * Abstraction over the storage backend for the relay session token + API key

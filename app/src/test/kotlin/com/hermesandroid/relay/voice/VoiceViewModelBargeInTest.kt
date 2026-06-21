@@ -10,7 +10,7 @@ import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.BargeInPreferences
 import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.data.BargeInSensitivity
-import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceViewModel

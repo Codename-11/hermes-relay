@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,7 +38,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -68,9 +72,11 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
-import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.upstream.ChatMode
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -645,13 +651,42 @@ fun AgentInfoSheet(
     val availableModels by chatViewModel.availableModels.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
+    val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
+    val fastEnabled by chatViewModel.fastEnabled.collectAsState()
+    // YOLO / Fast are gateway-only. This says whether the gateway is present (or
+    // still being probed) so we can SHOW those controls — present-but-loading
+    // reads as "checking", not "you don't have this". Only a definitively
+    // unreachable gateway (SSE-only connection) hides them.
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    // Capability snapshot for the transport-tier ladder in SessionPathDetails.
+    val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
 
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
     LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    // Re-pull server-supplied personalities (list + default + active) on open so
+    // a server-side change shows without an app reload.
+    LaunchedEffect(Unit) { chatViewModel.refreshPersonalities() }
+    // Re-pull the SSE-fallback model list + skill catalog on open so server-side
+    // changes surface without an app reload (gateway model groups are covered by
+    // refreshModelOptions above; skills feed the command palette).
+    LaunchedEffect(Unit) { chatViewModel.refreshModels() }
+    LaunchedEffect(Unit) { chatViewModel.refreshSkills() }
     // Pull the host's agent profiles from the dashboard so they appear in the
     // Profile picker even on a dashboard-only (non-relay) connection.
     LaunchedEffect(Unit) { connectionViewModel.refreshDashboardProfiles() }
+
+    // "Still settling" window for the picker LISTS (models / personalities). The
+    // refreshes above fire on open; show a brief loading cue while a list is
+    // empty — but BOUND it, because a server that genuinely has none (very common
+    // for named personalities) must not spin forever. After this window an empty
+    // list honestly reads as "none", while the section itself (Server default /
+    // None) is always present so the capability never looks absent.
+    var pickerListsSettling by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(5000)
+        pickerListsSettling = false
+    }
 
     // Connection summary state.
     val authState by connectionViewModel.authState.collectAsState()
@@ -662,6 +697,17 @@ fun AgentInfoSheet(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
+    val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+    val gatewayCurrentProvider by chatViewModel.gatewayCurrentProvider.collectAsState()
+
+    // Session-path state — drives the glanceable transport/route summary +
+    // capability chips at the top of the Connection section. The resolver
+    // turns the user's preference into the concrete transport actually in use
+    // ("gateway" / "sessions" / "completions" / "runs"); `activeEndpoint`
+    // gives the friendly route label (LAN / Tailscale / Public / custom).
+    val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
+    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+    val voiceReady by connectionViewModel.voiceReady.collectAsState()
 
     // Multi-connection switcher state — folded into this sheet in place of
     // the separate top-bar ConnectionChip (see 2026-04-20 DEVLOG). Read
@@ -690,7 +736,6 @@ fun AgentInfoSheet(
 
     val profileOverridesPersonality =
         selectedProfile?.systemMessage?.isNotBlank() == true
-    var endpointsExpanded by remember { mutableStateOf(false) }
     val effectiveDisplayProfile = AgentDisplay.effectiveDisplayProfile(
         selectedProfile = selectedProfile,
         profiles = agentProfiles,
@@ -731,12 +776,23 @@ fun AgentInfoSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // ---- Header: avatar + agent name + live status ----
+            // Detail view shows the provider next to the model (desktop-style);
+            // the chat composer pill stays model-only.
+            val currentProviderLabel = modelProviders
+                .firstOrNull { gatewayCurrentProvider.isNotBlank() && it.slug.equals(gatewayCurrentProvider, ignoreCase = true) }
+                ?.name
+                ?.takeIf { it.isNotBlank() }
             AgentSheetHeader(
                 profile = effectiveDisplayProfile,
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 localDisplayAlias = profileDisplayAlias,
                 serverModelName = serverModelName,
+                // The SESSION's live model — so the header model pairs with the
+                // (session-scoped) provider label instead of mixing the global
+                // default with the session provider.
+                sessionModelName = selectedModelOverride ?: gatewayCurrentModel,
+                modelProviderLabel = currentProviderLabel,
                 apiServerReachable = apiServerReachable,
                 chatMode = chatMode,
                 isCustomized = selectedProfile != null ||
@@ -749,6 +805,8 @@ fun AgentInfoSheet(
                 fallbackName = serverResolvedAgentName,
                 onSave = connectionViewModel::setProfileDisplayAlias,
             )
+
+            AgentIconRow(connectionViewModel)
 
             HorizontalDivider()
 
@@ -916,6 +974,11 @@ fun AgentInfoSheet(
                         ProfileRadioRow(
                             primary = primaryLabel,
                             secondary = secondaryLine,
+                            // Long descriptions (e.g. "Sentinel —
+                            // Infrastructure / Security / Reliability ·
+                            // gpt-5.5") truncate to two lines + tap-to-expand
+                            // so they never crunch the badge FlowRow below.
+                            secondaryExpandable = true,
                             // Cleaner card: drop the verbose "profile: … ·
                             // compatibility overlay · active" caption now that
                             // the name is the headline.
@@ -1003,6 +1066,19 @@ fun AgentInfoSheet(
                 }
 
                 HorizontalDivider()
+            } else if (pickerListsSettling) {
+                // Profiles are optional host config — a server may legitimately
+                // have none. Show the section while they might still be loading so
+                // it doesn't feel absent; once settled with none it cleanly
+                // disappears (the user is simply on the server default).
+                CollapsiblePickerSection(
+                    title = "Profile",
+                    hint = "Host-side Hermes contexts",
+                    currentValue = "Server default",
+                ) {
+                    PickerLoadingRow("Loading profiles…")
+                }
+                HorizontalDivider()
             }
 
             // ---- Personality section ----
@@ -1017,47 +1093,53 @@ fun AgentInfoSheet(
                 modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
             ) {
 
-                // Default row — maps to selectedPersonality == "default" which
-                // the VM resolves to whatever server-side personality is
-                // currently active.
+                // None row — the explicit "no personality overlay" state
+                // (upstream `/personality none`). On the gateway this is
+                // server-applied; on SSE it just sends no persona prompt. There
+                // is intentionally no synthetic client "Default" row — upstream's
+                // active value is `none` or a named personality, and the server's
+                // configured default (if any) shows below as the row tagged
+                // "(default)", highlighted whenever it's the active one.
                 ProfileRadioRow(
-                    primary = if (defaultPersonality.isNotBlank()) {
-                        "${defaultPersonality.replaceFirstChar { it.uppercase() }} (default)"
-                    } else {
-                        "Default"
-                    },
-                    secondary = null,
-                    selected = selectedPersonality == "default",
+                    primary = "None",
+                    secondary = "No personality overlay",
+                    selected = selectedPersonality == "none" || selectedPersonality == "neutral",
                     enabled = !isStreaming,
                     onSelect = {
-                        if (selectedPersonality != "default") {
-                            chatViewModel.selectPersonality("default")
+                        if (selectedPersonality != "none") {
+                            chatViewModel.selectPersonality("none")
                             if (!profileOverridesPersonality) {
-                                toast("Using default personality")
+                                toast("Personality cleared")
                             }
                         }
                     },
                 )
 
-                personalityNames
-                    .filter { it != defaultPersonality }
-                    .forEach { name ->
-                        ProfileRadioRow(
-                            primary = name.replaceFirstChar { it.uppercase() },
-                            secondary = null,
-                            selected = selectedPersonality == name,
-                            enabled = !isStreaming,
-                            onSelect = {
-                                if (selectedPersonality != name) {
-                                    chatViewModel.selectPersonality(name)
-                                    if (!profileOverridesPersonality) {
-                                        val display = name.replaceFirstChar { it.uppercase() }
-                                        toast("Personality: $display")
-                                    }
+                if (personalityNames.isEmpty() && pickerListsSettling) {
+                    // Named personalities still loading — bounded so a server with
+                    // none (common) doesn't spin forever; "None" above is always valid.
+                    PickerLoadingRow("Loading personalities…")
+                }
+
+                personalityNames.forEach { name ->
+                    val isServerDefault = name.equals(defaultPersonality, ignoreCase = true)
+                    ProfileRadioRow(
+                        primary = name.replaceFirstChar { it.uppercase() } +
+                            if (isServerDefault) " (default)" else "",
+                        secondary = null,
+                        selected = selectedPersonality == name,
+                        enabled = !isStreaming,
+                        onSelect = {
+                            if (selectedPersonality != name) {
+                                chatViewModel.selectPersonality(name)
+                                if (!profileOverridesPersonality) {
+                                    val display = name.replaceFirstChar { it.uppercase() }
+                                    toast("Personality: $display")
                                 }
-                            },
-                        )
-                    }
+                            }
+                        },
+                    )
+                }
 
                 // When a profile SOUL is active AND the user has picked a
                 // non-default personality, make the precedence explicit
@@ -1065,7 +1147,9 @@ fun AgentInfoSheet(
                 // The mirror caption in the Profile section tells the same
                 // story from the other direction — both are kept because a
                 // user scanning either section should see the constraint.
-                if (profileOverridesPersonality && selectedPersonality != "default") {
+                if (profileOverridesPersonality &&
+                    selectedPersonality != "default" && selectedPersonality != "none"
+                ) {
                     Text(
                         text = "Profile SOUL overrides personality while active.",
                         style = MaterialTheme.typography.labelSmall,
@@ -1090,7 +1174,11 @@ fun AgentInfoSheet(
                     listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
                     .distinct()
             }
-            if (modelProviders.isNotEmpty() || sseModelOptions.isNotEmpty()) {
+            // Always show the Model picker — choosing a model is always possible
+            // (Server default at minimum). While the provider/model list is still
+            // being fetched we show a "loading" row rather than hiding the whole
+            // section (an absent section read as "no model control at all").
+            run {
                 HorizontalDivider()
                 CollapsiblePickerSection(
                     title = "Model",
@@ -1109,6 +1197,11 @@ fun AgentInfoSheet(
                             }
                         },
                     )
+                    if (modelProviders.isEmpty() && sseModelOptions.isEmpty() && pickerListsSettling) {
+                        // List still loading — honest, BOUNDED "more coming" cue
+                        // (settles to nothing if the server exposes no extra models).
+                        PickerLoadingRow("Loading available models…")
+                    }
                     if (modelProviders.isNotEmpty()) {
                         // Gateway: the curated provider→model groups the desktop
                         // picker uses (grok / kimi / gpt-5.5 …). Each provider's
@@ -1153,6 +1246,116 @@ fun AgentInfoSheet(
                                 },
                             )
                         }
+                    }
+                }
+            }
+
+            // ---- Safety & speed section ----
+            // YOLO (approval bypass) + Fast (priority tier) are standard upstream
+            // gateway features (they mirror the desktop config.set yolo/fast,
+            // session-scoped, tracked live via session.info). NEVER hidden: live
+            // controls when the gateway is usable, "Checking…" while a value
+            // loads, or cleanly disabled WITH the reason when the gateway isn't
+            // reachable / needs sign-in — so the capability is always visible.
+            run {
+                val gatewayUnavailableReason: String? = when (gatewayAvailability) {
+                    GatewayAvailability.Unreachable ->
+                        "Available over the gateway transport — this connection uses the API server."
+                    GatewayAvailability.SignInRequired ->
+                        "Sign in under Manage to control these."
+                    // Ready, or Unknown (still probing) → available / loading.
+                    else -> null
+                }
+                val gatewayControlsAvailable = gatewayUnavailableReason == null
+                // Ready (socket up) → a null value is just "unconfirmed for this
+                // draft, settles on the next message". Unknown (still probing)
+                // keeps the "Checking…" spinner.
+                val gatewayReady = gatewayAvailability == GatewayAvailability.Ready
+
+                HorizontalDivider()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel(title = "Safety & speed", hint = null)
+                    if (gatewayUnavailableReason != null) {
+                        Text(
+                            text = gatewayUnavailableReason,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
+
+                    // YOLO — bypasses command approvals. On-state is loud.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("YOLO mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Bypasses command approvals — Hermes runs tools without asking.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (yoloEnabled == true) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        GatewayToggleControl(
+                            available = gatewayControlsAvailable,
+                            gatewayReady = gatewayReady,
+                            value = yoloEnabled,
+                            enabled = !isStreaming,
+                            label = "agentSheetYolo",
+                            onChange = { chatViewModel.setYolo(it) },
+                        )
+                    }
+                    if (yoloEnabled == true) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.errorContainer)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = "Approvals are OFF for this session.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+
+                    // Fast — priority service tier (model-gated server-side).
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Fast mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Priority service tier — lower latency where the model supports it.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        GatewayToggleControl(
+                            available = gatewayControlsAvailable,
+                            gatewayReady = gatewayReady,
+                            value = fastEnabled,
+                            enabled = !isStreaming,
+                            label = "agentSheetFast",
+                            onChange = { chatViewModel.setFast(it) },
+                        )
                     }
                 }
             }
@@ -1204,6 +1407,34 @@ fun AgentInfoSheet(
                     hint = if (allConnections.size >= 2) "Switch between paired servers" else null,
                 )
 
+                // ---- Session-path summary (always-visible, top of section) ----
+                // Glanceable "which transport/route is this session on" line +
+                // honest capability chips. Replaces the buried raw-enum readout
+                // that used to live only inside the routes expander. The
+                // resolved transport, route, and capability gating are computed
+                // from live state below; the richer technical detail folds into
+                // SessionPathDetails (the single expander further down).
+                val sessionTransport = sessionPathTransport(
+                    connectionViewModel.resolveStreamingEndpoint(streamingEndpoint),
+                )
+                val routeLabel = activeEndpoint?.displayLabel()
+                    ?: com.hermesandroid.relay.data.Connection
+                        .extractDefaultLabel(apiServerUrl)
+                        .takeIf { it.isNotBlank() }
+                val relayConnected = relayConnectionState == ConnectionState.Connected
+                val sessionCaps = sessionCapabilities(
+                    transport = sessionTransport,
+                    gatewayAvailability = gatewayAvailability,
+                    relayConnected = relayConnected,
+                    relayConfigured = relayUrl.isNotBlank(),
+                    voiceReady = voiceReady,
+                )
+                SessionPathSummary(
+                    transport = sessionTransport,
+                    routeLabel = routeLabel,
+                    capabilities = sessionCaps,
+                )
+
                 // Multi-connection switcher. Renders inline as a radio list
                 // (mirrors the Profile + Personality sections above) when the
                 // user has ≥2 paired connections. Replaces the separate top-
@@ -1222,7 +1453,7 @@ fun AgentInfoSheet(
                             val hostname = com.hermesandroid.relay.data.Connection
                                 .extractDefaultLabel(connection.apiServerUrl)
                             val statusLine = when {
-                                connection.pairedAt == null -> "$hostname • Standard"
+                                connection.pairedAt == null -> "$hostname • Vanilla Hermes"
                                 else -> "$hostname • Paired"
                             }
                             ProfileRadioRow(
@@ -1300,41 +1531,22 @@ fun AgentInfoSheet(
                     }
                 }
 
-                // Collapsible endpoint block — keeps the default view tidy.
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { endpointsExpanded = !endpointsExpanded }
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (endpointsExpanded) "Hide routes" else "Show routes",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Icon(
-                        imageVector = if (endpointsExpanded) {
-                            Icons.Filled.KeyboardArrowUp
-                        } else {
-                            Icons.Filled.KeyboardArrowDown
-                        },
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-
-                if (endpointsExpanded) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        InfoRow(label = "API", value = apiServerUrl, monospace = true)
-                        InfoRow(label = "Relay", value = relayUrl, monospace = true)
-                        ChipRow(label = "Relay state") {
-                            connectionChip(relayConnectionState)
-                        }
-                        InfoRow(label = "Streaming", value = chatMode.toString())
-                    }
-                }
+                // Session details — the single progressive-disclosure expander
+                // that ABSORBS the old "Show routes" block. Shows the friendly
+                // transport + route, relay state, the full honest capability
+                // list (✓ / — with a reason), and the technical API/Relay URLs.
+                // There is intentionally one expander here, not two.
+                SessionPathDetails(
+                    transport = sessionTransport,
+                    routeLabel = routeLabel,
+                    relayConnectionState = relayConnectionState,
+                    capabilities = sessionCaps,
+                    apiServerUrl = apiServerUrl,
+                    relayUrl = relayUrl,
+                    streamingEndpoint = streamingEndpoint,
+                    gatewayAvailability = gatewayAvailability,
+                    serverCapabilities = serverCapabilities,
+                )
             }
 
             HorizontalDivider()
@@ -1488,7 +1700,20 @@ private fun DisplayAliasSection(
  * Radio-style row used by both Profile and Personality sections. Whole row
  * is a tap target (and selectable() for a11y). Disabled when [enabled] is
  * false — look and behaviour both propagate the gate.
+ *
+ * Layout hierarchy inside the text column:
+ *   1. [primary]   — the name, on its own line.
+ *   2. [secondary] — a metadata/description line. When [secondaryExpandable]
+ *      is set it truncates to [SECONDARY_COLLAPSED_LINES] with an ellipsis and
+ *      becomes tap-to-expand, so a long description (e.g. "Sentinel —
+ *      Infrastructure / Security / Reliability · gpt-5.5") can never push the
+ *      badges off-screen or crunch them.
+ *   3. [secondaryTrailing] badges — rendered in a FlowRow on their OWN line
+ *      below the description, so WHOLE pills wrap to the next line rather than
+ *      the badge text wrapping internally ("141\nskills" / vertical "S O U L").
+ *   4. [tertiary]  — an optional caption.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileRadioRow(
     primary: String,
@@ -1518,13 +1743,31 @@ private fun ProfileRadioRow(
      */
     leadingDotContentDescription: String? = null,
     /**
-     * Optional trailing chip/badge row rendered next to the [secondary]
-     * line (same baseline as the model-name text for the Profile section
-     * entries). Slot-based so each call site composes its own badges.
+     * When true the [secondary] line is treated as a potentially-long
+     * description: it truncates to [SECONDARY_COLLAPSED_LINES] with an
+     * ellipsis and gains a tap-to-expand affordance (progressive disclosure)
+     * so the full text is reachable without crunching the badges. Default
+     * false keeps the short single-line caption behaviour every other caller
+     * relies on.
+     */
+    secondaryExpandable: Boolean = false,
+    /**
+     * Optional trailing chip/badge slot. Rendered in a FlowRow on its own
+     * line BELOW the [secondary] description (not inline with it), so whole
+     * badges wrap gracefully and never compete with the description for
+     * width. Slot-based so each call site composes its own badges.
      */
     secondaryTrailing: (@Composable () -> Unit)? = null,
 ) {
     val rowAlpha = (if (enabled) 1f else 0.5f) * contentAlpha
+    // Local expand state for a long [secondary] description. Only consulted
+    // when [secondaryExpandable]; tapping the description toggles it. Scoped
+    // to this row's identity so a list re-order doesn't carry the flag across.
+    var descriptionExpanded by remember(primary, secondary) { mutableStateOf(false) }
+    // Whether the collapsed description is actually being clipped — drives the
+    // "More" affordance so a short description that fits doesn't get a pointless
+    // expand link. Reported by the Text's onTextLayout below.
+    var descriptionOverflows by remember(primary, secondary) { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1563,26 +1806,64 @@ private fun ProfileRadioRow(
             )
         }
         Spacer(modifier = Modifier.size(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(
                 text = primary,
                 style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (secondary != null || secondaryTrailing != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+            // Description line on its own row. When expandable, truncate +
+            // make the text a tap-to-toggle target so the full description is
+            // reachable without pushing the badges off-screen. The whole-row
+            // selectable() still drives selection; this inner clickable only
+            // toggles disclosure, so a tap on the description text expands it
+            // rather than selecting the row.
+            if (secondary != null) {
+                val collapsed = secondaryExpandable && !descriptionExpanded
+                Text(
+                    text = secondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (collapsed) SECONDARY_COLLAPSED_LINES else Int.MAX_VALUE,
+                    overflow = if (collapsed) TextOverflow.Ellipsis else TextOverflow.Clip,
+                    // Only flag overflow from the COLLAPSED measure — once
+                    // expanded the text fits by definition, so don't clobber
+                    // the flag (the "Show less" affordance still wants it true).
+                    onTextLayout = { layout ->
+                        if (collapsed) descriptionOverflows = layout.hasVisualOverflow
+                    },
+                    modifier = if (secondaryExpandable && enabled) {
+                        Modifier.clickable { descriptionExpanded = !descriptionExpanded }
+                    } else {
+                        Modifier
+                    },
+                )
+                // "More" / "Show less" affordance — only when the collapsed
+                // description is actually clipped (or already expanded), so a
+                // short description that fits gets no pointless expand link.
+                if (secondaryExpandable && enabled && (descriptionOverflows || descriptionExpanded)) {
+                    Text(
+                        text = if (descriptionExpanded) "Show less" else "More",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable {
+                            descriptionExpanded = !descriptionExpanded
+                        },
+                    )
+                }
+            }
+            // Badges get their OWN line in a FlowRow so whole pills wrap to the
+            // next line on a narrow row — never crunched, never split internally.
+            if (secondaryTrailing != null) {
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    if (secondary != null) {
-                        Text(
-                            text = secondary,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (secondaryTrailing != null) {
-                        secondaryTrailing()
-                    }
+                    secondaryTrailing()
                 }
             }
             if (tertiary != null) {
@@ -1603,6 +1884,11 @@ private fun ProfileRadioRow(
     }
 }
 
+/** Lines a collapsed (truncated) [ProfileRadioRow] description shows before its
+ *  tap-to-expand affordance reveals the rest. Two keeps the badge FlowRow on
+ *  screen even when the description is long. */
+private const val SECONDARY_COLLAPSED_LINES = 2
+
 /**
  * Tiny pill rendered inline with a profile row's secondary line. Used for
  * "N skills" and "SOUL" indicators. Kept compact and visually subordinate
@@ -1618,11 +1904,103 @@ private fun ProfileMetadataBadge(
         text = text,
         style = MaterialTheme.typography.labelSmall,
         color = contentColor,
+        // A badge must read as one whole pill. maxLines=1 + softWrap=false keeps
+        // "141 skills" / "SOUL" on a single line so a width crunch can never break
+        // it into "141\nskills" or vertical "S O U L" — the FlowRow in
+        // ProfileRadioRow wraps WHOLE pills to the next line instead.
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(background)
             .padding(horizontal = 6.dp, vertical = 1.dp),
     )
+}
+
+/** A small spinner + label row used as a BOUNDED "list still loading" cue under
+ *  a picker section whose section header is always present. */
+@Composable
+private fun PickerLoadingRow(text: String) {
+    Row(
+        modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 2.dp,
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Trailing control for a standard upstream gateway toggle (YOLO / Fast) that is
+ * NEVER hidden:
+ *  - not [available] (gateway unreachable / needs sign-in) → a cleanly disabled
+ *    switch; the reason is shown once at the section level;
+ *  - [available] but [value] still unknown (null):
+ *     - [gatewayReady] → the value re-confirms from `session.info` on the user's
+ *       NEXT message (it's reset on a new chat / profile switch), so instead of
+ *       an indefinite spinner the placeholder says so honestly;
+ *     - still probing (Unknown) → the "Checking…" spinner pose;
+ *  - [available] with a confirmed [value] → the live switch.
+ */
+@Composable
+private fun GatewayToggleControl(
+    available: Boolean,
+    gatewayReady: Boolean,
+    value: Boolean?,
+    enabled: Boolean,
+    label: String,
+    onChange: (Boolean) -> Unit,
+) {
+    if (!available) {
+        Switch(checked = value == true, enabled = false, onCheckedChange = {})
+        return
+    }
+    LoadedFadeIn(
+        value = value,
+        label = label,
+        placeholder = {
+            if (gatewayReady) {
+                // Socket is up; the value is just unconfirmed for THIS draft.
+                // Honest + subtle: tell the user it settles on their next turn
+                // rather than spinning forever.
+                Text(
+                    text = "Confirms on your next message",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        text = "Checking…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+    ) { enabledValue ->
+        Switch(
+            checked = enabledValue,
+            enabled = enabled,
+            onCheckedChange = onChange,
+        )
+    }
 }
 
 @Composable
@@ -1632,6 +2010,8 @@ private fun AgentSheetHeader(
     defaultPersonality: String,
     localDisplayAlias: String?,
     serverModelName: String,
+    sessionModelName: String? = null,
+    modelProviderLabel: String? = null,
     apiServerReachable: Boolean,
     chatMode: ChatMode,
     isCustomized: Boolean,
@@ -1643,8 +2023,14 @@ private fun AgentSheetHeader(
         connectionLabel = null,
         localDisplayAlias = localDisplayAlias,
     )
-    val modelLabel = AgentDisplay.displayModelName(profile?.model)
+    // Session model wins so it pairs with the (session-scoped) provider label;
+    // falls back to the profile model, then the server default.
+    val modelLabel = AgentDisplay.displayModelName(sessionModelName)
+        ?: AgentDisplay.displayModelName(profile?.model)
         ?: AgentDisplay.displayModelName(serverModelName)
+    // The global default — surfaced as a quiet caption only when THIS session
+    // runs something different (the always-visible global-vs-session split).
+    val serverDefaultLabel = AgentDisplay.displayModelName(serverModelName)
     val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
     val statusText = when {
         apiServerReachable -> "Connected"
@@ -1664,7 +2050,7 @@ private fun AgentSheetHeader(
             modifier = Modifier
                 .size(48.dp)
                 .then(
-                    if (isCustomized) {
+                    if (isCustomized && LocalAgentIconPath.current.isNullOrBlank()) {
                         Modifier.border(
                             width = 2.dp,
                             color = MaterialTheme.colorScheme.primary,
@@ -1680,13 +2066,10 @@ private fun AgentSheetHeader(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.primary,
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = agentName.firstOrNull()?.uppercase() ?: "H",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
+                AgentAvatarFace(
+                    name = agentName,
+                    letterStyle = MaterialTheme.typography.titleMedium,
+                )
             }
         }
         Column(modifier = Modifier.weight(1f)) {
@@ -1695,10 +2078,36 @@ private fun AgentSheetHeader(
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
             )
-            modelLabel?.takeIf { it.isNotBlank() }?.let { label ->
+            // Fade the model in when it's CONFIRMED (from /api/config), rather
+            // than popping. While still connecting we show a skeleton (honest
+            // "loading"); once connected with no model reported we render
+            // nothing rather than claim a model we don't have.
+            LoadedFadeIn(
+                value = modelLabel?.takeIf { it.isNotBlank() },
+                label = "agentSheetModel",
+                placeholder = {
+                    // Never collapse the model line — show a loading pose, not an
+                    // empty slot (which reads as "no model").
+                    RelaySkeletonLine(width = 104.dp, height = 12.dp)
+                },
+            ) { label ->
                 Text(
-                    text = label,
+                    text = modelProviderLabel?.takeIf { it.isNotBlank() }
+                        ?.let { "$label · $it" } ?: label,
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            // Global-vs-session split: when the session runs a different model
+            // than the server's global default, name the default here so the
+            // scope is obvious at a glance (matches a mid-session switch).
+            if (modelLabel != null && serverDefaultLabel != null &&
+                !modelLabel.equals(serverDefaultLabel, ignoreCase = true)
+            ) {
+                Text(
+                    text = "Server default: $serverDefaultLabel",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                 )
