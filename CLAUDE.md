@@ -328,6 +328,7 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 | `quest/` | [EXPERIMENTAL] Meta Spatial SDK Quest/XR app — gradle `includeBuild("quest")`; needs further development, not shipped |
 | **Tooling — dev iteration (not shipped)** | |
 | `ui-preview/` | Desktop Compose Hot Reload harness — JVM Compose for Desktop; source-shares `MorphingSphereCore` from `:relay-ui`; `Main.kt` gallery; see `ui-preview/README.md` |
+| `app/src/test/.../screenshots/StoreScreenshotTest.kt` | Roborazzi host-side store/docs screenshot renderer — deterministic, no device, exact 1080×2160; reuses real components+chrome with mock data; `capture(name, themeId){…}` renders any view; see `docs/screenshot-automation.md` §Deterministic rendering (JDK-21 + no-plugin gotchas) |
 
 ## What NOT to Do
 
