@@ -238,8 +238,12 @@ writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
   can use a lot of RAM, and a single very large image can fail to decode. As an
   authoring best practice (not an enforced cap), keep frames ≲256 px and clip
   lengths modest (≤ ~30 frames); for many frames prefer a **sprite sheet** over a
-  long frame sequence — a sheet decodes as one bitmap. Only the **selected**
-  pet's **current** clip is decoded, off the main thread.
+  long frame sequence — a sheet decodes as one bitmap, so its cells can be larger
+  (256–512 px) without the per-frame cost of a sequence. **Size cells to the
+  largest surface the avatar appears on** (the full-screen chat background): a
+  128 px cell upscaled that far looks pixelated, while smaller surfaces (the
+  voice overlay) just downscale and stay sharp. Only the **selected** pet's
+  **current** clip is decoded, off the main thread.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
 

@@ -74,15 +74,15 @@ STEP 3 — pet.json   (save beside the PNGs in a folder, e.g. my-pet/)
   "label": "My Pet",
   "reactive": { "voice": true, "intensity": true },
   "states": {
-    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
-    "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
-    "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
-    "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
-    "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
-    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
-    "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
-    "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
-    "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 }
+    "idle":      { "sheet": "idle.png",      "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 8 },
+    "thinking":  { "sheet": "thinking.png",  "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "working":   { "sheet": "working.png",   "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "writing":   { "sheet": "writing.png",   "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "speaking":  { "sheet": "speaking.png",  "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "listening": { "sheet": "listening.png", "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 8 },
+    "error":     { "sheet": "error.png",     "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "greet":     { "sheet": "greet.png",     "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "done":      { "sheet": "done.png",      "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 }
   }
 }
 
@@ -118,6 +118,12 @@ GOTCHAS
 • CONSISTENCY: reuse the reference image every time, keep the character/style/
   accent lines identical, lock a fixed seed if you can. Fewer frames (2–4)
   stay consistent more easily.
+• RESOLUTION: one frame set serves every surface (contain-fit), so size for the
+  BIGGEST one — the full-screen chat background. 128px cells look pixelated
+  blown up that large; 256px cells (1024x1024 sheet for 4x4) are a good default,
+  512px (2048x2048) for extra crispness. A sheet decodes as one bitmap, so big
+  cells are cheap. (Voice mode is small, so it's always sharp.) Speed is also
+  tunable live in Settings -> Appearance.
 • SMOOTHNESS: comes from frame COUNT, not fps. This kit defaults to 4x4 (16
   frames) for fluid motion; if the character drifts between cells, drop to 2x2
   (4 frames), set frameCount 4, and accept a steppier look. Match fps to count

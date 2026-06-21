@@ -136,7 +136,7 @@ Only `idle` is required — start there for a one-clip pet, then add as many sta
 
 #### 3. Wire the sheets into a manifest
 
-Each generated sheet becomes one clip. This manifest wires up **all nine** — save it as `pet.json` beside the PNGs in a folder (e.g. `my-pet/`). For a **4×4 grid of 128 px cells** (a 512×512 image holding 16 frames), each clip looks like this:
+Each generated sheet becomes one clip. This manifest wires up **all nine** — save it as `pet.json` beside the PNGs in a folder (e.g. `my-pet/`). For a **4×4 grid of 256 px cells** (a 1024×1024 image holding 16 frames), each clip looks like this:
 
 ```json
 {
@@ -146,15 +146,15 @@ Each generated sheet becomes one clip. This manifest wires up **all nine** — s
   "label": "My Pet",
   "reactive": { "voice": true, "intensity": true },
   "states": {
-    "idle":      { "sheet": "idle.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
-    "thinking":  { "sheet": "thinking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
-    "working":   { "sheet": "working.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
-    "writing":   { "sheet": "writing.png",   "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
-    "speaking":  { "sheet": "speaking.png",  "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
-    "listening": { "sheet": "listening.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 8 },
-    "error":     { "sheet": "error.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 10 },
-    "greet":     { "sheet": "greet.png",     "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 },
-    "done":      { "sheet": "done.png",      "frameWidth": 128, "frameHeight": 128, "frameCount": 16, "fps": 12 }
+    "idle":      { "sheet": "idle.png",      "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 8 },
+    "thinking":  { "sheet": "thinking.png",  "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "working":   { "sheet": "working.png",   "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "writing":   { "sheet": "writing.png",   "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "speaking":  { "sheet": "speaking.png",  "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "listening": { "sheet": "listening.png", "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 8 },
+    "error":     { "sheet": "error.png",     "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 10 },
+    "greet":     { "sheet": "greet.png",     "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 },
+    "done":      { "sheet": "done.png",      "frameWidth": 256, "frameHeight": 256, "frameCount": 16, "fps": 12 }
   }
 }
 ```
@@ -167,6 +167,10 @@ The example above starts with a `$schema` line pointing at the published [pet sc
 
 ::: tip Smoothness: frames vs. fps
 Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed — which is why this kit defaults to a **4×4 grid (16 frames)**. Fewer frames are easier to keep consistent, so if the character drifts between cells, drop to a **2×2 grid (4 frames)** and set `frameCount: 4` — it'll just read steppier. And **match fps to frame count** so the loop length stays sane: 16 frames at `fps: 8` is a calm ~2 s cycle, while *4* frames at `fps: 8` is a frantic half-second. Keep calm states (`idle`/`listening`) a little slower than active ones (`speaking`/`done`).
+:::
+
+::: tip Resolution: size for the biggest surface
+The avatar is **contain-fit** into whatever space it occupies, and *one* set of frames serves every surface — so author for the **largest** place it appears (the full-screen chat background) and small placements (the voice overlay) just downscale and stay sharp. A 128 px cell upscaled to fill the chat background looks pixelated; **256 px cells** (a 1024×1024 sheet for a 4×4 grid) are a good default. Because a sprite sheet decodes as **one** bitmap, you can even go to 512 px cells (2048×2048) for extra crispness at a modest memory cost — that ceiling is per *sheet*, not per frame, so it's far cheaper than the same frames as separate files. You can also fine-tune the running speed live in **Settings → Appearance** without re-authoring.
 :::
 
 ::: warning Two things AI image models get wrong
