@@ -8,7 +8,8 @@
     "preview": "vitepress preview"
   },
   "devDependencies": {
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "search-insights": "^2.17.3"
   },
   "dependencies": {
     "@vue-flow/core": "^1.48.2"
