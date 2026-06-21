@@ -58,12 +58,12 @@
       "captureNote": "Session drawer or session management surface."
     },
     {
-      "id": "05_commands",
-      "title": "Command palette",
-      "source": "assets/screenshots/05_commands.png",
-      "readme": "assets/screenshots/05_commands.png",
+      "id": "05_themes",
+      "title": "App themes",
+      "source": "assets/screenshots/05_themes.png",
+      "readme": "assets/screenshots/05_themes.png",
       "play": "5.png",
-      "captureNote": "Command palette/search affordance with public-safe command labels."
+      "captureNote": "Theme picker (Settings → Appearance) showing the eight looks plus light/dark and font controls."
     },
     {
       "id": "06_manage",
@@ -82,12 +82,12 @@
       "captureNote": "Connection/routes view using generic LAN/Tailscale/public labels."
     },
     {
-      "id": "08_settings",
-      "title": "Settings",
-      "source": "assets/screenshots/08_settings.png",
-      "readme": "assets/screenshots/08_settings.png",
+      "id": "08_appearance",
+      "title": "Agent avatar & skins",
+      "source": "assets/screenshots/08_appearance.png",
+      "readme": "assets/screenshots/08_appearance.png",
       "play": "8.png",
-      "captureNote": "Settings overview showing privacy/security controls."
+      "captureNote": "Appearance: agent-avatar picker (Add a pet) + sphere-skin grid with honest capability badges."
     }
   ]
 }

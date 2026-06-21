@@ -144,10 +144,10 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
     <td align="center" width="25%"><img src="assets/screenshots/04_sessions.png" alt="Session history" width="100%"><br><sub><b>Session history</b></sub></td>
   </tr>
   <tr>
-    <td align="center" width="25%"><img src="assets/screenshots/05_commands.png" alt="Command palette" width="100%"><br><sub><b>Command palette</b></sub></td>
+    <td align="center" width="25%"><img src="assets/screenshots/05_themes.png" alt="App themes" width="100%"><br><sub><b>App themes</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/06_manage.png" alt="Manage your agent" width="100%"><br><sub><b>Manage your agent</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/07_connections.png" alt="Connections and routes" width="100%"><br><sub><b>Connections &amp; routes</b></sub></td>
-    <td align="center" width="25%"><img src="assets/screenshots/08_settings.png" alt="Settings" width="100%"><br><sub><b>Settings</b></sub></td>
+    <td align="center" width="25%"><img src="assets/screenshots/08_appearance.png" alt="Agent avatar &amp; skins" width="100%"><br><sub><b>Avatars &amp; skins</b></sub></td>
   </tr>
 </table>
 
