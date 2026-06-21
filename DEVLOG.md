@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Release-prep: android-v1.2.0 + plugin-v1.2.0
+
+**Why.** Cut a combined 1.2.0 across both lockstep surfaces (both were at 1.1.0). The accumulated `[Unreleased]` block had captured the major feature arcs but a second wave had landed undocumented — audited every commit since the `*-v1.1.0` tags and backfilled the changelog before promoting it.
+
+- **Versions.** `bump-android-version.sh 1.2.0` (`appVersionName 1.1.0→1.2.0`, `appVersionCode 13→14`); `bump-plugin-version.sh 1.2.0` (pyproject + `plugin/relay/__init__.py` + plugin.yaml + dashboard manifest/package/lock, all in sync). `check-version-tracks.py` + `check-plugin-version-sync.py --expect 1.2.0` green.
+- **CHANGELOG backfill.** Promoted `[Unreleased]` → `[1.2.0] - 2026-06-20` with a fresh empty `[Unreleased]`. Added the missing shipped features the accumulator had skipped: **agent pets** (swappable animated avatar + reactivity + in-app add/remove + AI authoring kit), per-profile agent icons + single-image avatars, **in-app crash reporting**, clean text-flow mode, the permissions-review screen, attachment previews; **Changed**: "Standard"→"Vanilla Hermes" rename, QR camera hardening for foldables, viewer landscape rotation; **Fixed**: PDF mid-render crash, the `kotlin.Result`-in-suspend `ClassCastException` on server images, side-loaded avatar/skin storage path, reopened-session model + media-badge fixes.
+- **Release notes.** Rewrote `RELEASE_NOTES.md` (Android, "Make it yours" framing) and `PLUGIN_RELEASE_NOTES.md` (enhancement-layer + enhanced voice). Updated in-app `whats_new.txt`, Play `release-notes/en-US/default.txt` (438/500 chars), and the `docs/play-store-listing.md` What's-new block.
+- **Scrub.** Grep'd the `[1.2.0]` block for names / private infra / fork plumbing — clean (only pre-existing released blocks carry the LAN host IP from old desktop-alpha entries; out of scope for this cut, flagged separately).
+- **Verification.** `python -m unittest plugin.tests.test_enhancements plugin.tests.test_terminal_channel` (20 pass). Android AAB build + `keytool` cert verify is Studio-side (Bailey) per the dev loop. Prep committed on `dev` in two commits (`release(android)` / `release(plugin)`); merge-to-`main` + tags deferred to operator.
+
 ## 2026-06-20 — Static-image avatars + per-profile agent icon (Android)
 
 **Why.** Two requests: a custom avatar shouldn't require authoring an animated pack (a single image should work), and each agent profile should be able to wear its own small icon beside its name — client-side, mirroring the existing local-name override.

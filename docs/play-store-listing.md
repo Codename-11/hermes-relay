@@ -83,13 +83,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-Hermes-Relay 1.0 — our biggest release.
+v1.2.0 — Make it yours.
 
-Vanilla Hermes path: chat, Manage, and voice now run on a plain Hermes agent, no plugin. The relay plugin is optional now — Advanced power tools only.
-
-Chat streams reasoning live, attaches images/PDFs/files, steers a running turn, and edits & resends. Switch agent profiles per conversation. Manage hits desktop-dashboard parity.
-
-Plus a redesigned input bar, seamless LAN/Tailscale handoffs, and a broad polish + QoL pass.
+• Eight app themes, swappable sphere skins, and animated agent "pets" that react to what your agent is doing.
+• See which streaming path you're on, plus a "What the agent sees" sheet showing the agent's exact context.
+• ~3× faster cold start and honest loading states.
+• In-app crash reporting with one-tap bug reports.
+• Fixes: QR pairing on foldables, server-image & PDF crashes, in-chat model picks now apply.
 ```
 
 ## Category

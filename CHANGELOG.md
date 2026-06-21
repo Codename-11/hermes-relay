@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-20
+
 ### Added
 
 - **Sensitive-media classification (relay).** The relay teaches the agent — server-side, via a removable system-prompt block — to mark private/NSFW media so the phone blurs it per your setting. **On by default for relay installs** (installing the relay is itself the opt-in); reversible from the "Agent context" toggle in the Relay dashboard, or `RELAY_AGENT_CONTEXT_ENABLED=0`. The exact injected instruction is visible in the chat "What the agent sees" sheet under "Relay context (server-side)". No on-device or relay-side classifier — sensitivity stays model-emitted. Vanilla upstream (no plugin) is unaffected. See `docs/plans/2026-06-20-relay-enhancement-layer.md`.
@@ -17,6 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Connections separate features from routes (Android).** Connection settings now distinguish what a connection can *do* (a **Features** section) from how this phone *reaches* Hermes (a **Route** section), so you can enable Relay features over whichever transport you prefer. A plugin-provided **Secure proxy** route is surfaced alongside LAN, Tailscale, public, and custom routes. The standard direct-to-upstream path is unchanged and still needs no plugin. See `docs/plans/2026-06-18-native-secure-routes.md`.
 - **Enhanced voice control (Gemini & xAI).** When the relay uses a Gemini or xAI voice provider, Voice Settings can now steer it: pick a Gemini voice and model and turn on expressive tone tags (with optional natural-language voice direction), or set an xAI voice with expressive speech tags. Expressive tags also apply to xAI on the streaming voice-output renderer. Standard (no-plugin) voice stays configured server-side.
 - **Voice render-path visibility.** Voice Settings shows which path is rendering speech (streaming vs. basic), and Diagnostics records it each session, making voice issues easier to troubleshoot.
+- **Agent pets — a living, swappable avatar.** The orb can be replaced with an animated "pet" that reacts to what the agent is doing: idle / thinking / writing / speaking / listening states, a distinct **working** pose during tool calls, one-shot **greet** / **celebrate** reactions, and a loop that quickens as output streams. Add or remove pets right in Settings → Appearance (no `adb` needed), with a live state preview, a playback-speed slider, and optional frame auto-stabilization; capability badges (Voice · Tools · Activity) show honestly what each pet actually reacts to. Pets are pure data — an AI authoring kit and a JSON schema let you generate one from sprite art. See `docs/pet-spec.md` and the custom-avatars guide.
+- **Per-profile agent icon + single-image avatars.** Each agent profile can wear its own small icon beside its name (client-side, never sent to Hermes), shown in chat, the agent sheet, the top bar, and Settings. Importing an avatar now also accepts a single image (auto-wrapped as a one-frame pet) — no animated pack required.
+- **In-app crash reporting.** If the app ever force-closes, the next launch shows a clean dialog with the stack trace — **Copy** it, or **Report** to open a pre-filled GitHub issue from the bug template. The report persists until you acknowledge it, and the handler re-raises so the OS still records the crash in Play vitals.
+- **Clean text-flow mode (chat).** A distraction-free chat layout where your sent text slides up into a continuous flow, paired with the swappable-avatar/pet system.
+- **Permissions review screen.** A central page makes the permission model explicit — standard Chat and Manage need no phone-control permissions, while voice, camera, notifications, and sideload Device Control stay opt-in — reading the same live grants Bridge does.
+- **In-app attachment previews + richer capture.** Attachments preview inline before sending, sensitive media is blurred per your setting, and the capture flow is richer.
 
 ### Changed
 
@@ -28,6 +36,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Voice replies are formatted for listening.** In voice mode the assistant is now guided to answer in short, conversational sentences without markdown, emoji, or raw URLs — without changing what is stored in chat history.
 - **Leaner terminal screen (Android).** The extra-keys bar scrolls horizontally with compact, fully-legible keys (no more clipped "CTRL"), the header is a single compact row showing one inline connection-status dot plus state, and the tab strip is hidden for single-tab sessions — the new-tab "+" moves into the header — reclaiming vertical space for the terminal.
 - **Relay terminals run on an isolated, TUI-tuned tmux.** Sessions now use a dedicated tmux server/socket with its own config — instant ESC (`escape-time 0`), truecolor `$TERM`, mouse and focus events on, and no status bar — so editors and full-screen tools behave correctly, without touching the user's personal tmux.
+- **"Standard" is now "Vanilla Hermes" throughout.** The user-facing name for the no-plugin upstream path is now **Vanilla Hermes**, so it's clear the default path runs on a plain Hermes agent.
+- **QR pairing degrades gracefully on unusual cameras.** On foldables and devices where the camera can't initialize, the scanner now shows a "camera unavailable — pair manually" card instead of force-closing.
+- **Image & attachment viewers rotate to landscape.** The full-screen image / attachment viewers can rotate to landscape even though the rest of the app stays portrait-locked.
 
 ### Fixed
 
@@ -49,6 +60,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **The model shown in chat matches the live session.** The chat header and the agent detail sheet now show the model the current session is actually running (reflecting a mid-session switch) rather than the profile/global default, and the agent sheet no longer pairs the global default model name with the session's provider — it now also names the host's "Server default" when the session runs something different.
 - **Server steering markers no longer appear as chat bubbles.** The "[System: the active model/personality changed]" notes the server injects into history for the agent's benefit are hidden from the transcript by default (matching the desktop/TUI); a new "Show system messages" debug toggle in Chat Settings can reveal them.
 - **Per-reply token counts (and other per-message details) survive the post-turn reload.** The input/output token subtext, provenance badges, tapped-card state, and voice/realtime sync traces are now preserved when the conversation reconciles against the server after a turn — previously a normal reply lost its token line once the turn finished (the error bubble kept it only because errored turns skip that reload). The reloader now preserves client-only message details by default instead of dropping any it doesn't re-derive from the server.
+- **PDF viewer no longer crashes when the document closes mid-render.** A PDF preview that was torn down during a layout pass could read a closed renderer and throw `IllegalStateException: Document already closed`; the renderer is now guarded so it returns nothing instead of crashing.
+- **No crash opening a chat with a server-local image.** Rendering a relay-fetched image could throw `ClassCastException: kotlin.Result cannot be cast to byte[]` because a `suspend` function returned `kotlin.Result` (which collides with the coroutine machinery's own wrapper); a purpose-built result type fixes it.
+- **Side-loaded avatars and sphere skins are reachable again.** Both loaders read internal storage while the docs (correctly) pointed `adb push` at external app-scoped storage, so a side-loaded pet or skin never appeared. Both now resolve through one external-preferred location, so the documented install path works.
+- **Reopened chats paint the session's real model** (not the profile/global default), the model-picker "Server default" caption shows the true default rather than the active override, and a chat's media badge shows only when paired — with the underlying server-image fetch-failure reason surfaced when a fetch fails.
 
 ## [1.1.0] - 2026-06-16
 
