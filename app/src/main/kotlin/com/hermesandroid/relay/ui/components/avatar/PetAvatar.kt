@@ -220,6 +220,9 @@ class PetAvatar(
         // tracks the agent without restarting it. One-shots play at authored rate.
         val intensityState = rememberUpdatedState(state.intensity)
         val modulateIntensity = reactivity.intensity && !playOnce
+        // Global user speed tune (Appearance), read live like intensity. Applies
+        // to every clip including one-shots, so the whole pet slows/speeds together.
+        val speedState = rememberUpdatedState(LocalPetPlaybackSpeed.current)
 
         if (animate) {
             // Vsync-paced frame advance (no fixed delay). Cancels when this leaves
@@ -235,11 +238,12 @@ class PetAvatar(
                     val now = withFrameNanos { it }
                     acc += (now - last).coerceAtLeast(0L) / 1_000_000_000f
                     last = now
+                    val speed = speedState.value
                     val fps = if (modulateIntensity) {
-                        (baseFps * (1f + intensityState.value.coerceIn(0f, 1f) * PET_INTENSITY_RATE))
-                            .coerceAtMost(PET_MAX_FPS)
+                        (baseFps * speed * (1f + intensityState.value.coerceIn(0f, 1f) * PET_INTENSITY_RATE))
+                            .coerceIn(1f, PET_MAX_FPS)
                     } else {
-                        baseFps
+                        (baseFps * speed).coerceIn(1f, PET_MAX_FPS)
                     }
                     val frameDurSec = 1f / fps
                     if (acc >= frameDurSec) {

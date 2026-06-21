@@ -102,3 +102,11 @@ val LocalAgentAvatar = staticCompositionLocalOf<AgentAvatar> { SphereAvatar }
  * user pets.
  */
 val LocalAvailableAvatars = staticCompositionLocalOf<List<AgentAvatar>> { listOf(SphereAvatar) }
+
+/**
+ * Global pet playback-speed multiplier (1.0 = the clip's authored fps), set in
+ * Appearance and provided at the app root. [PetAvatar] scales its frame rate by
+ * this so users can tune a pet that feels too fast/slow without re-authoring;
+ * the sphere avatar ignores it.
+ */
+val LocalPetPlaybackSpeed = staticCompositionLocalOf { 1f }

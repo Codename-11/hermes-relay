@@ -185,6 +185,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected agent avatar id. "sphere" (SphereAvatar.id) is the default
         // built-in; any other id selects a loaded user "pet" by id.
         private val KEY_AGENT_AVATAR = stringPreferencesKey("agent_avatar")
+        private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
         const val DEFAULT_FONT_SCALE: Float = 1.0f
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
@@ -973,6 +974,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun refreshAgentAvatars() {
         _avatarsRefreshTick.value = _avatarsRefreshTick.value + 1
     }
+
+    // Global pet playback-speed multiplier (1.0 = authored fps). Tunable in
+    // Appearance; applied to the active pet's clips via LocalPetPlaybackSpeed.
+    // The sphere avatar ignores it.
+    val petSpeed: StateFlow<Float> = application.relayDataStore.data
+        .map { preferences -> preferences[KEY_PET_SPEED] ?: 1f }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 1f)
 
     // Global font scale (1.0 = system default). Applied at the Compose theme
     // root via LocalDensity.fontScale and pushed into the xterm WebView via
@@ -5042,6 +5050,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_AGENT_AVATAR] = avatarId
+            }
+        }
+    }
+
+    /** Set the global pet playback-speed multiplier (clamped 0.5×–1.5×). */
+    fun setPetSpeed(speed: Float) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_SPEED] = speed.coerceIn(0.5f, 1.5f)
             }
         }
     }

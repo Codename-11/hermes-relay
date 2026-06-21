@@ -77,6 +77,7 @@ import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
+import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.components.ConnectionStatusToast
@@ -816,12 +817,14 @@ fun RelayApp() {
     val activeAgentAvatar = remember(agentAvatarId, availableAgentAvatars) {
         availableAgentAvatars.firstOrNull { it.id == agentAvatarId } ?: SphereAvatar
     }
+    val petSpeed by connectionViewModel.petSpeed.collectAsState()
 
     CompositionLocalProvider(
         LocalSphereSkin provides activeSphereSkin,
         LocalAvailableSphereSkins provides availableSphereSkins,
         LocalAgentAvatar provides activeAgentAvatar,
         LocalAvailableAvatars provides availableAgentAvatars,
+        LocalPetPlaybackSpeed provides petSpeed,
     ) {
     HermesRelayTheme(
         appThemeId = appThemeId,

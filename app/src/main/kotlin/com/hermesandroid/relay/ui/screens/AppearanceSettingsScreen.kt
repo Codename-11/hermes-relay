@@ -35,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TextButton
@@ -529,6 +530,31 @@ fun AppearanceSettingsScreen(
                                 }
                             }
                         }
+                    }
+
+                    // Pet playback-speed tuning (selected pet only) — scales the
+                    // authored fps live, no re-authoring or re-importing needed.
+                    if (activeAvatar.source == AvatarSource.USER) {
+                        HorizontalDivider()
+
+                        val petSpeed by connectionViewModel.petSpeed.collectAsState()
+                        Text(
+                            text = "Playback speed — ${"%.1f".format(java.util.Locale.US, petSpeed)}×",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Slider(
+                            value = petSpeed,
+                            onValueChange = { connectionViewModel.setPetSpeed(it) },
+                            valueRange = 0.5f..1.5f,
+                            steps = 9,
+                        )
+                        Text(
+                            text = "Scales the selected pet's animation speed. " +
+                                "1.0× plays each clip at its authored rate.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
 
                     // Second level of the model: skin chips, shown only when the
