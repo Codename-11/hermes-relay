@@ -58,9 +58,12 @@ class _IsolatedEnvMixin:
 
 
 class PluginConfigTests(_IsolatedEnvMixin, unittest.TestCase):
-    def test_context_flags_default_off(self) -> None:
-        self.assertFalse(plugin_config.agent_context_enabled())
-        self.assertFalse(plugin_config.context_media_sensitivity_enabled())
+    def test_context_flags_default_on(self) -> None:
+        # Default ON: the relay plugin install is itself the opt-in, so an unset
+        # env enables the layer. Explicit "0"/"false" still opts out (covered by
+        # test_context_flags_accept_strict_bool_tokens).
+        self.assertTrue(plugin_config.agent_context_enabled())
+        self.assertTrue(plugin_config.context_media_sensitivity_enabled())
 
     def test_context_flags_accept_strict_bool_tokens(self) -> None:
         for value in ("1", "true", "yes", "on"):
@@ -73,9 +76,11 @@ class PluginConfigTests(_IsolatedEnvMixin, unittest.TestCase):
                 self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, value)
                 self.assertFalse(plugin_config.agent_context_enabled())
 
-    def test_invalid_context_flag_is_not_enabled(self) -> None:
+    def test_invalid_context_flag_falls_back_to_default(self) -> None:
+        # An unrecognized value falls back to the default (now ON). A clean "0"
+        # / "false" is the supported opt-out, not a typo.
         self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "definitely")
-        self.assertFalse(plugin_config.agent_context_enabled())
+        self.assertTrue(plugin_config.agent_context_enabled())
 
     def test_dotenv_value_wins_for_dashboard_saved_toggles(self) -> None:
         self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "0")
@@ -91,10 +96,11 @@ class EnhancementRegistryTests(_IsolatedEnvMixin, unittest.TestCase):
         self.assertIn("context_injection", by_name)
         self.assertEqual(by_name["context_injection"].phase, "plugin_load")
         self.assertIn("system-prompt context hook", by_name["context_injection"].retirement_note)
-        self.assertFalse(by_name["context_injection"].enabled())
-
-        self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "1")
+        # Default ON when unset; explicit "0" opts out.
         self.assertTrue(by_name["context_injection"].enabled())
+
+        self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "0")
+        self.assertFalse(by_name["context_injection"].enabled())
 
 
 class ContextInjectionTests(_IsolatedEnvMixin, unittest.TestCase):
@@ -110,6 +116,7 @@ class ContextInjectionTests(_IsolatedEnvMixin, unittest.TestCase):
     def test_disabled_context_returns_prompt_unchanged(self) -> None:
         agent_class = self._agent_class()
         self.assertTrue(apply_context_injection(agent_class))
+        self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "0")
 
         self.assertEqual(agent_class()._build_system_prompt(), "base prompt")
 
@@ -117,6 +124,7 @@ class ContextInjectionTests(_IsolatedEnvMixin, unittest.TestCase):
         agent_class = self._agent_class()
         self.assertTrue(apply_context_injection(agent_class))
         self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "1")
+        self._set_env(plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY, "0")
 
         self.assertEqual(agent_class()._build_system_prompt(), "base prompt")
 
@@ -212,6 +220,7 @@ class ContextInjectedRouteTests(_IsolatedEnvMixin, unittest.IsolatedAsyncioTestC
         from plugin.relay.config import RelayConfig
         from plugin.relay.server import create_app
 
+        self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "0")
         app = create_app(RelayConfig())
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/context/injected")
@@ -242,6 +251,7 @@ class ContextInjectedRouteTests(_IsolatedEnvMixin, unittest.IsolatedAsyncioTestC
         from plugin.relay.server import create_app, handle_context_injected
 
         self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "1")
+        self._set_env(plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY, "0")
         app = create_app(RelayConfig())
         session = app["server"].sessions.create_session("phone", "phone-id")
 

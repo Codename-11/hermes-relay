@@ -86,13 +86,19 @@ def strict_bool(name: str, *, default: bool = False) -> bool:
 
 
 def agent_context_enabled() -> bool:
-    """Master gate for relay-owned system-prompt context injection."""
-    return strict_bool(RELAY_AGENT_CONTEXT_ENABLED, default=False)
+    """Master gate for relay-owned system-prompt context injection.
+
+    Defaults to ON: installing the relay plugin is itself the opt-in, and the
+    wrap is fail-open + auditable (chat "What the agent sees" → "Relay context
+    (server-side)") + reversible from the dashboard toggle. Vanilla upstream
+    (no plugin) is unaffected. Set ``RELAY_AGENT_CONTEXT_ENABLED=0`` to opt out.
+    """
+    return strict_bool(RELAY_AGENT_CONTEXT_ENABLED, default=True)
 
 
 def context_media_sensitivity_enabled() -> bool:
-    """Per-block gate for the media-sensitivity context instruction."""
-    return strict_bool(RELAY_CONTEXT_MEDIA_SENSITIVITY, default=False)
+    """Per-block gate for the media-sensitivity context instruction (default ON)."""
+    return strict_bool(RELAY_CONTEXT_MEDIA_SENSITIVITY, default=True)
 
 
 __all__ = [
