@@ -55,6 +55,12 @@ private const val WORKING_BURST_THRESHOLD = 0.5f
  */
 private const val ONE_SHOT_MAX_MS = 4000L
 
+/** How long to show a one-frame one-shot reaction before returning to the base loop. */
+private const val ONE_SHOT_STILL_MS = 1800L
+
+internal fun petOneShotReleaseDelayMs(frameCount: Int): Long =
+    if (frameCount <= 1) ONE_SHOT_STILL_MS else ONE_SHOT_MAX_MS
+
 /**
  * The live reactive signals the pet renderer actually consumes **today**. A pet's
  * effective [AgentAvatar.reactivity] is clamped to this in [PetSpec.toAvatar]
@@ -144,8 +150,9 @@ data class SpriteSheetClip(
  *   writing turn — so tool-use reads differently from contemplation. Null →
  *   tool-use looks like the base state (the pre-working behavior).
  * @property oneShots optional [PetOneShot] → clip map. Each plays **once** over
- *   the base loop on its trigger, then returns. Empty → no reactions (today's
- *   behavior). Triggers are derived from activity-state transitions in [Render].
+ *   the base loop on its trigger, then returns; one-frame clips show as a brief
+ *   still reaction. Empty → no reactions (today's behavior). Triggers are
+ *   derived from activity-state transitions in [Render].
  */
 class PetAvatar(
     override val id: String,
@@ -158,8 +165,8 @@ class PetAvatar(
 ) : AgentAvatar {
     override val source: AvatarSource = AvatarSource.USER
 
-    /** A one-shot is fireable only if it ships a clip that can actually play. */
-    private fun fireable(kind: PetOneShot): Boolean = (oneShots[kind]?.frameCount ?: 0) > 1
+    /** A one-shot is fireable only if it ships a clip that can actually show. */
+    private fun fireable(kind: PetOneShot): Boolean = (oneShots[kind]?.frameCount ?: 0) > 0
 
     @Composable
     override fun Render(state: AvatarRenderState, modifier: Modifier) {
@@ -181,11 +188,12 @@ class PetAvatar(
             prevState = state.state
             if (ended && !state.paused && fireable(PetOneShot.Done)) activeOneShot = PetOneShot.Done
         }
-        // Backstop: never let a reaction linger (decode failure / paused / single
-        // frame). The play-once loop clears it far sooner on success.
+        // Backstop: never let a reaction linger. Multi-frame reactions usually
+        // clear themselves on the final frame; one-frame reactions show briefly.
         LaunchedEffect(activeOneShot) {
-            if (activeOneShot != null) {
-                delay(ONE_SHOT_MAX_MS)
+            val shot = activeOneShot?.let { oneShots[it] }
+            if (shot != null) {
+                delay(petOneShotReleaseDelayMs(shot.frameCount))
                 activeOneShot = null
             }
         }

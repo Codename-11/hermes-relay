@@ -12,6 +12,7 @@ import HowItWorks from './components/HowItWorks.vue';
 import SurfaceCards from './components/SurfaceCards.vue';
 import StoreBadge from './components/StoreBadge.vue';
 import CombineModel from './components/CombineModel.vue';
+import PetPackBuilder from './components/PetPackBuilder.vue';
 
 export default {
   extends: DefaultTheme,
@@ -22,6 +23,7 @@ export default {
     // Global so `<StoreBadge />` works inside any markdown page.
     app.component('StoreBadge', StoreBadge);
     app.component('CombineModel', CombineModel);
+    app.component('PetPackBuilder', PetPackBuilder);
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {

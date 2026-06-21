@@ -186,6 +186,49 @@ class PetLoaderTest {
     }
 
     @Test
+    fun `single-frame clips can cover every state and reaction`() {
+        val dir = tempDir()
+        val files = listOf(
+            "idle.png",
+            "thinking.png",
+            "working.png",
+            "writing.png",
+            "speaking.png",
+            "listening.png",
+            "error.png",
+            "greet.png",
+            "done.png",
+        )
+        writePack(
+            dir,
+            "static",
+            """{ "id": "static", "reactive": { "intensity": true }, "states": {
+                 "idle": { "frames": ["idle.png"], "fps": 1 },
+                 "thinking": { "frames": ["thinking.png"], "fps": 1 },
+                 "working": { "frames": ["working.png"], "fps": 1 },
+                 "writing": { "frames": ["writing.png"], "fps": 1 },
+                 "speaking": { "frames": ["speaking.png"], "fps": 1 },
+                 "listening": { "frames": ["listening.png"], "fps": 1 },
+                 "error": { "frames": ["error.png"], "fps": 1 },
+                 "greet": { "frames": ["greet.png"], "fps": 1 },
+                 "done": { "frames": ["done.png"], "fps": 1 }
+            } }""",
+            imageFiles = files,
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals("static", avatar.id)
+        assertEquals("Voice · Tools · Activity", avatar.reactivity.summary())
+    }
+
+    @Test
+    fun `single-frame one-shot reactions hold long enough to read`() {
+        assertEquals(1800L, petOneShotReleaseDelayMs(frameCount = 1))
+        assertEquals(4000L, petOneShotReleaseDelayMs(frameCount = 2))
+    }
+
+    @Test
     fun `unknown json keys are tolerated`() {
         val dir = tempDir()
         writePack(

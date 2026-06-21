@@ -14,7 +14,7 @@ const val PET_SPEC_SCHEMA_VERSION = 1
 
 /**
  * User-authored pet manifest — the on-disk `pet.json` format for a side-loaded
- * animated companion. Pure data: filenames + numbers, no code. Parsed,
+ * bitmap companion. Pure data: filenames + numbers, no code. Parsed,
  * validated, and converted to a [PetAvatar] by [toAvatar]; see
  * `docs/pet-spec.md` for the authoring reference.
  *
@@ -64,9 +64,9 @@ data class PetReactiveSpec(
 )
 
 /**
- * One animation clip. Provide EITHER [frames] (one image file per frame) OR a
- * sprite [sheet] sliced into a [frameWidth]×[frameHeight] grid of [frameCount]
- * cells. [fps] is clamped to a safe range at load time.
+ * One animation clip. Provide EITHER [frames] (one or more image files; one is
+ * a still clip) OR a sprite [sheet] sliced into a [frameWidth]×[frameHeight]
+ * grid of [frameCount] cells. [fps] is clamped to a safe range at load time.
  */
 @Serializable
 data class PetClipSpec(

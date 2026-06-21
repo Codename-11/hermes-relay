@@ -61,7 +61,7 @@ For the full format — every state key, the optional motion `params`, color rul
 
 ## Pets — bring your own avatar
 
-A **pet** is an animated bitmap companion that replaces the Sphere entirely. It's a **self-contained pack**: a small `pet.json` manifest plus the images it plays back — either PNG frames or a single sprite sheet. Pets are **pure data** — frames and numbers, never code — and the renderer is dependency-free, so a pet is really just a folder of PNGs the app animates.
+A **pet** is a bitmap companion that replaces the Sphere entirely. It can be animated or still, and it's a **self-contained pack**: a small `pet.json` manifest plus the images it plays back — either PNG frames or a single sprite sheet. Pets are **pure data** — frames and numbers, never code — and the renderer is dependency-free, so a pet is really just a folder of PNGs the app displays or animates.
 
 A pet can have separate clips for the agent's **idle**, **thinking**, and **speaking** states, but the only hard requirement is `idle`. A minimal pet is one idle image and a one-line manifest — a static picture avatar.
 
@@ -80,7 +80,7 @@ On the **googlePlay** flavor, drop the `.sideload` suffix:
 Neither path needs a runtime permission — app-scoped external storage is reachable by `adb push` (or a file manager) directly. Reopen **Settings → Appearance → Agent avatar** and your pet appears as a chip alongside the Sphere.
 
 ::: tip Easiest: import in the app
-You don't need `adb`. In **Settings → Appearance → Agent avatar**, tap **Add a pet** and pick a file — it accepts a pet pack (`.zip`) **or a single image** (PNG/JPG), which becomes a one-frame **static avatar** with no manifest authoring. Imported pets appear immediately; remove them from the **Installed pets** list.
+You don't need `adb`. In **Settings → Appearance → Agent avatar**, tap **Add a pet** and pick a file — it accepts a pet pack (`.zip`) **or a single image** (PNG/JPG), which becomes a one-frame **static avatar** with no manifest authoring. A pet zip may contain `pet.json` at the archive root or inside one top-level folder. Imported pets appear immediately; remove them from the **Installed pets** list.
 :::
 
 ::: tip Authoring reference
@@ -89,26 +89,55 @@ For the manifest format — clips, sprite sheets, frame-rate limits, reactivity 
 
 ### Generate a pet with AI
 
-You don't have to draw anything. Because a pet is just a few **sprite sheets** plus a manifest, an AI image model can make the art for you — starting from a picture of **your own avatar** (a selfie, a character drawing, a brand mascot) — and you assemble the pack in minutes.
+You don't have to draw anything. Because a pet is just **PNG frames or sprite sheets** plus a manifest, an AI image model can make the art for you — starting from a picture of **your own avatar** (a selfie, a character drawing, a brand mascot) — and you assemble the pack in minutes.
 
-A sprite sheet is a single image holding every frame of one animation in a grid, read left-to-right, top-to-bottom. That's the easiest thing to ask an image model for (it's *one* picture), and it's exactly what the manifest's `sheet` clip form expects. You make **one sheet per state**.
+There are two good paths. The easiest is a **static per-state pack**: one expressive still PNG per state, referenced as `"frames": ["idle.png"]`. It has no in-state motion, but it avoids frame-registration drift and every state can still look distinct. The animated path is a **sprite sheet**: one image holding every frame of one animation in a grid, read left-to-right, top-to-bottom, referenced as a `sheet` clip. Use sprite sheets when you want motion.
 
 ::: tip Grab the whole kit
 The prompt, the per-state motion list, and the manifest below are also available as a single plain-text file you can copy in one go: **[pet-prompt-kit.txt](/pet-prompt-kit.txt)**.
 :::
 
 ::: tip Let an AI agent build the whole pack
-If you use an AI coding agent **with image generation** (e.g. Codex or Claude Code), you can hand it the whole job instead of running these steps yourself: give it this page (or [`pet-prompt-kit.txt`](/pet-prompt-kit.txt)) plus a reference image of your avatar, and ask it to generate the sheets, write `pet.json`, and drop the folder into `pets/`. It can self-check before installing — a pack is structurally valid when it has an `idle` clip, every referenced image file exists, each clip is a `frames` list or a `sheet` with positive `frameWidth`/`frameHeight`/`frameCount`, and no path escapes the pack folder; it is visually ready when every sheet decodes as RGBA, keeps visible pixels inside the safe margin, and keeps the head/shoulder anchor fixed across cells. *(A pure code agent can write the manifest but can't draw the frames — it needs image-generation access.)*
+If you use an AI coding agent **with image generation** (e.g. Codex or Claude Code), you can hand it the whole job instead of running these steps yourself: give it this page (or [`pet-prompt-kit.txt`](/pet-prompt-kit.txt)) plus a reference image of your avatar, and ask it to generate stills or sheets, write `pet.json`, and drop the folder into `pets/`. It can self-check before installing — a pack is structurally valid when it has an `idle` clip, every referenced image file exists, each clip is a `frames` list or a `sheet` with positive `frameWidth`/`frameHeight`/`frameCount`, and no path escapes the pack folder; it is visually ready when every PNG decodes as RGBA, keeps visible pixels inside the safe margin, and, for sheets, keeps the head/shoulder anchor fixed across cells. *(A pure code agent can write the manifest but can't draw the frames — it needs image-generation access.)*
 :::
 
 #### 1. Lock your character
 
 Two moves turn *any* avatar into a consistent, reactive pet:
 
-- **Use a reference image.** Attach a picture of your avatar to the image model and tell it to keep the face/outfit identical across the sheet. This is the single biggest lever for consistency — without it, the character drifts from frame to frame.
+- **Use a reference image.** Attach a picture of your avatar to the image model and tell it to keep the face/outfit identical across every still or sheet. This is the single biggest lever for consistency — without it, the character drifts between states or frames.
 - **Pick one signature accent.** Choose a single glow or outline color that **brightens when the agent is busy** (a soft aura works well). This is what makes the pet look *reactive* without redrawing the character — only the accent changes between states. Match it to your phone theme if you like.
 
-#### 2. Generate one sheet per state
+#### 2A. Easier: generate expressive stills per state
+
+Use this when you want maximum character fidelity with the least fuss. A still pack has no animation loop to communicate the state, so ask for **clearer expression, pose, hands, and accent cues** while keeping the character perfectly consistent.
+
+```text
+Create one square portrait PNG of {YOUR AVATAR — e.g. "the character in the attached reference image; keep the face, hair, outfit, colors, and proportions identical"},
+drawn as {STYLE — e.g. "a clean flat-shaded illustration with crisp outlines, half-body, facing forward"}.
+This is a single still frame for the agent state: {STATE}.
+Make the state visually legible through expression, eye direction, hand pose, contained prop/accent placement, and accent brightness: {STILL CUE — see the table below}.
+Keep the character's identity and anchor identical to the reference and to the other states — same face, colors, proportions, size, outfit, canvas crop, and head/shoulder position. Do not change the body scale or framing between states.
+Use a square final canvas. For the sharpest full-width mobile rendering, generate native 2048x2048 art; 1024x1024 is a lighter default. Do not generate a tiny 256x256 still and upscale it afterward.
+Keep all visible pixels inside a centered safe art box with transparent/chroma margin on every side: roughly 75-85% of the canvas for the character/effects, leaving at least 10-12% empty margin (about 192-256 px on a 2048 canvas, or 96-128 px on a 1024 canvas). Hair, hands, props, sparkles, glow, aura, and shadows all count as visible pixels and must stay inside that safe box.
+Use a flat #00ff00 chroma-key background so it can be removed cleanly after generation. No scenic background, no text, no labels, no frame borders.
+```
+
+Use these still cues, remove the chroma-key background, and save each as a PNG with alpha:
+
+| State | Save as | Still cue |
+|-------|---------|-----------|
+| **Idle** *(required)* | `idle.png` | calm neutral expression, relaxed shoulders, soft low accent |
+| **Thinking** | `thinking.png` | thoughtful eyes, hand near chin or temple, small contained spark/accent |
+| **Working** *(tool use)* | `working.png` | focused expression, small contained gear/tool/light held close to the body, brightest accent |
+| **Writing** *(output)* | `writing.png` | eyes down, hand poised as if writing/typing, short contained light stroke near the hand |
+| **Speaking** | `speaking.png` | mouth visibly speaking, direct engaged expression, subtle contained accent near the face |
+| **Listening** | `listening.png` | attentive expression, hand near ear, accent pulled inward like a listening ring |
+| **Error** | `error.png` | concerned or startled expression, small contained warning accent, no huge symbols |
+| **Greet** *(one-shot)* | `greet.png` | friendly raised-hand wave, warm smile, contained accent bloom |
+| **Done** *(one-shot)* | `done.png` | celebratory smile, open hands or small contained sparkle/accent near the shoulders |
+
+#### 2B. Animated: generate one sheet per state
 
 Paste this template into any capable image model. Fill in the `{braces}` — keep the **character**, **style**, and **accent** lines *identical* every time, and change only the **animate** line:
 
@@ -139,9 +168,34 @@ Drop one of these motion lines into `{MOTION FOR THIS STATE}`, remove the chroma
 
 Only `idle` is required — start there for a one-clip pet, then add as many states as you like. For what each state means and how unspecified ones fall back, see the [Pet spec](https://github.com/Codename-11/hermes-relay/blob/main/docs/pet-spec.md).
 
-#### 3. Wire the sheets into a manifest
+#### 3. Wire the images into a manifest
 
-Each generated sheet becomes one clip. This manifest wires up **all nine** — save it as `pet.json` beside the PNGs in a folder (e.g. `my-pet/`). For a **4×4 grid of 256 px cells** (a 1024×1024 image holding 16 frames), each clip looks like this:
+For a still pack, each generated PNG becomes a one-frame clip. This manifest wires up **all nine** — save it as `pet.json` beside the PNGs in a folder (e.g. `my-pet/`):
+
+```json
+{
+  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "schemaVersion": 1,
+  "id": "my-pet",
+  "label": "My Pet",
+  "reactive": { "voice": true, "intensity": true },
+  "states": {
+    "idle":      { "frames": ["idle.png"],      "fps": 1 },
+    "thinking":  { "frames": ["thinking.png"],  "fps": 1 },
+    "working":   { "frames": ["working.png"],   "fps": 1 },
+    "writing":   { "frames": ["writing.png"],   "fps": 1 },
+    "speaking":  { "frames": ["speaking.png"],  "fps": 1 },
+    "listening": { "frames": ["listening.png"], "fps": 1 },
+    "error":     { "frames": ["error.png"],     "fps": 1 },
+    "greet":     { "frames": ["greet.png"],     "fps": 1 },
+    "done":      { "frames": ["done.png"],      "fps": 1 }
+  }
+}
+```
+
+The sustained states (`idle`, `thinking`, `working`, `writing`, `speaking`, `listening`, `error`) stay visible for as long as the app is actually in that state. The still `greet` and `done` reactions are event clips, so the app holds one-frame reactions for about 1.8 seconds before returning to the current sustained state.
+
+For an animated pack, each generated sheet becomes one clip. For a **4×4 grid of 256 px cells** (a 1024×1024 image holding 16 frames), each clip looks like this:
 
 ```json
 {
@@ -164,7 +218,30 @@ Each generated sheet becomes one clip. This manifest wires up **all nine** — s
 }
 ```
 
-`frameWidth`/`frameHeight` are the size of **one cell**, and `frameCount` is how many cells the model drew (rows × columns). Any rectangular grid works — `4×4` (16 frames), `3×3` (9), even a `1×16` strip — as long as `frameCount` matches and the sheet measures `cols×frameWidth` by `rows×frameHeight`. Shipping the `working` clip is what lights the **Tools** badge, and `intensity: true` lights **Activity**; together with the default voice bounce this pet advertises **Voice · Tools · Activity** — every reactive signal lit. Then push the folder exactly as shown above and reopen Appearance.
+For sheets, `frameWidth`/`frameHeight` are the size of **one cell**, and `frameCount` is how many cells the model drew (rows × columns). Any rectangular grid works — `4×4` (16 frames), `3×3` (9), even a `1×16` strip — as long as `frameCount` matches and the sheet measures `cols×frameWidth` by `rows×frameHeight`. In either manifest style, shipping the `working` clip is what lights the **Tools** badge, and `intensity: true` lights **Activity**; together with the default voice bounce this pet advertises **Voice · Tools · Activity** — every reactive signal lit.
+
+#### 4. Package it for import
+
+The app imports a `.zip` pet pack. The most reliable archive shape is one top-level folder containing `pet.json` and only the referenced images:
+
+```text
+my-pet.zip
+└─ my-pet/
+   ├─ pet.json
+   ├─ idle.png
+   ├─ thinking.png
+   └─ ...
+```
+
+If you are working from this repository, package a folder with the built-in helper:
+
+```bash
+node scripts/package-pet.mjs path/to/my-pet --out my-pet.zip
+```
+
+The helper validates `pet.json`, checks that every referenced image exists, excludes `qa/` and other unreferenced files, and writes the app-compatible zip.
+
+<PetPackBuilder />
 
 ::: tip Validate as you author
 The example above starts with a `$schema` line pointing at the published [pet schema](https://codename-11.github.io/hermes-relay/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
@@ -179,7 +256,7 @@ Sprite animation is frame-stepped, so smoothness comes from **frame count**, not
 :::
 
 ::: tip Resolution: size for the biggest surface
-The avatar is **contain-fit** into whatever space it occupies, and *one* set of frames serves every surface — so author for the **largest** place it appears (the full-screen chat background) and small placements (the voice overlay) just downscale and stay sharp. A 128 px cell upscaled to fill the chat background looks pixelated; **256 px cells** (a 1024×1024 sheet for a 4×4 grid) are a good default. Because a sprite sheet decodes as **one** bitmap, you can even go to 512 px cells (2048×2048) for extra crispness at a modest memory cost — that ceiling is per *sheet*, not per frame, so it's far cheaper than the same frames as separate files. You can also fine-tune the running speed live in **Settings → Appearance** without re-authoring.
+The avatar is **contain-fit** into whatever space it occupies, and *one* asset set serves every surface — so author for the **largest** place it appears (the full-screen chat background) and small placements (the voice overlay) just downscale and stay sharp. For static per-state packs, use native **2048×2048** stills when you care about full-width, high-DPI phones; **1024×1024** is a lighter default. Avoid generating a 256 px still and upscaling it later — that makes a bigger file, not real detail. For animated sheets, **256 px cells** (a 1024×1024 sheet for a 4×4 grid) are a good default; 512 px cells (2048×2048 sheet) add crispness at a modest memory cost because a sheet decodes as one bitmap. You can also fine-tune the running speed live in **Settings → Appearance** without re-authoring.
 :::
 
 ::: warning Three things AI image models get wrong
@@ -188,11 +265,11 @@ The avatar is **contain-fit** into whatever space it occupies, and *one* set of 
 - **No motion (over-locked).** The opposite of drift: lean too hard on "identical / locked" and the model copies one pose across all 16 cells, so the pet looks frozen even though it cycles through them. The cells are an **animation, not copies** — the moving parts (eyes, mouth, hands, hair, accent) must *visibly* change cell to cell, sweeping the full arc (a blink open→shut→open, a breath rise→settle). If a contact sheet reads as 16 near-identical tiles, regenerate demanding clearer per-frame change.
 :::
 
-::: tip Fastest first pass
-Want to confirm the pipeline today before perfecting nine animated sheets? Generate **one** 3×3 image — "nine cells, the same character, one per state: idle, thinking, working, writing, speaking, listening, error, greeting, celebrating" — slice it into nine single-frame PNGs, and reference each as a one-frame `frames` clip (`"frames": ["idle.png"]`) instead of a `sheet`. No in-state motion, but every state is visibly distinct — a complete proof of the pipeline from a single generation.
+::: tip Static packs are first-class
+Want to confirm the pipeline today before perfecting nine animated sheets? Generate nine expressive stills and reference each as a one-frame `frames` clip (`"frames": ["idle.png"]`) instead of a `sheet`. Use `1024×1024` for a light pack or native `2048×2048` for crisp expanded mobile rendering. No in-state motion, but every state is visibly distinct, including brief still `greet` and `done` reactions.
 :::
 
-For a smooth, perfectly-stable animated character, hand-drawn pixel art still wins — but for a charming "good enough" companion, a few AI sprite sheets get you there without ever opening a drawing app.
+For a smooth, perfectly-stable animated character, hand-drawn pixel art still wins — but for a charming "good enough" companion, AI stills or sprite sheets get you there without ever opening a drawing app.
 
 ## Accessibility & reduced motion
 

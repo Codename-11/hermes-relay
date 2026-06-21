@@ -3,8 +3,8 @@
 The agent avatar (the embodiment shown on the empty chat screen, clean mode,
 the voice overlay, onboarding, and the startup splash) is a **swappable
 component**. The built-in **Sphere** ships with the app, and you can side-load
-your own animated **"pet"** — a bitmap frame-sequence or sprite atlas — to
-replace it. This document is the authoring reference.
+your own **"pet"** — a still or animated bitmap frame-sequence / sprite atlas —
+to replace it. This document is the authoring reference.
 
 > **See also** [`sphere-spec.md`](./sphere-spec.md) — the Sphere avatar has its
 > own skin system; pets and Sphere skins are the two ways to customize the agent
@@ -60,6 +60,19 @@ picker. Invalid/incomplete packs are skipped (check logcat, tag `PetLoader`);
 one bad pack never breaks the picker, and with no pets installed the app behaves
 exactly as today (Sphere only).
 
+The in-app **Add a pet** importer accepts either a `.zip` pack or a single image.
+Zip packs may put `pet.json` at the archive root or inside one top-level folder;
+the importer validates the manifest, rejects unsafe archive paths, and installs
+the pack under the sanitized manifest `id`. A single image is wrapped as a
+one-frame static `idle` pet.
+
+For generated folders, the canonical repo-side packer writes the tidy top-level
+folder shape and includes only manifest-referenced assets:
+
+```bash
+node scripts/package-pet.mjs path/to/my-pet --out my-pet.zip
+```
+
 ## Manifest format (`pet.json`)
 
 ```json
@@ -101,13 +114,15 @@ A **clip** is one animation loop, defined as **either**:
   decoded as one bitmap regardless of cell count).
 
 Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
-`8`). All clips **loop** while their state is active. Smoothness comes from frame
-**count**, not rate — a 4-frame loop looks steppy at any speed; prefer **8–16
-frames** for fluid motion, and match fps to the count (a 4-frame `idle` at `fps`
-3–4 reads calm; `fps` 6+ looks busy). The frames must also actually **differ**:
-16 near-identical cells play as a frozen image no matter the count or fps — each
-cell has to be a distinct keyframe of a visible motion arc (a common failure when
-AI generation is over-constrained to keep every cell "identical").
+`8`). All clips **loop** while their state is active. A frame sequence may contain
+just **one** image; that is a valid static clip for the state. For animated clips,
+smoothness comes from frame **count**, not rate — a 4-frame loop looks steppy at
+any speed; prefer **8–16 frames** for fluid motion, and match fps to the count (a
+4-frame `idle` at `fps` 3–4 reads calm; `fps` 6+ looks busy). The frames must
+also actually **differ**: 16 near-identical cells play as a frozen image no
+matter the count or fps — each cell has to be a distinct keyframe of a visible
+motion arc (a common failure when AI generation is over-constrained to keep every
+cell "identical").
 
 ### Editor validation (JSON Schema)
 
@@ -184,8 +199,8 @@ what lights the **Tools** badge — no separate flag needed.
 Beyond the sustained per-state loops, a pet can play a brief **reaction** that
 fires once and returns to the base loop — the touch that turns a status display
 into a character (cf. the Peon Pet's celebrate-on-finish). Both are **opt-in**
-(play only if you ship the clip) and **multi-frame** (a single-frame reaction is
-skipped). They're suppressed under reduced motion.
+(play only if you ship the clip). They can be multi-frame, or a single still
+frame held for about 1.8 seconds. They're suppressed under reduced motion.
 
 | Reaction | Clip (alias) | Fires when |
 |----------|--------------|-----------|
@@ -246,27 +261,47 @@ writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
   open before shipping a pack.
 - **Memory:** while a pet is selected, every frame of its current clip is decoded
   into memory at **full resolution** (there is no downscaling). Many large frames
-  can use a lot of RAM, and a single very large image can fail to decode. As an
-  authoring best practice (not an enforced cap), keep frames ≲256 px and clip
-  lengths modest (≤ ~30 frames); for many frames prefer a **sprite sheet** over a
-  long frame sequence — a sheet decodes as one bitmap, so its cells can be larger
-  (256–512 px) without the per-frame cost of a sequence. **Size cells to the
-  largest surface the avatar appears on** (the full-screen chat background): a
-  128 px cell upscaled that far looks pixelated, while smaller surfaces (the
-  voice overlay) just downscale and stay sharp. Only the **selected** pet's
-  **current** clip is decoded, off the main thread.
+  can use a lot of RAM, and a single very large image can fail to decode. For a
+  static per-state pack, one `2048×2048` PNG per state is reasonable for
+  full-width, high-density phones because each clip contains only one frame and
+  only the **current** clip is decoded. For animated frame sequences, keep frames
+  smaller and clip lengths modest (≤ ~30 frames); for many frames prefer a
+  **sprite sheet** over a long frame sequence — a sheet decodes as one bitmap, so
+  its cells can be larger (256–512 px) without the per-frame cost of a sequence.
+  **Size art to the largest surface the avatar appears on** (the full-screen
+  chat background): a 128 px cell or still upscaled that far looks pixelated,
+  while smaller surfaces (the voice overlay) just downscale and stay sharp.
+  Only the **selected** pet's **current** clip is decoded, off the main thread.
 - File names must stay **inside the pack directory** — paths that escape it
   (`../…`) are rejected.
 
 ## Generating frames with AI
 
-You don't have to draw a pet by hand. The **sprite-sheet** clip form (one image,
-a grid of frames) is exactly what an AI image model produces most naturally, so
-the common workflow is to generate **one sheet per state** and reference each as
-a `sheet` clip. A 4×4 grid of 256 px cells maps directly to
-`{ "sheet": "idle.png", "frameWidth": 256, "frameHeight": 256, "frameCount": 16 }`.
+You don't have to draw a pet by hand. There are two AI-friendly workflows:
 
-The reliable AI workflow is:
+1. **Static per-state pack:** generate one expressive PNG per state and reference
+   each as a one-item `frames` clip, for example
+   `{ "frames": ["thinking.png"], "fps": 1 }`. This is the easiest path: no
+   frame registration problem, no drifting animation, and every state can still
+   read differently through pose, expression, hands, props, and accent color.
+2. **Animated sprite sheets:** generate one grid per state and reference each as
+   a `sheet` clip. A 4×4 grid of 256 px cells maps directly to
+   `{ "sheet": "idle.png", "frameWidth": 256, "frameHeight": 256, "frameCount": 16 }`.
+
+For a static pack, make the state pose more expressive because there is no motion
+arc to carry the meaning. Keep the same reference image, style, palette, outfit,
+face, proportions, canvas size, and head/shoulder anchor for every state, but
+change the still's readable cue: thoughtful eyes and hand for `thinking`, a
+contained tool/gear for `working`, mouth/gesture for `speaking`, warm warning
+accent for `error`, a clear wave for `greet`, and a celebratory smile/accent for
+`done`. Use transparent PNGs (or chroma-key then remove it), keep the same safe
+box margins, and avoid scenery/text/backgrounds. For normal use, `1024×1024`
+stills are a good lighter target. For high-DPI phones where the avatar may expand
+near full screen width, author stills natively at `2048×2048` rather than
+upscaling a small `256×256` image; the larger canvas only helps if the drawing
+itself has real high-resolution linework.
+
+For animated sheets, the reliable AI workflow is:
 
 1. Generate each state **one sheet at a time** from the same reference image.
 2. Ask for a flat removable chroma-key background (for example `#00ff00`) rather
@@ -280,16 +315,16 @@ The reliable AI workflow is:
    have no visible alpha inside the unsafe margin, and keep the head/shoulder
    anchor at the same position and scale across frames.
 
-Two caveats from [Frames and images](#frames-and-images) bite hardest here:
-**registration** — many models still move or resize the character between cells
-even with a strict prompt — and **edge padding** — models like to fill the full
-cell, which clips hair, hands, props, or effects when the sheet is sliced. If a
-16-frame AI sheet looks good but drifts, use a hybrid pass: pick a stable
-state-specific generated frame, keep it locked, and animate only small secondary
-elements such as blink, mouth, glow, sparkles, or a contained prop. This keeps a
-4×4 sheet smooth without letting the head, shoulders, or silhouette float. Only
-reduce the frame count (for example 3×3 or 2×2) when frame count is negotiable;
-then update `frameCount`/`fps` accordingly.
+Two caveats from [Frames and images](#frames-and-images) bite hardest with
+animated sheets: **registration** — many models still move or resize the
+character between cells even with a strict prompt — and **edge padding** — models
+like to fill the full cell, which clips hair, hands, props, or effects when the
+sheet is sliced. If a 16-frame AI sheet looks good but drifts, use a hybrid pass:
+pick a stable state-specific generated frame, keep it locked, and animate only
+small secondary elements such as blink, mouth, glow, sparkles, or a contained
+prop. This keeps a 4×4 sheet smooth without letting the head, shoulders, or
+silhouette float. Only reduce the frame count (for example 3×3 or 2×2) when
+frame count is negotiable; then update `frameCount`/`fps` accordingly.
 
 Hand-drawn or rigged art still wins for smooth, perfectly-stable loops.
 

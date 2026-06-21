@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://codename-11.github.io/hermes-relay/pet.schema.json",
   "title": "Hermes-Relay pet manifest",
-  "description": "Schema for pet.json — a side-loaded animated avatar ('pet') pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. Visual QA rules such as PNG alpha, safe-box padding, and frame registration are documented in docs/pet-spec.md.",
+  "description": "Schema for pet.json — a side-loaded still or animated avatar ('pet') pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. Visual QA rules such as PNG alpha, safe-box padding, and frame registration are documented in docs/pet-spec.md.",
   "type": "object",
   "required": ["states"],
   "properties": {
@@ -28,7 +28,7 @@
     "reactive": { "$ref": "#/definitions/reactive" },
     "states": {
       "type": "object",
-      "description": "Animation clips keyed by state/reaction name. An 'idle' clip is required; every other state falls back through it.",
+      "description": "Animation clips keyed by state/reaction name. An 'idle' clip is required; every other state falls back through it. A one-item frames list is valid and displays a still for that state.",
       "required": ["idle"],
       "properties": {
         "idle":      { "$ref": "#/definitions/clip", "description": "Required. Shown when waiting between turns; the fallback for every other state." },
@@ -63,12 +63,12 @@
     },
     "clip": {
       "type": "object",
-      "description": "One animation clip: either a 'frames' list (one image per frame) OR a 'sheet' grid (one image, sliced into cells). Loops while its state is active. For sheets, frameWidth/frameHeight are cell canvas dimensions; visible art should leave internal transparent padding.",
+      "description": "One animation clip: either a 'frames' list (one image per frame) OR a 'sheet' grid (one image, sliced into cells). Loops while its state is active; a one-frame clip displays as a still. For sheets, frameWidth/frameHeight are cell canvas dimensions; visible art should leave internal transparent padding.",
       "properties": {
         "frames": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Frame image files, in play order. Paths must stay inside the pack directory."
+          "description": "Frame image files, in play order. A one-item list is a valid static clip. Paths must stay inside the pack directory."
         },
         "sheet": {
           "type": "string",
