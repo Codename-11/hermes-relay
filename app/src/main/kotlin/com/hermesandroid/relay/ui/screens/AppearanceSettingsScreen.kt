@@ -29,6 +29,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,8 +53,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,6 +82,8 @@ import com.hermesandroid.relay.ui.theme.BrandPalette
 import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Dedicated Appearance settings screen. Hosts theme picker (auto/light/dark),
@@ -579,6 +585,97 @@ fun AppearanceSettingsScreen(
                                 onCheckedChange = { connectionViewModel.setPetStabilize(it) },
                             )
                         }
+
+                        // Live state preview — drive the pet through each state to
+                        // verify look/speed/stabilization without running the agent.
+                        HorizontalDivider()
+                        Text(
+                            text = "Preview",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+
+                        val previewStates = remember {
+                            listOf(
+                                Triple("Idle", SphereState.Idle, 0f),
+                                Triple("Thinking", SphereState.Thinking, 0f),
+                                Triple("Working", SphereState.Thinking, 1f),
+                                Triple("Writing", SphereState.Streaming, 0f),
+                                Triple("Speaking", SphereState.Speaking, 0f),
+                                Triple("Listening", SphereState.Listening, 0f),
+                                Triple("Error", SphereState.Error, 0f),
+                            )
+                        }
+                        var previewIdx by remember { mutableIntStateOf(0) }
+                        var greetKey by remember { mutableIntStateOf(0) }
+                        var overrideState by remember { mutableStateOf<SphereState?>(null) }
+                        val previewScope = rememberCoroutineScope()
+                        val sel = previewStates[previewIdx.coerceIn(0, previewStates.lastIndex)]
+                        val previewSphereState = overrideState ?: sel.second
+                        val previewBurst = if (overrideState != null) 0f else sel.third
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surface),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(modifier = Modifier.size(140.dp)) {
+                                key(greetKey) {
+                                    activeAvatar.Render(
+                                        state = AvatarRenderState(
+                                            state = previewSphereState,
+                                            toolCallBurst = previewBurst,
+                                        ),
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                            }
+                        }
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            previewStates.forEachIndexed { i, s ->
+                                FilterChip(
+                                    selected = overrideState == null && previewIdx == i,
+                                    onClick = {
+                                        overrideState = null
+                                        previewIdx = i
+                                    },
+                                    label = { Text(s.first) },
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(onClick = { greetKey++ }) { Text("Greet") }
+                            OutlinedButton(onClick = {
+                                // Replay celebrate by driving Speaking → Idle on the
+                                // live instance (the transition fires the one-shot).
+                                previewScope.launch {
+                                    overrideState = SphereState.Speaking
+                                    delay(150)
+                                    overrideState = SphereState.Idle
+                                    delay(2500)
+                                    overrideState = null
+                                }
+                            }) { Text("Done") }
+                        }
+
+                        Text(
+                            text = "Tap a state to preview it; Greet/Done replay the one-shot " +
+                                "reactions. Reflects the speed and stabilize settings above.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
 
                     // Second level of the model: skin chips, shown only when the

@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet state preview in Appearance (Android)
+
+**Why.** Testing a pet meant *inducing* each state by driving the agent (run a tool to see `working`, fail a turn for `error`, start voice for `speaking`/`listening`) — painful. An in-app preview turns Appearance into a pet test harness.
+
+- **Live preview (`AppearanceSettingsScreen`).** Under the speed/stabilize controls (pet selected only): a ~140 dp canvas rendering the active pet, a `FilterChip` row for the seven sustained states (`Idle · Thinking · Working · Writing · Speaking · Listening · Error`), and `Greet`/`Done` buttons that replay the one-shots. Pure UI on the existing `AgentAvatar` seam — no new ViewModel/pref/renderer; it just calls `activeAvatar.Render(AvatarRenderState(state=…))` with a user-picked state, so it also reflects the live speed and stabilize settings.
+- **State→render mapping.** Base states feed `state=…`; **Working** feeds `state=Thinking, toolCallBurst=1f` (lights the overlay); **Greet** remounts the preview via a `key` (re-fires the on-appear reaction); **Done** drives a momentary `Speaking → Idle` transition on the live instance (fires the celebrate reaction), then returns to the selected chip.
+- **Verification.** `:app:assembleSideloadDebug` BUILD SUCCESSFUL; installed via `adb install -r`. On-device visual check recorded in TODO.
+
 ## 2026-06-20 — Pet frame auto-stabilization (Android)
 
 **Why.** On-device audit of a 4×4 AI pet (Lucy) found the character's vertical center drifting 34 px across the 16 cells, with 8/16 frames touching the cell edge — the image model held *appearance* but not *position/scale*, so the pet floated upward and bled the next frame in. The renderer slices/centers exact cells faithfully, so the drift can't be cured per-frame there — but it can be neutralized by re-centering each frame on its own content.
