@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Static-image avatars + per-profile agent icon (Android)
+
+**Why.** Two requests: a custom avatar shouldn't require authoring an animated pack (a single image should work), and each agent profile should be able to wear its own small icon beside its name — client-side, mirroring the existing local-name override.
+
+- **Static-image import (`PetImporter`).** "Add a pet" now accepts a single image (`.png`/`.jpg`/`.gif`/`.webp`), not just a `.zip` — detected by **magic bytes**, not the file name. An image is auto-wrapped as a one-frame static pet (written as `idle.png` with a synthesized minimal `pet.json`), so a static avatar needs no manifest authoring. The renderer already supported a one-frame `idle`; this is purely import ergonomics. `importZip` → `importUri`; `ConnectionViewModel.importPetFromZip` → `importPet`. Test covers the image-wrap path.
+- **Per-profile agent icon (client-side).** A direct twin of `ProfileDisplayAliasStore`: new `ProfileIconStore` (own DataStore `profile_icons`, keyed per `(connection, profile)`, **never sent to Hermes**). It stores a **path** to an image copied into `files/profile-icons/` (not a SAF URI, so it survives without persistable permission). Wired through `ProfileController` next to `profileDisplayAlias` (`profileIcon` StateFlow + `setProfileIcon`/`clearProfileIcon` + the copy), exposed on `ConnectionViewModel`, provided at the app root as `LocalAgentIconPath`, and rendered as a small circular Coil image beside the agent name in `MessageBubble`. The picker (`AgentIconRow`) sits right under the local-name row in `ConnectionInfoSheet`. Scope: small name-adjacent icon only — the big empty-chat/voice avatar stays global. `ProfileIconStore` cleared alongside the alias on connection removal; test mirrors the alias store's.
+- **Verification.** `:app:assembleSideloadDebug` + `PetImporterTest`/`ProfileIconStoreTest` <pending>. Installed via `adb install -r`. On-device check (import an image as a pet; set a profile icon and see it by the name) in TODO.
+
 ## 2026-06-20 — Pet state preview in Appearance (Android)
 
 **Why.** Testing a pet meant *inducing* each state by driving the agent (run a tool to see `working`, fail a turn for `error`, start voice for `speaking`/`listening`) — painful. An in-app preview turns Appearance into a pet test harness.

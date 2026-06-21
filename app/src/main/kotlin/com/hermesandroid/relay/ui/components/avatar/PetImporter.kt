@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components.avatar
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Log
 import com.hermesandroid.relay.ui.components.UserContentDir
 import kotlinx.serialization.json.Json
@@ -41,21 +42,37 @@ object PetImporter {
     private const val MAX_ENTRY_BYTES = 16L * 1024 * 1024
     private const val MAX_TOTAL_BYTES = 96L * 1024 * 1024
     private const val MAX_ENTRIES = 512
+    private const val MAGIC_LEN = 16
 
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
     }
 
-    /** Import the pack at [uri] (a `.zip`) into the app's pets directory. */
-    fun importZip(context: Context, uri: Uri): PetImportResult {
+    /**
+     * Import the file at [uri] — either a `.zip` pet pack OR a single image
+     * (PNG/JPG/GIF/WebP, auto-wrapped as a one-frame static pet) — into the pets
+     * directory. The kind is detected by **magic bytes**, not the file name.
+     */
+    fun importUri(context: Context, uri: Uri): PetImportResult {
+        val petsDir = UserContentDir.resolve(context, DIR)
         val input = try {
-            context.contentResolver.openInputStream(uri)
+            context.contentResolver.openInputStream(uri)?.buffered()
         } catch (t: Throwable) {
             Log.w(TAG, "openInputStream failed: ${t.message}")
             null
         } ?: return PetImportResult.Failure("Couldn't open that file.")
-        return input.use { importStream(it, UserContentDir.resolve(context, DIR), context.cacheDir) }
+        return input.use { stream ->
+            stream.mark(MAGIC_LEN)
+            val head = ByteArray(MAGIC_LEN)
+            val n = stream.read(head).coerceAtLeast(0)
+            stream.reset()
+            when {
+                looksLikeZip(head, n) -> importStream(stream, petsDir, context.cacheDir)
+                looksLikeImage(head, n) -> importImage(stream, petsDir, displayBaseName(context, uri))
+                else -> PetImportResult.Failure("Pick a .zip pet pack or a single image (PNG/JPG).")
+            }
+        }
     }
 
     /**
@@ -165,5 +182,79 @@ object PetImporter {
             .joinToString("")
             .trim('.', '-')
         return cleaned.ifBlank { "pet" }
+    }
+
+    /**
+     * Wrap a single [stream]ed image as a one-frame static pet: write it as
+     * `idle.png` under a folder named from [baseName] and synthesize a minimal
+     * `pet.json`. The lightest path to a custom avatar — no animation or manifest
+     * authoring. The byte format is sniffed by the renderer, so the `.png` name is
+     * nominal (a JPEG decodes fine).
+     */
+    internal fun importImage(stream: InputStream, petsDir: File, baseName: String): PetImportResult {
+        val name = sanitize(baseName)
+        val target = File(petsDir, name)
+        try {
+            if (target.exists()) target.deleteRecursively()
+            target.mkdirs()
+            var total = 0L
+            File(target, "idle.png").outputStream().use { out ->
+                val buf = ByteArray(8 * 1024)
+                while (true) {
+                    val r = stream.read(buf)
+                    if (r < 0) break
+                    total += r
+                    if (total > MAX_ENTRY_BYTES) {
+                        target.deleteRecursively()
+                        return PetImportResult.Failure("That image is too large.")
+                    }
+                    out.write(buf, 0, r)
+                }
+            }
+            val label = baseName.trim().ifBlank { name }
+            val spec = PetSpec(
+                schemaVersion = 1,
+                id = name,
+                label = label,
+                states = mapOf("idle" to PetClipSpec(frames = listOf("idle.png"), fps = 1f)),
+            )
+            File(target, "pet.json").writeText(json.encodeToString(PetSpec.serializer(), spec))
+            val avatar = spec.toAvatar(target)
+            return PetImportResult.Success(avatar.id, avatar.label)
+        } catch (t: Throwable) {
+            Log.w(TAG, "image import failed: ${t.message}")
+            target.deleteRecursively()
+            return PetImportResult.Failure("Couldn't import that image.")
+        }
+    }
+
+    private fun looksLikeZip(b: ByteArray, n: Int): Boolean =
+        n >= 2 && b[0] == 0x50.toByte() && b[1] == 0x4B.toByte()
+
+    private fun looksLikeImage(b: ByteArray, n: Int): Boolean {
+        if (n < 4) return false
+        // PNG (89 50 4E 47)
+        if (b[0] == 0x89.toByte() && b[1] == 0x50.toByte() && b[2] == 0x4E.toByte() && b[3] == 0x47.toByte()) return true
+        // JPEG (FF D8 FF)
+        if (b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() && b[2] == 0xFF.toByte()) return true
+        // GIF (47 49 46)
+        if (b[0] == 0x47.toByte() && b[1] == 0x49.toByte() && b[2] == 0x46.toByte()) return true
+        // WebP (RIFF????WEBP)
+        if (n >= 12 && b[0] == 0x52.toByte() && b[1] == 0x49.toByte() && b[2] == 0x46.toByte() && b[3] == 0x46.toByte() &&
+            b[8] == 0x57.toByte() && b[9] == 0x45.toByte() && b[10] == 0x42.toByte() && b[11] == 0x50.toByte()
+        ) return true
+        return false
+    }
+
+    /** Best-effort display name (sans extension) for naming a static-image pet. */
+    private fun displayBaseName(context: Context, uri: Uri): String {
+        val name = try {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        } catch (t: Throwable) {
+            null
+        }
+        return (name ?: "pet").substringBeforeLast('.')
     }
 }

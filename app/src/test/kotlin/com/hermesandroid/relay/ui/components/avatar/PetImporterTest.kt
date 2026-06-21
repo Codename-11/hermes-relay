@@ -106,6 +106,23 @@ class PetImporterTest {
     }
 
     @Test
+    fun `a single image is wrapped as a one-frame static pet`() {
+        val pets = petsDir()
+        // PNG magic + filler; importImage writes raw bytes and synthesizes the manifest.
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(64)
+
+        val result = PetImporter.importImage(ByteArrayInputStream(png), pets, "Mascot")
+
+        assertTrue(result is PetImportResult.Success)
+        result as PetImportResult.Success
+        assertEquals("Mascot", result.id)
+        assertTrue(File(pets, "Mascot/pet.json").isFile)
+        assertTrue(File(pets, "Mascot/idle.png").isFile)
+        // It loads back as a valid (static) pet.
+        assertEquals(1, PetLoader.loadPets(pets).size)
+    }
+
+    @Test
     fun `zip-slip entry is refused and writes nothing outside the staging dir`() {
         val pets = petsDir()
         val work = workDir()

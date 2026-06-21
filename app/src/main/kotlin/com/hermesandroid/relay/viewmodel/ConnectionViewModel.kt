@@ -1043,6 +1043,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setProfileDisplayAlias(alias: String?) = profileController.setProfileDisplayAlias(alias)
 
+    /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
+    val profileIcon: StateFlow<String?> get() = profileController.profileIcon
+
+    fun setProfileIcon(uri: Uri) = profileController.setProfileIcon(uri)
+
+    fun clearProfileIcon() = profileController.clearProfileIcon()
+
     fun selectProfile(profile: Profile?) = profileController.selectProfile(profile)
 
     // --- Paired devices list (GET /sessions) -------------------------------
@@ -2355,6 +2362,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         profileController.profileSelectionStore.clear(connectionId)
         profileController.profileSessionStore.clearConnection(connectionId)
         profileController.profileDisplayAliasStore.clearConnection(connectionId)
+        profileController.profileIconStore.clearConnection(connectionId)
     }
 
     private suspend fun readStoredDeviceIdForRemoval(
@@ -5079,11 +5087,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** Import a pet pack from a user-picked `.zip`, then refresh the picker. */
-    fun importPetFromZip(uri: Uri) {
+    /** Import a pet from a user-picked `.zip` pack or a single image, then refresh. */
+    fun importPet(uri: Uri) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                PetImporter.importZip(getApplication<Application>(), uri)
+                PetImporter.importUri(getApplication<Application>(), uri)
             }
             when (result) {
                 is PetImportResult.Success -> {

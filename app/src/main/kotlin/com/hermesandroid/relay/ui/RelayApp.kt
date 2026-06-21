@@ -68,6 +68,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.CrashReportGate
+import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
 import com.hermesandroid.relay.ui.components.SphereRegistry
@@ -820,6 +821,7 @@ fun RelayApp() {
     }
     val petSpeed by connectionViewModel.petSpeed.collectAsState()
     val petStabilize by connectionViewModel.petStabilize.collectAsState()
+    val agentIconPath by connectionViewModel.profileIcon.collectAsState()
 
     CompositionLocalProvider(
         LocalSphereSkin provides activeSphereSkin,
@@ -828,6 +830,7 @@ fun RelayApp() {
         LocalAvailableAvatars provides availableAgentAvatars,
         LocalPetPlaybackSpeed provides petSpeed,
         LocalPetStabilize provides petStabilize,
+        LocalAgentIconPath provides agentIconPath,
     ) {
     HermesRelayTheme(
         appThemeId = appThemeId,

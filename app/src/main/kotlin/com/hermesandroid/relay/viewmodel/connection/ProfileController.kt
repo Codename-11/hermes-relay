@@ -1,10 +1,12 @@
 package com.hermesandroid.relay.viewmodel.connection
 
 import android.content.Context
+import android.net.Uri
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileDisplayAliasStore
+import com.hermesandroid.relay.data.ProfileIconStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.SessionTransport
@@ -13,6 +15,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,6 +27,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * Owns the **agent-profiles cluster** of
@@ -55,7 +60,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProfileController(
-    context: Context,
+    private val context: Context,
     private val scope: CoroutineScope,
     /** Swappable AuthManager flow — supplies the relay-advertised profile list. */
     authManagerFlow: StateFlow<AuthManager>,
@@ -121,6 +126,22 @@ class ProfileController(
         }
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
+    val profileIconStore: ProfileIconStore = ProfileIconStore(context)
+
+    /** The active profile's local agent-icon path (twin of [profileDisplayAlias]). */
+    val profileIcon: StateFlow<String?> = combine(
+        activeConnectionId,
+        selectedProfile,
+    ) { connectionId, profile ->
+        connectionId to AgentDisplay.profileRequestName(profile?.name)
+    }.flatMapLatest { (connectionId, profileName) ->
+        if (connectionId == null) {
+            flowOf(null)
+        } else {
+            profileIconStore.iconFlow(connectionId, profileName)
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, null)
+
     /**
      * Load the host's agent profiles from the dashboard `/api/profiles` into
      * [agentProfiles] (merged in the combine above). Lets the chat agent sheet
@@ -172,6 +193,45 @@ class ProfileController(
             profileDisplayAliasStore.setAlias(connectionId, profileName, normalizedAlias)
         }
     }
+
+    fun setProfileIcon(uri: Uri) {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        scope.launch {
+            val path = copyIcon(connectionId, profileName, uri) ?: return@launch
+            profileIconStore.setIcon(connectionId, profileName, path)
+        }
+    }
+
+    fun clearProfileIcon() {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        scope.launch {
+            profileIconStore.iconFlow(connectionId, profileName).first()?.let {
+                runCatching { File(it).delete() }
+            }
+            profileIconStore.setIcon(connectionId, profileName, null)
+        }
+    }
+
+    /** Copy [uri]'s image bytes into app-internal storage; returns the path or null. */
+    private suspend fun copyIcon(connectionId: String, profileName: String?, uri: Uri): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val dir = File(context.filesDir, "profile-icons").apply { mkdirs() }
+                val key = AgentDisplay.profileSessionKey(profileName)
+                val safe = "${connectionId}_$key"
+                    .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
+                    .joinToString("")
+                val out = File(dir, "$safe.png")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    out.outputStream().use { input.copyTo(it) }
+                } ?: return@withContext null
+                out.absolutePath
+            } catch (t: Throwable) {
+                null
+            }
+        }
 
     /**
      * Set (or clear, with `null`) the active profile pick. Writes through

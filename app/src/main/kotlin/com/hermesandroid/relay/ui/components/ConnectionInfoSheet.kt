@@ -806,6 +806,8 @@ fun AgentInfoSheet(
                 onSave = connectionViewModel::setProfileDisplayAlias,
             )
 
+            AgentIconRow(connectionViewModel)
+
             HorizontalDivider()
 
             // ---- Profile section (hidden when server advertises none) ----

@@ -79,6 +79,10 @@ On the **googlePlay** flavor, drop the `.sideload` suffix:
 
 Neither path needs a runtime permission — app-scoped external storage is reachable by `adb push` (or a file manager) directly. Reopen **Settings → Appearance → Agent avatar** and your pet appears as a chip alongside the Sphere.
 
+::: tip Easiest: import in the app
+You don't need `adb`. In **Settings → Appearance → Agent avatar**, tap **Add a pet** and pick a file — it accepts a pet pack (`.zip`) **or a single image** (PNG/JPG), which becomes a one-frame **static avatar** with no manifest authoring. Imported pets appear immediately; remove them from the **Installed pets** list.
+:::
+
 ::: tip Authoring reference
 For the manifest format — clips, sprite sheets, frame-rate limits, reactivity flags, and image best practices — see the Pet spec: [`docs/pet-spec.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/pet-spec.md).
 :::

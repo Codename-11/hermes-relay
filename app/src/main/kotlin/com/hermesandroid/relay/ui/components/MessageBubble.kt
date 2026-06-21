@@ -45,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
@@ -60,6 +62,7 @@ import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -193,14 +196,31 @@ fun MessageBubble(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
-        // Agent name label (above assistant bubbles, only first in group)
+        // Agent name label (above assistant bubbles, only first in group), with
+        // the active profile's local icon (if set) — a small avatar by the name.
         if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
-            Text(
-                text = message.agentName,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 2.dp, start = 4.dp)
-            )
+            val agentIconPath = LocalAgentIconPath.current
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
+            ) {
+                if (!agentIconPath.isNullOrBlank()) {
+                    AsyncImage(
+                        model = File(agentIconPath),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape),
+                    )
+                }
+                Text(
+                    text = message.agentName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
 
         if (!isUser && !isSystem && message.badges.isNotEmpty()) {

@@ -105,7 +105,7 @@ fun AppearanceSettingsScreen(
     var pendingDelete by remember { mutableStateOf<AgentAvatar?>(null) }
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let { connectionViewModel.importPetFromZip(it) } }
+    ) { uri -> uri?.let { connectionViewModel.importPet(it) } }
 
     // Re-scan pets/ when this screen opens (surfaces a pack added out-of-band,
     // e.g. via adb), and relay add/remove results as snackbars.
@@ -483,7 +483,7 @@ fun AppearanceSettingsScreen(
                         OutlinedButton(
                             onClick = {
                                 importLauncher.launch(
-                                    arrayOf("application/zip", "application/octet-stream", "*/*")
+                                    arrayOf("application/zip", "image/*", "application/octet-stream", "*/*")
                                 )
                             },
                         ) {
@@ -503,8 +503,9 @@ fun AppearanceSettingsScreen(
                     }
 
                     Text(
-                        text = "Import an animated \"pet\" pack (.zip). Generate one " +
-                            "with AI or hand-author it — see docs/pet-spec.md.",
+                        text = "Import a pet pack (.zip), or a single image to use as a " +
+                            "static avatar. Generate one with AI or hand-author it — " +
+                            "see docs/pet-spec.md.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
