@@ -3,12 +3,14 @@
   "label": "Relay",
   "description": "Paired devices, bridge activity, media inspection, and remote access for hermes-relay",
   "icon": "Activity",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "tab": {
     "path": "/relay",
     "position": "after:skills"
   },
-  "slots": ["header-right"],
+  "slots": [
+    "header-right"
+  ],
   "entry": "dist/index.js",
   "css": "dist/style.css",
   "api": "plugin_api.py"
