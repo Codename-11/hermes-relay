@@ -98,7 +98,7 @@ The prompt, the per-state motion list, and the manifest below are also available
 :::
 
 ::: tip Let an AI agent build the whole pack
-If you use an AI coding agent **with image generation** (e.g. Codex or Claude Code), you can hand it the whole job instead of running these steps yourself: give it this page (or [`pet-prompt-kit.txt`](/pet-prompt-kit.txt)) plus a reference image of your avatar, and ask it to generate the sheets, write `pet.json`, and drop the folder into `pets/`. It can self-check before installing — a pack is valid when it has an `idle` clip, every referenced image file exists, each clip is a `frames` list or a `sheet` with positive `frameWidth`/`frameHeight`/`frameCount`, and no path escapes the pack folder. *(A pure code agent can write the manifest but can't draw the frames — it needs image-generation access.)*
+If you use an AI coding agent **with image generation** (e.g. Codex or Claude Code), you can hand it the whole job instead of running these steps yourself: give it this page (or [`pet-prompt-kit.txt`](/pet-prompt-kit.txt)) plus a reference image of your avatar, and ask it to generate the sheets, write `pet.json`, and drop the folder into `pets/`. It can self-check before installing — a pack is structurally valid when it has an `idle` clip, every referenced image file exists, each clip is a `frames` list or a `sheet` with positive `frameWidth`/`frameHeight`/`frameCount`, and no path escapes the pack folder; it is visually ready when every sheet decodes as RGBA, keeps visible pixels inside the safe margin, and keeps the head/shoulder anchor fixed across cells. *(A pure code agent can write the manifest but can't draw the frames — it needs image-generation access.)*
 :::
 
 #### 1. Lock your character
@@ -116,25 +116,26 @@ Paste this template into any capable image model. Fill in the `{braces}` — kee
 A sprite sheet of {YOUR AVATAR — e.g. "the character in the attached reference image; keep the face, hair, and outfit identical"},
 drawn as {STYLE — e.g. "a clean flat-shaded illustration with crisp outlines, half-body, facing forward"}.
 Give it a signature {ACCENT — e.g. "soft teal-to-violet aura"} that reads as "alive" and grows brighter when it is more active.
-Lay out 16 frames in a 4x4 grid, evenly spaced, each cell exactly the same size, the character centered in every cell.
+Lay out 16 frames in a 4x4 grid, evenly spaced, with each cell exactly 256x256 px.
+Treat each cell as the final transparent canvas, not as the full art box: keep all visible pixels inside a centered 200-208 px safe art box, leaving at least 24 px of empty margin on every side (28 px preferred). Hair, hands, props, sparkles, glow, aura, and shadows all count as visible pixels and must stay inside that safe box.
 Animate across the frames: {MOTION FOR THIS STATE — see the table below}.
-It must be the exact same character in every cell — identical face, colors, proportions, AND size and framing: lock the head and shoulders in the same position and scale in every cell, so the character never drifts up or down or grows or shrinks between cells, and always stays fully inside its cell. Only small secondary motion (a breath, a blink, hair sway) changes between frames.
-Transparent background. No background, no text, no labels, no grid lines, no frame borders, no shadow.
+Keep the character's identity and anchor identical in every cell — same face, colors, proportions, size, and head/shoulder position (it never drifts up or down or grows or shrinks, and always stays fully inside its cell). But the 16 cells are an ANIMATION, not copies: the moving parts (eyes, mouth, hands, hair, accent) must visibly change from cell to cell, sweeping smoothly through the full motion across all 16 frames (a blink goes open→half→shut→half→open; breathing clearly rises then settles). Adjacent frames must be noticeably different in the animated areas — never repeat a pose.
+Use a flat #00ff00 chroma-key background in every cell so it can be removed cleanly after generation. No scenic background, no text, no labels, no grid lines, no frame borders.
 ```
 
-Drop one of these motion lines into `{MOTION FOR THIS STATE}` and save each result under the matching file name. The last column is what that clip exercises in the app:
+Drop one of these motion lines into `{MOTION FOR THIS STATE}`, remove the chroma-key background, save the result as a PNG with alpha, and put it under the matching file name. The last column is what that clip exercises in the app:
 
 | State | Save as | `animate:` line to use | Drives |
 |-------|---------|------------------------|--------|
-| **Idle** *(required)* | `idle.png` | a calm breathing loop — the character gently rises and settles with a single blink; the accent pulses softly | base loop |
-| **Thinking** | `thinking.png` | looking upward in thought, a small glowing spark above the head; a cooler, dimmer accent | thinking clip |
-| **Working** *(tool use)* | `working.png` | a focused, busy pose — turning a small glowing gear or tool; the accent at its brightest and steady | **Tools** badge + overlay |
-| **Writing** *(output)* | `writing.png` | a quick scribbling or typing motion, eyes down, thin streaks of light trailing from the hand | streaming clip + intensity speedup |
-| **Speaking** | `speaking.png` | the mouth opening and closing as if talking, a slight head bob, the accent rippling outward in time | speaking clip + voice bounce |
-| **Listening** | `listening.png` | leaning in attentively, a hand near the ear, mouth closed; the accent drawing inward into a soft ring | listening clip |
+| **Idle** *(required)* | `idle.png` | a calm breathing loop — tiny chest/coat expansion and a single blink; the head and shoulder anchor stays locked; the accent pulses softly | base loop |
+| **Thinking** | `thinking.png` | eyes glancing upward in thought, a tiny glowing spark contained near the temple; a cooler, dimmer accent | thinking clip |
+| **Working** *(tool use)* | `working.png` | a focused, busy pose — turning a small glowing gear or tool held close to the body inside the safe box; the accent at its brightest and steady | **Tools** badge + overlay |
+| **Writing** *(output)* | `writing.png` | a quick scribbling or typing motion, eyes down, short contained light strokes close to the hand | streaming clip + intensity speedup |
+| **Speaking** | `speaking.png` | the mouth opening and closing as if talking, no head bob; contained accent rings ripple near the face in time | speaking clip + voice bounce |
+| **Listening** | `listening.png` | attentive eyes, a hand near the ear without leaning the body; the accent drawing inward into a soft contained ring | listening clip |
 | **Error** | `error.png` | a small startled "oops" — wide eyes and a tiny sweat-drop, the accent flickering briefly to a dim red | error clip |
-| **Greet** *(one-shot)* | `greet.png` | a friendly wave, starting with the arm low and ending mid-wave, the accent blooming up | greet reaction (on appear) |
-| **Done** *(one-shot)* | `done.png` | a happy celebration — arms up with a little sparkle or confetti pop, the accent bursting | done reaction (turn finish) |
+| **Greet** *(one-shot)* | `greet.png` | a small friendly wave that stays inside the safe box, the head and shoulders locked, the accent blooming gently | greet reaction (on appear) |
+| **Done** *(one-shot)* | `done.png` | a happy celebration — brighter smile, small contained sparkles near the shoulders or hands, the accent blooming without reaching the cell edge | done reaction (turn finish) |
 
 Only `idle` is required — start there for a one-clip pet, then add as many states as you like. For what each state means and how unspecified ones fall back, see the [Pet spec](https://github.com/Codename-11/hermes-relay/blob/main/docs/pet-spec.md).
 
@@ -169,17 +170,22 @@ Each generated sheet becomes one clip. This manifest wires up **all nine** — s
 The example above starts with a `$schema` line pointing at the published [pet schema](https://codename-11.github.io/hermes-relay/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
 :::
 
+::: tip Safe box: leave room inside every cell
+A 256 px cell is the **canvas**, not the size the character should fill. After background removal, all visible alpha should sit inside the centered 200-208 px safe art box, leaving at least 24 px of transparent padding on every side. If hair, hands, glow, or props touch the outer margin, scale the art down or make the motion smaller before installing.
+:::
+
 ::: tip Smoothness: frames vs. fps
-Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed — which is why this kit defaults to a **4×4 grid (16 frames)**. Fewer frames are easier to keep consistent, so if the character drifts between cells, drop to a **2×2 grid (4 frames)** and set `frameCount: 4` — it'll just read steppier. And **match fps to frame count** so the loop length stays sane: 16 frames at `fps: 8` is a calm ~2 s cycle, while *4* frames at `fps: 8` is a frantic half-second. Keep calm states (`idle`/`listening`) a little slower than active ones (`speaking`/`done`).
+Sprite animation is frame-stepped, so smoothness comes from **frame count**, not speed — which is why this kit defaults to a **4×4 grid (16 frames)**. If a 16-frame sheet drifts, keep the 4×4 grid and fix registration first: generate states one at a time, keep the same reference and seed, or use one stable state-specific frame as a locked base and animate only blink, mouth, glow, sparkles, or a contained prop. Only drop to **3×3** or **2×2** when frame count is negotiable. And **match fps to frame count** so the loop length stays sane: 16 frames at `fps: 8` is a calm ~2 s cycle, while *4* frames at `fps: 8` is a frantic half-second. Keep calm states (`idle`/`listening`) a little slower than active ones (`speaking`/`done`).
 :::
 
 ::: tip Resolution: size for the biggest surface
 The avatar is **contain-fit** into whatever space it occupies, and *one* set of frames serves every surface — so author for the **largest** place it appears (the full-screen chat background) and small placements (the voice overlay) just downscale and stay sharp. A 128 px cell upscaled to fill the chat background looks pixelated; **256 px cells** (a 1024×1024 sheet for a 4×4 grid) are a good default. Because a sprite sheet decodes as **one** bitmap, you can even go to 512 px cells (2048×2048) for extra crispness at a modest memory cost — that ceiling is per *sheet*, not per frame, so it's far cheaper than the same frames as separate files. You can also fine-tune the running speed live in **Settings → Appearance** without re-authoring.
 :::
 
-::: warning Two things AI image models get wrong
-- **Transparency.** Many models bake in a solid or checkerboard background even when you ask for "transparent." If yours does, run the image through a background-removal step and save it as a PNG **with alpha** before adding it to the pack — otherwise the pet draws inside an opaque box.
-- **Consistency & registration.** Keeping the *same* character across frames is the hard part — and keeping it **registered** (same position, scale, and framing in every cell) is harder still. If the character drifts up/down or changes size between cells, it visibly floats and jumps as it plays, with the edge of the next frame bleeding in. Reuse the reference image, keep the character/style/accent lines byte-identical, lock a fixed **seed**, and stress "lock the head and shoulders in place." Registration degrades with cell count, so if a **4×4** drifts, fall back to **3×3** or **2×2** — fewer cells register far more easily (you trade some smoothness for stability).
+::: warning Three things AI image models get wrong
+- **Transparency.** Many models bake in a solid or checkerboard background even when you ask for "transparent." Ask for a flat `#00ff00` chroma-key background, remove it after generation, and save as a PNG **with alpha** before adding it to the pack — otherwise the pet draws inside an opaque box.
+- **Consistency, registration, and clipping.** Keeping the *same* character across frames is the hard part — and keeping it **registered** (same position, scale, and framing in every cell) is harder still. If the character drifts up/down or changes size between cells, it visibly floats and jumps as it plays, with the edge of the next frame bleeding in. If visible pixels enter the outer 24 px margin, hair, hands, props, or glow can clip when the sheet is sliced. Reuse the reference image, keep the character/style/accent lines byte-identical, lock a fixed **seed**, stress "lock the head and shoulders in place," and validate that every cell keeps the same anchor and safe-box padding. If a generated **4×4** still drifts, preserve the 16 cells with a locked-base hybrid pass before reducing frame count.
+- **No motion (over-locked).** The opposite of drift: lean too hard on "identical / locked" and the model copies one pose across all 16 cells, so the pet looks frozen even though it cycles through them. The cells are an **animation, not copies** — the moving parts (eyes, mouth, hands, hair, accent) must *visibly* change cell to cell, sweeping the full arc (a blink open→shut→open, a breath rise→settle). If a contact sheet reads as 16 near-identical tiles, regenerate demanding clearer per-frame change.
 :::
 
 ::: tip Fastest first pass

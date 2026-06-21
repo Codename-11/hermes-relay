@@ -104,7 +104,10 @@ Both forms take an `"fps"` (frames per second; clamped to **1–60**, default
 `8`). All clips **loop** while their state is active. Smoothness comes from frame
 **count**, not rate — a 4-frame loop looks steppy at any speed; prefer **8–16
 frames** for fluid motion, and match fps to the count (a 4-frame `idle` at `fps`
-3–4 reads calm; `fps` 6+ looks busy).
+3–4 reads calm; `fps` 6+ looks busy). The frames must also actually **differ**:
+16 near-identical cells play as a frozen image no matter the count or fps — each
+cell has to be a distinct keyframe of a visible motion arc (a common failure when
+AI generation is over-constrained to keep every cell "identical").
 
 ### Editor validation (JSON Schema)
 
@@ -229,6 +232,14 @@ writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
 - PNG with alpha is recommended (transparent background composites cleanly).
 - Frames are **contain-fit and centered** in the avatar area, preserving aspect
   ratio — they don't have to match the screen's shape.
+- Sprite-sheet cells need their own internal padding. Treat the declared
+  `frameWidth`/`frameHeight` as the **transparent cell canvas**, not as the
+  amount of space the character should fill. For 256 px cells, keep all visible
+  alpha inside a roughly **200–208 px safe art box** with at least **24 px of
+  transparent padding** on every side; 28 px is safer for glow, hair, hands, and
+  sampling. Scale that margin proportionally for other cell sizes. Effects,
+  props, hair, hands, and aura pixels count as visible content — none of them
+  should touch the cell edge.
 - A referenced image that **exists but isn't a decodable image** (a corrupt or
   non-PNG file with a `.png` name) is **not** caught at load time — the pet still
   appears valid in the picker but renders **blank**. Verify your images actually
@@ -249,17 +260,38 @@ writing vs. speaking loops); `voice` (bounce), the `working` overlay, and
 
 ## Generating frames with AI
 
-You don't have to draw a pet by hand. The **sprite-sheet** clip form (one image, a
-grid of frames) is exactly what an AI image model produces most naturally, so the
-common workflow is to generate **one sheet per state** and reference each as a
-`sheet` clip. A 2×2 grid of 128 px cells maps directly to
-`{ "sheet": "idle.png", "frameWidth": 128, "frameHeight": 128, "frameCount": 4 }`.
+You don't have to draw a pet by hand. The **sprite-sheet** clip form (one image,
+a grid of frames) is exactly what an AI image model produces most naturally, so
+the common workflow is to generate **one sheet per state** and reference each as
+a `sheet` clip. A 4×4 grid of 256 px cells maps directly to
+`{ "sheet": "idle.png", "frameWidth": 256, "frameHeight": 256, "frameCount": 16 }`.
+
+The reliable AI workflow is:
+
+1. Generate each state **one sheet at a time** from the same reference image.
+2. Ask for a flat removable chroma-key background (for example `#00ff00`) rather
+   than trusting "transparent background"; remove the key and save PNG-with-alpha
+   before shipping.
+3. Require a centered safe art box inside every cell. For 256 px cells, keep all
+   visible pixels inside ~200–208 px with at least 24 px transparent padding
+   (28 px preferred).
+4. Validate after background removal: the sheet must decode as RGBA, have the
+   expected total dimensions, contain the expected number of evenly-spaced cells,
+   have no visible alpha inside the unsafe margin, and keep the head/shoulder
+   anchor at the same position and scale across frames.
 
 Two caveats from [Frames and images](#frames-and-images) bite hardest here:
-**transparency** — many models bake in an opaque background, so run a
-background-removal pass and save PNG-with-alpha before shipping — and **per-frame
-consistency** — keep the same character across cells; fewer frames stay consistent
-more easily. Hand-drawn pixel art still wins for smooth, perfectly-stable loops.
+**registration** — many models still move or resize the character between cells
+even with a strict prompt — and **edge padding** — models like to fill the full
+cell, which clips hair, hands, props, or effects when the sheet is sliced. If a
+16-frame AI sheet looks good but drifts, use a hybrid pass: pick a stable
+state-specific generated frame, keep it locked, and animate only small secondary
+elements such as blink, mouth, glow, sparkles, or a contained prop. This keeps a
+4×4 sheet smooth without letting the head, shoulders, or silhouette float. Only
+reduce the frame count (for example 3×3 or 2×2) when frame count is negotiable;
+then update `frameCount`/`fps` accordingly.
+
+Hand-drawn or rigged art still wins for smooth, perfectly-stable loops.
 
 The ready-to-use, fill-in-the-blanks prompt template plus a per-state motion table
 live in the user guide under **Custom Avatars → Generate a pet with AI**

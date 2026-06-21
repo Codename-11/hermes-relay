@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://codename-11.github.io/hermes-relay/pet.schema.json",
   "title": "Hermes-Relay pet manifest",
-  "description": "Schema for pet.json — a side-loaded animated avatar ('pet') pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. See docs/pet-spec.md.",
+  "description": "Schema for pet.json — a side-loaded animated avatar ('pet') pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. Visual QA rules such as PNG alpha, safe-box padding, and frame registration are documented in docs/pet-spec.md.",
   "type": "object",
   "required": ["states"],
   "properties": {
@@ -63,7 +63,7 @@
     },
     "clip": {
       "type": "object",
-      "description": "One animation clip: either a 'frames' list (one image per frame) OR a 'sheet' grid (one image, sliced into cells). Loops while its state is active.",
+      "description": "One animation clip: either a 'frames' list (one image per frame) OR a 'sheet' grid (one image, sliced into cells). Loops while its state is active. For sheets, frameWidth/frameHeight are cell canvas dimensions; visible art should leave internal transparent padding.",
       "properties": {
         "frames": {
           "type": "array",
@@ -74,8 +74,8 @@
           "type": "string",
           "description": "A single sprite-sheet image, sliced left-to-right, top-to-bottom into a grid of cells. Path must stay inside the pack directory."
         },
-        "frameWidth":  { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell width, in pixels." },
-        "frameHeight": { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell height, in pixels." },
+        "frameWidth":  { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell canvas width, in pixels. This is not the visible character width; leave safe transparent padding inside each cell." },
+        "frameHeight": { "type": "integer", "minimum": 1, "description": "Sprite-sheet cell canvas height, in pixels. This is not the visible character height; leave safe transparent padding inside each cell." },
         "frameCount":  { "type": "integer", "minimum": 1, "description": "Number of cells in the sheet (rows x columns). Clamped to the sheet's real capacity at load." },
         "fps": {
           "type": "number",

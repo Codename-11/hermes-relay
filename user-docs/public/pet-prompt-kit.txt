@@ -33,36 +33,50 @@ identical every time; change ONLY the "Animate across the frames" line.
   outlines, half-body, facing forward"}.
   Give it a signature {ACCENT — e.g. "soft teal-to-violet aura"} that reads as
   "alive" and grows brighter when it is more active.
-  Lay out 16 frames in a 4x4 grid, evenly spaced, each cell exactly the same
-  size, the character centered in every cell.
+  Lay out 16 frames in a 4x4 grid, evenly spaced, with each cell exactly
+  256x256 px.
+  Treat each cell as the final transparent canvas, not as the full art box: keep
+  all visible pixels inside a centered 200-208 px safe art box, leaving at least
+  24 px of empty margin on every side (28 px preferred). Hair, hands, props,
+  sparkles, glow, aura, and shadows all count as visible pixels and must stay
+  inside that safe box.
   Animate across the frames: {MOTION — see the list below}.
-  It must be the exact same character in every cell — identical face, colors,
-  proportions, AND size + framing: lock the head and shoulders in the same
-  position and scale in every cell, so the character never drifts up/down or
-  grows/shrinks and always stays fully inside its cell. Only small secondary
-  motion (a breath, a blink, hair sway) changes between frames.
-  Transparent background. No background, no text, no labels, no grid lines,
-  no frame borders, no shadow.
+  Keep the character's identity and anchor identical in every cell — same face,
+  colors, proportions, size, and head/shoulder position (it never drifts up/down
+  or grows/shrinks and always stays fully inside its cell). But the 16 cells are
+  an ANIMATION, not copies: the moving parts (eyes, mouth, hands, hair, accent)
+  must visibly change from cell to cell, sweeping smoothly through the full
+  motion below across all 16 frames (a blink goes open->half->shut->half->open;
+  breathing clearly rises then settles). Adjacent frames must be noticeably
+  different in the animated areas — never repeat a pose.
+  Use a flat #00ff00 chroma-key background in every cell so it can be removed
+  cleanly after generation. No scenic background, no text, no labels, no grid
+  lines, no frame borders.
 
-MOTION lines — save each result under the given file name:
+MOTION lines — remove the chroma key, save each result as PNG with alpha, and
+put it under the given file name:
 
-  idle.png      (required) a calm breathing loop: gently rises and settles
-                with one blink; the accent pulses softly
-  thinking.png  looking upward in thought, a glowing spark above the head;
-                a cooler, dimmer accent
-  working.png   a focused, busy pose turning a small glowing gear/tool; the
-                accent at its brightest and steady     [lights the Tools badge]
-  writing.png   a quick scribbling/typing motion, eyes down, thin streaks of
-                light trailing from the hand
-  speaking.png  mouth opening and closing as if talking, a slight head bob,
-                the accent rippling outward in time
-  listening.png leaning in, a hand near the ear, mouth closed; the accent
-                drawing inward into a soft ring
+  idle.png      (required) a calm breathing loop: tiny chest/coat expansion
+                and one blink; the head/shoulder anchor stays locked; the
+                accent pulses softly
+  thinking.png  eyes glancing upward in thought, a tiny glowing spark contained
+                near the temple; a cooler, dimmer accent
+  working.png   a focused, busy pose turning a small glowing gear/tool held
+                close to the body inside the safe box; the accent at its
+                brightest and steady     [lights the Tools badge]
+  writing.png   a quick scribbling/typing motion, eyes down, short contained
+                light strokes close to the hand
+  speaking.png  mouth opening and closing as if talking, no head bob; contained
+                accent rings ripple near the face in time
+  listening.png attentive eyes, a hand near the ear without leaning the body;
+                the accent drawing inward into a soft contained ring
   error.png     a small startled "oops": wide eyes, a tiny sweat-drop, the
                 accent flickering briefly to a dim red
-  greet.png     (one-shot) a friendly wave from low to mid-wave; accent blooms
-  done.png      (one-shot) a happy celebration, arms up with a sparkle pop;
-                accent bursts
+  greet.png     (one-shot) a small friendly wave that stays inside the safe box;
+                head/shoulders locked; accent blooms gently
+  done.png      (one-shot) a happy celebration: brighter smile, small contained
+                sparkles near the shoulders or hands; accent blooms without
+                reaching the cell edge
 
 Only idle is required. Add as many of the others as you want.
 
@@ -117,13 +131,28 @@ Restart the app, then: Settings → Appearance → Agent avatar → pick your pe
 GOTCHAS
 ------------------------------------------------------------------
 • TRANSPARENCY: if the model bakes a background in, remove it and re-save as a
-  PNG WITH ALPHA, or the pet renders inside an opaque box.
+  PNG WITH ALPHA, or the pet renders inside an opaque box. For generation, ask
+  for a flat #00ff00 chroma-key background and remove it afterward; that is more
+  reliable than asking the model for true transparency.
+• SAFE BOX / CLIPPING: a 256px cell is the canvas, not the character size. Keep
+  all visible pixels inside a centered 200-208px art box, with at least 24px
+  empty margin on every side (28px preferred). Hair, hands, props, glow, aura,
+  sparkles, and shadows count as visible pixels.
 • CONSISTENCY + REGISTRATION: reuse the reference image, keep the character/
   style/accent lines identical, lock a fixed seed. Beyond appearance, keep the
   character REGISTERED — same position, scale, and framing in every cell — or it
   floats/jumps as it plays and the next frame's edge bleeds in. Stress "lock the
-  head and shoulders in place." This degrades with cell count: if a 4x4 drifts,
-  fall back to 3x3 or 2x2 (trade smoothness for stability).
+  head and shoulders in place." If a generated 4x4 drifts, keep the 16 cells and
+  use a locked-base hybrid pass first: one stable state-specific frame, then
+  animate only blink, mouth, glow, sparkles, or a contained prop. Reduce to 3x3
+  or 2x2 only when frame count is negotiable.
+• NO MOTION / STATIC: the opposite failure — over-stress "identical/locked" and
+  the model copies one pose 16x, so the pet looks frozen even though it cycles.
+  The 16 cells are an ANIMATION, not copies: the moving parts (eyes, mouth, hands,
+  hair, accent) must visibly change cell to cell, sweeping the full arc (blink
+  open->shut->open; breath rise->settle). Adjacent frames must be noticeably
+  different. If a contact sheet looks like 16 identical tiles, regenerate
+  demanding clearer per-frame change.
 • RESOLUTION: one frame set serves every surface (contain-fit), so size for the
   BIGGEST one — the full-screen chat background. 128px cells look pixelated
   blown up that large; 256px cells (1024x1024 sheet for 4x4) are a good default,
@@ -131,9 +160,10 @@ GOTCHAS
   cells are cheap. (Voice mode is small, so it's always sharp.) Speed is also
   tunable live in Settings -> Appearance.
 • SMOOTHNESS: comes from frame COUNT, not fps. This kit defaults to 4x4 (16
-  frames) for fluid motion; if the character drifts between cells, drop to 2x2
-  (4 frames), set frameCount 4, and accept a steppier look. Match fps to count
-  so the loop stays sane: 16 frames at fps 8 ≈ 2s; 4 frames at fps 8 ≈ 0.5s.
+  frames) for fluid motion. If the character drifts between cells, do not try to
+  hide it with fps; fix registration with the locked-base hybrid approach above.
+  Match fps to count so the loop stays sane: 16 frames at fps 8 ≈ 2s; 4 frames
+  at fps 8 ≈ 0.5s.
 • FASTEST FIRST PASS: generate one 3x3 image (nine cells, one per state),
   slice it into nine single-frame PNGs, and reference each as
   "frames": ["idle.png"] instead of a sheet. No in-state motion, but it
