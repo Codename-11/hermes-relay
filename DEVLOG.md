@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet playback-speed control + cell-resolution guidance (Android + docs)
+
+**Why.** Two more on-device tuning gaps: a pet that still felt fast needed re-authoring/re-importing to slow down (slow loop), and a 128 px-celled pet looked pixelated blown up to the full-screen chat background (while crisp in the small voice overlay — same frames, different scale).
+
+- **Playback-speed control (`ConnectionViewModel`, `LocalPetPlaybackSpeed`, `PetAvatar`, `AppearanceSettingsScreen`).** A global multiplier pref (`pet_speed`, 0.5×–1.5×, default 1.0) surfaced as a **Slider in Appearance** when a pet is selected. Provided at the app root via a new `LocalPetPlaybackSpeed` composition local and read **live** in `PetAvatar.Render` (`rememberUpdatedState`), so dragging the slider re-times the pet instantly with no restart. Applies to every clip (including one-shots) and composes with intensity (`baseFps × speed × intensityFactor`, clamped 1–60). The sphere ignores it.
+- **Cell-resolution guidance (docs).** Pixelation is a *resolution* axis (cell px) distinct from smoothness (frame count): one frame set is contain-fit into every surface, so author for the **largest** (the chat background). Bumped the kit default to **256 px cells** (a 1024×1024 sheet for a 4×4 grid), noted 512 px is fine for a sprite sheet (decodes as one bitmap), and that the old "≲256 px" note applied to frame-*sequences*. Updated `custom-avatars.md`, `pet-prompt-kit.txt`, `pet-spec.md`.
+- **Verification.** `:app:assembleSideloadDebug` BUILD SUCCESSFUL; installed to the sideload build via `adb install -r`. Slider behavior is on-device-visual (recorded in TODO).
+
 ## 2026-06-20 — Pet kit defaults to 4×4 (16-frame) sheets (docs)
 
 **Why.** A 4-frame (2×2) sheet reads steppy no matter the fps — the on-device Lucy made that obvious. The renderer already slices any N×M grid (`decodeClip` derives `cols`/`rows` from sheet size ÷ cell size; `drawPetFrame` indexes `col = i%cols`, `row = i/cols`), so "support 4×4" is an authoring-default change, not a renderer one.
@@ -37,7 +45,7 @@
 
 **Why.** Teaching the agent to mark sensitive media (and, more generally, to know things only the relay can teach it) needs a way to inject context into the agent's system prompt — but hermes-agent exposes no plugin context hook (`system_prompt_block()` is memory-provider-only; lifecycle hooks are observers). The one transport-agnostic seam is `AIAgent._build_system_prompt`. Rather than a one-off patch, we built a reusable, removable **enhancement layer** so the relay can apply such patches cleanly and retire them per-surface as upstream catches up — the same pattern as the bootstrap route shims.
 
-- **`plugin/enhancements/` (registry + contract).** Each enhancement declares `name · phase · enabled() · apply() · retirement note`. Config-gated, OFF by default, no-op on vanilla, removable with the plugin.
+- **`plugin/enhancements/` (registry + contract).** Each enhancement declares `name · phase · enabled() · apply() · retirement note`. Config-gated, **default ON for relay installs** (the relay install is the opt-in; `RELAY_AGENT_CONTEXT_ENABLED=0` opts out), no-op on vanilla, removable with the plugin.
 - **`context_injection` enhancement (fail-open).** Wraps `AIAgent._build_system_prompt` at plugin-load; appends auditable fenced blocks (`<!-- hermes-relay:<name> -->`). Fail-open at every step — seam absent / block build throws / setattr fails ⇒ returns the base prompt unchanged. With `RELAY_AGENT_CONTEXT_ENABLED` off, the prompt is byte-for-byte unchanged. Works on BOTH gateway and SSE (agent core).
 - **First block: media-sensitivity.** Teaches the agent to mark private/NSFW media with the client's spoiler convention (`||![alt](path)||` / sentinel alt) — the bit the client already blurs. No soul/memory touched.
 - **`GET /context/injected` audit route + client audit.** The relay exposes exactly what it would inject; the chat "What the agent sees" sheet gained a "Relay context (server-side)" section. Server-side injection is never hidden.
