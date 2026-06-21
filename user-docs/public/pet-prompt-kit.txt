@@ -37,7 +37,10 @@ identical every time; change ONLY the "Animate across the frames" line.
   size, the character centered in every cell.
   Animate across the frames: {MOTION — see the list below}.
   It must be the exact same character in every cell — identical face, colors,
-  shapes, and proportions — only the pose/expression and the accent change.
+  proportions, AND size + framing: lock the head and shoulders in the same
+  position and scale in every cell, so the character never drifts up/down or
+  grows/shrinks and always stays fully inside its cell. Only small secondary
+  motion (a breath, a blink, hair sway) changes between frames.
   Transparent background. No background, no text, no labels, no grid lines,
   no frame borders, no shadow.
 
@@ -115,9 +118,12 @@ GOTCHAS
 ------------------------------------------------------------------
 • TRANSPARENCY: if the model bakes a background in, remove it and re-save as a
   PNG WITH ALPHA, or the pet renders inside an opaque box.
-• CONSISTENCY: reuse the reference image every time, keep the character/style/
-  accent lines identical, lock a fixed seed if you can. Fewer frames (2–4)
-  stay consistent more easily.
+• CONSISTENCY + REGISTRATION: reuse the reference image, keep the character/
+  style/accent lines identical, lock a fixed seed. Beyond appearance, keep the
+  character REGISTERED — same position, scale, and framing in every cell — or it
+  floats/jumps as it plays and the next frame's edge bleeds in. Stress "lock the
+  head and shoulders in place." This degrades with cell count: if a 4x4 drifts,
+  fall back to 3x3 or 2x2 (trade smoothness for stability).
 • RESOLUTION: one frame set serves every surface (contain-fit), so size for the
   BIGGEST one — the full-screen chat background. 128px cells look pixelated
   blown up that large; 256px cells (1024x1024 sheet for 4x4) are a good default,

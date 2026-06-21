@@ -114,7 +114,7 @@ drawn as {STYLE — e.g. "a clean flat-shaded illustration with crisp outlines, 
 Give it a signature {ACCENT — e.g. "soft teal-to-violet aura"} that reads as "alive" and grows brighter when it is more active.
 Lay out 16 frames in a 4x4 grid, evenly spaced, each cell exactly the same size, the character centered in every cell.
 Animate across the frames: {MOTION FOR THIS STATE — see the table below}.
-It must be the exact same character in every cell — identical face, colors, shapes, and proportions — only the pose/expression and the accent change.
+It must be the exact same character in every cell — identical face, colors, proportions, AND size and framing: lock the head and shoulders in the same position and scale in every cell, so the character never drifts up or down or grows or shrinks between cells, and always stays fully inside its cell. Only small secondary motion (a breath, a blink, hair sway) changes between frames.
 Transparent background. No background, no text, no labels, no grid lines, no frame borders, no shadow.
 ```
 
@@ -175,7 +175,7 @@ The avatar is **contain-fit** into whatever space it occupies, and *one* set of 
 
 ::: warning Two things AI image models get wrong
 - **Transparency.** Many models bake in a solid or checkerboard background even when you ask for "transparent." If yours does, run the image through a background-removal step and save it as a PNG **with alpha** before adding it to the pack — otherwise the pet draws inside an opaque box.
-- **Consistency.** Keeping the *same* character across frames (and across states) is the hard part. Reuse the reference image for every state, keep the character/style/accent lines byte-identical, and lock a fixed **seed** if your tool supports one. Fewer frames per sheet (2–4) stay consistent far more easily than many.
+- **Consistency & registration.** Keeping the *same* character across frames is the hard part — and keeping it **registered** (same position, scale, and framing in every cell) is harder still. If the character drifts up/down or changes size between cells, it visibly floats and jumps as it plays, with the edge of the next frame bleeding in. Reuse the reference image, keep the character/style/accent lines byte-identical, lock a fixed **seed**, and stress "lock the head and shoulders in place." Registration degrades with cell count, so if a **4×4** drifts, fall back to **3×3** or **2×2** — fewer cells register far more easily (you trade some smoothness for stability).
 :::
 
 ::: tip Fastest first pass
