@@ -186,6 +186,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // built-in; any other id selects a loaded user "pet" by id.
         private val KEY_AGENT_AVATAR = stringPreferencesKey("agent_avatar")
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
+        private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
         const val DEFAULT_FONT_SCALE: Float = 1.0f
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
@@ -981,6 +982,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val petSpeed: StateFlow<Float> = application.relayDataStore.data
         .map { preferences -> preferences[KEY_PET_SPEED] ?: 1f }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1f)
+
+    // Re-center each pet frame on its own content (cancels AI-sheet drift).
+    // Default on; consumed by PetAvatar via LocalPetStabilize.
+    val petStabilize: StateFlow<Boolean> = application.relayDataStore.data
+        .map { preferences -> preferences[KEY_PET_STABILIZE] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     // Global font scale (1.0 = system default). Applied at the Compose theme
     // root via LocalDensity.fontScale and pushed into the xterm WebView via
@@ -5059,6 +5066,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_PET_SPEED] = speed.coerceIn(0.5f, 1.5f)
+            }
+        }
+    }
+
+    /** Toggle per-frame stabilization (auto-recenter) for pets. */
+    fun setPetStabilize(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_STABILIZE] = enabled
             }
         }
     }

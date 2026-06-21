@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-20 — Pet frame auto-stabilization (Android)
+
+**Why.** On-device audit of a 4×4 AI pet (Lucy) found the character's vertical center drifting 34 px across the 16 cells, with 8/16 frames touching the cell edge — the image model held *appearance* but not *position/scale*, so the pet floated upward and bled the next frame in. The renderer slices/centers exact cells faithfully, so the drift can't be cured per-frame there — but it can be neutralized by re-centering each frame on its own content.
+
+- **Decode-time recenter (`PetAvatar`).** With stabilization on, `decodeClip` scans each frame's opaque pixels (alpha bbox) and stores a per-frame offset that moves the content's bbox center to the cell center; `drawPetFrame` applies it (source px → dest px, scaled). Works for sprite sheets (per-cell) and frame sequences (per-bitmap); empty/transparent frames get a zero offset. The scan is one-time per clip decode on `Dispatchers.IO` with a reused scratch buffer, so steady-state cost is nil.
+- **Global toggle, default on (`ConnectionViewModel`, `LocalPetStabilize`, `AppearanceSettingsScreen`).** A `pet_stabilize` pref → `LocalPetStabilize` provided at the app root → read in `PetAvatar.Render` (keys the decode `produceState`, so flipping re-decodes). A "Stabilize frames" Switch sits under the playback-speed slider when a pet is selected. Default on because AI sheets nearly always need it; a hand-authored pet with intentional motion can switch it off.
+- **Authoring (docs).** The prompt kit now also stresses *registration* (lock head/shoulders, same position + scale, only secondary motion) so the art improves at the source — stabilization is the safety net for what the model still gets wrong.
+- **Verification.** `:app:assembleSideloadDebug` BUILD SUCCESSFUL; installed via `adb install -r`. Fixes the *already-installed* Lucy at render time (no re-import). On-device visual confirmation recorded in TODO.
+
 ## 2026-06-20 — Pet playback-speed control + cell-resolution guidance (Android + docs)
 
 **Why.** Two more on-device tuning gaps: a pet that still felt fast needed re-authoring/re-importing to slow down (slow loop), and a 128 px-celled pet looked pixelated blown up to the full-screen chat background (while crisp in the small voice overlay — same frames, different scale).

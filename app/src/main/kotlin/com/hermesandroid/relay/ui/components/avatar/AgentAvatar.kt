@@ -110,3 +110,11 @@ val LocalAvailableAvatars = staticCompositionLocalOf<List<AgentAvatar>> { listOf
  * the sphere avatar ignores it.
  */
 val LocalPetPlaybackSpeed = staticCompositionLocalOf { 1f }
+
+/**
+ * Whether [PetAvatar] re-centers each frame on its own opaque content at decode
+ * time, cancelling the positional drift common in AI-generated sprite sheets (a
+ * character that floats/jumps cell-to-cell). Global Appearance toggle, default
+ * on; the sphere ignores it.
+ */
+val LocalPetStabilize = staticCompositionLocalOf { true }

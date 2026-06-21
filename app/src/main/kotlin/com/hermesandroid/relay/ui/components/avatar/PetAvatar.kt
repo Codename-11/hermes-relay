@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components.avatar
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
@@ -202,13 +203,19 @@ class PetAvatar(
         val clip = oneShotClip ?: baseClip
         val playOnce = oneShotClip != null
 
+        // Re-center each frame on its own opaque content at decode time —
+        // neutralizes the positional drift common in AI-generated sheets (a
+        // character that floats/jumps cell-to-cell). Global Appearance toggle;
+        // flipping it re-decodes via the produceState key.
+        val stabilize = LocalPetStabilize.current
+
         // Decode the active clip off the main thread; null until ready / on
         // decode failure (graceful — the avatar just renders nothing).
-        val frames by produceState<PetFrames?>(initialValue = null, clip) {
+        val frames by produceState<PetFrames?>(initialValue = null, clip, stabilize) {
             value = if (clip == null) {
                 null
             } else {
-                withContext(Dispatchers.IO) { runCatching { decodeClip(clip) }.getOrNull() }
+                withContext(Dispatchers.IO) { runCatching { decodeClip(clip, stabilize) }.getOrNull() }
             }
         }
 
@@ -291,46 +298,92 @@ private class PetFrames(
     val frameHeight: Int,
     val frameCount: Int,
     val fps: Float,
+    /** Per-frame recenter offset (source px) when stabilization is on; null = off. */
+    val centerOffsets: List<IntOffset>? = null,
 )
 
-private fun decodeClip(clip: PetClip): PetFrames? = when (clip) {
+private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (clip) {
     is FrameSequenceClip -> {
-        val bitmaps = clip.files.mapNotNull { file ->
-            BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
-        }
+        val bitmaps = clip.files.mapNotNull { file -> BitmapFactory.decodeFile(file.absolutePath) }
         if (bitmaps.isEmpty()) {
             null
         } else {
             PetFrames(
-                frames = bitmaps,
+                frames = bitmaps.map { it.asImageBitmap() },
                 sheet = null,
                 frameWidth = bitmaps.first().width,
                 frameHeight = bitmaps.first().height,
                 frameCount = bitmaps.size,
                 fps = clip.fps,
+                centerOffsets = if (stabilize) bitmaps.map { bitmapRecenter(it) } else null,
             )
         }
     }
 
     is SpriteSheetClip -> {
-        val sheet = BitmapFactory.decodeFile(clip.sheet.absolutePath)?.asImageBitmap()
-        if (sheet == null) {
+        val bmp = BitmapFactory.decodeFile(clip.sheet.absolutePath)
+        if (bmp == null) {
             null
         } else {
             // Clamp the declared frame count to what the sheet can actually hold.
-            val cols = (sheet.width / clip.frameWidth).coerceAtLeast(1)
-            val rows = (sheet.height / clip.frameHeight).coerceAtLeast(1)
-            val capacity = cols * rows
+            val cols = (bmp.width / clip.frameWidth).coerceAtLeast(1)
+            val rows = (bmp.height / clip.frameHeight).coerceAtLeast(1)
+            val count = clip.frameCount.coerceIn(1, cols * rows)
             PetFrames(
                 frames = emptyList(),
-                sheet = sheet,
+                sheet = bmp.asImageBitmap(),
                 frameWidth = clip.frameWidth,
                 frameHeight = clip.frameHeight,
-                frameCount = clip.frameCount.coerceIn(1, capacity),
+                frameCount = count,
                 fps = clip.fps,
+                centerOffsets = if (stabilize) {
+                    sheetRecenter(bmp, cols, clip.frameWidth, clip.frameHeight, count)
+                } else {
+                    null
+                },
             )
         }
     }
+}
+
+/** Per-cell recenter offsets for a sprite sheet (see [contentRecenter]). */
+private fun sheetRecenter(bmp: Bitmap, cols: Int, fw: Int, fh: Int, count: Int): List<IntOffset> {
+    val buf = IntArray(fw * fh)
+    return (0 until count).map { i ->
+        contentRecenter(bmp, (i % cols) * fw, (i / cols) * fh, fw, fh, buf)
+    }
+}
+
+/** Recenter offset for one standalone frame bitmap. */
+private fun bitmapRecenter(bmp: Bitmap): IntOffset =
+    contentRecenter(bmp, 0, 0, bmp.width, bmp.height, IntArray(bmp.width * bmp.height))
+
+/**
+ * Scan the [w]×[h] region at ([x0],[y0]) of [bmp] for opaque pixels and return the
+ * offset (source px) that moves their bounding-box center to the region center —
+ * cancelling per-frame positional drift. [buf] (size ≥ [w]×[h]) is reused scratch.
+ * Returns [IntOffset.Zero] for a fully-transparent region.
+ */
+private fun contentRecenter(bmp: Bitmap, x0: Int, y0: Int, w: Int, h: Int, buf: IntArray): IntOffset {
+    bmp.getPixels(buf, 0, w, x0, y0, w, h)
+    var minX = w
+    var minY = h
+    var maxX = -1
+    var maxY = -1
+    var idx = 0
+    for (yy in 0 until h) {
+        for (xx in 0 until w) {
+            if ((buf[idx] ushr 24) and 0xFF > 16) {
+                if (xx < minX) minX = xx
+                if (xx > maxX) maxX = xx
+                if (yy < minY) minY = yy
+                if (yy > maxY) maxY = yy
+            }
+            idx++
+        }
+    }
+    if (maxX < 0) return IntOffset.Zero
+    return IntOffset(w / 2 - (minX + maxX) / 2, h / 2 - (minY + maxY) / 2)
 }
 
 /** Draw frame [index] of [f], contain-fit + centered, scaled by [bounce]. */
@@ -347,14 +400,29 @@ private fun DrawScope.drawPetFrame(f: PetFrames, index: Int, bounce: Float) {
             image = f.sheet,
             srcOffset = IntOffset(col * fw, row * fh),
             srcSize = IntSize(fw, fh),
-            dstOffset = dstOffset,
+            dstOffset = recenter(dstOffset, dstSize.width, fw, f.centerOffsets, index),
             dstSize = dstSize,
         )
     } else {
         val bmp = f.frames.getOrNull(index) ?: f.frames.firstOrNull() ?: return
         val (dstOffset, dstSize) = containFit(bmp.width.toFloat(), bmp.height.toFloat(), bounce)
-        drawImage(image = bmp, dstOffset = dstOffset, dstSize = dstSize)
+        drawImage(
+            image = bmp,
+            dstOffset = recenter(dstOffset, dstSize.width, bmp.width, f.centerOffsets, index),
+            dstSize = dstSize,
+        )
     }
+}
+
+/** Shift [dstOffset] by frame [index]'s stabilization offset (source px → dest px). */
+private fun recenter(dstOffset: IntOffset, dstW: Int, srcW: Int, offsets: List<IntOffset>?, index: Int): IntOffset {
+    val o = offsets?.getOrNull(index) ?: return dstOffset
+    if (o.x == 0 && o.y == 0) return dstOffset
+    val scale = if (srcW > 0) dstW.toFloat() / srcW else 1f
+    return IntOffset(
+        dstOffset.x + (o.x * scale).roundToInt(),
+        dstOffset.y + (o.y * scale).roundToInt(),
+    )
 }
 
 /** Compute a centered, aspect-preserving destination rect for a [w]×[h] frame. */

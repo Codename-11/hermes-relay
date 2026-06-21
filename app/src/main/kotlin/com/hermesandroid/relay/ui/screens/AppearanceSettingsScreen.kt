@@ -555,6 +555,30 @@ fun AppearanceSettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Stabilize frames",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = "Auto-centers each frame so the pet doesn't drift or jump " +
+                                        "between frames (fixes wobbly AI sheets).",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            val petStabilize by connectionViewModel.petStabilize.collectAsState()
+                            Switch(
+                                checked = petStabilize,
+                                onCheckedChange = { connectionViewModel.setPetStabilize(it) },
+                            )
+                        }
                     }
 
                     // Second level of the model: skin chips, shown only when the
