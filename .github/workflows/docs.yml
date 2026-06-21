@@ -38,7 +38,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          # Node 24 ships npm 11, matching the npm that generates
+          # user-docs/package-lock.json. On npm 10 (Node 20), `npm ci` rejects
+          # the lock over the optional `search-insights` peer dep of bundled
+          # docsearch. Keep this aligned with the npm used to write the lock.
+          node-version: 24
           cache: npm
           cache-dependency-path: user-docs/package-lock.json
 
