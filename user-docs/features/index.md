@@ -13,6 +13,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |
 | [Connections](/features/connections) | Save multiple Hermes servers — one-tap switch from the top-bar chip |
+| [App Themes](/features/themes) | Eight looks — the whole app follows your choice, light/dark aware |
 | [Profiles](/features/profiles) | Auto-discovered upstream agent directories — overlay model + SOUL on chat turns |
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
 | [Command Palette](/guide/chat#command-palette) | Searchable command browser — 29 gateway commands, personalities, 90+ skills |
