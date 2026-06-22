@@ -90,10 +90,9 @@ import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
 import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
-import com.hermesandroid.relay.ui.components.UpdateBanner
+import com.hermesandroid.relay.ui.components.UpdateAvailableBanner
+import com.hermesandroid.relay.ui.components.rememberUpdateAvailability
 import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
-import com.hermesandroid.relay.update.UpdateCheckResult
-import com.hermesandroid.relay.viewmodel.UpdateViewModel
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
@@ -327,7 +326,6 @@ fun RelayApp() {
     val chatViewModel: ChatViewModel = viewModel()
     val terminalViewModel: TerminalViewModel = viewModel()
     val voiceViewModel: VoiceViewModel = viewModel()
-    val updateViewModel: UpdateViewModel = viewModel()
 
     // Composition-scoped coroutine scope for firing connection-store suspend
     // writes off of UI click handlers (rename/revoke/remove) —
@@ -681,7 +679,12 @@ fun RelayApp() {
         chatViewModel.refreshSessions()
     }
 
-    LaunchedEffect(selectedProfile?.name) {
+    LaunchedEffect(activeConnectionId, selectedProfile?.name) {
+        // WP-V2: namespace per-profile voice prefs by BOTH the active connection
+        // and the profile so two connections exposing a same-named profile don't
+        // collide. Set the connection id first so onProfileChanged re-seeds from
+        // the correctly-scoped keys.
+        voiceViewModel.setVoicePrefsConnection(activeConnectionId)
         voiceViewModel.onProfileChanged(
             AgentDisplay.profileRequestName(selectedProfile?.name)
         )
@@ -1221,11 +1224,12 @@ fun RelayApp() {
             !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
-        // Sideload-only update availability (UpdateViewModel short-circuits on
-        // googlePlay). Hoisted to the outer scope so the update toast can render
-        // in the floating Box overlay below alongside the connection toast.
-        val updateBannerState by updateViewModel.bannerState.collectAsState()
-        val availableUpdate = (updateBannerState as? UpdateCheckResult.Available)?.update
+        // Update availability (unified): googlePlay = Play In-App Update FLEXIBLE,
+        // sideload = GitHub releases. The handle filters dismissed versions +
+        // throttles checks internally, exposing a surfaceable status for the
+        // floating overlay (mirrors the connection toast treatment).
+        val updateHandle = rememberUpdateAvailability()
+        val availableUpdateStatus by updateHandle.visibleStatus
 
         // Content-identity key so a swipe-up dismiss sticks for THIS status but
         // a genuinely new status (different title/tone/phase) re-shows.
@@ -1772,6 +1776,7 @@ fun RelayApp() {
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
+                        connectionId = activeConnectionId,
                         selectedProfile = selectedProfile,
                         standardVoiceAvailability = standardVoiceAvailability,
                         standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
@@ -2191,15 +2196,17 @@ fun RelayApp() {
                 .windowInsetsPadding(WindowInsets.statusBars),
         ) {
             AnimatedVisibility(
-                visible = availableUpdate != null && !suppressGlobalChrome &&
+                visible = availableUpdateStatus != null && !suppressGlobalChrome &&
                     !showStartupSphere && !voiceUiState.voiceMode,
                 enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
                 exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
             ) {
-                availableUpdate?.let { upd ->
-                    UpdateBanner(
-                        update = upd,
-                        onDismiss = { updateViewModel.dismiss(upd.latestVersion) },
+                availableUpdateStatus?.let { status ->
+                    UpdateAvailableBanner(
+                        status = status,
+                        onUpdate = updateHandle.onUpdateClick,
+                        onDismiss = updateHandle.onDismiss,
+                        includeStatusBarPadding = false,
                     )
                 }
             }

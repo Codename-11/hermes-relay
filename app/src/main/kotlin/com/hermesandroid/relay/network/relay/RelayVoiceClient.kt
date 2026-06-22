@@ -1270,6 +1270,13 @@ class RelayVoiceClient(
         // True while a turn is awaiting its response. In persistent mode the idle
         // guard only applies while a turn is active; between-turn idle is normal.
         val activeTurn = AtomicBoolean(true)
+        // W3: set true once a turn is known to be a long/background Hermes run
+        // (e.g. `hermes.run.promoted`). The relay can legitimately go quiet for
+        // minutes while such a run executes, so the 90s idle guard would kill an
+        // otherwise-healthy turn. When set, the idle check is paused the same way
+        // persistent between-turn idle is — REALTIME_AGENT_MAX_TURN_MS remains
+        // the absolute backstop. Reset at every turn boundary.
+        val longRunningTurn = AtomicBoolean(false)
         val inputChunks = buildList {
             var offset = 0
             var chunkId = 1L
@@ -1306,6 +1313,7 @@ class RelayVoiceClient(
             turnStartedAtMs.set(System.currentTimeMillis())
             lastEventAtMs.set(System.currentTimeMillis())
             activeTurn.set(true)
+            longRunningTurn.set(false)
         }
         fun activateSocket(webSocket: WebSocket, generation: Long): Boolean {
             while (true) {
@@ -1440,6 +1448,13 @@ class RelayVoiceClient(
                         lastPlayedAudioEventId.updateAndGet { current -> maxOf(current, playedAudioEventId) }
                     }
                     onEvent(event, control)
+                    // W3: a promoted (background) Hermes run can legitimately
+                    // leave the socket quiet for minutes. Flag the turn so the
+                    // idle guard relaxes; MAX_TURN_MS still bounds it.
+                    if (event.type == "hermes.run.promoted") {
+                        longRunningTurn.set(true)
+                        Log.i(TAG, "Realtime agent turn marked long-running (run promoted); relaxing idle guard")
+                    }
                     if (event.isAudioDelta) {
                         audioChunks += 1
                         val byteCount = event.byteCount ?: 0
@@ -1468,6 +1483,7 @@ class RelayVoiceClient(
                             // Turn boundary, not session boundary: keep the socket
                             // open for the next utterance.
                             activeTurn.set(false)
+                            longRunningTurn.set(false)
                             onTurnComplete(summary)
                         } else {
                             if (completed.compareAndSet(false, true)) {
@@ -1588,14 +1604,26 @@ class RelayVoiceClient(
                     if (turnElapsedMs >= REALTIME_AGENT_MAX_TURN_MS) {
                         throw IOException("Realtime agent exceeded the turn limit")
                     }
-                    if (idleElapsedMs >= REALTIME_AGENT_IDLE_TIMEOUT_MS) {
+                    // W3: for a known long/background run the relay can go quiet
+                    // for minutes — pause the idle guard the same way persistent
+                    // between-turn idle is paused, keeping only the MAX_TURN_MS
+                    // backstop above.
+                    val idleGuardActive = !longRunningTurn.get()
+                    if (idleGuardActive && idleElapsedMs >= REALTIME_AGENT_IDLE_TIMEOUT_MS) {
                         throw IOException("Realtime agent stalled waiting for relay events")
                     }
-                    val waitMs = minOf(
-                        REALTIME_AGENT_WAIT_SLICE_MS,
-                        REALTIME_AGENT_MAX_TURN_MS - turnElapsedMs,
-                        REALTIME_AGENT_IDLE_TIMEOUT_MS - idleElapsedMs,
-                    ).coerceAtLeast(1L)
+                    val waitMs = if (idleGuardActive) {
+                        minOf(
+                            REALTIME_AGENT_WAIT_SLICE_MS,
+                            REALTIME_AGENT_MAX_TURN_MS - turnElapsedMs,
+                            REALTIME_AGENT_IDLE_TIMEOUT_MS - idleElapsedMs,
+                        ).coerceAtLeast(1L)
+                    } else {
+                        minOf(
+                            REALTIME_AGENT_WAIT_SLICE_MS,
+                            REALTIME_AGENT_MAX_TURN_MS - turnElapsedMs,
+                        ).coerceAtLeast(1L)
+                    }
                     withTimeoutOrNull(waitMs) {
                         finished.await()
                     }?.let { return it }
@@ -1626,6 +1654,7 @@ class RelayVoiceClient(
                             turnStartedAtMs.set(System.currentTimeMillis())
                             lastEventAtMs.set(System.currentTimeMillis())
                             activeTurn.set(true)
+                            longRunningTurn.set(false)
                         } else {
                             sendTurnPcm(ws, turn.inputPcm, turn.sampleRate)
                         }

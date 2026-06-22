@@ -7,6 +7,7 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileDisplayAliasStore
 import com.hermesandroid.relay.data.ProfileIconStore
+import com.hermesandroid.relay.data.ProfileLockStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.SessionTransport
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -113,6 +115,13 @@ class ProfileController(
     val profileSessionStore: ProfileSessionStore = ProfileSessionStore(context)
     val profileDisplayAliasStore: ProfileDisplayAliasStore = ProfileDisplayAliasStore(context)
 
+    /**
+     * Per-connection "profile lock" persistence (twin of [profileSelectionStore],
+     * sharing the same DataStore). Public so the ViewModel's connection-lifecycle
+     * orchestrators can clear it alongside the selection store.
+     */
+    val profileLockStore: ProfileLockStore = ProfileLockStore(context)
+
     val profileDisplayAlias: StateFlow<String?> = combine(
         activeConnectionId,
         selectedProfile,
@@ -125,6 +134,28 @@ class ProfileController(
             profileDisplayAliasStore.aliasFlow(connectionId, profileName)
         }
     }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /**
+     * The active connection's stored profile-lock target, or `null` when the
+     * connection is unlocked. The value is the raw stored token: the sentinel
+     * [AgentDisplay.SERVER_DEFAULT_PROFILE_KEY] means "locked to Server default",
+     * any other string is a profile name. Built by flatMapLatest on the active
+     * connection id exactly like [profileDisplayAlias] so it repoints cleanly
+     * across connection switches.
+     */
+    val lockedProfileName: StateFlow<String?> = activeConnectionId
+        .flatMapLatest { connectionId ->
+            if (connectionId == null) {
+                flowOf(null)
+            } else {
+                profileLockStore.lockedProfileFlow(connectionId)
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** True when the active connection is pinned to a single profile. */
+    val isProfileLocked: StateFlow<Boolean> = lockedProfileName
+        .map { it != null }
+        .stateIn(scope, SharingStarted.Eagerly, false)
 
     val profileIconStore: ProfileIconStore = ProfileIconStore(context)
 
@@ -234,12 +265,45 @@ class ProfileController(
         }
 
     /**
+     * The stored lock-token for a (possibly null) profile. Server default —
+     * including the synthetic "default" alias — maps to
+     * [AgentDisplay.SERVER_DEFAULT_PROFILE_KEY]; everything else to its name.
+     * Mirrors [AgentDisplay.profileSessionKey] so the lock token and the
+     * session/selection key for the same profile always agree.
+     */
+    private fun lockTokenFor(profile: Profile?): String =
+        AgentDisplay.profileSessionKey(profile?.name)
+
+    /**
      * Set (or clear, with `null`) the active profile pick. Writes through
      * to [profileSelectionStore] for the currently-active connection so
      * the selection survives process death and connection switches.
+     *
+     * When the connection is **locked**, a request for a profile other than
+     * the locked target is ignored (the pickers are gated, but this guards the
+     * programmatic paths too — e.g. voice/card dispatch). Re-selecting the
+     * locked target is allowed (it's a no-op against current state anyway).
      */
     fun selectProfile(profile: Profile?) {
         val normalizedProfile = AgentDisplay.normalizeSelection(profile)
+        val locked = lockedProfileName.value
+        if (locked != null && lockTokenFor(normalizedProfile) != locked) {
+            // Pinned to a different profile — refuse the switch. Never silently
+            // coerce to the locked target here; the resolution path already
+            // holds the selection on the locked target (or null if it's gone).
+            return
+        }
+        applyProfileSelection(normalizedProfile)
+    }
+
+    /**
+     * The actual selection write — runs the full profile-switch machinery
+     * (fresh draft via [setLastSessionId], pending-state stamp, persist,
+     * chat-API rebuild, last-session restore). Bypasses the lock gate so
+     * [lockProfile] can force-select the new locked target even mid-relock;
+     * [selectProfile] is the gated public entry point.
+     */
+    private fun applyProfileSelection(normalizedProfile: Profile?) {
         _selectedProfile.value = normalizedProfile
         setLastSessionId(null)
         val connectionId = activeConnectionId.value ?: return
@@ -256,6 +320,15 @@ class ProfileController(
         val connectionId = activeConnectionId.value ?: return false
         if (_pendingSelectedProfileConnectionId.value != connectionId) {
             return false
+        }
+        // When the connection is locked, the lock target — NOT the pending or
+        // persisted selection — decides the active profile. The sentinel means
+        // Server default (selection null); any other token resolves against the
+        // current list. If the locked profile isn't (yet/anymore) advertised we
+        // HOLD on null so the Settings banner can explain it — never fall back.
+        val locked = lockedProfileName.value
+        if (locked != null) {
+            return resolveLockedProfileFrom(locked, list)
         }
         val current = _selectedProfile.value
         if (current != null) {
@@ -288,6 +361,67 @@ class ProfileController(
             return true
         }
         return false
+    }
+
+    /**
+     * Resolve the active profile against the lock [token] (already known to be
+     * non-null by the caller). Returns true when the selection changed.
+     *
+     *  - sentinel → Server default → selection null.
+     *  - a name present in [list] → select that profile.
+     *  - a name absent from [list] → HOLD on null (the locked profile is gone
+     *    or hasn't been advertised yet); the pending name is kept so a banner
+     *    can name it and so a later list arrival can recover it.
+     */
+    private fun resolveLockedProfileFrom(token: String, list: List<Profile>): Boolean {
+        if (AgentDisplay.isServerDefaultAlias(token) ||
+            token == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
+        ) {
+            _pendingSelectedProfileName.value = null
+            val changed = _selectedProfile.value != null
+            _selectedProfile.value = null
+            return changed
+        }
+        val resolved = list.firstOrNull { it.name == token }
+        if (resolved != null) {
+            val changed = _selectedProfile.value != resolved
+            _selectedProfile.value = resolved
+            _pendingSelectedProfileName.value = resolved.name
+            return changed
+        }
+        // Locked profile not present — hold on null, keep the pending name so the
+        // banner can name it and a later arrival can recover the lock.
+        _pendingSelectedProfileName.value = token
+        val changed = _selectedProfile.value != null
+        _selectedProfile.value = null
+        return changed
+    }
+
+    /**
+     * Lock the active connection to [profile]. A `null` argument locks to
+     * **Server default** (stored as the [AgentDisplay.SERVER_DEFAULT_PROFILE_KEY]
+     * sentinel so it's distinct from "unlocked"). Persists the lock, then forces
+     * the selection to the locked target via the normal [selectProfile] path so
+     * the existing profile-switch machinery (fresh draft, gateway hot-swap, chat
+     * API rebuild) runs. Locking to the already-selected profile is effectively
+     * a no-op for the selection but still records the lock.
+     */
+    suspend fun lockProfile(profile: Profile?) {
+        val connectionId = activeConnectionId.value ?: return
+        val normalizedProfile = AgentDisplay.normalizeSelection(profile)
+        val token = lockTokenFor(normalizedProfile)
+        // Persist the lock first, then force-select via the un-gated body so the
+        // switch lands even when re-locking from a different target (the
+        // lockedProfileName StateFlow may still hold the previous token until the
+        // DataStore emission propagates).
+        profileLockStore.setLockedProfile(connectionId, token)
+        applyProfileSelection(normalizedProfile)
+    }
+
+    /** Remove the lock for the active connection (back to free profile choice). */
+    suspend fun unlockProfile() {
+        val connectionId = activeConnectionId.value ?: return
+        profileLockStore.setLockedProfile(connectionId, null)
     }
 
     /**

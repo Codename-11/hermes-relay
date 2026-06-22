@@ -43,8 +43,14 @@ class HermesToolBroker:
         try:
             async with aiohttp.ClientSession(timeout=timeout) as http:
                 session_id = request.session_id
+                # Track whether *we* own the API Server session. A caller-supplied
+                # session_id may come from a different namespace (gateway/client
+                # session store) and not exist in the API Server, in which case the
+                # chat/stream call 404s and we resolve to a fresh API session below.
+                api_session_owned = False
                 if not session_id:
                     session_id = await self._create_session(http, request, headers)
+                    api_session_owned = True
                     yield {
                         "type": "hermes.session.bound",
                         "session_id": session_id,
@@ -65,32 +71,55 @@ class HermesToolBroker:
                     body["system_message"] = interface_system_message
                 if request.profile and request.profile != "default":
                     body["profile"] = request.profile
-                url = f"{self.webapi_url}/api/sessions/{session_id}/chat/stream"
-                async with http.post(
-                    url,
-                    json=body,
-                    headers={**headers, "Accept": "text/event-stream"},
-                ) as resp:
-                    if resp.status in (401, 403):
-                        await resp.read()
-                        yield _auth_error_event(
-                            resp.status,
-                            session_id=session_id,
-                            has_bearer=bool(headers.get("Authorization")),
-                        )
-                        return
-                    if resp.status != 200:
-                        text = await resp.text()
-                        yield {
-                            "type": "voice.error",
-                            "message": f"Hermes API error ({resp.status}): {text[:240]}",
-                            "session_id": session_id,
-                        }
-                        return
-                    async for event in _iter_sse_events(resp):
-                        mapped = _map_sse_event(event, session_id)
-                        if mapped is not None:
-                            yield mapped
+                resolved_via_handoff = False
+                while True:
+                    url = f"{self.webapi_url}/api/sessions/{session_id}/chat/stream"
+                    async with http.post(
+                        url,
+                        json=body,
+                        headers={**headers, "Accept": "text/event-stream"},
+                    ) as resp:
+                        if resp.status in (401, 403):
+                            await resp.read()
+                            yield _auth_error_event(
+                                resp.status,
+                                session_id=session_id,
+                                has_bearer=bool(headers.get("Authorization")),
+                            )
+                            return
+                        if resp.status != 200:
+                            text = await resp.text()
+                            # The supplied session id was created outside the API
+                            # Server (e.g. a gateway/client session). Resolve once
+                            # to a fresh API Server session and retry the turn.
+                            if (
+                                not api_session_owned
+                                and not resolved_via_handoff
+                                and _is_session_not_found(resp.status, text)
+                            ):
+                                resolved_via_handoff = True
+                                session_id = await self._create_session(
+                                    http, request, headers
+                                )
+                                api_session_owned = True
+                                yield {
+                                    "type": "hermes.session.bound",
+                                    "session_id": session_id,
+                                    "profile": request.profile,
+                                    "reason": "session_not_found_handoff",
+                                }
+                                continue
+                            yield {
+                                "type": "voice.error",
+                                "message": f"Hermes API error ({resp.status}): {text[:240]}",
+                                "session_id": session_id,
+                            }
+                            return
+                        async for event in _iter_sse_events(resp):
+                            mapped = _map_sse_event(event, session_id)
+                            if mapped is not None:
+                                yield mapped
+                    break
 
                 yield {
                     "type": "hermes.run.completed",
@@ -183,7 +212,7 @@ class HermesToolBroker:
                     headers=resp.headers,
                 )
             data = await resp.json()
-        session_id = str(data.get("id") or data.get("session_id") or "").strip()
+        session_id = _session_id_from_create_response(data)
         if not session_id:
             raise aiohttp.ClientError("Hermes API created a session without an id")
         return session_id
@@ -197,6 +226,49 @@ def _headers(bearer_token: str | None) -> dict[str, str]:
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     return headers
+
+
+def _session_id_from_create_response(data: Any) -> str:
+    """Extract a session id from the API Server's create-session response.
+
+    The current Hermes API Server returns the session nested under
+    ``{"object": "hermes.session", "session": {"id": "api_..."}}`` while older
+    or partial builds returned a flat ``{"id": ...}`` / ``{"session_id": ...}``.
+    Accept both so the broker keeps working across server versions.
+    """
+    if not isinstance(data, dict):
+        return ""
+    session_obj = data.get("session") if isinstance(data.get("session"), dict) else {}
+    return str(
+        data.get("id")
+        or data.get("session_id")
+        or session_obj.get("id")
+        or session_obj.get("session_id")
+        or ""
+    ).strip()
+
+
+def _is_session_not_found(status: int, body_text: str) -> bool:
+    """True when a chat/stream response is the API Server's 404 ``session_not_found``.
+
+    The API Server emits ``{"error": {"code": "session_not_found", ...}}`` (see
+    upstream ``_get_existing_session_or_404``). Fall back to substring matching so
+    a non-JSON body or a slightly different shape is still recognised.
+    """
+    if status != 404:
+        return False
+    try:
+        payload = json.loads(body_text)
+    except (json.JSONDecodeError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            if str(error.get("code") or "").strip().lower() == "session_not_found":
+                return True
+            if "session not found" in str(error.get("message") or "").lower():
+                return True
+    return "session_not_found" in body_text or "session not found" in body_text.lower()
 
 
 def _auth_error_event(

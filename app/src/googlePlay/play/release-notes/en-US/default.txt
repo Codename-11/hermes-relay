@@ -1,7 +1,7 @@
-v1.2.0 — Make it yours.
+v1.2.1 — Polish & control.
 
-• Eight app themes, swappable sphere skins, and animated agent "pets" that react to what your agent is doing.
-• See which streaming path you're on, plus a "What the agent sees" sheet showing the agent's exact context.
-• ~3× faster cold start and honest loading states.
-• In-app crash reporting with one-tap bug reports.
-• Fixes: QR pairing on foldables, server-image & PDF crashes, in-chat model picks now apply.
+• Lock the app to a single agent profile and hide the rest.
+• In-app "What's New" with current and past release notes.
+• Diagnostics with clean error titles and one-tap reporting.
+• A tasteful, dismissable "update available" nudge.
+• Voice fixes: Stop halts speech instantly, steadier hold-to-talk, a more readable overlay, and chosen voices apply in Auto mode.

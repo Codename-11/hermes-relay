@@ -57,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.data.AgentDisplay
@@ -117,6 +118,12 @@ fun VoiceSettingsScreen(
      */
     standardVoiceSignInRouteHint: String? = null,
     relayVoiceReady: Boolean = false,
+    /**
+     * Active connection id used to namespace per-profile voice prefs so two
+     * connections that expose a same-named profile don't share voice picks.
+     * Passed from RelayApp; null degrades to profile-only namespacing.
+     */
+    connectionId: String? = null,
     onOpenManage: (() -> Unit)? = null,
     onBack: () -> Unit,
     settingsViewModel: VoiceSettingsViewModel = viewModel(),
@@ -141,13 +148,12 @@ fun VoiceSettingsScreen(
 
     // WP-V2/V3: point the screen's prefs repo at the active (connection,
     // profile) scope so the per-profile engine/route/enhanced toggles read and
-    // write the SAME namespaced keys VoiceViewModel seeds from. RelayApp never
-    // wires a connection id into the voice-prefs scope today (the VM mirrors
-    // ProfileSelectionStore profile-only keying), so we pass a null connection
-    // id and the normalized profile name — matching VoiceViewModel exactly.
-    LaunchedEffect(selectedProfile?.name) {
+    // write the SAME namespaced keys VoiceViewModel seeds from. The connection
+    // id (when supplied by RelayApp) disambiguates two connections that expose
+    // a same-named profile; the normalized profile name matches VoiceViewModel.
+    LaunchedEffect(connectionId, selectedProfile?.name) {
         prefsRepo.setActiveScope(
-            connectionId = null,
+            connectionId = connectionId,
             profileName = AgentDisplay.profileRequestName(selectedProfile?.name),
         )
     }
@@ -415,6 +421,26 @@ private fun VoiceForThisProfileCard(
     onOpenManage: (() -> Unit)?,
 ) {
     val scope = rememberCoroutineScope()
+
+    // Auto-repair when Relay disappears out from under a Relay-only selection:
+    // a persisted RealtimeAgent engine (Relay-only) or Relay route can't run
+    // without a paired Relay, so fall back to the always-available defaults.
+    LaunchedEffect(relayVoiceReady, currentEngine, currentAudioRoute) {
+        if (!relayVoiceReady) {
+            if (currentEngine == VoiceEngineMode.RealtimeAgent) {
+                prefsRepo.setEngineMode(VoiceEngineMode.HermesVoiceOutput)
+            }
+            val coerced = coerceAudioRoute(
+                engine = VoiceEngineMode.HermesVoiceOutput,
+                route = currentAudioRoute,
+                relayVoiceReady = false,
+            )
+            if (coerced != currentAudioRoute) {
+                prefsRepo.setAudioRoute(coerced)
+            }
+        }
+    }
+
     SectionCard(title = "Voice for this profile") {
         Text(
             text = "Voice engine",
@@ -434,13 +460,33 @@ private fun VoiceForThisProfileCard(
             ),
         ).forEach { (engine, copy) ->
             val (label, detail, experimental) = copy
+            // RealtimeAgent requires a paired Relay; HermesVoiceOutput is always
+            // selectable. The existing warning row below explains the disabled
+            // RealtimeAgent radio.
+            val engineEnabled = engine == VoiceEngineMode.HermesVoiceOutput || relayVoiceReady
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .selectable(
                         selected = currentEngine == engine,
+                        enabled = engineEnabled,
                         onClick = {
-                            scope.launch { prefsRepo.setEngineMode(engine) }
+                            scope.launch {
+                                prefsRepo.setEngineMode(engine)
+                                // Switching to HermesVoiceOutput may leave a now
+                                // invalid persisted route (e.g. Relay while
+                                // unpaired) — coerce it to a reachable one.
+                                if (engine == VoiceEngineMode.HermesVoiceOutput) {
+                                    val coerced = coerceAudioRoute(
+                                        engine = engine,
+                                        route = currentAudioRoute,
+                                        relayVoiceReady = relayVoiceReady,
+                                    )
+                                    if (coerced != currentAudioRoute) {
+                                        prefsRepo.setAudioRoute(coerced)
+                                    }
+                                }
+                            }
                         },
                     )
                     .padding(vertical = 6.dp),
@@ -449,6 +495,7 @@ private fun VoiceForThisProfileCard(
                 RadioButton(
                     selected = currentEngine == engine,
                     onClick = null,
+                    enabled = engineEnabled,
                 )
                 Spacer(Modifier.size(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -456,7 +503,15 @@ private fun VoiceForThisProfileCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (engineEnabled) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            },
+                        )
                         if (experimental) ExperimentalBadge("Experimental")
                     }
                     Text(
@@ -535,11 +590,16 @@ private fun VoiceForThisProfileCard(
                     badge = "Optional",
                 ),
             ).forEach { option ->
+                // Auto always stays selectable (it self-resolves to whatever's
+                // reachable). Standard/Relay are only selectable when their live
+                // availability probe says so — otherwise the radio is dimmed.
+                val routeEnabled = option.route == VoiceAudioRoute.Auto || option.statusOk
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .selectable(
                             selected = currentAudioRoute == option.route,
+                            enabled = routeEnabled,
                             onClick = {
                                 scope.launch { prefsRepo.setAudioRoute(option.route) }
                             },
@@ -550,6 +610,7 @@ private fun VoiceForThisProfileCard(
                     RadioButton(
                         selected = currentAudioRoute == option.route,
                         onClick = null,
+                        enabled = routeEnabled,
                     )
                     Spacer(Modifier.size(8.dp))
                     Column(modifier = Modifier.weight(1f)) {
@@ -557,7 +618,15 @@ private fun VoiceForThisProfileCard(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (routeEnabled) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                },
+                            )
                             option.badge?.let { ExperimentalBadge(it) }
                         }
                         Text(
@@ -2286,6 +2355,29 @@ private data class RouteOption(
     val badge: String? = null,
 )
 
+/**
+ * Pure coercion of a persisted [route] to a reachable one for the given
+ * [engine] / [relayVoiceReady] combination. Keeps the engine/route radios from
+ * leaving a stale invalid selection persisted (e.g. a Relay route after Relay
+ * was unpaired). Unit-testable; the composable just applies the result.
+ *
+ * - Engine == RealtimeAgent requires a paired Relay; this helper only governs
+ *   the audio route, so when relay isn't ready the route is forced to [Auto]
+ *   (the caller separately forces the engine back to HermesVoiceOutput).
+ * - [VoiceAudioRoute.Relay] is only valid when [relayVoiceReady].
+ * - [VoiceAudioRoute.Auto] is always valid (it self-resolves at runtime).
+ * - [VoiceAudioRoute.Standard] is left as-is — its reachability is a live
+ *   dashboard probe the UI dims via `statusOk`, not something we can know here.
+ */
+internal fun coerceAudioRoute(
+    engine: VoiceEngineMode,
+    route: VoiceAudioRoute,
+    relayVoiceReady: Boolean,
+): VoiceAudioRoute = when {
+    route == VoiceAudioRoute.Relay && !relayVoiceReady -> VoiceAudioRoute.Auto
+    else -> route
+}
+
 private data class VoiceChoice(
     val value: String,
     val label: String = value,
@@ -2687,12 +2779,18 @@ private fun VoiceChoiceDropdown(
                 DropdownMenuItem(
                     text = {
                         Column {
-                            Text(choice.label)
+                            Text(
+                                choice.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             choice.detail?.takeIf { it.isNotBlank() }?.let { detail ->
                                 Text(
                                     text = detail,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -2809,6 +2907,8 @@ private fun ProviderRow(label: String, value: String) {
             text = value,
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(0.62f),
         )
     }

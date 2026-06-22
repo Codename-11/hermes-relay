@@ -12,7 +12,6 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.net.URLEncoder
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
@@ -28,19 +27,19 @@ import kotlin.system.exitProcess
  * records the crash. We only observe; we never swallow.
  *
  * On the next launch [CrashReportGate] reads the pending report and offers the
- * user a clean copy / "report on GitHub" flow (see [CrashReportDialog]). The
- * GitHub path pre-fills our `bug_report.yml` issue form so a one-star "it keeps
- * crashing" review can become an actionable issue with a stack trace attached.
+ * user three GitHub-free-friendly actions (see [CrashReportDialog]): copy the
+ * full report, **share** it via the system sheet (email / chat / notes — the
+ * path for users without a GitHub account and for sideload installs Play vitals
+ * never sees), or open a pre-filled `bug_report.yml` issue. The GitHub path
+ * turns a one-star "it keeps crashing" review into an actionable issue with a
+ * stack trace attached; share/copy cover everyone else. Every outbound path is
+ * user-initiated — nothing is transmitted automatically.
  */
 object CrashReporter {
 
     private const val TAG = "CrashReporter"
     private const val DIR = "crash"
     private const val FILE = "last-crash.json"
-
-    /** Public issue tracker — keep in sync with the git remote. */
-    private const val GITHUB_NEW_ISSUE =
-        "https://github.com/Codename-11/hermes-relay/issues/new"
 
     /**
      * Cap the stack trace we inline into the GitHub URL. Browsers + GitHub
@@ -140,17 +139,11 @@ object CrashReporter {
      * issue. The body mirrors `bug_report.yml`'s sections in markdown so triage
      * structure is preserved without depending on the preview path.
      */
-    fun buildGithubIssueUrl(report: CrashReport): String {
-        // LinkedHashMap preserves a stable, readable param order.
-        val params = linkedMapOf(
-            "title" to "[Bug]: Crash — ${report.shortTitle()}",
-            "labels" to "bug",
-            "body" to buildIssueBody(report),
-        )
-        return GITHUB_NEW_ISSUE + "?" + params.entries.joinToString("&") { (key, value) ->
-            "$key=" + URLEncoder.encode(value, "UTF-8").replace("+", "%20")
-        }
-    }
+    fun buildGithubIssueUrl(report: CrashReport): String = IssueReport.buildGithubIssueUrl(
+        title = "[Bug]: Crash — ${report.shortTitle()}",
+        bodyMarkdown = buildIssueBody(report),
+        labels = "bug",
+    )
 
     private fun buildIssueBody(report: CrashReport): String {
         val trace = report.stackTrace.let {

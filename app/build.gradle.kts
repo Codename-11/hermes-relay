@@ -254,6 +254,15 @@ dependencies {
     // Bundled ONNX Silero model (~2.2 MB); pulled from JitPack.
     implementation(libs.android.vad.silero)
 
+    // Google Play In-App Update — googlePlay flavor ONLY (FLEXIBLE flow).
+    // Scoped via the `googlePlayImplementation` configuration so it never
+    // ships in the sideload APK, which updates via the GitHub-releases
+    // UpdateChecker instead. The `app/src/googlePlay/.../update/` impl
+    // references AppUpdateManager; the `app/src/sideload/.../update/` impl
+    // never touches this library.
+    "googlePlayImplementation"(libs.play.app.update)
+    "googlePlayImplementation"(libs.play.app.update.ktx)
+
     // Markdown rendering
     implementation(libs.markdown.renderer.m3)
     implementation(libs.markdown.renderer.code)

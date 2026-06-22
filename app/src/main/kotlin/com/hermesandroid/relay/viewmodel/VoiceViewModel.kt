@@ -340,6 +340,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val OUTPUT_AUDIO_ACTIVE_THRESHOLD = 0.012f
 
         /**
+         * W3 spoken-status throttle. On long / tool-heavy realtime runs the
+         * agent emits many spoken status lines ("Searching.", "Still working.")
+         * which becomes chatty. Independent of the per-key [spokenStatusKeys]
+         * dedupe: this caps BOTH the spoken cadence (no two spoken status lines
+         * within [MIN_SPOKEN_STATUS_GAP_MS]) and the per-turn spoken count
+         * ([MAX_SPOKEN_STATUS_PER_TURN]). Suppressed lines still update the UI
+         * + diagnostics — only the TTS enqueue is skipped.
+         */
+        private const val MIN_SPOKEN_STATUS_GAP_MS = 22_000L
+        private const val MAX_SPOKEN_STATUS_PER_TURN = 3
+
+        /**
          * Resume watchdog window (B4). After a hard barge-in interrupt, the
          * VoiceViewModel listens for user-speech silence for this many ms
          * before deciding the interrupt was a brief cough / false-positive
@@ -435,6 +447,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var responseText = StringBuilder()
     private var inputTranscript = StringBuilder()
     private val spokenStatusKeys = mutableSetOf<String>()
+    // W3 spoken-status throttle (per turn). Reset alongside spokenStatusKeys at
+    // every turn start/reset. See [shouldSpeakStatusNow] for the decision.
+    private var lastSpokenStatusAtMs: Long = 0L
+    private var spokenStatusCount: Int = 0
     private var voiceRelayPreflight: (suspend () -> Result<Unit>)? = null
 
     // === PHASE3-voice-intents: voice→bridge intent routing ===
@@ -542,6 +558,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var firstFrameWatchdogJob: Job? = null
     private var continuousLoopArmed: Boolean = false
     private var lastRealtimeAudioDeltaAtMs: Long = 0L
+
+    /**
+     * Set true when the user interrupts a realtime turn ([interruptSpeaking]).
+     * The persistent realtime socket stays open by design, so audio deltas
+     * already in flight can still arrive after we stop the player and would
+     * re-create the AudioTrack — making "Stop" feel like it didn't work. While
+     * suppressed, [handleRealtimeVoiceEvent] drops audio writes. Cleared when
+     * the next turn is actually sent ([submitRealtimeTurn] / [runRealtimeAgentTurn]).
+     */
+    @Volatile
+    private var realtimeAudioSuppressed: Boolean = false
     private var listeningStartedAtMs: Long = 0L
     // 2026-04-18: silence-based auto-stop watchdog. Runs for the duration
     // of a Listening turn in TapToTalk / Continuous modes when the user has
@@ -1526,6 +1553,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             "Interrupting speech pipeline",
         )
         cancelRealtimeAgentTurn("interrupt")
+        // Drop realtime audio deltas still in flight on the open socket so a
+        // stopped turn's tail can't re-create the player and resume playback.
+        realtimeAudioSuppressed = true
         // B4: tear down the barge-in listener immediately so we don't
         // double-trigger on the ducking watchdog or emit another
         // bargeInDetected while the resume watchdog is deliberating.
@@ -2193,6 +2223,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         persistentOpen: Boolean = false,
     ) {
         providerRealtimeAgentTurnActive.set(true)
+        // New turn requested → allow this response's audio through again.
+        realtimeAudioSuppressed = false
         streamObserverJob?.cancel()
         streamObserverJob = null
         drainQueuedLocalTts()
@@ -2227,6 +2259,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         responseText = StringBuilder()
         inputTranscript = StringBuilder()
         spokenStatusKeys.clear()
+        lastSpokenStatusAtMs = 0L
+        spokenStatusCount = 0
         rtUserText = userText
         rtConversationContext = chatVm.realtimeAgentContextMessages()
         rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
@@ -2257,6 +2291,30 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             if (speak && (!audioSeen.get() || speakEvenAfterProviderAudio)) {
+                // W3: per-turn throttle independent of the per-key dedupe above.
+                // Suppress the TTS enqueue (UI state + diagnostics already
+                // applied) when spoken status is too frequent or has hit the
+                // per-turn cap, so long / tool-heavy runs don't over-narrate.
+                val now = System.currentTimeMillis()
+                if (!shouldSpeakStatusNow(
+                        now = now,
+                        lastSpokenAtMs = lastSpokenStatusAtMs,
+                        count = spokenStatusCount,
+                        gapMs = MIN_SPOKEN_STATUS_GAP_MS,
+                        maxCount = MAX_SPOKEN_STATUS_PER_TURN,
+                    )
+                ) {
+                    Log.i(
+                        TAG,
+                        "Realtime status TTS suppressed (throttle) key=$key " +
+                            "count=$spokenStatusCount sinceLastMs=${
+                                if (lastSpokenStatusAtMs > 0L) now - lastSpokenStatusAtMs else -1L
+                            } line=$line",
+                    )
+                    return
+                }
+                lastSpokenStatusAtMs = now
+                spokenStatusCount += 1
                 val remainingProviderAudioMs = if (speakEvenAfterProviderAudio && audioSeen.get()) {
                     300L
                 } else {
@@ -2265,6 +2323,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i(
                     TAG,
                     "Realtime status TTS queued key=$key speak=$speak " +
+                        "count=$spokenStatusCount " +
                         "afterProviderAudio=${audioSeen.get()} delayMs=$remainingProviderAudioMs line=$line",
                 )
                 if (remainingProviderAudioMs > 0L) {
@@ -2612,6 +2671,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun submitRealtimeTurn(chatVm: ChatViewModel, inputPcm: ByteArray, inputSampleRate: Int) {
         val channel = realtimeTurnChannel ?: return
+        // New turn requested → allow this response's audio through again.
+        realtimeAudioSuppressed = false
         drainQueuedLocalTts()
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
         firstFrameWatchdogJob?.cancel(); firstFrameWatchdogJob = null
@@ -2623,6 +2684,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         responseText = StringBuilder()
         inputTranscript = StringBuilder()
         spokenStatusKeys.clear()
+        lastSpokenStatusAtMs = 0L
+        spokenStatusCount = 0
         rtUserText = ""
         rtConversationContext = chatVm.realtimeAgentContextMessages()
         rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
@@ -2930,7 +2993,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceOutputAvailable != false &&
             realtimePcmPlayer != null &&
             voiceClient != null &&
-            voiceAudioClient?.route == VoiceAudioRoute.Relay
+            // Use the RESOLVED route: AutoVoiceAudioClient.effectiveRoute maps
+            // Auto -> Relay when relay is ready, so in `auto` mode with relay
+            // paired the override-capable relay path engages. Reading the raw
+            // `route` would stay "Auto" and silently drop the chosen override.
+            voiceAudioClient?.effectiveRoute == VoiceAudioRoute.Relay
 
     private fun drainSentences() {
         while (true) {
@@ -3129,6 +3196,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 decision.firstAudioMs?.let { ms ->
                     Log.i(TAG, "Realtime watchdog: first audio reached speaker after ${ms}ms")
+                    // Flip the waveform's output gate the instant playback truly
+                    // starts, even if no further audio-delta byte event arrives
+                    // to drive handleRealtimeVoiceEvent — the unfold then lands
+                    // exactly at the first audible frame.
+                    if (_uiState.value.state == VoiceState.Speaking) {
+                        _uiState.update { st -> st.copy(outputAudioActive = true) }
+                    }
                 }
                 if (decision.reportStuck) {
                     reportedStuck = true
@@ -3159,6 +3233,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInStarted: AtomicBoolean,
     ) {
         if (!event.isAudioDelta) return
+        // After an interrupt, ignore the cancelled turn's in-flight audio tail
+        // until the next turn is sent (which clears the flag). Otherwise these
+        // late deltas re-create the player and playback resumes after "Stop".
+        if (realtimeAudioSuppressed) return
         val encoded = event.audioBase64 ?: return
         val audio = try {
             Base64.getDecoder().decode(encoded)
@@ -3185,11 +3263,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             startRealtimePlaybackWatchdog()
         }
         if (_uiState.value.state == VoiceState.Speaking) {
+            // Keep feeding the visual envelope from the decoded level so the
+            // waveform stays smooth, but gate `outputAudioActive` on REAL
+            // playback start (head-move / head-synced amplitude) rather than on
+            // the decoded RMS, which leads the audible frame by the player's
+            // start prebuffer. Mirrors the basic-TTS Visualizer gating.
             speakEnvelope = applyEnvelope(speakEnvelope, level)
+            val snap = pcmPlayer.snapshot()
+            val playbackActive = shouldMarkRealtimeOutputActive(
+                headFrames = snap.headFrames,
+                playbackAmplitude = pcmPlayer.playbackAmplitude(),
+            )
             _uiState.update {
                 it.copy(
                     amplitude = speakEnvelope,
-                    outputAudioActive = it.outputAudioActive || level > OUTPUT_AUDIO_ACTIVE_THRESHOLD,
+                    outputAudioActive = it.outputAudioActive || playbackActive,
                 )
             }
         }
@@ -5083,6 +5171,50 @@ internal fun evaluateFirstFrameWatchdog(
     }
     val stuck = !alreadyReportedStuck && playStatePlaying && elapsedSinceStartMs >= stuckThresholdMs
     return FirstFrameWatchdogDecision(null, reportStuck = stuck, keepWatching = true)
+}
+
+/**
+ * Pure gate for the realtime waveform's `outputAudioActive` flag (W3).
+ *
+ * The decoded-PCM RMS [level] arrives before the audio is actually audible —
+ * [RealtimePcmPlayer] holds a start prebuffer, so the first few deltas decode
+ * (level > 0) while the AudioTrack head is still parked at frame 0. Gating
+ * `outputAudioActive` on [level] therefore unfolds the UI too early.
+ *
+ * Instead we gate on a playback-synced signal: the playback head has actually
+ * moved ([headFrames] > 0) and/or the head-tracked [playbackAmplitude] is
+ * non-zero. This mirrors the basic-TTS path, where the Visualizer only reports
+ * amplitude once ExoPlayer is genuinely producing audio.
+ *
+ * Returns true once playback has really started so the caller may flip
+ * `outputAudioActive` true (it is monotonic per turn — the caller ORs it).
+ */
+internal fun shouldMarkRealtimeOutputActive(
+    headFrames: Int,
+    playbackAmplitude: Float,
+): Boolean = headFrames > 0 || playbackAmplitude > 0f
+
+/**
+ * Pure decision for the W3 spoken-status throttle. Returns true when a spoken
+ * status line should actually be enqueued for TTS right now, given the time of
+ * the last spoken status ([lastSpokenAtMs], 0 = none yet this turn), how many
+ * have already been spoken this turn ([count]), the minimum inter-status gap
+ * ([gapMs]), and the per-turn cap ([maxCount]).
+ *
+ * Independent of the per-key dedupe — this caps cadence + volume so long /
+ * tool-heavy runs don't narrate every step.
+ */
+internal fun shouldSpeakStatusNow(
+    now: Long,
+    lastSpokenAtMs: Long,
+    count: Int,
+    gapMs: Long,
+    maxCount: Int,
+): Boolean {
+    if (count >= maxCount) return false
+    // First spoken status of the turn (lastSpokenAtMs == 0) is always allowed.
+    if (lastSpokenAtMs > 0L && now - lastSpokenAtMs < gapMs) return false
+    return true
 }
 
 /** Drain cross-check (#3): estimate vs. real hardware head position. */

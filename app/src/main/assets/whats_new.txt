@@ -1,32 +1,21 @@
-v1.2.0 - Make it yours
+v1.2.1 - Polish & control
 
-Personalize
-* Eight app themes in Settings → Appearance — the Hermes Relay brand plus
-  ports of the Nous Hermes looks (Teal, Nous Blue, Midnight, Ember, Mono,
-  Cyberpunk, Rosé), with light/dark.
-* Swap the agent orb for an animated pet that reacts to what the agent is
-  doing — add, preview, and tune pets right in the app, or generate one
-  from sprite art with the AI authoring kit.
-* Reskin the sphere, and give each agent profile its own icon.
+Yours to control
+* Lock the app to a single agent profile (Settings → Profile lock) and hide
+  the rest from the pickers.
 
-See what's happening
-* The chat status strip names the actual streaming path (Gateway, Sessions,
-  Completions, Runs), with a basic→best tier ladder in Chat Settings.
-* Tap the context meter for a "What the agent sees" sheet — the exact extra
-  context prepended to your next turn.
-* Voice and Realtime turns are badged in the scrollback.
+Find your way back
+* A new "What's New" entry in Settings shows current and past release notes
+  any time — not just after an update.
 
-Privacy
-* When paired to the relay, the agent can mark private media and the phone
-  blurs it per your setting — sensitivity stays model-emitted.
+When something breaks
+* Diagnostics now show clean error titles — tap any entry for a detail view
+  with Copy, Share, and a one-tap GitHub issue.
+* A tasteful in-app banner tells you when a newer version is live (Play or
+  sideload) — dismissable, and it never nags.
 
-Faster & more reliable
-* Cold start is about 3× faster, and model/personality/approvals load
-  honestly instead of showing a maybe-wrong value.
-* In-app crash reporting offers a one-tap, pre-filled bug report.
-* QR pairing no longer force-closes on unusual cameras (foldables); fixed
-  crashes opening server images and PDFs; in-chat model picks now apply.
-
-Voice & terminal
-* Enhanced voice control for Gemini and xAI providers.
-* Leaner terminal with TUI-correct input and an isolated, tuned tmux.
+Voice fixes
+* Stop now halts realtime speech instantly, hold-to-talk is steadier, the
+  voice overlay is easier to read, and a chosen voice applies in Auto mode.
+* Realtime turns that reach back to Hermes no longer drop with a session
+  error.

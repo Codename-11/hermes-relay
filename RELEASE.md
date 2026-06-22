@@ -392,6 +392,14 @@ the new app version and a higher `appVersionCode`.
   3. Skim the new versioned block and tighten / reorder if needed —
      Keep-a-Changelog grouping (`Added` / `Changed` / `Fixed`) should
      already be in place from the accumulator phase.
+  4. **Per-surface split.** `[Unreleased]` accumulates entries from *all
+     three* surfaces (Android + CLI + plugin), but releases are
+     per-surface. Move only the entries for the surface you're cutting into
+     the new versioned block, and leave the other surfaces' entries under
+     the fresh `[Unreleased]` for their own `cli-v*` / `plugin-v*` cut.
+     (Those tracks' GitHub-Release bodies come from `CLI_RELEASE_NOTES.md` /
+     `PLUGIN_RELEASE_NOTES.md`, so the split here only governs this file's
+     historical record.)
 - `RELEASE_NOTES.md` — body of the GitHub Release for this version
   (rewritten each release; the workflow uses this as-is). This is the
   operator-facing summary, not the CHANGELOG mirror. Keep the

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -645,6 +646,11 @@ fun AgentInfoSheet(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
+    // Profile lock — when set, the picker below collapses to a single static
+    // "Locked to <name>" row. Only the dedicated Settings control still lists
+    // every profile (to change the lock target or unlock).
+    val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
+    val lockedProfileName by connectionViewModel.lockedProfileName.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -835,6 +841,26 @@ fun AgentInfoSheet(
                         ?: AgentDisplay.profileDisplayName(selectedProfile)
                         ?: "Server default",
                 ) {
+
+                  if (isProfileLocked) {
+                    // Pinned to one profile — collapse the whole radio list to a
+                    // single static, non-interactive row. The lock target is the
+                    // raw stored token: the sentinel means Server default, any
+                    // other value is a profile name (resolved to its display name).
+                    val lockedDisplayName = when {
+                        lockedProfileName == null ->
+                            "Server default"
+                        AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
+                            lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
+                            "Server default"
+                        else ->
+                            agentProfiles
+                                .firstOrNull { it.name == lockedProfileName }
+                                ?.let { AgentDisplay.profileDisplayName(it) }
+                                ?: lockedProfileName!!.replaceFirstChar { it.uppercase() }
+                    }
+                    LockedProfileRow(lockedDisplayName = lockedDisplayName)
+                  } else {
 
                     val defaultDotColor = serverDefaultProfile?.let { profile ->
                         if (profile.gatewayRunning) {
@@ -1063,6 +1089,7 @@ fun AgentInfoSheet(
                             modifier = Modifier.padding(top = 4.dp, start = 4.dp),
                         )
                     }
+                  } // end else (not locked)
                 }
 
                 HorizontalDivider()
@@ -1879,6 +1906,42 @@ private fun ProfileRadioRow(
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/**
+ * Single static, non-interactive row shown in place of the profile radio list
+ * when the connection is locked to one profile. There is intentionally no
+ * onSelect — the only way to change the target or unlock is the dedicated
+ * "Profile lock" control in Settings, which always lists every profile.
+ */
+@Composable
+private fun LockedProfileRow(lockedDisplayName: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Lock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Locked to $lockedDisplayName",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = "Manage the lock in Settings → Profile lock",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
