@@ -253,6 +253,8 @@ transport_exited      → reconnect budget exhausted; exit 1 so service manager 
 
 ::: tip Background ≠ service
 `daemon start` survives closing the terminal, but **not a reboot or logout**. True auto-start (Windows `sc.exe` service / systemd user unit / launchd agent) is still v1.0 work — until then, wrap `hermes-relay daemon` (foreground) with your service manager of choice, or use `daemon start` for "background, this session."
+
+The Windows **tray app** auto-starts the daemon when it launches (the `auto_start_daemon` default), so opening the tray is the GUI equivalent of `daemon start` — but it's the same "while it's running" lifetime, not boot-persistence.
 :::
 
 ## `hermes-relay audit`

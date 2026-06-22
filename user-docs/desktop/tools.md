@@ -154,6 +154,24 @@ The desktop tools run **in-process on your machine** with your full user privile
 - Per-tool sandbox (e.g., restrict `desktop_read_file` to a project root).
 - Code signing (`hermes-relay` binary is currently unsigned).
 
+## Computer-use (experimental)
+
+Beyond the 23 default tools, an **experimental computer-use family** (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) drives full local mouse/keyboard UI control. It's **off by default** and gated in three stages:
+
+1. **Enable** — advertise the tools with `--experimental-computer-use` on `chat` / `shell` / `daemon` (or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`), on top of the normal desktop-tool consent.
+2. **Observe** — `desktop_computer_status` / `_screenshot` need no extra approval (read-only).
+3. **Grant + act** — `desktop_computer_grant_request(mode="assist"|"control")` must be **approved by you** before `desktop_computer_action` will send any input; the grant is task-scoped and time-boxed (default ~15 min), and `desktop_computer_cancel` ends it.
+
+### Approving a grant
+
+How you approve depends on how the client is running:
+
+- **Interactive (`shell` / `chat` on a TTY):** a visible prompt appears in your terminal — type `yes` to approve.
+- **Tray app:** approve or deny in the **Grant Requests** tab — the GUI surface that makes computer-use practical without a terminal open.
+- **Headless (`daemon`, no TTY):** approvals route through a **file-bridge** directory, `~/.hermes/grant-bridge` (set via `HERMES_RELAY_GRANT_BRIDGE_DIR`). The daemon writes `request-<id>.json`; an approver writes a matching response. The **tray sets this up automatically** when it launches the daemon (it passes the bridge dir and reads pending requests), so running the daemon under the tray gives you GUI approval out of the box. Without an approver wired up, a headless grant request simply times out — input stays failed-closed.
+
+Input injection is currently **Windows-only**; `status` / `screenshot` work cross-platform.
+
 ## Diagnosing routing
 
 If the agent says "desktop_terminal is not available" or calls time out immediately:
