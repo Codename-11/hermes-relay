@@ -98,11 +98,11 @@ Everything currently shipped works — pairing, shell, chat, tools, devices, sta
 
 ## Does it log my tool calls?
 
-Server-side: yes. The relay's `desktop` channel keeps a rolling 100-command audit buffer (`/desktop/activity`) with tool name, request ID, latency. The contents of `desktop_terminal` commands and `desktop_read_file` paths are in that buffer.
+Server-side: yes. The relay's `desktop` channel keeps a rolling 100-command audit buffer (surfaced on the loopback `/desktop/health` route) with tool name, request ID, and latency. The contents of `desktop_terminal` commands and `desktop_read_file` paths are in that buffer.
 
-Client-side: no. The CLI doesn't write a separate audit log — just stdout/stderr of the current session.
+Client-side: yes — run `hermes-relay audit`. The tool router appends every `desktop_*` call it runs to a local log at `~/.hermes/desktop-audit.jsonl`, and `audit` renders the recent entries (tool, status, detail). No network, no auth — it's your machine's own record of what the agent did, and it works whether the relay is local or remote.
 
-If you care about this (you probably should), pair only with Hermes hosts you control.
+If you care about this (you probably should), pair only with Hermes hosts you control — and skim `hermes-relay audit` to see what's been run.
 
 ## How is this different from MCP?
 
@@ -115,15 +115,11 @@ Hermes's desktop tools are:
 
 You can totally use MCP alongside Hermes-Relay — the agent sees MCP tools (under the `hermes-acp` / `hermes-api-server` toolsets etc.) and `desktop_*` tools in the same registry.
 
-## When will there be a daemon mode?
+## Is there a daemon mode?
 
-v1.0. Tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track). The daemon will:
+Yes — it shipped. `hermes-relay daemon` runs the tool router headless (no PTY, no TUI), advertising your `desktop_*` tools so the agent can reach you with no shell open. `hermes-relay daemon start` runs it in the **background**: no console window, logs to `~/.hermes/daemon.log`, and it survives closing the terminal. `daemon status` shows state/uptime, `daemon stop` stops it.
 
-- Run in the background with no visible shell.
-- Advertise desktop tools so the agent can reach you anytime you're on the machine.
-- Install as a Windows service / systemd user unit / launchd plist so it auto-starts on login.
-
-Until then: keep a `hermes-relay` session open in a spare terminal tab for the agent to dispatch tool calls into.
+The one piece still outstanding is **auto-start across reboots/logout** — installing as a Windows service / systemd user unit / launchd agent. That's v1.0 work (tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track)); until then, `daemon start` covers "background, this session," or wrap the foreground `hermes-relay daemon` with your own service manager.
 
 ## Can multiple people use the same Hermes host from different CLI clients?
 

@@ -16,7 +16,9 @@
 // caller is expected to inspect `resolvedEndpoint.relay.url` and override its
 // `--remote` argument — we don't reach into the caller's URL state from here.
 
+import { humanExpiry } from './banner.js'
 import type { EndpointCandidate } from './endpoint.js'
+import { theme as makeTheme } from './lib/theme.js'
 import { promptForPairingCode } from './pairing.js'
 import {
   decodePairingPayload,
@@ -25,6 +27,31 @@ import {
   relayPairingCodeFromPayload
 } from './pairingQr.js'
 import { getSession } from './remoteSessions.js'
+
+/** Warn (on a TTY only) when a stored token is at/near expiry, so a returning
+ * user gets a heads-up + the exact re-pair command instead of a bare auth
+ * failure on the next request. Piped/scripted output stays clean. */
+function maybeWarnExpiry(url: string, ttlExpiresAt: number | null | undefined): void {
+  if (ttlExpiresAt === null || ttlExpiresAt === undefined) {
+    return
+  }
+  if (!process.stderr.isTTY) {
+    return
+  }
+  const delta = ttlExpiresAt - Date.now() / 1000
+  const t = makeTheme()
+  if (delta <= 0) {
+    process.stderr.write(
+      t.warnLine(`stored session for ${url} has expired — re-pair: hermes-relay pair --remote ${url}`) + '\n'
+    )
+  } else if (delta < 3600) {
+    process.stderr.write(
+      t.warnLine(
+        `stored session for ${url} expires ${humanExpiry(ttlExpiresAt)} — re-pair soon: hermes-relay pair --remote ${url}`
+      ) + '\n'
+    )
+  }
+}
 
 export interface Credentials {
   sessionToken?: string
@@ -83,6 +110,7 @@ export async function resolveCredentials(
 
   const stored = await getSession(url)
   if (stored) {
+    maybeWarnExpiry(url, stored.ttlExpiresAt)
     return { sessionToken: stored.token }
   }
 

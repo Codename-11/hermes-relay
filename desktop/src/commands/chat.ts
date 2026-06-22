@@ -25,7 +25,9 @@ import type {
   SessionResumeResponse
 } from '../gatewayTypes.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
+import { renderLogo } from '../lib/logo.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
+import { theme as makeTheme } from '../lib/theme.js'
 import { deleteSession, saveSession } from '../remoteSessions.js'
 import { CliRenderer } from '../renderer.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
@@ -549,6 +551,7 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
   }
 
   // REPL mode.
+  process.stderr.write('\n' + renderLogo({ theme: makeTheme({ noColor: !!args.flags['no-color'] }) }))
   process.stderr.write(
     '\nType a message. Ctrl+C to interrupt a turn, /help for slash commands, /quit to exit.\n'
   )

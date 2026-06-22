@@ -282,7 +282,17 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 | `desktop/package.json` | `@hermes-relay/cli` package manifest — Node ≥21, one `hermes-relay` bin, pre-built dist |
 | `desktop/bin/hermes-relay.js` | Tiny shim: `import('../dist/cli.js').then(m => m.main())` + error surfacing |
 | `desktop/src/chatAttach.ts` | captureClipboardImage / captureScreenshot / readImageFile; ships base64 to server via `image.attach.bytes` RPC before next prompt.submit |
-| `desktop/src/cli.ts` | argv parser + subcommand dispatcher — bare → `shell` (PTY), positional-only → `chat` |
+| `desktop/src/cli.ts` | argv parser + subcommand dispatcher — bare → `shell` (PTY), positional-only → `chat`; command-scoped `--help` falls through to each command |
+| `desktop/src/lib/theme.ts` | Shared ANSI palette + `colorEnabled()` + `Theme` (semantic helpers, `statusDot`) — single visual language; `--no-color`/`NO_COLOR`/TTY aware |
+| `desktop/src/lib/table.ts` | Zero-dep column-aligned table renderer (ANSI-width aware, last column flexes to terminal width) — used by devices/sessions/audit |
+| `desktop/src/lib/spinner.ts` | Stderr braille spinner for slow ops (pair probe, gateway connect); no-op when piped/quiet/json |
+| `desktop/src/lib/usage.ts` | `UsageSpec` + `renderUsage`/`printUsage`/`unknownSubcommand` — per-subcommand `--help` + self-documenting sub-verb fallback |
+| `desktop/src/lib/hints.ts` | `suggestedFix(err, ctx)` → next-step command (re-pair on auth fail, etc.); `formatError` renders error + hint |
+| `desktop/src/lib/logo.ts` | Slim box-drawing "Hermes Relay" wordmark; shown atop `--help`, first-run welcome, REPL header, and `hermes-relay logo`; theme/no-color aware |
+| `desktop/src/lib/auditLog.ts` | Local desktop-tool audit JSONL (`~/.hermes/desktop-audit.jsonl`); router appends per dispatch; backs `audit` command (relay's ring is loopback-only) |
+| `desktop/src/lib/daemonStatus.ts` | Daemon heartbeat file (`~/.hermes/daemon-status.json`) + `isPidAlive` liveness; backs `daemon --status` |
+| `desktop/src/commands/audit.ts` | `hermes-relay audit` — tails the local audit log into a table (WHEN/TOOL/STATUS/DETAIL); `--limit`, `--json` |
+| `desktop/src/commands/relay.ts` | `hermes-relay relay info/security/context` — relay-server management surface; info/security loopback-only, context works remote with bearer |
 | `desktop/src/commands/chat.ts` | REPL + one-shot + piped-stdin; `runOneTurn` returns `{promise, cancel}` for safe SIGINT; auto-wires `DesktopToolRouter` when consented |
 | `desktop/src/commands/shell.ts` | Pipes the `terminal` relay channel to raw-mode stdin/stdout; post-attach `exec hermes` 350ms after tmux settles; `Ctrl+A .` detach / `Ctrl+A k` kill / `Ctrl+A Ctrl+A` literal |
 | `desktop/src/commands/pair.ts` | Either 6-char code + `--remote`, or full v3 QR via `--pair-qr` — probes + picks endpoint, records role; `--grant-tools` (TTY prompt) / `--auto-grant-tools` (silent) stamp `toolsConsented` so `daemon` works without a `shell` round-trip |

@@ -8,7 +8,20 @@
 
 import type { ParsedArgs } from '../cli.js'
 import { detectActiveEditor, type ActiveEditorHint } from '../activeEditor.js'
+import { theme as makeTheme, type Theme } from '../lib/theme.js'
+import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { detectWorkspaceContext, type WorkspaceContext } from '../workspaceContext.js'
+
+const WORKSPACE_USAGE: UsageSpec = {
+  name: 'workspace',
+  summary: 'print the local workspace context the CLI advertises to the relay (cwd, git, editor, shell)',
+  usage: ['workspace [--json]'],
+  flags: [{ flag: '--json', desc: 'Emit the exact desktop.workspace payload as JSON' }],
+  examples: [
+    'hermes-relay workspace',
+    'hermes-relay workspace --json | jq .workspace.git_branch'
+  ]
+}
 
 function renderStatusSummary(
   summary: WorkspaceContext['git_status_summary']
@@ -43,20 +56,28 @@ function renderEditorLine(hint: ActiveEditorHint): string {
   return '(none detected)'
 }
 
-function renderHuman(ctx: WorkspaceContext, editor: ActiveEditorHint): string {
-  const lines: string[] = []
-  lines.push(`cwd:       ${ctx.cwd}`)
-  lines.push(`repo:      ${ctx.repo_name ?? '(not a git repo)'}`)
-  lines.push(`branch:    ${ctx.git_branch ?? '(n/a)'}`)
-  lines.push(`status:    ${renderStatusSummary(ctx.git_status_summary)}`)
-  lines.push(`host:      ${ctx.hostname}`)
-  lines.push(`platform:  ${ctx.platform}/${ctx.arch}`)
-  lines.push(`shell:     ${ctx.active_shell ?? '(unknown)'}`)
-  lines.push(`editor:    ${renderEditorLine(editor)}`)
-  return lines.join('\n') + '\n'
+function renderHuman(ctx: WorkspaceContext, editor: ActiveEditorHint, t: Theme): string {
+  const kv = (label: string, value: string): string => `${t.muted((label + ':').padEnd(10))} ${value}`
+  return (
+    [
+      kv('cwd', ctx.cwd),
+      kv('repo', ctx.repo_name ?? '(not a git repo)'),
+      kv('branch', ctx.git_branch ?? '(n/a)'),
+      kv('status', renderStatusSummary(ctx.git_status_summary)),
+      kv('host', ctx.hostname),
+      kv('platform', `${ctx.platform}/${ctx.arch}`),
+      kv('shell', ctx.active_shell ?? '(unknown)'),
+      kv('editor', renderEditorLine(editor))
+    ].join('\n') + '\n'
+  )
 }
 
 export async function workspaceCommand(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (args.flags.help) {
+    printUsage(WORKSPACE_USAGE, t)
+    return 0
+  }
   const ctx = await detectWorkspaceContext()
   const editor = await detectActiveEditor()
 
@@ -69,7 +90,7 @@ export async function workspaceCommand(args: ParsedArgs): Promise<number> {
     return 0
   }
 
-  process.stdout.write(renderHuman(ctx, editor))
+  process.stdout.write(renderHuman(ctx, editor, t))
   return 0
 }
 

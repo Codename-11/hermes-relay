@@ -335,6 +335,23 @@ export interface ProbeResult {
   error?: string
 }
 
+/** Progress event emitted by `probeCandidatesByPriority` so callers can show
+ * per-endpoint feedback during the otherwise-silent reachability race. */
+export interface ProbeProgress {
+  phase: 'probing' | 'result' | 'cached'
+  candidate: EndpointCandidate
+  /** 1-based position in the full candidate list. */
+  index: number
+  total: number
+  reachable?: boolean
+  elapsedMs?: number
+  error?: string
+}
+
+export interface ProbeOptions {
+  onProbe?: (ev: ProbeProgress) => void
+}
+
 /**
  * Fire one HEAD-equivalent probe. We use GET (not HEAD) because not every
  * relay flavor answers HEAD — Tailscale Serve in particular has been
@@ -387,11 +404,14 @@ export async function probeCandidate(
  */
 export async function probeCandidatesByPriority(
   candidates: EndpointCandidate[],
+  opts: ProbeOptions = {},
 ): Promise<EndpointCandidate> {
   if (candidates.length === 0) {
     throw new Error('no endpoint candidates to probe')
   }
 
+  const total = candidates.length
+  const indexOf = new Map<EndpointCandidate, number>(candidates.map((c, i) => [c, i + 1]))
   const now = Date.now()
   // Bucket by priority ascending. Sort after the groupBy so cache-hit
   // fast-path and the live race both see tiers in the same order.
@@ -411,6 +431,7 @@ export async function probeCandidatesByPriority(
     for (const c of group) {
       const cached = probeCache.get(cacheKey(c))
       if (cached && cached.expiresAt > now && cached.reachable) {
+        opts.onProbe?.({ phase: 'cached', candidate: c, index: indexOf.get(c) ?? 0, total, reachable: true })
         return c
       }
     }
@@ -421,6 +442,8 @@ export async function probeCandidatesByPriority(
     // so either can trigger abort.
     const groupController = new AbortController()
     const probes = group.map(async (c) => {
+      const idx = indexOf.get(c) ?? 0
+      opts.onProbe?.({ phase: 'probing', candidate: c, index: idx, total })
       const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS)
       // AbortSignal.any is available on Node ≥20 for combining signals.
       const signal = AbortSignal.any([groupController.signal, timeout])
@@ -428,6 +451,15 @@ export async function probeCandidatesByPriority(
       probeCache.set(cacheKey(c), {
         expiresAt: Date.now() + PROBE_CACHE_TTL_MS,
         reachable: result.reachable,
+      })
+      opts.onProbe?.({
+        phase: 'result',
+        candidate: c,
+        index: idx,
+        total,
+        reachable: result.reachable,
+        elapsedMs: result.elapsedMs,
+        ...(result.error !== undefined ? { error: result.error } : {}),
       })
       if (!result.reachable) {
         throw new Error(result.error ?? `unreachable: ${c.role}`)

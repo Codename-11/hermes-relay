@@ -24,9 +24,38 @@
 import { humanExpiry } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
 import { getActiveDesktopRelayUrl } from '../desktopConfig.js'
+import { formatError } from '../lib/hints.js'
+import { renderTable } from '../lib/table.js'
+import { theme as makeTheme } from '../lib/theme.js'
+import { printUsage, unknownSubcommand, type UsageSpec } from '../lib/usage.js'
 import { getSession, listSessions } from '../remoteSessions.js'
 
 const DEFAULT_EXTEND_TTL_SECONDS = 24 * 3600
+
+const DEVICES_USAGE: UsageSpec = {
+  name: 'devices',
+  summary: 'manage the devices paired with a relay (server-side sessions)',
+  usage: [
+    'devices [list]',
+    'devices revoke <prefix>',
+    'devices extend <prefix> [--ttl <seconds>]'
+  ],
+  subcommands: [
+    { verb: 'list', desc: 'List paired devices (default)' },
+    { verb: 'revoke <prefix>', desc: 'Delete a session token by prefix' },
+    { verb: 'extend <prefix>', desc: 'Push out a session expiry (default +24h)' }
+  ],
+  flags: [
+    { flag: '--remote <url>', desc: 'Relay to target (default: tray-active or sole stored)' },
+    { flag: '--ttl <seconds>', desc: 'extend: new TTL in seconds (default 86400)' },
+    { flag: '--json', desc: 'Machine-readable output' }
+  ],
+  examples: [
+    'hermes-relay devices',
+    'hermes-relay devices revoke e35a85b2',
+    'hermes-relay devices extend e35a85b2 --ttl 604800'
+  ]
+}
 
 interface ServerSession {
   token_prefix: string
@@ -133,6 +162,19 @@ async function jsonFetch(
   return { status: res.status, body }
 }
 
+function humanAge(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds}s`
+  }
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)}m`
+  }
+  if (seconds < 86_400) {
+    return `${Math.floor(seconds / 3600)}h`
+  }
+  return `${Math.floor(seconds / 86_400)}d`
+}
+
 async function listDevices(args: ParsedArgs): Promise<number> {
   const { url, token } = await resolveRemoteAndToken(args)
   const httpBase = wsToHttp(url)
@@ -150,52 +192,63 @@ async function listDevices(args: ParsedArgs): Promise<number> {
     return 0
   }
 
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+
   if (sessions.length === 0) {
-    process.stdout.write(`(no paired devices on ${url})\n`)
+    process.stdout.write(t.muted(`(no paired devices on ${url})`) + '\n')
     return 0
   }
 
-  process.stdout.write(`Devices paired with ${url} (${sessions.length}):\n\n`)
-  for (const s of sessions) {
-    const tag = s.is_current ? ' ● (this device)' : ''
+  const nowSec = Math.floor(Date.now() / 1000)
+  const rows = sessions.map((s) => {
     const name = s.device_name ?? '(unnamed)'
-    process.stdout.write(`  ${s.token_prefix}   ${name}${tag}\n`)
-    if (s.last_seen) {
-      const ageSec = Math.floor(Date.now() / 1000) - s.last_seen
-      const ageHuman =
-        ageSec < 60
-          ? `${ageSec}s`
-          : ageSec < 3600
-            ? `${Math.floor(ageSec / 60)}m`
-            : ageSec < 86_400
-              ? `${Math.floor(ageSec / 3600)}h`
-              : `${Math.floor(ageSec / 86_400)}d`
-      process.stdout.write(`      last seen:  ${ageHuman} ago\n`)
-    }
-    process.stdout.write(`      expires:    ${humanExpiry(s.expires_at ?? null)}\n`)
-    if (s.transport_hint) {
-      process.stdout.write(`      transport:  ${s.transport_hint}\n`)
-    }
-    if (s.grants && Object.keys(s.grants).length > 0) {
-      const formatted = Object.entries(s.grants)
-        .map(([k, v]) => `${k}=${v === null ? 'never' : humanExpiry(v)}`)
-        .sort()
-        .join(', ')
-      process.stdout.write(`      grants:     ${formatted}\n`)
-    }
-    process.stdout.write('\n')
-  }
+    const nameCell = s.is_current ? `${name} ${t.muted('(this device)')}` : name
+    const lastSeen = s.last_seen ? `${humanAge(nowSec - s.last_seen)} ago` : '—'
+    const grants =
+      s.grants && Object.keys(s.grants).length > 0
+        ? Object.entries(s.grants)
+            .map(([k, v]) => `${k}=${v === null ? 'never' : humanExpiry(v)}`)
+            .sort()
+            .join(', ')
+        : '—'
+    return [
+      s.token_prefix,
+      nameCell,
+      lastSeen,
+      humanExpiry(s.expires_at ?? null),
+      s.transport_hint ?? '—',
+      grants
+    ]
+  })
+
+  process.stdout.write(t.bold(`Devices paired with ${url} (${sessions.length})`) + '\n\n')
   process.stdout.write(
-    `  Use \`hermes-relay devices revoke <prefix>\` to delete a session, or\n` +
-      `      \`hermes-relay devices extend <prefix> --ttl <seconds>\` to push the expiry.\n`
+    renderTable(
+      [
+        { header: 'PREFIX' },
+        { header: 'DEVICE' },
+        { header: 'LAST SEEN' },
+        { header: 'EXPIRES' },
+        { header: 'TRANSPORT' },
+        { header: 'GRANTS' }
+      ],
+      rows,
+      { theme: t }
+    ) + '\n'
+  )
+  process.stdout.write(
+    '\n' +
+      t.muted('revoke: hermes-relay devices revoke <prefix>    extend: … extend <prefix> --ttl <s>') +
+      '\n'
   )
   return 0
 }
 
 async function revokeDevice(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const prefix = args.positional[0]
   if (!prefix) {
-    process.stderr.write('error: `devices revoke` needs a token prefix. Run `devices` to see them.\n')
+    process.stderr.write('error: `devices revoke` needs a token prefix. Run `hermes-relay devices` to list them.\n')
     return 2
   }
   const { url, token } = await resolveRemoteAndToken(args)
@@ -205,7 +258,9 @@ async function revokeDevice(args: ParsedArgs): Promise<number> {
   })
   if (status === 200 || status === 204) {
     const revokedSelf = typeof body === 'object' && body !== null && (body as Record<string, unknown>).revoked_self === true
-    process.stdout.write(`✓ revoked ${prefix}${revokedSelf ? ' (this device — subsequent commands will re-pair)' : ''}\n`)
+    process.stdout.write(
+      `${t.okLine(`revoked ${prefix}`)}${revokedSelf ? t.muted(' (this device — subsequent commands will re-pair)') : ''}\n`
+    )
     return 0
   }
   if (status === 404) {
@@ -221,9 +276,10 @@ async function revokeDevice(args: ParsedArgs): Promise<number> {
 }
 
 async function extendDevice(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const prefix = args.positional[0]
   if (!prefix) {
-    process.stderr.write('error: `devices extend` needs a token prefix. Run `devices` to see them.\n')
+    process.stderr.write('error: `devices extend` needs a token prefix. Run `hermes-relay devices` to list them.\n')
     return 2
   }
   const rawTtl = typeof args.flags.ttl === 'string' ? args.flags.ttl : null
@@ -241,9 +297,9 @@ async function extendDevice(args: ParsedArgs): Promise<number> {
   if (status === 200) {
     const expiresAt = (body as { expires_at?: number | null })?.expires_at ?? null
     process.stdout.write(
-      `✓ extended ${prefix} — now expires ${humanExpiry(expiresAt)}` +
-        (expiresAt === null ? ' (never)' : '') +
-        '\n'
+      t.okLine(
+        `extended ${prefix} — now expires ${humanExpiry(expiresAt)}${expiresAt === null ? ' (never)' : ''}`
+      ) + '\n'
     )
     return 0
   }
@@ -252,43 +308,40 @@ async function extendDevice(args: ParsedArgs): Promise<number> {
 }
 
 export async function devicesCommand(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (args.flags.help) {
+    printUsage(DEVICES_USAGE, t)
+    return 0
+  }
+
   // The first positional after `devices` is the sub-verb: list (default) /
   // revoke / extend. Shift it out so the remaining positionals are available
   // to the sub-handler (which uses positional[0] for the token prefix).
   const sub = args.positional[0] ?? 'list'
+  const url = typeof args.flags.remote === 'string' ? args.flags.remote : undefined
+  const run = async (fn: (a: ParsedArgs) => Promise<number>): Promise<number> => {
+    try {
+      return await fn(args)
+    } catch (e) {
+      process.stderr.write(formatError(e, { command: 'devices', url }, t) + '\n')
+      return 1
+    }
+  }
 
   if (sub === 'list') {
-    if (args.positional.length > 0 && args.positional[0] === 'list') {
+    if (args.positional[0] === 'list') {
       args.positional.shift()
     }
-    try {
-      return await listDevices(args)
-    } catch (e) {
-      process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`)
-      return 1
-    }
+    return run(listDevices)
   }
-
   if (sub === 'revoke') {
     args.positional.shift()
-    try {
-      return await revokeDevice(args)
-    } catch (e) {
-      process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`)
-      return 1
-    }
+    return run(revokeDevice)
   }
-
   if (sub === 'extend') {
     args.positional.shift()
-    try {
-      return await extendDevice(args)
-    } catch (e) {
-      process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`)
-      return 1
-    }
+    return run(extendDevice)
   }
 
-  process.stderr.write(`unknown devices sub-verb "${sub}". Try: list | revoke <prefix> | extend <prefix>\n`)
-  return 2
+  return unknownSubcommand(DEVICES_USAGE, sub, t)
 }

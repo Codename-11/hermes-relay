@@ -13,10 +13,13 @@ Full reference for every `hermes-relay` verb. Flags map one-to-one with env vars
 | `status` | Local view of stored sessions. Default-redacts tokens. |
 | `tools` | Server-side tool inventory (`tools.list` RPC). |
 | `devices` | Server-side paired-device management — list / revoke / extend. |
-| `daemon` | Headless tool router — keeps `desktop_*` tools advertised even with no shell open. |
+| `relay` | Inspect the relay server — `info`, `security`, injected `context`. |
+| `daemon` | Headless tool router — keeps `desktop_*` tools advertised even with no shell open. `daemon start` runs it in the background. |
+| `audit` | Show what the agent has run on this machine via desktop tools. |
 | `doctor` | Local diagnostic — version, install paths, session summary, daemon detection, platform info. |
 | `update` | Self-update via GitHub Releases. |
 | `workspace` | Print local workspace context (cwd / git / editor / shell) — same envelope shipped to the relay on connect. |
+| `logo` | Print the Hermes Relay banner. |
 | `help` | Print full help. |
 
 ## `hermes-relay` (bare — defaults to `shell`)
@@ -195,19 +198,46 @@ hermes-relay devices --json                        # machine-readable (redacted)
 
 The current device is marked `●`. Prefix must be unambiguous — if multiple sessions share a prefix, you'll get a 409 with the conflicting list; use a longer prefix.
 
-## `hermes-relay daemon`
+## `hermes-relay relay`
 
-Run the tool router headless — no PTY, no Ink TUI, just the WSS connection + `desktop_*` handlers. Lets the agent reach your machine while you're working in another window.
+Inspect the relay **server** itself — the management surface the plugin gained in v1.2.0. Resolves the relay + bearer from your stored session, the same way `devices` does.
 
 ```bash
-hermes-relay daemon                              # default — auto-human logs on TTY, JSON on pipes
-hermes-relay daemon --log-json                   # force JSON-line lifecycle events on stderr
-hermes-relay daemon --log-human                  # force human-readable
-hermes-relay daemon --token <token>              # explicit token (for service-managed installs)
+hermes-relay relay context     # what context the relay injects into the agent's system prompt
+hermes-relay relay info        # version, uptime, session + device counts, pending commands
+hermes-relay relay security    # runtime auth toggles (allow_insecure_api_bearer, trust_proxy)
+hermes-relay relay <sub> --json
+```
+
+`relay context` works from any paired machine (it authenticates with your relay session). `relay info` and `relay security` are **loopback-only** — they answer for operators on the relay host; a remote call gets a clear "run this on the relay host" note instead of a raw 403. Use `context` to audit, e.g., the media-sensitivity block the relay prepends to the agent's prompt.
+
+## `hermes-relay daemon`
+
+Run the tool router headless — no PTY, no Ink TUI, just the WSS connection + `desktop_*` handlers. Lets the agent reach your machine while you're working in another window, or with no terminal open at all.
+
+```bash
+hermes-relay daemon start                        # background — no console window, survives terminal close
+hermes-relay daemon status                       # state, uptime, relay, advertised-tool count
+hermes-relay daemon stop                         # stop the background daemon
+hermes-relay daemon                              # FOREGROUND (current console) — handy for watching logs live
+hermes-relay daemon --log-json                   # foreground: force JSON-line lifecycle events on stderr
 hermes-relay daemon --token <t> --allow-tools    # skip stored-consent gate (only with --token)
 ```
 
-**Lifecycle events** (each emitted on stderr — JSON-line by default for journald / log shippers, human-readable on a TTY):
+`daemon start` (alias `daemon --detach`) re-spawns the foreground daemon detached: no console window, stdio redirected to `~/.hermes/daemon.log`, and it keeps running after you close the terminal. `daemon status` reads the heartbeat file the running daemon maintains and cross-checks that the pid is alive, so a crashed daemon whose file lingers reads as "not running" (and `status` exits non-zero, for scripts). Bare `hermes-relay daemon` still runs in the foreground.
+
+```
+$ hermes-relay daemon status
+hermes-relay daemon
+  state:    ● connected
+  pid:      48213
+  relay:    ws://<host>:8767
+  uptime:   3h 12m
+  server:   1.2.0
+  tools:    23 advertised
+```
+
+**Lifecycle events** (emitted on stderr in the foreground, or to `~/.hermes/daemon.log` under `daemon start` — JSON-line by default for journald / log shippers, human-readable on a TTY):
 
 ```
 starting              → process up, transport not yet attempting
@@ -221,14 +251,36 @@ transport_exited      → reconnect budget exhausted; exit 1 so service manager 
 
 **Fails closed:** no stored session + no `--token` → exits 1. No `toolsConsented: true` on the stored record → exits 1 unless `--allow-tools` is passed alongside an explicit `--token` (a headless binary must never be the thing that first grants tool access).
 
-Service installers (Windows `sc.exe` / systemd user unit / launchd plist) are v1.0 work — until then, run from a terminal tab or wrap with your service manager of choice.
+::: tip Background ≠ service
+`daemon start` survives closing the terminal, but **not a reboot or logout**. True auto-start (Windows `sc.exe` service / systemd user unit / launchd agent) is still v1.0 work — until then, wrap `hermes-relay daemon` (foreground) with your service manager of choice, or use `daemon start` for "background, this session."
+:::
+
+## `hermes-relay audit`
+
+Show what the remote agent has run on **this** machine through the desktop tools — tool, status, and a short detail per call. Read from a local log (`~/.hermes/desktop-audit.jsonl`) the tool router appends to on every `desktop_*` dispatch, so there's no network or auth, and it works whether the relay is local or remote.
+
+```bash
+hermes-relay audit               # last 50 desktop-tool calls
+hermes-relay audit --limit 20    # fewer
+hermes-relay audit --json        # raw entries for scripting
+```
+
+```
+Desktop-tool activity (4 most recent)
+
+  WHEN     TOOL                STATUS   DETAIL
+  12s ago  desktop_read_file   ● ok     path=C:\src\app.ts
+  10s ago  desktop_terminal    ● ok     exit 0
+   8s ago  desktop_write_file  ✗ error  EACCES: permission denied
+   2s ago  desktop_search      ● ok     pattern=TODO
+```
 
 ## `hermes-relay doctor`
 
 Local-only diagnostic report — no network. Useful for support pastes and triaging "is my install OK?"
 
 ```bash
-hermes-relay doctor              # human format (! for warnings, hint at bottom)
+hermes-relay doctor              # human format (⚠ for warnings, hint at bottom)
 hermes-relay doctor --json       # machine-readable; safe to paste — tokens are omitted entirely (no prefix)
 ```
 
@@ -262,9 +314,26 @@ Fields detected via parallel `git rev-parse` / `git status --porcelain=v1 --bran
 The client-side workspace envelope shipped in alpha.6. Server-side prompt-context injection (so the agent reads "Active desktop workspace: machine=X · repo=Y · branch=Z" every turn) is on the way — see [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental). Until then, the envelope is captured by the relay as ephemeral session metadata; you can ask the agent about it explicitly via tool calls.
 :::
 
+## `hermes-relay logo`
+
+Print the Hermes Relay banner — the same slim box-drawing wordmark shown atop `--help`, the first-run welcome, and the chat REPL. Handy for screenshots or docs.
+
+```bash
+hermes-relay logo
+```
+
+```
+╦ ╦┌─┐┬─┐┌┬┐┌─┐┌─┐  ┬─┐┌─┐┬  ┌─┐┬ ┬
+╠═╣├┤ ├┬┘│││├┤ └─┐  ├┬┘├┤ │  ├─┤└┬┘
+╩ ╩└─┘┴└─┴ ┴└─┘└─┘  ┴└─└─┘┴─┘┴ ┴ ┴
+thin client · remote Hermes agent over WSS
+```
+
+Suppressed automatically for piped / `--json` / `--no-color` output, so it never pollutes a script.
+
 ## Global flags
 
-Available on every subcommand.
+Available on every subcommand. Every subcommand also answers `--help` with its own usage (sub-commands, flags, examples) — e.g. `hermes-relay devices --help`.
 
 | Flag | Env | Purpose |
 |------|-----|---------|
@@ -281,7 +350,10 @@ Available on every subcommand.
 | `--no-tools` | — | Don't wire desktop tool handlers for this invocation |
 | `--log-human` / `--log-json` | — | `daemon` only: force log format |
 | `--allow-tools` | — | `daemon` only: skip stored-consent gate (use only with `--token`; implies trust) |
-| `--json` | — | `chat` / `sessions` / `status` / `tools` / `devices` / `doctor` / `workspace` / `update`: JSON output |
+| `--detach` | — | `daemon` only: run in the background (alias for `daemon start`) |
+| `--status` | — | `daemon` only: print the running daemon's state + uptime and exit (alias for `daemon status`) |
+| `--limit <n>` | — | `audit` only: how many recent entries to show (default 50) |
+| `--json` | — | `chat` / `sessions` / `status` / `tools` / `devices` / `audit` / `relay` / `voice` / `doctor` / `workspace` / `update`: JSON output |
 | `--verbose` | — | `chat` / `tools`: include thinking/reasoning + transport stderr |
 | `--quiet`, `-q` | — | Suppress status lines + tool decorations |
 | `--no-color` | `NO_COLOR` | Disable ANSI colors |

@@ -11,6 +11,9 @@
 //       render "Paired via LAN / Tailscale / Public" correctly).
 
 import type { ParsedArgs } from '../cli.js'
+import { formatError } from '../lib/hints.js'
+import { SYMBOLS, theme as makeTheme } from '../lib/theme.js'
+import { printUsage, type UsageSpec } from '../lib/usage.js'
 import {
   cleanCode,
   isValidCode,
@@ -22,15 +25,46 @@ import {
   probeCandidatesByPriority,
   relayPairingCodeFromPayload
 } from '../pairingQr.js'
-import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
+import { DEFAULT_RELAY_PORT, normalizeRelayUrl, resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { saveSession } from '../remoteSessions.js'
 import { ensureToolsConsent } from '../tools/consent.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
+const PAIR_USAGE: UsageSpec = {
+  name: 'pair',
+  summary: 'pair with a relay and store a session token',
+  usage: ['pair [CODE] --remote <url>', 'pair --pair-qr "<invite>"'],
+  flags: [
+    {
+      flag: '--pair-qr <invite>',
+      desc: 'Paste a full QR payload or hermes-relay://pair invite (recommended — probes endpoints)'
+    },
+    { flag: '--remote <url>', desc: 'Relay URL (with [CODE] or an interactive prompt)' },
+    { flag: '--code <code>', desc: '6-char pairing code (or pass it as the positional arg)' },
+    {
+      flag: '--grant-tools',
+      desc: 'Also grant desktop-tool consent now (TTY prompt) — lets `daemon` work with no `shell` round-trip'
+    },
+    { flag: '--auto-grant-tools', desc: 'Grant desktop-tool consent without prompting (scripts/CI)' }
+  ],
+  examples: [
+    'hermes-relay pair --pair-qr "hermes-relay://pair?payload=…"',
+    'hermes-relay pair --remote ws://192.168.1.50:8767',
+    'hermes-relay pair ABC123 --remote ws://host:8767 --grant-tools'
+  ]
+}
+
 function resolveRemote(args: ParsedArgs): string | null {
   const v = args.flags.remote
-  const url = (typeof v === 'string' ? v : null) ?? process.env.HERMES_RELAY_URL ?? null
-  return url ? url.trim() : null
+  const raw = (typeof v === 'string' ? v : null) ?? process.env.HERMES_RELAY_URL ?? null
+  if (!raw) {
+    return null
+  }
+  const norm = normalizeRelayUrl(raw)
+  if (norm.added) {
+    process.stderr.write(`  (no port given — using :${DEFAULT_RELAY_PORT})\n`)
+  }
+  return norm.url
 }
 
 interface PairTarget {
@@ -61,15 +95,27 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) }
     }
-    process.stderr.write(`Probing ${candidates.length} endpoint(s)...\n`)
+    const t = makeTheme({ noColor: !!args.flags['no-color'] })
+    process.stderr.write(t.bold(`Probing ${candidates.length} endpoint(s)…`) + '\n')
     let winner
     try {
-      winner = await probeCandidatesByPriority(candidates)
+      winner = await probeCandidatesByPriority(candidates, {
+        onProbe: (ev) => {
+          const label = `[${ev.index}/${ev.total}] ${ev.candidate.role} ${ev.candidate.relay.url}`
+          if (ev.phase === 'result' && ev.reachable) {
+            process.stderr.write(`  ${t.okLine(label)} ${t.muted(`${ev.elapsedMs}ms`)}\n`)
+          } else if (ev.phase === 'result') {
+            process.stderr.write(`  ${t.muted(`${SYMBOLS.dot} ${label} — ${ev.error ?? 'unreachable'}`)}\n`)
+          } else if (ev.phase === 'cached') {
+            process.stderr.write(`  ${t.okLine(label)} ${t.muted('(cached)')}\n`)
+          }
+        }
+      })
     } catch (e) {
       return { error: `no endpoints reachable: ${e instanceof Error ? e.message : String(e)}` }
     }
     process.stderr.write(
-      `  → picked ${winner.role} endpoint ${winner.relay.url}\n`
+      `  ${t.cyan(SYMBOLS.arrow)} picked ${t.bold(winner.role)} endpoint ${winner.relay.url}\n`
     )
     return {
       url: winner.relay.url,
@@ -120,9 +166,14 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
 }
 
 export async function pairCommand(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (args.flags.help) {
+    printUsage(PAIR_USAGE, t)
+    return 0
+  }
   const target = await resolvePairTarget(args)
   if ('error' in target) {
-    process.stderr.write(`error: ${target.error}\n`)
+    process.stderr.write(formatError(target.error, { command: 'pair' }, t) + '\n')
     return 1
   }
 
@@ -135,7 +186,7 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
   const autoGrant = !!args.flags['auto-grant-tools']
   const promptGrant = !!args.flags['grant-tools'] && !autoGrant
 
-  process.stderr.write(`Pairing with ${target.url}...\n`)
+  process.stderr.write(t.muted(`Pairing with ${target.url}…`) + '\n')
 
   const relay = new RelayTransport({
     url: target.url,
@@ -156,25 +207,32 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
       endpointRole: target.endpointRole,
       ...(autoGrant ? { toolsConsented: true } : {})
     })
-    process.stdout.write(`✓ Paired. Token stored in ~/.hermes/remote-sessions.json\n`)
-    process.stdout.write(`  Server: ${outcome.serverVersion ?? '?'}\n`)
-    process.stdout.write(`  Relay:  ${target.url}\n`)
+    process.stdout.write(t.okLine('Paired. Token stored in ~/.hermes/remote-sessions.json') + '\n')
+    process.stdout.write(t.muted(`  server: ${outcome.serverVersion ?? '?'}`) + '\n')
+    process.stdout.write(t.muted(`  relay:  ${target.url}`) + '\n')
     if (target.endpointRole) {
-      process.stdout.write(`  Route:  ${target.endpointRole}\n`)
+      process.stdout.write(t.muted(`  route:  ${target.endpointRole}`) + '\n')
     }
 
     if (autoGrant) {
-      process.stdout.write(`✓ Desktop tool consent granted (--auto-grant-tools).\n`)
+      process.stdout.write(t.okLine('Desktop tool consent granted (--auto-grant-tools).') + '\n')
     } else if (promptGrant) {
       const result = await ensureToolsConsent(target.url)
       if (result.consented) {
-        process.stdout.write(`✓ Desktop tool consent granted.\n`)
+        process.stdout.write(t.okLine('Desktop tool consent granted.') + '\n')
       } else {
         process.stderr.write(
-          `! Tool consent not granted: ${result.reason ?? 'declined'}\n` +
-            `  Pair succeeded; rerun \`hermes-relay pair --remote ${target.url} --grant-tools\` on a TTY to grant.\n`
+          t.warnLine(`Tool consent not granted: ${result.reason ?? 'declined'}`) + '\n' +
+            t.muted(`  Pair succeeded; rerun \`hermes-relay pair --remote ${target.url} --grant-tools\` on a TTY to grant.`) + '\n'
         )
       }
+    } else {
+      // Nudge the daemon-first workflow: most users who pair from a terminal
+      // want desktop tools, and discovering --grant-tools after the fact means
+      // an extra `shell` round-trip. Surface it once, here.
+      process.stdout.write(
+        t.muted('  tip: add --grant-tools to also enable desktop tools (needed for `daemon`).') + '\n'
+      )
     }
 
     try {
@@ -185,8 +243,14 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
     return 0
   }
 
-  process.stderr.write(`✗ Pairing failed: ${outcome.reason}\n`)
-  process.stderr.write(`  ${relay.getLogTail(5)}\n`)
+  process.stderr.write(t.errLine(`Pairing failed: ${outcome.reason}`) + '\n')
+  const hint = formatError(outcome.reason, { command: 'pair', url: target.url }, t)
+  // formatError repeats the message; only emit the hint line (2nd line) if present.
+  const hintLine = hint.split('\n')[1]
+  if (hintLine) {
+    process.stderr.write(hintLine + '\n')
+  }
+  process.stderr.write(t.muted(`  ${relay.getLogTail(5)}`) + '\n')
   try {
     relay.kill()
   } catch {

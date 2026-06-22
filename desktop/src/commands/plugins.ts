@@ -1,4 +1,6 @@
 import type { ParsedArgs } from '../cli.js'
+import { theme as makeTheme } from '../lib/theme.js'
+import { printUsage, unknownSubcommand, type UsageSpec } from '../lib/usage.js'
 import {
   getSurfacePlugin,
   listSurfacePluginStatuses,
@@ -7,6 +9,33 @@ import {
   surfacePluginStatus,
   type SurfacePluginStatus
 } from '../surfacePlugins.js'
+
+const PLUGINS_USAGE: UsageSpec = {
+  name: 'plugins',
+  summary: 'list / install / update / launch desktop surface plugins (e.g. herm)',
+  usage: [
+    'plugins [list]',
+    'plugins status [id]',
+    'plugins install <id>',
+    'plugins update <id>',
+    'plugins launch <id>',
+    'plugins resume <id>'
+  ],
+  subcommands: [
+    { verb: 'list', desc: 'List known surface plugins + install state (default)' },
+    { verb: 'status [id]', desc: 'Detailed status for one (or all) plugins' },
+    { verb: 'install <id>', desc: 'Install via Bun/npm' },
+    { verb: 'update <id>', desc: 'Update an installed plugin' },
+    { verb: 'launch <id>', desc: 'Launch the plugin surface' },
+    { verb: 'resume <id>', desc: 'Resume a running plugin surface' }
+  ],
+  flags: [{ flag: '--json', desc: 'Machine-readable output' }],
+  examples: [
+    'hermes-relay plugins',
+    'hermes-relay plugins install herm',
+    'hermes-relay plugins launch herm'
+  ]
+}
 
 function renderStatus(status: SurfacePluginStatus): string {
   const plugin = status.descriptor
@@ -41,6 +70,10 @@ function resolvePluginOrPrint(id: string): ReturnType<typeof getSurfacePlugin> {
 }
 
 export async function pluginsCommand(args: ParsedArgs): Promise<number> {
+  if (args.flags.help) {
+    printUsage(PLUGINS_USAGE)
+    return 0
+  }
   const sub = args.positional[0] ?? 'list'
   const id = args.positional[1] ?? 'herm'
   const wantJson = !!args.flags.json
@@ -60,7 +93,8 @@ export async function pluginsCommand(args: ParsedArgs): Promise<number> {
       process.stdout.write(JSON.stringify(statuses, null, 2) + '\n')
       return 0
     }
-    process.stdout.write('Desktop surface plugins:\n\n')
+    const t = makeTheme({ noColor: !!args.flags['no-color'] })
+    process.stdout.write(t.bold('Desktop surface plugins:') + '\n\n')
     process.stdout.write(statuses.map(renderStatus).join('\n\n') + '\n')
     return 0
   }
@@ -106,6 +140,5 @@ export async function pluginsCommand(args: ParsedArgs): Promise<number> {
     return code
   }
 
-  process.stderr.write('unknown plugins sub-verb. Try: list | status [id] | install <id> | update <id> | launch <id> | resume <id>\n')
-  return 2
+  return unknownSubcommand(PLUGINS_USAGE, sub)
 }

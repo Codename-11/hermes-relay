@@ -18,10 +18,13 @@ import { createInterface } from 'node:readline/promises'
 import { getSession, saveSession } from '../remoteSessions.js'
 
 export const CONSENT_PROMPT = `
-Desktop tools are about to be exposed to the remote Hermes agent.
-The agent can read/write files, run shell commands, and search your filesystem.
-This is AGENT-CONTROLLED access. Only use with trusted Hermes installs.
-Type 'yes' to enable, or rerun with --no-tools to disable.
+Desktop tools let the remote Hermes agent act on THIS machine:
+  • read/write files, run shell + PowerShell, manage processes & jobs
+  • this is a ONE-TIME grant per relay URL, stored in
+    ~/.hermes/remote-sessions.json (revoke by re-pairing or editing that file)
+  • review what the agent runs anytime with:  hermes-relay audit
+Only enable this for a Hermes server you trust.
+Type 'yes' to enable, or rerun with --no-tools to keep it off.
 `
 
 export const COMPUTER_USE_CONSENT_PROMPT = `

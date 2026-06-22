@@ -6,7 +6,20 @@
 
 import { humanExpiry, parseRole, roleLabel } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
+import { theme as makeTheme } from '../lib/theme.js'
+import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { listSessions, type RemoteSessionRecord } from '../remoteSessions.js'
+
+const STATUS_USAGE: UsageSpec = {
+  name: 'status',
+  summary: 'show the relays this machine is paired with (grants, TTL, desktop-tool consent)',
+  usage: ['status [--json] [--reveal-tokens]'],
+  flags: [
+    { flag: '--json', desc: 'Machine-readable output (tokens redacted by default)' },
+    { flag: '--reveal-tokens', desc: 'Include full session tokens (use with care)' }
+  ],
+  examples: ['hermes-relay status', 'hermes-relay status --json']
+}
 
 function humanAge(seconds: number): string {
   if (seconds < 60) {
@@ -30,6 +43,11 @@ function humanAge(seconds: number): string {
 const REDACTED = '(redacted — pass --reveal-tokens to show)'
 
 export async function statusCommand(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (args.flags.help) {
+    printUsage(STATUS_USAGE, t)
+    return 0
+  }
   const sessions = await listSessions()
   const entries = Object.entries(sessions)
   const revealTokens = !!args.flags['reveal-tokens']
@@ -51,28 +69,32 @@ export async function statusCommand(args: ParsedArgs): Promise<number> {
 
   if (entries.length === 0) {
     process.stdout.write(
-      'No paired relays. Run `hermes-relay pair --remote ws://host:port` to pair.\n'
+      t.muted('No paired relays. Run `hermes-relay pair --remote ws://host:port` to pair.') + '\n'
     )
     return 0
   }
 
-  process.stdout.write(`Paired relays (${entries.length}):\n\n`)
+  process.stdout.write(t.bold(`Paired relays (${entries.length})`) + '\n\n')
   const now = Math.floor(Date.now() / 1000)
+  const kv = (label: string, value: string): string =>
+    `    ${t.muted((label + ':').padEnd(9))} ${value}`
   for (const [url, rec] of entries) {
     const age = humanAge(Math.max(0, now - rec.pairedAt))
     const tokenDisplay = revealTokens ? rec.token : REDACTED
-    process.stdout.write(`  ${url}\n`)
-    process.stdout.write(`    server:   ${rec.serverVersion ?? '(unknown)'}\n`)
-    process.stdout.write(`    paired:   ${age} ago\n`)
-    process.stdout.write(`    token:    ${tokenDisplay}\n`)
-    process.stdout.write(`    expires:  ${humanExpiry(rec.ttlExpiresAt)}\n`)
+    const expiresRaw = humanExpiry(rec.ttlExpiresAt)
+    const expires = expiresRaw === 'expired' ? t.err('expired') : expiresRaw
+    process.stdout.write(`  ${t.cyan(url)}\n`)
+    process.stdout.write(kv('server', rec.serverVersion ?? '(unknown)') + '\n')
+    process.stdout.write(kv('paired', `${age} ago`) + '\n')
+    process.stdout.write(kv('token', tokenDisplay) + '\n')
+    process.stdout.write(kv('expires', expires) + '\n')
     const computerUse = rec.toolsConsented ? 'feature-flagged opt-in' : 'no'
     process.stdout.write(
-      `    desktop: tools=${rec.toolsConsented ? 'yes' : 'no'}, computer-use=${computerUse}\n`
+      kv('desktop', `${t.statusDot(!!rec.toolsConsented)} tools=${rec.toolsConsented ? 'yes' : 'no'}, computer-use=${computerUse}`) + '\n'
     )
     const role = parseRole(rec.endpointRole)
     if (role) {
-      process.stdout.write(`    route:    ${roleLabel(role)}\n`)
+      process.stdout.write(kv('route', roleLabel(role)) + '\n')
     }
     if (rec.grants && Object.keys(rec.grants).length > 0) {
       const formatted = Object.entries(rec.grants)
@@ -81,10 +103,10 @@ export async function statusCommand(args: ParsedArgs): Promise<number> {
           return `${channel} (${when})`
         })
         .sort()
-      process.stdout.write(`    grants:   ${formatted.join(', ')}\n`)
+      process.stdout.write(kv('grants', formatted.join(', ')) + '\n')
     }
     if (rec.certPinSha256) {
-      process.stdout.write(`    cert:     sha256:${rec.certPinSha256.slice(0, 12)}…\n`)
+      process.stdout.write(kv('cert', `sha256:${rec.certPinSha256.slice(0, 12)}…`) + '\n')
     }
     process.stdout.write('\n')
   }

@@ -7,12 +7,28 @@ import type { ParsedArgs } from '../cli.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type { GatewayEvent, ToolsListResponse } from '../gatewayTypes.js'
+import { formatError } from '../lib/hints.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
+import { createSpinner } from '../lib/spinner.js'
+import { SYMBOLS, theme as makeTheme } from '../lib/theme.js'
+import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { deleteSession, saveSession } from '../remoteSessions.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
 const READY_TIMEOUT_MS = 60_000
+
+const TOOLS_USAGE: UsageSpec = {
+  name: 'tools',
+  summary: 'show the tool access the agent will have on this connection',
+  usage: ['tools [--verbose] [--json]'],
+  flags: [
+    { flag: '--verbose', desc: 'List individual tools under each toolset' },
+    { flag: '--json', desc: 'Machine-readable toolset list' },
+    { flag: '--remote <url>', desc: 'Relay to query (default: stored/active)' }
+  ],
+  examples: ['hermes-relay tools', 'hermes-relay tools --verbose']
+}
 
 function resolveRemote(args: ParsedArgs): string | null {
   const v = args.flags.remote
@@ -39,6 +55,11 @@ function waitForReady(gw: GatewayClient): Promise<void> {
 }
 
 export async function toolsCommand(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (args.flags.help) {
+    printUsage(TOOLS_USAGE, t)
+    return 0
+  }
   let urlFlag = resolveRemote(args)
   const argCode = typeof args.flags.code === 'string' ? args.flags.code : undefined
   const argToken = typeof args.flags.token === 'string' ? args.flags.token : undefined
@@ -98,6 +119,12 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
     })
   })
 
+  const spinner = createSpinner(`Connecting to ${url}…`, {
+    enabled: !args.flags.json && !args.flags.quiet,
+    theme: t
+  })
+  spinner.start()
+
   relay.start()
   const outcome = await relay.whenAuthResolved()
 
@@ -105,7 +132,8 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
     if (creds.sessionToken) {
       await deleteSession(url)
     }
-    process.stderr.write(`error: ${outcome.reason}\n`)
+    spinner.fail('connection failed')
+    process.stderr.write(formatError(outcome.reason, { command: 'tools', url }, t) + '\n')
     try {
       relay.kill()
     } catch {
@@ -114,6 +142,7 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
     return 1
   }
 
+  spinner.update('Loading toolsets…')
   const gw = new GatewayClient(relay)
   const ready = waitForReady(gw)
   gw.start()
@@ -122,13 +151,15 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
   try {
     await ready
   } catch (e) {
-    process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
+    spinner.fail('gateway not ready')
+    process.stderr.write(formatError(e, { command: 'tools', url }, t) + '\n')
     gw.kill()
     return 1
   }
 
   try {
     const raw = await gw.request<ToolsListResponse>('tools.list', {})
+    spinner.stop()
     const result = asRpcResult<ToolsListResponse>(raw)
     const toolsets = result?.toolsets ?? []
 
@@ -139,43 +170,46 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
     }
 
     if (toolsets.length === 0) {
-      process.stdout.write('(server returned no toolsets)\n')
+      process.stdout.write(t.muted('(server returned no toolsets)') + '\n')
       gw.kill()
       return 0
     }
 
-    const enabled = toolsets.filter((t) => t.enabled).length
+    const enabled = toolsets.filter((ts) => ts.enabled).length
     process.stdout.write(
-      `Server: ${url}\n` +
-        `Version: ${relay.serverVersion ?? '?'}\n` +
-        `Toolsets: ${toolsets.length} (${enabled} enabled)\n\n`
+      `${t.muted('Server:  ')} ${url}\n` +
+        `${t.muted('Version: ')} ${relay.serverVersion ?? '?'}\n` +
+        `${t.muted('Toolsets:')} ${toolsets.length} (${enabled} enabled)\n\n`
     )
 
     for (const ts of toolsets) {
-      const mark = ts.enabled ? '●' : '○'
       const count = typeof ts.tool_count === 'number' ? `${ts.tool_count} tools` : '?'
-      process.stdout.write(`  ${mark} ${ts.name}  (${count})`)
+      process.stdout.write(`  ${t.statusDot(!!ts.enabled)} ${t.bold(ts.name)}  ${t.muted(`(${count})`)}`)
       if (ts.description) {
-        process.stdout.write(`  — ${ts.description}`)
+        process.stdout.write(`  ${t.muted('— ' + ts.description)}`)
       }
       process.stdout.write('\n')
 
       if (args.flags.verbose && ts.tools && ts.tools.length > 0) {
-        for (const t of ts.tools) {
-          process.stdout.write(`      • ${t.name}`)
-          if (t.description) {
-            process.stdout.write(`  ${t.description}`)
+        for (const tool of ts.tools) {
+          process.stdout.write(`      ${t.muted(SYMBOLS.bullet)} ${tool.name}`)
+          if (tool.description) {
+            process.stdout.write(`  ${t.muted(tool.description)}`)
           }
           process.stdout.write('\n')
         }
       }
     }
-    process.stdout.write('\n  ● = enabled for this session  ○ = available but off\n')
+    process.stdout.write(
+      `\n  ${t.statusDot(true)} ${t.muted('enabled for this session')}   ` +
+        `${t.statusDot(false)} ${t.muted('available but off')}\n`
+    )
 
     gw.kill()
     return 0
   } catch (e) {
-    process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
+    spinner.stop()
+    process.stderr.write(formatError(e, { command: 'tools', url }, t) + '\n')
     gw.kill()
     return 1
   }

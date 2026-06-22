@@ -32,8 +32,11 @@ import type {
   SessionResumeResponse
 } from '../gatewayTypes.js'
 import { getActiveDesktopRelayUrl } from '../desktopConfig.js'
+import { formatError } from '../lib/hints.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
+import { theme as makeTheme, type Theme } from '../lib/theme.js'
+import { printUsage, unknownSubcommand, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
@@ -42,6 +45,34 @@ import { discoverTray, notifyTrayShowVoice } from '../trayBridge.js'
 
 const READY_TIMEOUT_MS = 60_000
 
+const VOICE_USAGE: UsageSpec = {
+  name: 'voice',
+  summary: 'inspect native Hermes voice config (STT/TTS/realtime) and run push-to-talk',
+  usage: ['voice [status]', 'voice mode [--port <n>] [--no-open]'],
+  subcommands: [
+    { verb: 'status', desc: 'Show STT/TTS/realtime providers + enhanced-voice capabilities (default)' },
+    { verb: 'mode', desc: 'Push-to-talk in a browser tab, proxied through this CLI' }
+  ],
+  flags: [
+    { flag: '--remote <url>', desc: 'Relay to query (default: stored/active)' },
+    { flag: '--json', desc: 'status: raw JSON for scripting' },
+    { flag: '--port <n>', desc: 'mode: local voice-server port (default: ephemeral)' },
+    { flag: '--no-open', desc: 'mode: do not auto-open the browser' }
+  ],
+  examples: ['hermes-relay voice', 'hermes-relay voice mode']
+}
+
+/** Per-provider enhanced-voice capability hint, surfaced by `/voice/config`
+ * (plugin v1.2.0). Gemini carries tone-tags + persona; xAI carries speech-tags
+ * + language. The CLI previously dropped this block entirely. */
+interface VoiceEnhanced {
+  audio_tags_enabled?: boolean
+  audio_tags_label?: string | null
+  supports_persona?: boolean
+  persona_prompt_file?: string | null
+  overrides?: string[]
+}
+
 interface VoiceProvider {
   provider?: string | null
   model?: string | null
@@ -49,6 +80,7 @@ interface VoiceProvider {
   voice_id?: string | null
   enabled?: boolean
   available?: boolean
+  enhanced?: VoiceEnhanced | null
 }
 
 interface VoiceConfigResponse {
@@ -159,36 +191,57 @@ async function getJson<T>(
   return { status: res.status, body: body as T | { error?: string } | string | undefined }
 }
 
-function formatProvider(p: VoiceProvider | null | undefined, label: string): string {
+function formatProvider(p: VoiceProvider | null | undefined, label: string, t: Theme): string {
   if (!p || !p.provider) {
-    return `  ${label}: (not configured)`
+    return `  ${t.muted(`${label}: (not configured)`)}`
   }
-  const enabled = p.enabled === false ? '○' : '●'
-  const provider = p.provider
   const model = p.model ? ` · ${p.model}` : ''
   const voice = p.voice ?? p.voice_id
   const voiceTag = voice ? ` · voice=${voice}` : ''
-  return `  ${enabled} ${label}: ${provider}${model}${voiceTag}`
+  return `  ${t.statusDot(p.enabled !== false)} ${t.bold(label)}: ${p.provider}${model}${voiceTag}`
 }
 
-function formatRealtime(rt: RealtimeVoiceConfigResponse | null): string[] {
+/** Render the enhanced-voice capability sub-line under a provider, if present.
+ * Surfaces what the relay's per-request `/voice/synthesize` overrides can do
+ * (Gemini tone-tags + persona, xAI speech-tags + language). */
+function formatEnhanced(p: VoiceProvider | null | undefined, t: Theme): string | null {
+  const e = p?.enhanced
+  if (!e) {
+    return null
+  }
+  const bits: string[] = []
+  if (e.audio_tags_label) {
+    bits.push(`${e.audio_tags_label} ${e.audio_tags_enabled ? t.ok('(on)') : t.muted('(off)')}`)
+  }
+  if (e.supports_persona) {
+    bits.push('persona supported')
+  }
+  if (e.overrides?.length) {
+    bits.push(`overrides: ${e.overrides.join(', ')}`)
+  }
+  if (bits.length === 0) {
+    return null
+  }
+  return `      ${t.muted('enhanced: ' + bits.join(' · '))}`
+}
+
+function formatRealtime(rt: RealtimeVoiceConfigResponse | null, t: Theme): string[] {
   if (!rt) {
-    return ['  Realtime: (unavailable)']
+    return [`  ${t.muted('Realtime: (unavailable)')}`]
   }
   if (rt.success === false) {
-    return [`  Realtime: error — ${rt.error ?? 'unknown'}`]
+    return [`  ${t.warn(`Realtime: error — ${rt.error ?? 'unknown'}`)}`]
   }
   const lines: string[] = []
-  const enabled = rt.enabled ? '●' : '○'
   const provider = rt.default_provider ?? '(none)'
   const model = rt.default_model ? ` · ${rt.default_model}` : ''
   const voice = rt.default_voice ? ` · voice=${rt.default_voice}` : ''
   const rate = rt.sample_rate ? ` @ ${rt.sample_rate}Hz` : ''
-  lines.push(`  ${enabled} Realtime: ${provider}${model}${voice}${rate}`)
+  lines.push(`  ${t.statusDot(!!rt.enabled)} ${t.bold('Realtime')}: ${provider}${model}${voice}${rate}`)
   const providers = (rt.providers ?? []).filter((p) => p.status && p.status !== 'unavailable')
   if (providers.length > 0) {
     const labels = providers.map((p) => p.name ?? p.id)
-    lines.push(`      available: ${labels.join(', ')}`)
+    lines.push(`      ${t.muted('available: ' + labels.join(', '))}`)
   }
   return lines
 }
@@ -244,13 +297,22 @@ async function voiceStatus(args: ParsedArgs): Promise<number> {
     return 1
   }
 
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const cfg = basic.body as VoiceConfigResponse
   const rt = (realtime.status === 200 ? (realtime.body as RealtimeVoiceConfigResponse) : null)
 
-  process.stdout.write(`Voice on ${url}:\n\n`)
-  process.stdout.write(formatProvider(cfg.stt, 'STT') + '\n')
-  process.stdout.write(formatProvider(cfg.tts, 'TTS') + '\n')
-  for (const line of formatRealtime(rt)) {
+  process.stdout.write(t.bold(`Voice on ${url}`) + '\n\n')
+  process.stdout.write(formatProvider(cfg.stt, 'STT', t) + '\n')
+  const sttEnhanced = formatEnhanced(cfg.stt, t)
+  if (sttEnhanced) {
+    process.stdout.write(sttEnhanced + '\n')
+  }
+  process.stdout.write(formatProvider(cfg.tts, 'TTS', t) + '\n')
+  const ttsEnhanced = formatEnhanced(cfg.tts, t)
+  if (ttsEnhanced) {
+    process.stdout.write(ttsEnhanced + '\n')
+  }
+  for (const line of formatRealtime(rt, t)) {
     process.stdout.write(line + '\n')
   }
 
@@ -258,19 +320,19 @@ async function voiceStatus(args: ParsedArgs): Promise<number> {
   const ttsOk = cfg.tts?.enabled !== false && !!cfg.tts?.provider
   process.stdout.write('\n')
   if (sttOk && ttsOk) {
-    process.stdout.write('  Native Hermes voice is configured on the server. ✓\n')
+    process.stdout.write(t.okLine('Native Hermes voice is configured on the server.') + '\n')
   } else if (!sttOk && !ttsOk) {
     process.stdout.write(
-      '  Neither STT nor TTS is configured.\n' +
-        '  Edit ~/.hermes/config.yaml on the server (stt.provider / tts.provider) and restart.\n'
+      t.warnLine('Neither STT nor TTS is configured.') + '\n' +
+        t.muted('  Edit ~/.hermes/config.yaml on the server (stt.provider / tts.provider) and restart.') + '\n'
     )
   } else {
     process.stdout.write(
-      `  Partial: ${sttOk ? 'STT' : 'TTS'} is configured, ${sttOk ? 'TTS' : 'STT'} is not.\n` +
-        '  See ~/.hermes/config.yaml on the server.\n'
+      t.warnLine(`Partial: ${sttOk ? 'STT' : 'TTS'} is configured, ${sttOk ? 'TTS' : 'STT'} is not.`) + '\n' +
+        t.muted('  See ~/.hermes/config.yaml on the server.') + '\n'
     )
   }
-  process.stdout.write('\n  ● = enabled  ○ = available but off\n')
+  process.stdout.write(`\n  ${t.statusDot(true)} ${t.muted('enabled')}   ${t.statusDot(false)} ${t.muted('available but off')}\n`)
 
   return 0
 }
@@ -500,16 +562,22 @@ async function voiceMode(args: ParsedArgs): Promise<number> {
 }
 
 export async function voiceCommand(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (args.flags.help) {
+    printUsage(VOICE_USAGE, t)
+    return 0
+  }
   const sub = args.positional[0] ?? 'status'
+  const url = typeof args.flags.remote === 'string' ? args.flags.remote : undefined
 
   if (sub === 'status') {
-    if (args.positional.length > 0 && args.positional[0] === 'status') {
+    if (args.positional[0] === 'status') {
       args.positional.shift()
     }
     try {
       return await voiceStatus(args)
     } catch (e) {
-      process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`)
+      process.stderr.write(formatError(e, { command: 'voice', url }, t) + '\n')
       return 1
     }
   }
@@ -519,11 +587,10 @@ export async function voiceCommand(args: ParsedArgs): Promise<number> {
     try {
       return await voiceMode(args)
     } catch (e) {
-      process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`)
+      process.stderr.write(formatError(e, { command: 'voice', url }, t) + '\n')
       return 1
     }
   }
 
-  process.stderr.write(`unknown voice sub-verb "${sub}". Try: status | mode\n`)
-  return 2
+  return unknownSubcommand(VOICE_USAGE, sub, t)
 }

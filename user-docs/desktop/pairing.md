@@ -48,14 +48,19 @@ Type or paste `F3W7EY`. On success:
 
 ```
   → using code: F3W7EY
-Pairing with ws://<host>:8767...
+Pairing with ws://<host>:8767…
 ✓ Paired. Token stored in ~/.hermes/remote-sessions.json
-  Server: 0.6.0
-  Relay:  ws://<host>:8767
-  Route:  lan
+  server: 1.2.0
+  relay:  ws://<host>:8767
+  route:  lan
+  tip: add --grant-tools to also enable desktop tools (needed for `daemon`).
 ```
 
-Subsequent `hermes-relay` commands reuse the stored token.
+Subsequent `hermes-relay` commands reuse the stored token. When that token nears its expiry, the CLI warns you (on a TTY) before the next command would fail and prints the exact re-pair command — so an expired session never just silently breaks.
+
+::: tip Port default
+A bare `ws://<host>` with no port defaults to `:8767` (the relay's default), and the CLI tells you it did. A `wss://<host>` is left untouched — it's usually a reverse-proxy / Tailscale Serve front on `:443` — so include the port explicitly if your secure relay listens elsewhere.
+:::
 
 ## Paste safety — what if the code comes out garbled?
 
@@ -69,7 +74,14 @@ hermes-relay pair F3W7EY --remote ws://<host>:8767
 
 ## Multi-endpoint pairing (ADR 24)
 
-If your Hermes server is reachable from multiple routes — LAN + Tailscale + public URL — the host can mint a **single QR payload** containing all of them. The CLI probes endpoints in priority order (LAN → Tailscale → public), picks the first reachable one, and records which route it picked so the banner shows "Connected via LAN (plain)" or "Connected via Tailscale (secure)" on reconnect. On every network change, the client re-probes — moving from home Wi-Fi to a coffee shop transparently fails over to Tailscale or the public URL.
+If your Hermes server is reachable from multiple routes — LAN + Tailscale + public URL — the host can mint a **single QR payload** containing all of them. The CLI probes endpoints in priority order (LAN → Tailscale → public), printing each one's result + latency as it races them, picks the first reachable one, and records which route it picked so the banner shows "Connected via LAN (plain)" or "Connected via Tailscale (secure)" on reconnect. On every network change, the client re-probes — moving from home Wi-Fi to a coffee shop transparently fails over to Tailscale or the public URL.
+
+```
+Probing 3 endpoint(s)…
+  ✓ [1/3] lan ws://192.168.1.50:8767 145ms
+  · [2/3] tailscale ws://hermes.tail1234.ts.net:8767 — timeout
+  → picked lan endpoint ws://192.168.1.50:8767
+```
 
 On the server:
 
