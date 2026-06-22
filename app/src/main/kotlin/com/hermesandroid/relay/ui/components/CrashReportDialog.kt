@@ -1,15 +1,12 @@
 package com.hermesandroid.relay.ui.components
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -49,6 +46,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.util.CrashReport
 import com.hermesandroid.relay.util.CrashReporter
+import com.hermesandroid.relay.util.IssueReport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -150,26 +148,45 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                 }
 
                 Spacer(Modifier.height(18.dp))
-                Row(
+                // FlowRow so the actions wrap instead of clipping on narrow /
+                // foldable cover screens now that a fourth (Share) action exists.
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     TextButton(onClick = onDismiss) { Text("Dismiss") }
-                    Spacer(Modifier.width(8.dp))
                     OutlinedButton(
                         onClick = {
-                            copyToClipboard(context, reportText)
+                            IssueReport.copyToClipboard(context, reportText)
                             toast(context, "Crash report copied")
                         },
                     ) { Text("Copy") }
-                    Spacer(Modifier.width(8.dp))
+                    // Universal, GitHub-free path: hand the full report to the
+                    // system share sheet (email, chat apps, notes, Drive…). The
+                    // user picks the destination, so nothing leaves the device
+                    // until they choose to send it — same privacy posture as Copy.
+                    OutlinedButton(
+                        onClick = {
+                            val shared = IssueReport.share(
+                                context,
+                                "Hermes-Relay crash report — ${report.shortTitle()}",
+                                reportText,
+                                chooserTitle = "Share crash report",
+                            )
+                            if (!shared) {
+                                IssueReport.copyToClipboard(context, reportText)
+                                toast(context, "Report copied — no app found to share to")
+                            }
+                            onDismiss()
+                        },
+                    ) { Text("Share") }
                     Button(
                         onClick = {
                             // Copy the FULL report first; the URL only carries the
                             // head of the trace, so the user can paste the rest.
-                            copyToClipboard(context, reportText)
-                            val opened = openUrl(context, CrashReporter.buildGithubIssueUrl(report))
+                            IssueReport.copyToClipboard(context, reportText)
+                            val opened = IssueReport.openUrl(context, CrashReporter.buildGithubIssueUrl(report))
                             toast(
                                 context,
                                 if (opened) "Full report copied — paste into the issue if it's truncated"
@@ -183,20 +200,6 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
         }
     }
 }
-
-private fun copyToClipboard(context: Context, text: String) {
-    runCatching {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Hermes-Relay crash report", text))
-    }
-}
-
-private fun openUrl(context: Context, url: String): Boolean = runCatching {
-    context.startActivity(
-        Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-    )
-    true
-}.getOrDefault(false)
 
 private fun toast(context: Context, message: String) {
     Toast.makeText(context, message, Toast.LENGTH_LONG).show()

@@ -13,7 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,7 +60,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,7 +82,9 @@ import com.hermesandroid.relay.viewmodel.PermissionDeniedCallout
 import com.hermesandroid.relay.viewmodel.VoiceHandoffStatus
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.SharedFlow
+import java.io.File
 
 /**
  * Full-screen voice-mode overlay. Renders the MorphingSphere in its voiceMode
@@ -608,9 +611,17 @@ private fun VoiceMicButton(
     val gestureModifier = when (uiState.interactionMode) {
         InteractionMode.HoldToTalk -> Modifier.pointerInput(Unit) {
             awaitEachGesture {
-                awaitFirstDown()
+                awaitFirstDown(requireUnconsumed = false)
                 currentOnHoldPress()
-                waitForUpOrCancellation()
+                // Hold until the finger genuinely lifts. Don't use
+                // waitForUpOrCancellation(): it ends the hold on ANY cancel — a
+                // consumed move event or the finger drifting just off the small
+                // circle — which made the button feel like it released by
+                // accident. Loop until no pointer is still pressed so drift and
+                // minor consumption don't cut the recording short.
+                do {
+                    val event = awaitPointerEvent()
+                } while (event.changes.any { it.pressed })
                 currentOnHoldRelease()
             }
         }
@@ -729,7 +740,10 @@ private fun VoiceSessionPill(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+        // Fully opaque panel — the overlay floats over live chat/sphere, so a
+        // translucent surface let the background bleed through and made the
+        // dropdown text hard to read.
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 5.dp,
         shadowElevation = 7.dp,
     ) {
@@ -741,12 +755,29 @@ private fun VoiceSessionPill(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Filled.GraphicEq,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp),
-                )
+                // Show the active profile's local icon (if set) as the leading
+                // glyph — same circular avatar treatment chat uses in
+                // MessageBubble. Falls back to the equalizer icon when there's
+                // no profile icon; the sphere/pet remains the no-icon fallback.
+                val agentIconPath = LocalAgentIconPath.current
+                if (!agentIconPath.isNullOrBlank()) {
+                    AsyncImage(
+                        model = File(agentIconPath),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .testTag("voiceOverlayProfileIcon")
+                            .size(18.dp)
+                            .clip(CircleShape),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.GraphicEq,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
                 Text(
                     text = "Voice",
                     style = MaterialTheme.typography.labelLarge,
@@ -857,7 +888,11 @@ private fun VoiceSessionPill(
                             onClick = { onFocusModeChange(!focusMode) },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text(if (focusMode) "Compact" else "Focus")
+                            Text(
+                                if (focusMode) "Compact" else "Focus",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                         TextButton(
                             onClick = {
@@ -866,13 +901,13 @@ private fun VoiceSessionPill(
                             },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Overlay")
+                            Text("Overlay", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         TextButton(
                             onClick = onExit,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Exit")
+                            Text("Exit", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         // Settings link (4c): exit voice mode before navigating
                         // so the overlay isn't left floating over the Voice
@@ -991,7 +1026,8 @@ private fun VoiceControlChip(
         color = if (selected) {
             MaterialTheme.colorScheme.primaryContainer
         } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f)
+            // Opaque — translucent chips over the floating overlay were hard to read.
+            MaterialTheme.colorScheme.surfaceVariant
         },
         contentColor = if (selected) {
             MaterialTheme.colorScheme.onPrimaryContainer
@@ -1021,9 +1057,11 @@ private fun StatusPill(
         modifier = modifier.height(24.dp),
         shape = RoundedCornerShape(999.dp),
         color = if (emphasized) {
-            MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f)
+            // Opaque — translucent status bubbles over the floating overlay were
+            // hard to read against the sphere/chat behind them.
+            MaterialTheme.colorScheme.tertiaryContainer
         } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+            MaterialTheme.colorScheme.surfaceVariant
         },
         contentColor = if (emphasized) {
             MaterialTheme.colorScheme.onTertiaryContainer

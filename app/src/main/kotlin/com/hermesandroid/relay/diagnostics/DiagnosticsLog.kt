@@ -28,11 +28,20 @@ data class DiagnosticLogEntry(
     val endpointRole: String? = null,
     val url: String? = null,
     val elapsedMs: Long? = null,
+    /**
+     * Full (multi-KB) redacted stacktrace for the detail page. Kept OUT of the
+     * 180-char [detail] truncation — the list still shows the short title/detail,
+     * the detail view shows this. Null for non-error / manually-recorded entries.
+     */
+    val stacktrace: String? = null,
 )
 
 object DiagnosticsLog {
     private const val MAX_ENTRIES = 200
     private const val MAX_TEXT_LENGTH = 180
+
+    /** Cap for the full stacktrace kept on an error entry — a few KB is plenty. */
+    private const val MAX_TRACE_LENGTH = 8000
 
     private val lock = Any()
     private val _entries = MutableStateFlow<List<DiagnosticLogEntry>>(emptyList())
@@ -46,6 +55,7 @@ object DiagnosticsLog {
         endpointRole: String? = null,
         url: String? = null,
         elapsedMs: Long? = null,
+        stacktrace: String? = null,
     ) {
         val entry = DiagnosticLogEntry(
             timestampMs = System.currentTimeMillis(),
@@ -56,11 +66,50 @@ object DiagnosticsLog {
             endpointRole = clean(endpointRole),
             url = sanitizeUrl(url),
             elapsedMs = elapsedMs,
+            stacktrace = redactTrace(stacktrace),
         )
         synchronized(lock) {
             _entries.value = (_entries.value + entry).takeLast(MAX_ENTRIES)
         }
     }
+
+    /**
+     * Record an [DiagnosticSeverity.Error] entry from a classified failure. The
+     * list keeps showing the clean [title] (+ short [detail]); the detail page
+     * shows the full redacted stacktrace.
+     *
+     * Called centrally from [com.hermesandroid.relay.util.classifyError] as a
+     * side effect, so every classified error lands here with no per-call-site
+     * churn. The flow is one-way (classify -> record); nothing here re-enters
+     * the classifier, so there is no recursion.
+     *
+     * @param title  clean, human title (e.g. [com.hermesandroid.relay.util.HumanError.title]).
+     * @param detail short one-line summary shown in the list row (truncated to 180).
+     * @param throwable source error — its stacktrace is captured, redacted, and capped.
+     */
+    fun recordError(
+        category: DiagnosticCategory,
+        title: String,
+        detail: String? = null,
+        throwable: Throwable? = null,
+        endpointRole: String? = null,
+        url: String? = null,
+        elapsedMs: Long? = null,
+    ) {
+        record(
+            category = category,
+            severity = DiagnosticSeverity.Error,
+            title = title,
+            detail = detail ?: throwable?.message,
+            endpointRole = endpointRole,
+            url = url,
+            elapsedMs = elapsedMs,
+            stacktrace = throwable?.let { stackTraceText(it) },
+        )
+    }
+
+    private fun stackTraceText(t: Throwable): String =
+        java.io.StringWriter().also { t.printStackTrace(java.io.PrintWriter(it)) }.toString().trim()
 
     fun recent(
         categories: Set<DiagnosticCategory>? = null,
@@ -101,10 +150,26 @@ object DiagnosticsLog {
 
     private fun clean(value: String?): String? {
         val trimmed = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        return trimmed
-            .replace(Regex("""(?i)(bearer|token|api[_-]?key|session[_-]?token)\s*[:=]\s*\S+""")) {
-                "${it.groupValues[1]}=[hidden]"
-            }
-            .take(MAX_TEXT_LENGTH)
+        return redact(trimmed).take(MAX_TEXT_LENGTH)
     }
+
+    /**
+     * Same secret redaction as [clean] but WITHOUT the 180-char list truncation —
+     * for the full stacktrace shown on the detail page. Still capped at
+     * [MAX_TRACE_LENGTH] so a runaway trace can't bloat the ring.
+     */
+    private fun redactTrace(value: String?): String? {
+        val trimmed = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val redacted = redact(trimmed)
+        return if (redacted.length > MAX_TRACE_LENGTH) {
+            redacted.take(MAX_TRACE_LENGTH) + "\n… (truncated)"
+        } else {
+            redacted
+        }
+    }
+
+    private fun redact(value: String): String =
+        value.replace(Regex("""(?i)(bearer|token|api[_-]?key|session[_-]?token)\s*[:=]\s*\S+""")) {
+            "${it.groupValues[1]}=[hidden]"
+        }
 }

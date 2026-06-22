@@ -1,6 +1,6 @@
 [versions]
-appVersionName = "1.2.0"
-appVersionCode = "14"
+appVersionName = "1.2.1"
+appVersionCode = "15"
 agp = "9.2.1"
 kotlin = "2.3.21"
 compose-bom = "2026.05.01"
@@ -26,6 +26,7 @@ play-publisher = "4.0.0"
 media3 = "1.10.1"
 androidVad = "2.0.10"
 spatialsdk = "0.12.0"
+play-app-update = "2.1.0"
 
 [libraries]
 # Compose BOM
@@ -99,6 +100,15 @@ meta-spatial-sdk-mruk = { group = "com.meta.spatial", name = "meta-spatial-sdk-m
 
 # android-vad (Silero) — on-device voice activity detection for barge-in (B2)
 android-vad-silero = { group = "com.github.gkonovalov.android-vad", name = "silero", version.ref = "androidVad" }
+
+# Google Play In-App Update — googlePlay flavor ONLY (FLEXIBLE flow).
+# Sideload uses the GitHub releases UpdateChecker instead and must NOT pull
+# this in (it would be dead weight + a Play dependency the sideload track
+# deliberately avoids). The base `app-update` artifact covers everything the
+# impl uses (AppUpdateManager, InstallStateUpdatedListener, startUpdateFlow);
+# `-ktx` is kept as the standard companion for the coroutine/Flow extensions.
+play-app-update = { group = "com.google.android.play", name = "app-update", version.ref = "play-app-update" }
+play-app-update-ktx = { group = "com.google.android.play", name = "app-update-ktx", version.ref = "play-app-update" }
 
 # Serialization
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization" }

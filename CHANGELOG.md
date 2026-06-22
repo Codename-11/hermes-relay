@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: background daemon.** `hermes-relay daemon start` runs the headless tool router in the background (no console window, survives closing the terminal), with `daemon stop` and `daemon status` to manage it. `daemon status` reports state, uptime, relay, and advertised-tool count; bare `daemon` still runs in the foreground. Logs go to `~/.hermes/daemon.log`.
 - **Desktop CLI: per-command help.** Every subcommand now answers `--help`, and `devices`/`sessions`/`plugins`/`voice`/`relay` print their own usage (sub-commands, flags, examples) instead of a terse "unknown sub-verb".
 - **Desktop CLI: startup banner.** A slim "Hermes Relay" wordmark shows atop `--help`, the first-run welcome, and the chat REPL — and `hermes-relay logo` prints it on demand. Suppressed for piped/`--json`/`--no-color` output.
+- **Profile lock (Android).** Settings → Profile lock pins the app to a single agent profile and hides the rest from the pickers; the lock screen stays the one place that lists every profile, with a clear notice if the locked profile isn't on the current server.
+- **In-app What's New & changelog (Android).** A new Settings entry shows the current and past release notes any time — not just the post-update popup.
+- **Diagnostics: tap for detail + report (Android).** Logged errors now carry clean titles and open a detail view with Copy / Share / Create-GitHub-issue (the same flow as crash reports); classified errors across voice, chat, and connection are captured centrally.
+- **Update-available nudge (Android).** A dismissable in-app banner when a newer version is live — Google Play In-App Update on Play installs, GitHub Releases on sideload. Per-version dismissal, throttled, never nags.
 
 ### Changed
 
@@ -20,6 +24,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 - **Crash reports can be shared without GitHub.** The crash dialog now has a **Share** action alongside Copy and Report, handing the full report to the system share sheet (email, chat apps, notes, Drive). This covers users without a GitHub account and sideload installs that Play vitals never sees. Every outbound path stays user-initiated — nothing is sent automatically.
+
+### Fixed
+
+- **Voice override applies in Auto mode (Android).** A chosen per-profile/enhanced voice now takes effect when the engine is on Auto with the relay paired — previously only "Relay" mode applied it. Per-profile voice settings are also namespaced by connection.
+- **Realtime voice "Stop" stops immediately (Android).** Tapping Stop while the agent is speaking now halts realtime playback at once; over-chatty spoken status is throttled; and long background tasks no longer time out the turn (relay keeps the session alive while the task runs).
+- **Hold-to-talk no longer releases on accidental drift (Android).** The mic button holds until the finger genuinely lifts, instead of cancelling when it drifts off the button.
+- **Voice overlay is readable (Android).** The voice dropdown panel and its status bubbles are opaque (no bleed-through), and the Focus/Overlay/Exit labels no longer wrap to two lines; invalid engine/route combinations are no longer selectable.
+- **Connection status overlay clears faster (Android).** Resolved (error/warning) connection toasts auto-dismiss within ~5s instead of lingering.
 
 ## [1.2.0] - 2026-06-20
 

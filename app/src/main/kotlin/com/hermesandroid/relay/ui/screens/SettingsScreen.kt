@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -37,18 +39,25 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Security
 // === END PHASE3-safety-rails ===
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -61,15 +70,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
@@ -258,7 +272,17 @@ fun SettingsScreen(
     // back where they started.
     var showAgentSheet by remember { mutableStateOf(false) }
     var showDiagnosticsSheet by remember { mutableStateOf(false) }
+    var showProfileLockDialog by remember { mutableStateOf(false) }
+    // What's New / Changelog — opens the full release history as a
+    // self-contained full-screen Dialog (no nav route). Always available, not
+    // gated on the post-update "seen" state that drives the auto dialog.
+    var showChangelog by remember { mutableStateOf(false) }
     val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Profile lock state — this card/dialog is the ONE surface that always
+    // lists every profile, so it does NOT gate on isProfileLocked.
+    val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
+    val lockedProfileName by connectionViewModel.lockedProfileName.collectAsState()
 
     Scaffold(
         topBar = {
@@ -330,6 +354,28 @@ fun SettingsScreen(
             ProfileInspectorCard(
                 activeProfile = inspectorTarget,
                 onClick = { profileName -> onNavigateToProfileInspector(profileName) },
+                isDarkTheme = isDarkTheme,
+            )
+
+            // ── Profile lock ───────────────────────────────────────────
+            // Pin the app to ONE profile. When locked, the profile pickers
+            // elsewhere collapse to a single locked row; this card's dialog
+            // is the only surface that still lists every profile.
+            val lockedDisplayName: String? = when {
+                !isProfileLocked -> null
+                lockedProfileName == null ||
+                    AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
+                    lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
+                    "Server default"
+                else ->
+                    agentProfiles
+                        .firstOrNull { it.name == lockedProfileName }
+                        ?.let { AgentDisplay.profileDisplayName(it) }
+                        ?: lockedProfileName!!.replaceFirstChar { it.uppercase() }
+            }
+            ProfileLockCard(
+                lockedDisplayName = lockedDisplayName,
+                onClick = { showProfileLockDialog = true },
                 isDarkTheme = isDarkTheme,
             )
 
@@ -491,6 +537,14 @@ fun SettingsScreen(
             }
 
             SettingsCategoryRow(
+                icon = Icons.Filled.NewReleases,
+                title = "What's New",
+                subtitle = "Release notes and full changelog",
+                onClick = { showChangelog = true },
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
                 icon = Icons.Filled.Info,
                 title = "About",
                 subtitle = "Version, credits, docs",
@@ -543,6 +597,31 @@ fun SettingsScreen(
                     showCategory = true,
                     showClear = true,
                 )
+            }
+        }
+    }
+
+    if (showProfileLockDialog) {
+        ProfileLockDialog(
+            profiles = agentProfiles,
+            isLocked = isProfileLocked,
+            lockedProfileName = lockedProfileName,
+            onLock = { profile -> connectionViewModel.lockProfile(profile) },
+            onUnlock = { connectionViewModel.unlockProfile() },
+            onDismiss = { showProfileLockDialog = false },
+        )
+    }
+
+    // Full-screen changelog. Hosted as a self-contained Dialog (no nav route)
+    // so it stacks over Settings and dismisses back here — mirroring the
+    // showAgentSheet / showDiagnosticsSheet inline-surface pattern above.
+    if (showChangelog) {
+        Dialog(
+            onDismissRequest = { showChangelog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(modifier = Modifier.fillMaxSize()) {
+                ChangelogScreen(onClose = { showChangelog = false })
             }
         }
     }
@@ -655,6 +734,247 @@ private fun ActiveAgentCard(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * Entry card for the per-connection profile lock. Subtitle reflects the live
+ * lock state: the locked profile's display name when pinned, or the generic
+ * "Pin the app to one agent profile" prompt when unlocked. Tapping opens
+ * [ProfileLockDialog].
+ */
+@Composable
+private fun ProfileLockCard(
+    lockedDisplayName: String?,
+    onClick: () -> Unit,
+    isDarkTheme: Boolean,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gradientBorder(
+                shape = RoundedCornerShape(12.dp),
+                isDarkTheme = isDarkTheme,
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Lock,
+                contentDescription = null,
+                tint = if (lockedDisplayName != null) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Profile lock",
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = lockedDisplayName?.let { "Locked to $it" }
+                        ?: "Pin the app to one agent profile",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * The one surface that ALWAYS lists every profile (it never gates on the lock
+ * state — it's how the user picks the target or unlocks). A master "Lock to a
+ * profile" toggle reveals a radio list of "Server default" + every advertised
+ * profile. When the stored lock target isn't present in the list, a banner
+ * names the missing profile with an inline Unlock affordance.
+ */
+@Composable
+private fun ProfileLockDialog(
+    profiles: List<Profile>,
+    isLocked: Boolean,
+    lockedProfileName: String?,
+    onLock: (Profile?) -> Unit,
+    onUnlock: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // Selectable rows: a synthetic "Server default" sentinel + the advertised
+    // profiles, minus the synthetic "default" alias (folded into Server default).
+    val selectableProfiles = profiles.filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
+
+    // Is the stored lock target Server default (sentinel / "default" alias / null)?
+    val lockedIsServerDefault = lockedProfileName == null ||
+        AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
+        lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
+    val lockedProfile = if (lockedIsServerDefault) {
+        null
+    } else {
+        selectableProfiles.firstOrNull { it.name == lockedProfileName }
+    }
+    // Locked to a named profile the server no longer advertises.
+    val lockedProfileMissing = isLocked && !lockedIsServerDefault && lockedProfile == null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Profile lock") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Pin the app to one agent profile. While locked, the " +
+                        "profile pickers elsewhere collapse to a single locked row.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                if (lockedProfileMissing) {
+                    Surface(
+                        color = RelayRefresh.Amber.copy(alpha = 0.15f),
+                        contentColor = RelayRefresh.Amber,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, RelayRefresh.Amber.copy(alpha = 0.5f)),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = "Locked profile '" +
+                                    (lockedProfileName ?: "") +
+                                    "' not found on this server.",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            TextButton(
+                                onClick = onUnlock,
+                                modifier = Modifier.align(Alignment.End),
+                            ) {
+                                Text("Unlock")
+                            }
+                        }
+                    }
+                }
+
+                // Master toggle. Off = unlocked; flipping on locks to the
+                // current effective target (Server default by default, or the
+                // already-stored target when it still resolves).
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Lock to a profile",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = isLocked,
+                        onCheckedChange = { checked ->
+                            if (checked) {
+                                // Lock to the existing target if it still
+                                // resolves, else Server default.
+                                onLock(lockedProfile)
+                            } else {
+                                onUnlock()
+                            }
+                        },
+                    )
+                }
+
+                if (isLocked) {
+                    HorizontalDivider()
+                    // Server default option.
+                    ProfileLockOptionRow(
+                        label = "Server default",
+                        secondary = "Use this connection's default profile",
+                        selected = lockedIsServerDefault,
+                        onSelect = { onLock(null) },
+                    )
+                    selectableProfiles.forEach { profile ->
+                        ProfileLockOptionRow(
+                            label = AgentDisplay.profileDisplayName(profile)
+                                ?: profile.name.replaceFirstChar { it.uppercase() },
+                            secondary = profile.model.takeIf { it.isNotBlank() },
+                            selected = !lockedIsServerDefault &&
+                                lockedProfileName == profile.name,
+                            onSelect = { onLock(profile) },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        },
+    )
+}
+
+@Composable
+private fun ProfileLockOptionRow(
+    label: String,
+    secondary: String?,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .selectable(
+                selected = selected,
+                role = Role.RadioButton,
+                onClick = onSelect,
+            )
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (secondary != null) {
+                Text(
+                    text = secondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

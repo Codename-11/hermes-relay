@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.util
 
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -134,13 +136,50 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
 }
 
 /**
+ * Map the caller's [classifyError] context tag to a diagnostics category so the
+ * recorded error lands under the right surface in the activity log. Defaults to
+ * [DiagnosticCategory.Api] for unknown/null contexts.
+ */
+private fun categoryForContext(context: String?): DiagnosticCategory = when (context) {
+    "transcribe", "synthesize", "voice_config", "record" -> DiagnosticCategory.Voice
+    "pair" -> DiagnosticCategory.Auth
+    "save_and_test", "media_fetch" -> DiagnosticCategory.Relay
+    "send_message" -> DiagnosticCategory.Api
+    else -> DiagnosticCategory.Api
+}
+
+/**
  * Convert an arbitrary Throwable into a user-facing [HumanError].
+ *
+ * **Side effect:** every classified error is also recorded to [DiagnosticsLog]
+ * (Error severity, clean title + full redacted stacktrace) so the diagnostics
+ * activity log captures it with zero call-site churn. The return value and all
+ * existing copy are unchanged. The flow is one-way — [DiagnosticsLog.recordError]
+ * never re-enters the classifier — so there is no recursion. A null throwable
+ * produces a fallback but is NOT recorded (nothing actually failed).
  *
  * @param context short tag that shapes the title ("transcribe", "synthesize",
  *                "voice_config", "record", "pair", "save_and_test",
  *                "media_fetch", "send_message", or null for generic)
  */
 fun classifyError(t: Throwable?, context: String? = null): HumanError {
+    val human = classifyErrorInternal(t, context)
+    if (t != null) {
+        // Record after classification so the clean title and the raw trace both
+        // reach the log. Defensive: never let logging turn a handled error fatal.
+        runCatching {
+            DiagnosticsLog.recordError(
+                category = categoryForContext(context),
+                title = human.title,
+                detail = human.body,
+                throwable = t,
+            )
+        }
+    }
+    return human
+}
+
+private fun classifyErrorInternal(t: Throwable?, context: String?): HumanError {
     if (t == null) return nullFallback(context)
 
     val msg = t.message.orEmpty().lowercase()

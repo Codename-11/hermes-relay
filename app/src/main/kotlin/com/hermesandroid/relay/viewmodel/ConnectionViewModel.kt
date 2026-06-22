@@ -1052,6 +1052,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun selectProfile(profile: Profile?) = profileController.selectProfile(profile)
 
+    // --- Profile lock (per-connection pin to one profile) ------------------
+    //
+    // When set, the profile pickers/switchers across the app collapse to a
+    // single locked state; only the dedicated Settings control still lists
+    // every profile (to change the lock target or unlock). `lockedProfileName`
+    // is the raw stored token (the SERVER_DEFAULT_PROFILE_KEY sentinel means
+    // "locked to Server default"); `isProfileLocked` is the convenience boolean.
+
+    val lockedProfileName: StateFlow<String?> get() = profileController.lockedProfileName
+
+    val isProfileLocked: StateFlow<Boolean> get() = profileController.isProfileLocked
+
+    /** Lock the active connection to [profile] (null = Server default). */
+    fun lockProfile(profile: Profile?) {
+        viewModelScope.launch { profileController.lockProfile(profile) }
+    }
+
+    /** Remove the active connection's profile lock. */
+    fun unlockProfile() {
+        viewModelScope.launch { profileController.unlockProfile() }
+    }
+
     // --- Paired devices list (GET /sessions) -------------------------------
     //
     // Loaded on-demand from PairedDevicesScreen. Owned by [pairingController];
@@ -1714,9 +1736,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         connectionHandoffClearJob = viewModelScope.launch {
             delay(
                 when {
+                    // Live, in-progress handoff: keep the spinner up as a backstop
+                    // until it resolves to success/error (which then clears fast).
                     active -> 30_000L
+                    // Resolved states auto-dismiss within 5s — anything longer
+                    // reads as a stuck overlay.
                     success -> 5_000L
-                    else -> 12_000L
+                    else -> 5_000L
                 }
             )
             if (_connectionHandoffStatus.value?.updatedAtMs == now) {
@@ -2360,6 +2386,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ProfileSelectionStore is a separate DataStore file from
         // ConnectionStore's EncryptedSharedPrefs.
         profileController.profileSelectionStore.clear(connectionId)
+        profileController.profileLockStore.clear(connectionId)
         profileController.profileSessionStore.clearConnection(connectionId)
         profileController.profileDisplayAliasStore.clearConnection(connectionId)
         profileController.profileIconStore.clearConnection(connectionId)
@@ -2760,6 +2787,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         )
                         connectionStore.removeConnection(duplicate.id)
                         profileController.profileSelectionStore.clear(duplicate.id)
+                        profileController.profileLockStore.clear(duplicate.id)
                         profileController.profileSessionStore.clearConnection(duplicate.id)
                     }
 
@@ -3202,6 +3230,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             profileController.agentProfiles.collect { list ->
                 if (profileController.resolvePendingProfileFrom(list)) {
+                    profileController.refreshLastSessionForProfile(
+                        activeConnectionId.value,
+                        profileController.selectedProfile.value?.name,
+                    )
+                    rebuildChatApiClient()
+                }
+            }
+        }
+
+        // Re-resolve when the per-connection profile lock changes — locking,
+        // unlocking, and the lock flow repointing after a connection switch all
+        // funnel through here so the active profile always reflects the lock
+        // target (or holds null + a banner when it's missing). resolvePending
+        // is lock-aware, so on unlock it falls back to the persisted selection.
+        viewModelScope.launch {
+            profileController.lockedProfileName.collect {
+                if (profileController.resolvePendingProfileFrom(
+                        profileController.agentProfiles.value,
+                    )
+                ) {
                     profileController.refreshLastSessionForProfile(
                         activeConnectionId.value,
                         profileController.selectedProfile.value?.name,
@@ -5157,6 +5205,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.clearApiKey()
             dataManager.resetAppData()
             profileController.profileSelectionStore.clearAll()
+            profileController.profileLockStore.clearAll()
             profileController.profileSessionStore.clearAll()
             _apiServerUrl.value = ""
             _relayUrl.value = ""

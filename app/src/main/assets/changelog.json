@@ -1,0 +1,108 @@
+{
+  "versions": [
+    {
+      "version": "1.2.0",
+      "title": "Make it yours",
+      "date": "2026-06-20",
+      "sections": [
+        {
+          "header": "Personalize",
+          "bullets": [
+            "Eight app themes in Settings → Appearance — the Hermes Relay brand plus ports of the Nous Hermes looks (Teal, Nous Blue, Midnight, Ember, Mono, Cyberpunk, Rosé), with light/dark.",
+            "Swap the agent orb for an animated pet that reacts to what the agent is doing — add, preview, and tune pets right in the app, or generate one from sprite art with the AI authoring kit.",
+            "Reskin the sphere, and give each agent profile its own icon."
+          ]
+        },
+        {
+          "header": "See what's happening",
+          "bullets": [
+            "The chat status strip names the actual streaming path (Gateway, Sessions, Completions, Runs), with a basic→best tier ladder in Chat Settings.",
+            "Tap the context meter for a \"What the agent sees\" sheet — the exact extra context prepended to your next turn.",
+            "Voice and Realtime turns are badged in the scrollback."
+          ]
+        },
+        {
+          "header": "Privacy",
+          "bullets": [
+            "When paired to the relay, the agent can mark private media and the phone blurs it per your setting — sensitivity stays model-emitted."
+          ]
+        },
+        {
+          "header": "Faster & more reliable",
+          "bullets": [
+            "Cold start is about 3× faster, and model/personality/approvals load honestly instead of showing a maybe-wrong value.",
+            "In-app crash reporting offers a one-tap, pre-filled bug report.",
+            "QR pairing no longer force-closes on unusual cameras (foldables); fixed crashes opening server images and PDFs; in-chat model picks now apply."
+          ]
+        },
+        {
+          "header": "Voice & terminal",
+          "bullets": [
+            "Enhanced voice control for Gemini and xAI providers.",
+            "Leaner terminal with TUI-correct input and an isolated, tuned tmux."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "title": "Release plumbing & polish",
+      "date": "2026-06-16",
+      "sections": [
+        {
+          "header": "New",
+          "bullets": [
+            "Automated Play Console upload when a release tag ships (a human still starts the rollout).",
+            "/relay slash commands — status, devices, and pair from any platform — plus a relay-status badge in the dashboard header.",
+            "The relay plugin prompts for its optional voice-provider keys on install, and a tools-only native install path."
+          ]
+        },
+        {
+          "header": "Improved",
+          "bullets": [
+            "Settings overhaul: status pills are now exception-only, Power tools shows a single Plugin active/required/offline badge, and Connections moved to the top.",
+            "Release names and notes are now split per surface (Android, plugin, CLI)."
+          ]
+        },
+        {
+          "header": "Fixed",
+          "bullets": [
+            "No more force-close on connect when the stored credential keyset was corrupt — it now heals in place.",
+            "The installer works on uv-managed Hermes hosts, and the dashboard relay panel buttons are readable again."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "title": "Stable launch",
+      "date": "2026-06-14",
+      "sections": [
+        {
+          "header": "Gateway chat with live thinking",
+          "bullets": [
+            "Chat can ride the upstream dashboard gateway — the only vanilla-upstream path that streams reasoning live, so the Thinking block and sphere light up during generation. \"Auto\" prefers it and falls back to the SSE endpoints per turn.",
+            "Desktop parity: native image/PDF/file attachments, mid-turn steering, edit & resend, approval/clarify/sudo/secret cards, live subagent lanes, a context-window meter, server slash commands, and turn-complete notifications.",
+            "Warm-start and an opt-in Keep connected in background toggle so long-backgrounded conversations resume instantly."
+          ]
+        },
+        {
+          "header": "Agents, Manage & media",
+          "bullets": [
+            "Switch agent profiles per conversation — model, SOUL, personality, and skills — with the selection bound to the session, never changing the server default for other clients.",
+            "Manage parity with the desktop dashboard: change models, manage provider keys, edit profiles and SOUL.md, and browse/install skills.",
+            "Open and save chat images and attachments — full-screen viewer with pinch-zoom, plus an Open/Share/Save menu."
+          ]
+        },
+        {
+          "header": "Standard path is first-class",
+          "bullets": [
+            "Chat, Manage, and voice all work against an unmodified upstream Hermes agent; the relay plugin is now purely additive.",
+            "Seamless connection UX — LAN↔Tailscale handoffs and reconnects no longer reload the chat, and status shows as in-theme slide-down toasts.",
+            "Persistent Realtime Agent voice that keeps one session across turns, with long runs promoted to tracked background tasks."
+          ]
+        }
+      ]
+    }
+  ]
+}
