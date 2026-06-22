@@ -1,5 +1,9 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-21 — Released android-v1.2.1
+
+Cut the Android 1.2.1 release. Version source (`appVersionName 1.2.1` / `appVersionCode 15`) was already on `dev`; release-prep promoted `CHANGELOG.md` `[Unreleased]` → `[1.2.1]` (**Android-only** — the Desktop-CLI entries and the relay `session_not_found` fix stay under `[Unreleased]` for their own `cli-v*`/`plugin-v*` cuts) and rewrote `RELEASE_NOTES.md`, in-app `whats_new.txt`, the Play release notes, and the Play listing copy, all scrubbed for public distribution. Release PR #102 (`dev` → `main`, `--no-ff`) auto-merged on green CI (merge `39cafc2`); `android-v1.2.1` tagged from the `main` tip triggers `release-android.yml` (validate → signed APK/AAB + checksums + GitHub Release; Play Production *draft* when the service-account secret is set, operator clicks Start rollout). Headline 1.2.1 changes: profile lock, in-app changelog, diagnostics detail + Copy/Share/Create-issue, a dismissable update-available nudge, plus voice/realtime fixes (override applies in Auto, realtime Stop halts playback, steadier hold-to-talk, readable overlay, faster connection-overlay dismiss) and a debug-only Developer-options test harness. `RELEASE.md` §2 gained a per-surface CHANGELOG-split clarification.
+
 ## 2026-06-21 — Realtime Agent API Server session handoff (issue #101)
 
 **Why.** The Realtime Agent's brokered Hermes path (`hermes_run_task`) could fail two ways when reaching back to the API Server. (1) A caller-supplied `chat_session_id` that originated in a different session namespace (the gateway/client session store) was passed straight to `POST /api/sessions/{id}/chat/stream`, which the API Server rejects with `404 session_not_found`. (2) `_create_session()` only read a flat `id`/`session_id`, but the current API Server returns the created session nested under `{"object":"hermes.session","session":{"id":"api_…"}}` — so creation raised "Hermes API created a session without an id."
