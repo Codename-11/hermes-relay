@@ -261,6 +261,23 @@ data class MessageItem(
 //   error               — { message (string), error }
 //   done                — { session_id, run_id, state: "final" }
 
+
+@Serializable
+data class RelayStreamEventEnvelope(
+    val type: String = "stream.event",
+    @SerialName("schema_version") val schemaVersion: Int = 1,
+    @SerialName("session_id")
+    @Serializable(with = FlexibleIdSerializer::class)
+    val sessionId: String? = null,
+    @SerialName("run_id")
+    @Serializable(with = FlexibleIdSerializer::class)
+    val runId: String? = null,
+    val seq: Int? = null,
+    val event: String,
+    val ts: String? = null,
+    val payload: JsonObject = kotlinx.serialization.json.buildJsonObject { },
+)
+
 @Serializable
 data class HermesSseEvent(
     // Event type — may come as "type" or "event" depending on server version

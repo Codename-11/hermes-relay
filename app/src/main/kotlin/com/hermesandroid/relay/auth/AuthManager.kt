@@ -22,6 +22,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -703,6 +704,18 @@ class AuthManager(
     }
 
     /**
+     * Capability negotiation advertised in the first system/auth envelope.
+     * Older relays ignore this object; newer relays use it to send versioned
+     * `chat:stream.event` payloads instead of flattening Hermes SSE into text.
+     */
+    private fun JsonObjectBuilder.putRelayClientSupports() {
+        put("supports", buildJsonObject {
+            put("typed_stream_events", true)
+            put("event_schema_version", 1)
+        })
+    }
+
+    /**
      * Send auth envelope when connection is established.
      *
      * Pairing-code precedence when unpaired:
@@ -737,6 +750,7 @@ class AuthManager(
                         }
                         put("device_id", deviceId)
                         put("device_name", android.os.Build.MODEL)
+                        putRelayClientSupports()
                     }
                 }
                 else -> {
@@ -752,6 +766,7 @@ class AuthManager(
                         put("pairing_code", codeToSend)
                         put("device_id", deviceId)
                         put("device_name", android.os.Build.MODEL)
+                        putRelayClientSupports()
                         pendingTtlSeconds?.let { put("ttl_seconds", it) }
                         pendingGrants?.let { grants ->
                             val obj = buildJsonObject {

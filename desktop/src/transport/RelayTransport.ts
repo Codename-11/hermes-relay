@@ -482,6 +482,11 @@ export class RelayTransport extends EventEmitter implements Transport {
       payload.ttl_seconds = this.cfg.ttlSeconds
     }
 
+    payload.supports = {
+      typed_stream_events: true,
+      event_schema_version: 1
+    }
+
     this.sendEnvelope('system', 'auth', payload)
   }
 
