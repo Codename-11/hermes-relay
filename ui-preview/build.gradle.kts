@@ -17,7 +17,7 @@ plugins {
     kotlin("jvm")
     // Compose compiler — version inherited from the root plugins {} block.
     id("org.jetbrains.kotlin.plugin.compose")
-    id("org.jetbrains.compose") version "1.10.3"
+    id("org.jetbrains.compose") version "1.11.1"
 }
 
 kotlin {
