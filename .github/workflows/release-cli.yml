@@ -147,10 +147,13 @@ jobs:
       - name: Smoke-test tray exe launch
         shell: pwsh
         run: |
-          $home = Join-Path $env:RUNNER_TEMP 'hermes-tray-smoke-home'
-          New-Item -ItemType Directory -Force -Path $home | Out-Null
-          $env:USERPROFILE = $home
-          $env:HOME = $home
+          # $HOME is a read-only automatic variable in PowerShell (names are
+          # case-insensitive), so use a distinct scratch name; only the
+          # $env:HOME / $env:USERPROFILE environment vars are writable.
+          $smokeHome = Join-Path $env:RUNNER_TEMP 'hermes-tray-smoke-home'
+          New-Item -ItemType Directory -Force -Path $smokeHome | Out-Null
+          $env:USERPROFILE = $smokeHome
+          $env:HOME = $smokeHome
           $proc = Start-Process -FilePath tray/src-tauri/target/release/hermes-relay-desktop.exe -WindowStyle Hidden -PassThru
           Start-Sleep -Seconds 5
           if ($proc.HasExited) { throw "tray app exited early with code $($proc.ExitCode)" }
