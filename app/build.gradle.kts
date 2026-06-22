@@ -320,6 +320,6 @@ dependencies {
     testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.43.1")
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.compose.ui.test.manifest)
-    testImplementation("androidx.test.ext:junit:1.2.1")
+    testImplementation("androidx.test.ext:junit:1.3.0")
 }
 
