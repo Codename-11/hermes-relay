@@ -3,7 +3,7 @@
   "label": "Relay",
   "description": "Paired devices, bridge activity, media inspection, and remote access for hermes-relay",
   "icon": "Activity",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "tab": {
     "path": "/relay",
     "position": "after:skills"

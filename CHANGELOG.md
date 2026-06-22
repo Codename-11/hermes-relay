@@ -20,10 +20,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 
-### Fixed
-
-- **Realtime Agent: brokered Hermes turns no longer fail with `session_not_found`.** When the Realtime Agent reached back to Hermes for context or tool work, it could hand the API Server a session id that belonged to a different session namespace (the gateway/client store), which the API Server rejected. The broker now mints a valid API Server session and retries the turn once when that happens, and reuses an existing API Server session when the id is already valid. It also reads the API Server's current nested `{"session": {"id": …}}` create-session response (previously only the legacy flat shape), so session creation no longer errored with "created a session without an id." Provider-native turns are unaffected.
-
 ## [1.2.1] - 2026-06-21
 
 ### Added
@@ -41,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Voice override applies in Auto mode.** A chosen per-profile/enhanced voice now takes effect when the engine is on Auto with the relay paired — previously only "Relay" mode applied it. Per-profile voice settings are also namespaced by connection.
 - **Realtime voice "Stop" stops immediately.** Tapping Stop while the agent is speaking now halts realtime playback at once; over-chatty spoken status is throttled; and long background tasks no longer time out the turn (relay keeps the session alive while the task runs).
+- **Realtime Agent: brokered Hermes turns no longer fail (relay).** When the Realtime Agent reached back to Hermes for context or tool work, a session-namespace mismatch could make the API Server reject the turn with `session_not_found`. The relay now mints or reuses a valid API Server session and retries once, and reads the API Server's current nested create-session response. Provider-native turns are unaffected.
 - **Hold-to-talk no longer releases on accidental drift.** The mic button holds until the finger genuinely lifts, instead of cancelling when it drifts off the button.
 - **Voice overlay is readable.** The voice dropdown panel and its status bubbles are opaque (no bleed-through), and the Focus/Overlay/Exit labels no longer wrap to two lines; invalid engine/route combinations are no longer selectable.
 - **Connection status overlay clears faster.** Resolved (error/warning) connection toasts auto-dismiss within ~5s instead of lingering.
