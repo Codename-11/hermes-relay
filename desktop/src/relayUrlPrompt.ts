@@ -21,11 +21,38 @@
 import { createInterface } from 'node:readline/promises'
 
 import { getActiveDesktopRelayUrl } from './desktopConfig.js'
+import { renderLogo } from './lib/logo.js'
 import { listSessions } from './remoteSessions.js'
 
 const URL_RE = /^wss?:\/\/\S+$/
 
 export const isValidRelayUrl = (raw: string): boolean => URL_RE.test(raw.trim())
+
+/** Default relay WSS port — matches the server's listen port. */
+export const DEFAULT_RELAY_PORT = 8767
+
+/**
+ * Fill in the default relay port when the user typed a bare host. Scoped to
+ * `ws://` ONLY: a `wss://` URL is almost always a reverse-proxy / Tailscale
+ * Serve front on the implied :443, so appending :8767 there would break it.
+ * Plain `ws://host` is the LAN-direct case that wants :8767. Returns `added`
+ * so the caller can surface the substitution instead of doing it silently.
+ */
+export function normalizeRelayUrl(raw: string): { url: string; added: boolean } {
+  const trimmed = raw.trim()
+  try {
+    const u = new URL(trimmed)
+    if (!u.port && u.protocol === 'ws:') {
+      u.port = String(DEFAULT_RELAY_PORT)
+      // URL.toString() adds a trailing slash for empty paths — strip it so the
+      // stored form stays tidy (ws://host:8767, not ws://host:8767/).
+      return { url: u.toString().replace(/\/$/, ''), added: true }
+    }
+    return { url: trimmed, added: false }
+  } catch {
+    return { url: trimmed, added: false }
+  }
+}
 
 export interface PromptRelayUrlOptions {
   /** Max attempts before we give up. Default 3. */
@@ -77,7 +104,11 @@ export async function promptForRelayUrl(
       }
 
       if (isValidRelayUrl(trimmed)) {
-        return trimmed
+        const norm = normalizeRelayUrl(trimmed)
+        if (norm.added) {
+          process.stderr.write(`  (no port given — using :${DEFAULT_RELAY_PORT})\n`)
+        }
+        return norm.url
       }
 
       process.stderr.write(
@@ -162,9 +193,9 @@ export async function resolveFirstRunUrl(
   // Case (4): zero stored sessions — first-run path. Show a welcoming banner
   // before the URL prompt so a brand-new user knows they're in the right place.
   if (urls.length === 0) {
+    process.stderr.write('\n' + renderLogo())
     const banner =
-      opts.banner ??
-      "Welcome to hermes-relay. No stored sessions yet — let's pair with a relay server."
+      opts.banner ?? "No stored sessions yet — let's pair with a relay server."
     process.stderr.write(`\n${banner}\n`)
     return promptForRelayUrl()
   }

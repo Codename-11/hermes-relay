@@ -209,9 +209,11 @@ If `connected: true` but the agent still says the tool is missing:
 
 ## Daemon mode — tools without an open shell
 
-`hermes-relay daemon` runs the WSS connection + tool router headless, so the agent can reach your machine while you're in another window or VS Code or off making coffee. See [Subcommands → daemon](./subcommands.md#hermes-relay-daemon) for full lifecycle/log details.
+`hermes-relay daemon` runs the WSS connection + tool router headless, so the agent can reach your machine while you're in another window or VS Code or off making coffee. Use `hermes-relay daemon start` to run it in the **background** (no console window, survives closing the terminal), `daemon status` to check it, and `daemon stop` to stop it. See [Subcommands → daemon](./subcommands.md#hermes-relay-daemon) for full lifecycle/log details.
 
-Service installers (Windows `sc.exe` / systemd user unit / launchd plist) ship with v1.0; until then, run from a terminal tab or wrap with your service manager of choice. Tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental).
+Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log.
+
+`daemon start` covers "background, this session." True auto-start across reboots/logout (Windows `sc.exe` service / systemd user unit / launchd agent) is still v1.0 work — until then, wrap foreground `hermes-relay daemon` with your service manager of choice. Tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental).
 
 ## Related
 

@@ -18,7 +18,21 @@
 import type { ParsedArgs } from '../cli.js'
 import { captureClipboardImage } from '../chatAttach.js'
 import { getActiveDesktopRelayUrl } from '../desktopConfig.js'
+import { theme as makeTheme } from '../lib/theme.js'
+import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { getSession, listSessions } from '../remoteSessions.js'
+
+const PASTE_USAGE: UsageSpec = {
+  name: 'paste',
+  summary: 'stage the local clipboard image for /paste (or Alt+V) in the Hermes TUI',
+  usage: ['paste [--remote <url>]'],
+  flags: [
+    { flag: '--remote <url>', desc: 'Relay to stage into (default: stored/active)' },
+    { flag: '--json', desc: 'Machine-readable result' },
+    { flag: '--quiet', desc: 'Suppress the success line' }
+  ],
+  examples: ['hermes-relay paste']
+}
 
 function wsToHttp(url: string): string {
   const trimmed = url.trim()
@@ -140,6 +154,11 @@ export async function stageClipboardImageToInbox(
 }
 
 export async function pasteCommand(args: ParsedArgs): Promise<number> {
+  if (args.flags.help) {
+    printUsage(PASTE_USAGE)
+    return 0
+  }
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const json = !!args.flags.json
   const quiet = !!args.flags.quiet
 
@@ -222,8 +241,8 @@ export async function pasteCommand(args: ParsedArgs): Promise<number> {
       }) + '\n'
     )
   } else if (!quiet) {
-    process.stdout.write(`✓ Image queued for /paste in TUI (${dims}, ${sizeKb} KB)\n`)
-    process.stdout.write(`  Type /paste (or Alt+V) in the TUI to attach to next message.\n`)
+    process.stdout.write(t.okLine(`Image queued for /paste in TUI (${dims}, ${sizeKb} KB)`) + '\n')
+    process.stdout.write(t.muted('  Type /paste (or Alt+V) in the TUI to attach to next message.') + '\n')
   }
   return 0
 }

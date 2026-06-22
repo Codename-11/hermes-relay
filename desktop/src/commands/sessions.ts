@@ -1,4 +1,7 @@
 import type { ParsedArgs } from '../cli.js'
+import { renderTable } from '../lib/table.js'
+import { theme as makeTheme } from '../lib/theme.js'
+import { printUsage, unknownSubcommand, type UsageSpec } from '../lib/usage.js'
 import {
   clearActiveTerminalSession,
   getActiveTerminalSession
@@ -6,6 +9,32 @@ import {
 import { connectAndAuth, shellCommand } from './shell.js'
 
 const COMMAND_TIMEOUT_MS = 15_000
+
+const SESSIONS_USAGE: UsageSpec = {
+  name: 'sessions',
+  summary: 'list / resume / create / kill the relay-side Hermes TUI tmux sessions',
+  usage: [
+    'sessions [list]',
+    'sessions resume [name]',
+    'sessions new [name]',
+    'sessions kill <name>'
+  ],
+  subcommands: [
+    { verb: 'list', desc: 'List live TUI sessions (default)' },
+    { verb: 'resume [name]', desc: 'Attach a shell (active/default if name omitted)' },
+    { verb: 'new [name]', desc: 'Start a fresh session and attach' },
+    { verb: 'kill <name>', desc: 'Terminate a tmux session' }
+  ],
+  flags: [
+    { flag: '--remote <url>', desc: 'Relay to target' },
+    { flag: '--json', desc: 'Machine-readable list output' }
+  ],
+  examples: [
+    'hermes-relay sessions',
+    'hermes-relay sessions resume default',
+    'hermes-relay sessions kill scratch'
+  ]
+}
 
 interface TerminalSessionInfo {
   name: string
@@ -120,26 +149,42 @@ async function listTerminalSessions(args: ParsedArgs): Promise<number> {
       return 0
     }
 
+    const t = makeTheme({ noColor: !!args.flags['no-color'] })
     if (sessions.length === 0) {
-      process.stdout.write(`No Hermes TUI sessions on ${url}.\n`)
-      process.stdout.write('Run `hermes-relay` to start the default session.\n')
+      process.stdout.write(t.muted(`No Hermes TUI sessions on ${url}.`) + '\n')
+      process.stdout.write(t.muted('Run `hermes-relay` to start the default session.') + '\n')
       return 0
     }
 
-    process.stdout.write(`Hermes TUI sessions on ${url}:\n\n`)
-    for (const session of sessions) {
-      const activeMark = active?.name === session.name ? ' * active' : ''
+    const rows = sessions.map((session) => {
+      const activeMark = active?.name === session.name ? ` ${t.muted('(active)')}` : ''
       const attached = session.attached ?? (session.live ? 1 : 0)
-      process.stdout.write(`  ${session.name}${activeMark}\n`)
-      process.stdout.write(`      tmux:     ${session.tmux_name ?? `hermes-${session.name}`}\n`)
-      process.stdout.write(`      attached: ${attached}\n`)
-      if (session.windows !== undefined) {
-        process.stdout.write(`      windows:  ${session.windows}\n`)
-      }
-      process.stdout.write(`      created:  ${formatCreated(session.created_at)}\n\n`)
-    }
+      return [
+        `${session.name}${activeMark}`,
+        session.tmux_name ?? `hermes-${session.name}`,
+        String(attached),
+        session.windows !== undefined ? String(session.windows) : '—',
+        formatCreated(session.created_at)
+      ]
+    })
+    process.stdout.write(t.bold(`Hermes TUI sessions on ${url} (${sessions.length})`) + '\n\n')
     process.stdout.write(
-      '  Resume with `hermes-relay sessions resume <name>`, or run bare `hermes-relay` for the active/default session.\n'
+      renderTable(
+        [
+          { header: 'NAME' },
+          { header: 'TMUX' },
+          { header: 'ATTACHED', align: 'right' },
+          { header: 'WINDOWS', align: 'right' },
+          { header: 'CREATED' }
+        ],
+        rows,
+        { theme: t }
+      ) + '\n'
+    )
+    process.stdout.write(
+      '\n' +
+        t.muted('resume: hermes-relay sessions resume <name>    or run bare `hermes-relay` for the active session.') +
+        '\n'
     )
     return 0
   } finally {
@@ -174,6 +219,10 @@ async function killTerminalSession(args: ParsedArgs): Promise<number> {
 }
 
 export async function sessionsCommand(args: ParsedArgs): Promise<number> {
+  if (args.flags.help) {
+    printUsage(SESSIONS_USAGE)
+    return 0
+  }
   const sub = args.positional[0] ?? 'list'
 
   if (sub === 'list') {
@@ -213,6 +262,5 @@ export async function sessionsCommand(args: ParsedArgs): Promise<number> {
     return killTerminalSession(args)
   }
 
-  process.stderr.write('unknown sessions sub-verb. Try: list | resume [name] | new [name] | kill <name>\n')
-  return 2
+  return unknownSubcommand(SESSIONS_USAGE, sub)
 }

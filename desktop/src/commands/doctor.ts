@@ -19,11 +19,21 @@ import { fileURLToPath } from 'node:url'
 
 import { humanExpiry } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
+import { theme as makeTheme, type Theme } from '../lib/theme.js'
+import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { listSessions } from '../remoteSessions.js'
 import { VERSION } from '../version.js'
 import { detectWorkspaceContext, type WorkspaceContext } from '../workspaceContext.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+const DOCTOR_USAGE: UsageSpec = {
+  name: 'doctor',
+  summary: 'local diagnostic report: version, binary path, PATH, stored sessions, daemon, workspace',
+  usage: ['doctor [--json]'],
+  flags: [{ flag: '--json', desc: 'Machine-readable report (safe to paste — tokens omitted)' }],
+  examples: ['hermes-relay doctor', 'hermes-relay doctor --json']
+}
 
 function readVersion(): string {
   if (VERSION) {
@@ -194,19 +204,19 @@ async function gather(): Promise<DoctorReport> {
   }
 }
 
-function renderHuman(report: DoctorReport): string {
+function renderHuman(report: DoctorReport, t: Theme): string {
   const lines: string[] = []
   const hints: string[] = []
 
-  lines.push('hermes-relay doctor')
-  lines.push(`  version:       ${report.version}`)
-  lines.push(`  binary:        ${report.binary_path}`)
-  lines.push(`  node:          ${report.node_version} (${report.platform}/${report.arch})`)
+  lines.push(t.bold('hermes-relay doctor'))
+  lines.push(`  ${t.muted('version:      ')} ${report.version}`)
+  lines.push(`  ${t.muted('binary:       ')} ${report.binary_path}`)
+  lines.push(`  ${t.muted('node:         ')} ${report.node_version} (${report.platform}/${report.arch})`)
 
   if (report.on_path) {
-    lines.push(`  on PATH:       yes`)
+    lines.push(`  ${t.muted('on PATH:      ')} ${t.ok('yes')}`)
   } else {
-    lines.push(`!! on PATH:       no  (install_dir: ${report.install_dir})`)
+    lines.push(`  ${t.warnLine(`on PATH: ${t.warn('no')}  (install_dir: ${report.install_dir})`)}`)
     hints.push(
       `add ${report.install_dir} to your PATH, or re-run the installer from desktop/scripts/`
     )
@@ -214,9 +224,9 @@ function renderHuman(report: DoctorReport): string {
 
   if (report.sessions_file_exists) {
     const sz = report.sessions_file_size !== null ? `  (${humanSize(report.sessions_file_size)})` : ''
-    lines.push(`  sessions file: ${report.sessions_file}${sz}`)
+    lines.push(`  ${t.muted('sessions file:')} ${report.sessions_file}${sz}`)
   } else {
-    lines.push(`!! sessions file: ${report.sessions_file}  (missing)`)
+    lines.push(`  ${t.warnLine(`sessions file: ${report.sessions_file}  (missing)`)}`)
     hints.push('run `hermes-relay pair --remote <url>` to create it')
   }
 
@@ -277,10 +287,15 @@ function renderHuman(report: DoctorReport): string {
     lines.push(`    shell:       ${ws.active_shell}`)
   }
 
+  // doctor is intentionally zero-network — point at the live-relay checks for
+  // anything that needs to actually talk to the server.
+  lines.push('')
+  lines.push(t.muted('  live relay checks: hermes-relay relay info | relay context | voice'))
+
   if (hints.length > 0) {
     lines.push('')
     for (const hint of hints) {
-      lines.push(`hint: ${hint}`)
+      lines.push(t.warn(`hint: ${hint}`))
     }
   }
 
@@ -288,6 +303,11 @@ function renderHuman(report: DoctorReport): string {
 }
 
 export async function doctorCommand(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (args.flags.help) {
+    printUsage(DOCTOR_USAGE, t)
+    return 0
+  }
   const report = await gather()
 
   if (args.flags.json) {
@@ -295,7 +315,7 @@ export async function doctorCommand(args: ParsedArgs): Promise<number> {
     return 0
   }
 
-  process.stdout.write(renderHuman(report))
+  process.stdout.write(renderHuman(report, t))
   return 0
 }
 

@@ -25,6 +25,7 @@ import * as os from 'node:os'
 
 import type { RelayTransport } from '../transport/RelayTransport.js'
 
+import { appendAudit, previewArgs, summarizeResult } from '../lib/auditLog.js'
 import { VERSION } from '../version.js'
 import { getComputerGrantSummary, getComputerUseRuntimeSummary } from './computerGrants.js'
 
@@ -297,6 +298,15 @@ export class DesktopToolRouter {
       // the outcome as the canonical result — the handler decided the
       // work was completable.
       this.sendResponse({ request_id, ok: true, result })
+      // Local audit trail — fire-and-forget so logging never delays the reply.
+      void appendAudit({
+        ts: Date.now(),
+        tool,
+        ok: true,
+        request_id,
+        args_preview: previewArgs(args),
+        summary: summarizeResult(result)
+      })
     } catch (e) {
       clearTimeout(timeoutTimer)
       // Distinguish aborts (timeout or transport teardown) from genuine
@@ -313,6 +323,15 @@ export class DesktopToolRouter {
       // grep'ing through journal logs.
       this.lastError = { message, tool, ts: Date.now() }
       this.sendResponse({ request_id, ok: false, error: message })
+      void appendAudit({
+        ts: Date.now(),
+        tool,
+        ok: false,
+        aborted,
+        request_id,
+        args_preview: previewArgs(args),
+        error: message
+      })
     }
   }
 

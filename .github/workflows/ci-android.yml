@@ -6,6 +6,11 @@
 # Pipeline: lint, build, and focused tests run concurrently. PRs build debug
 # APKs before merge; dev pushes keep lint/tests only to avoid duplicate
 # post-merge packaging. Main pushes keep APK artifacts.
+#
+# A release-build smoke (bundleRelease assembleRelease) runs on dev/main pushes
+# and on the dev→main release PR so release-only breakage (R8/minify rules,
+# resource shrinking, bundletool OOM) is caught BEFORE the android-v* tag,
+# instead of mid-release. It is debug-signed, so it needs no signing secrets.
 
 name: CI — Android
 
@@ -152,3 +157,38 @@ jobs:
           name: test-reports
           path: app/build/reports/tests/
           retention-days: 7
+
+  # ──────────────────────────────────────────────
+  # Release build smoke — exercises the release variant the android-v* tag
+  # build runs (./gradlew bundleRelease assembleRelease, both flavors), so
+  # release-only breakage (R8/minify, resource shrinking, bundletool OOM) is
+  # caught BEFORE the tag instead of mid-release. Debug-signed — no secrets,
+  # so it also runs on fork PRs. Runs on dev/main pushes (early signal after
+  # each merge) and on the dev→main release PR (hard pre-tag gate); skipped on
+  # dev-targeted feature PRs to avoid re-running a ~12-min build per iteration.
+  # ──────────────────────────────────────────────
+  release-smoke:
+    name: Release build smoke (Android)
+    if: ${{ github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+      # Mirrors release-android.yml's build step. No keystore is provided here,
+      # so app/build.gradle.kts falls back to debug signing — fine for a build
+      # smoke; the goal is to exercise the build, not to produce a shippable AAB.
+      - name: Build release bundles + APKs (both flavors, debug-signed)
+        run: ./gradlew bundleRelease assembleRelease --console=plain

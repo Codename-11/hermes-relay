@@ -3,6 +3,7 @@
 // lands in hermes_cli/main.py — the proper home for a full CLI") but with
 // subcommands because a thin client has actual verbs (pair, status, tools).
 
+import { auditCommand } from './commands/audit.js'
 import { chatCommand } from './commands/chat.js'
 import { chatWorkerCommand } from './commands/chatWorker.js'
 import { daemonCommand } from './commands/daemon.js'
@@ -11,6 +12,7 @@ import { doctorCommand } from './commands/doctor.js'
 import { pairCommand } from './commands/pair.js'
 import { pasteCommand } from './commands/paste.js'
 import { pluginsCommand } from './commands/plugins.js'
+import { relayCommand } from './commands/relay.js'
 import { sessionsCommand } from './commands/sessions.js'
 import { shellCommand } from './commands/shell.js'
 import { statusCommand } from './commands/status.js'
@@ -18,6 +20,8 @@ import { toolsCommand } from './commands/tools.js'
 import { updateCommand } from './commands/update.js'
 import { voiceCommand } from './commands/voice.js'
 import { workspaceCommand } from './commands/workspace.js'
+import { renderLogo } from './lib/logo.js'
+import { theme as makeTheme } from './lib/theme.js'
 import { finalizePendingUpdate } from './updater.js'
 import { VERSION } from './version.js'
 
@@ -57,6 +61,8 @@ const BOOLEAN_FLAGS = new Set([
   'auto-grant-tools',
   'log-human',
   'log-json',
+  'status',
+  'detach',
   'allow-tools',
   'allow-computer-use',
   'experimental-computer-use',
@@ -126,6 +132,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 const KNOWN_COMMANDS = new Set([
+  'audit',
   'chat',
   'chat-worker',
   'daemon',
@@ -133,6 +140,7 @@ const KNOWN_COMMANDS = new Set([
   'doctor',
   'paste',
   'pair',
+  'relay',
   'sessions',
   'shell',
   'plugins',
@@ -156,13 +164,16 @@ Usage:
   hermes-relay sessions            List / resume / create / kill TUI tmux sessions
   hermes-relay status              Show stored sessions + grants + TTL
   hermes-relay tools               List tools available on the server
+  hermes-relay audit               Show what the agent ran on this machine (desktop tools)
   hermes-relay devices             List / revoke / extend server-side paired devices
-  hermes-relay daemon              Run headless — expose desktop tools even when no shell is open
+  hermes-relay relay               Inspect the relay server (info / security / injected context)
+  hermes-relay daemon [start|stop|status]   Headless tool router — 'start' runs it in the background
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
   hermes-relay update              Check for and install the latest cli-v* release
   hermes-relay voice               Show native Hermes voice config (STT/TTS/realtime providers)
   hermes-relay voice mode          Push-to-talk in a browser tab (proxied through this CLI)
   hermes-relay workspace           Print local workspace context (cwd, git, editor, shell) — --json for scripting
+  hermes-relay logo                Print the Hermes Relay banner
   hermes-relay help                Show this help
   hermes-relay --version           Print version and exit
 
@@ -184,8 +195,14 @@ Flags:
   --no-tools             chat/shell: disable local tool handlers (fs, exec, search)
   --experimental-computer-use
                          chat/shell/daemon: advertise experimental desktop_computer_*
-                         tools after normal desktop-tool consent. Host input still
-                         requires task grant plus visible local approval.
+                         tools (screenshots + mouse/keyboard). Three-stage safety:
+                           1. observe — desktop_computer_screenshot/status need only
+                              the normal desktop-tool consent (no extra approval).
+                           2. grant  — desktop_computer_grant_request(mode=assist|control)
+                              pops a visible local prompt you approve (or a file-bridge
+                              in headless via HERMES_RELAY_GRANT_BRIDGE_DIR).
+                           3. act    — desktop_computer_action runs only while a grant is
+                              live (default 15 min); desktop_computer_cancel ends it.
                          Env: HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1
   --no-computer-use      Disable computer-use advertisement even if env enabled.
   --grant-tools          pair: prompt for desktop-tool consent during pairing (TTY required;
@@ -253,8 +270,19 @@ export async function main(argv = process.argv): Promise<number> {
     return 0
   }
 
-  if (args.flags.help || args.command === 'help') {
-    process.stdout.write(HELP)
+  const noColor = !!args.flags['no-color']
+
+  // Global help only when there is no command (bare `--help` / `help`). When a
+  // command is present, `--help` falls through to it so each subcommand can
+  // print its own usage (e.g. `hermes-relay devices --help`).
+  if ((args.flags.help && !args.command) || args.command === 'help') {
+    process.stdout.write(renderLogo({ theme: makeTheme({ noColor }), subtitle: false }) + '\n' + HELP)
+    return 0
+  }
+
+  // Explicit on-demand logo (handy for screenshots / docs).
+  if (args.command === 'logo' || args.command === 'banner') {
+    process.stdout.write(renderLogo({ theme: makeTheme({ noColor }) }))
     return 0
   }
 
@@ -278,6 +306,8 @@ export async function main(argv = process.argv): Promise<number> {
   }
 
   switch (args.command) {
+    case 'audit':
+      return auditCommand(args)
     case 'chat':
       return chatCommand(args)
     case 'chat-worker':
@@ -294,6 +324,8 @@ export async function main(argv = process.argv): Promise<number> {
       return pasteCommand(args)
     case 'plugins':
       return pluginsCommand(args)
+    case 'relay':
+      return relayCommand(args)
     case 'sessions':
       return sessionsCommand(args)
     case 'shell':

@@ -387,6 +387,63 @@ Toolsets: 18 (12 enabled)
 
 Pass `--verbose` to list every tool inside each toolset.
 
+### Audit — what the agent ran on this machine
+
+```sh
+hermes-relay audit            # last 50 desktop-tool calls
+hermes-relay audit --limit 20
+hermes-relay audit --json
+```
+
+```
+Desktop-tool activity (4 most recent)
+
+  WHEN     TOOL                STATUS   DETAIL
+  12s ago  desktop_read_file   ● ok     path=C:\src\app.ts
+  10s ago  desktop_terminal    ● ok     exit 0
+   8s ago  desktop_write_file  ✗ error  EACCES: permission denied
+   2s ago  desktop_search      ● ok     pattern=TODO
+```
+
+Read from a local log (`~/.hermes/desktop-audit.jsonl`) the tool router writes whenever the agent runs a `desktop_*` tool — no network, no auth, works whether the relay is local or remote.
+
+### Relay — inspect the server
+
+```sh
+hermes-relay relay context     # what context the relay injects into the agent's prompt
+hermes-relay relay info        # version, uptime, sessions (run on the relay host)
+hermes-relay relay security    # runtime auth toggles (run on the relay host)
+```
+
+`relay context` works from any paired machine; `relay info` / `relay security` are loopback-only (for operators on the relay host) and say so if reached remotely.
+
+### Daemon — background tool router
+
+```sh
+hermes-relay daemon start      # run in the background (no console window)
+hermes-relay daemon status     # state + uptime of the running daemon
+hermes-relay daemon stop       # stop it
+hermes-relay daemon            # run in the FOREGROUND (current console)
+```
+
+`daemon start` detaches the headless tool router so it keeps running after you close the terminal — the agent can reach your machine any time, not just while a shell is open. It logs to `~/.hermes/daemon.log`. Bare `hermes-relay daemon` still runs in the foreground (handy for watching logs live or running under your own supervisor).
+
+```
+$ hermes-relay daemon status
+hermes-relay daemon
+  state:    ● connected
+  pid:      48213
+  relay:    ws://172.16.24.250:8767
+  uptime:   3h 12m
+  updated:  4s ago
+  server:   1.2.0
+  tools:    23 advertised
+```
+
+`status` reads the heartbeat file a running daemon maintains and cross-checks that the pid is alive — it exits non-zero (and says "not running") when the daemon is gone, so scripts can branch on it.
+
+> **Auto-start on boot/login** (survive a reboot, not just a closed terminal) needs an OS service — a Windows service, a systemd user unit, or a launchd agent. Those installers aren't shipped yet; for now `daemon start` covers "background process, this session."
+
 ## Flags and environment
 
 | Flag              | Env                    | Purpose                                      |

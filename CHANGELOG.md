@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop CLI: `hermes-relay audit`.** Shows what the remote agent has actually run on this machine through the desktop tools — tool, status, and a short detail per call — read from a local log, no network or auth. Answers "what did the agent just do?" at a glance.
+- **Desktop CLI: `hermes-relay relay`.** Inspect the relay server itself: `relay info` (version, uptime, sessions — on the relay host), `relay security` (runtime auth toggles), and `relay context` (audit the system-prompt context the relay injects into the agent, which works from a remote machine with your session).
+- **Desktop CLI: background daemon.** `hermes-relay daemon start` runs the headless tool router in the background (no console window, survives closing the terminal), with `daemon stop` and `daemon status` to manage it. `daemon status` reports state, uptime, relay, and advertised-tool count; bare `daemon` still runs in the foreground. Logs go to `~/.hermes/daemon.log`.
+- **Desktop CLI: per-command help.** Every subcommand now answers `--help`, and `devices`/`sessions`/`plugins`/`voice`/`relay` print their own usage (sub-commands, flags, examples) instead of a terse "unknown sub-verb".
+- **Desktop CLI: startup banner.** A slim "Hermes Relay" wordmark shows atop `--help`, the first-run welcome, and the chat REPL — and `hermes-relay logo` prints it on demand. Suppressed for piped/`--json`/`--no-color` output.
+
+### Changed
+
+- **Desktop CLI: visual + ergonomics refresh.** A single color theme across the CLI, aligned tables for `devices`/`sessions`, status dots for on/off states, and progress spinners for slow operations (the multi-endpoint pairing probe and the gateway connect) so nothing looks hung. Errors now suggest the fix (e.g. re-pair on auth failure).
+- **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
+- **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
+- **Crash reports can be shared without GitHub.** The crash dialog now has a **Share** action alongside Copy and Report, handing the full report to the system share sheet (email, chat apps, notes, Drive). This covers users without a GitHub account and sideload installs that Play vitals never sees. Every outbound path stays user-initiated — nothing is sent automatically.
+
 ## [1.2.0] - 2026-06-20
 
 ### Added

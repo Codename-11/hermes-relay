@@ -103,7 +103,9 @@ _PLAYBACK_DRAIN_TIMEOUT_SECONDS = 2.5
 _PRE_HERMES_STATUS_LEAD_SECONDS = 0.75
 _HERMES_PROGRESS_INTERVAL_SECONDS = 5.0
 _HERMES_SPOKEN_PROGRESS_AFTER_SECONDS = 15.0
-_HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS = 30.0
+# Calmer cadence: only re-speak the SAME high-level status this far apart, and
+# only when the coarse status actually changed (see _should_repeat_spoken_status).
+_HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS = 90.0
 _RESUME_TTL_SECONDS = 30.0
 # Max time a completed background result waits for the floor to clear before it
 # is spoken anyway (ADR 33 Tier B result delivery).
@@ -2581,7 +2583,13 @@ class RealtimeAgentHandler:
             await asyncio.sleep(_HERMES_PROGRESS_INTERVAL_SECONDS)
             now = time.time()
             status = session.hermes_run_status
-            if status not in {"running", "waiting_for_confirmation"}:
+            # Keep the heartbeat alive while the underlying run is still in
+            # flight, even if `status` transiently drifts off "running" — the
+            # client kills the turn after ~90s of websocket silence, so this is
+            # the one thing keeping a long/background run's socket warm.
+            if not _should_continue_heartbeat(
+                session.hermes_task, status, session_closed=session.closed
+            ):
                 return
             elapsed_seconds = now - started_at
             message, status_key = _hermes_progress_status(session)
@@ -2589,19 +2597,21 @@ class RealtimeAgentHandler:
                 status_key.startswith("progress:")
                 and "drafting a response" in status_key.lower()
             )
+            coarse_key = _coarse_spoken_status_key(status, status_key)
             should_speak = (
                 speakable_progress
                 and elapsed_seconds >= _HERMES_SPOKEN_PROGRESS_AFTER_SECONDS
                 and session.floor.can_speak(FloorMouth.ANDROID_FILLER)
-                and (
-                    session.hermes_last_spoken_progress_key != status_key
-                    or now - session.hermes_last_spoken_progress_at
-                    >= _HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS
+                and _should_repeat_spoken_status(
+                    now,
+                    session.hermes_last_spoken_progress_at,
+                    session.hermes_last_spoken_progress_key,
+                    coarse_key,
                 )
             )
             if should_speak:
                 session.hermes_last_spoken_progress_at = now
-                session.hermes_last_spoken_progress_key = status_key
+                session.hermes_last_spoken_progress_key = coarse_key
             await self._send(
                 ws,
                 session,
@@ -3580,6 +3590,69 @@ def _tool_status_line(tool_name: str | None, *, started: bool) -> str:
     if label == "Hermes skill":
         return "Hermes skill loaded."
     return f"Finished {label}."
+
+
+def _should_continue_heartbeat(
+    task: asyncio.Task[Any] | None,
+    status: str,
+    *,
+    session_closed: bool,
+) -> bool:
+    """Whether the Hermes run-progress heartbeat should keep ticking.
+
+    The heartbeat is the only thing keeping the realtime websocket from going
+    silent during a long/background Hermes run, and the client kills the turn
+    after ~90s of silence. So the heartbeat must NOT self-terminate just because
+    ``hermes_run_status`` momentarily drifts off ``running`` (e.g. a status that
+    briefly reads ``completed``/``idle`` between SSE bursts on a still-running
+    background run). It keeps ticking while the underlying task is alive and the
+    socket is open; it only stops once the task is actually finished/None or the
+    session has closed.
+    """
+    if session_closed:
+        return False
+    if task is not None and not task.done():
+        # The run is still in flight regardless of the transient status label.
+        return True
+    # No live task: fall back to the status. Keep ticking only while a run is
+    # genuinely active/awaiting input; otherwise the heartbeat has nothing to
+    # guard and should stop.
+    return status in {"running", "waiting_for_confirmation"}
+
+
+def _coarse_spoken_status_key(status: str, status_key: str) -> str:
+    """Collapse a fine-grained ``status_key`` to a coarse high-level key.
+
+    The repeat gate should fire on a *meaningful* status change, not on tool
+    *message* churn. ``status_key`` values like ``progress:<message text>`` vary
+    every time a tool emits a new line even though the high-level state ("Hermes
+    is working") is unchanged. Collapsing those to a single ``progress`` bucket
+    means message-only churn no longer re-flags ``should_speak`` on the repeat
+    cadence, while real transitions (entering/leaving a tool, confirmation,
+    drafting) still register.
+    """
+    if status_key.startswith("progress:"):
+        return f"{status}:progress"
+    return f"{status}:{status_key}"
+
+
+def _should_repeat_spoken_status(
+    now: float,
+    last_spoken_at: float,
+    last_coarse_key: str | None,
+    coarse_key: str,
+    *,
+    repeat_after_seconds: float = _HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS,
+) -> bool:
+    """Whether a *repeat* spoken-progress nudge is warranted.
+
+    Returns True when the coarse high-level status changed since the last spoken
+    progress, OR when the same coarse status has persisted past the (now calmer)
+    repeat window. A brand-new status (no prior spoken key) always qualifies.
+    """
+    if last_coarse_key is None or coarse_key != last_coarse_key:
+        return True
+    return (now - last_spoken_at) >= repeat_after_seconds
 
 
 def _hermes_progress_status(session: RealtimeAgentSession) -> tuple[str, str]:
