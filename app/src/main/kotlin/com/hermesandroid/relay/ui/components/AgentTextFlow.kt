@@ -57,7 +57,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -85,8 +84,8 @@ import kotlinx.coroutines.delay
  *  visual line so the bounded buffer maps cleanly to "≤6 lines". */
 private const val FLOW_MAX_CHARS = 42
 
-/** Soft-wrap target only — the visible buffer is now bounded by the ~1/3
- *  screen viewport + scroll, not a hard line count. */
+/** Soft-wrap target only — the visible buffer is now bounded by the
+ *  scrollable viewport height + scroll, not a hard line count. */
 private const val FLOW_MAX_LINES = 6
 
 /** Memory ceiling for the persistent line buffer. Lines past this (already
@@ -311,7 +310,7 @@ fun AgentTextFlow(
 
             // Add new lines (they slide in) and grow the still-streaming tail.
             // Lines PERSIST — they never fade out; older ones simply scroll up
-            // within the bounded ~1/3-height viewport and dissolve at the top
+            // within the bounded, scrollable viewport and dissolve at the top
             // fade edge. (No dwell / fade-out / removal anymore.)
             segs.forEachIndexed { i, s ->
                 val existing = flowLines.firstOrNull { it.key == i }
@@ -518,9 +517,6 @@ fun CleanChatMode(
     }
     val flowContent = lastAssistant?.content.orEmpty()
     val flowStreaming = lastAssistant?.isStreaming == true && isStreaming
-    // Cap the flow at ~1/3 of the screen so lines can slide up and accumulate
-    // without ever climbing into / blocking the avatar above them.
-    val maxFlowHeight = (LocalConfiguration.current.screenHeightDp * 0.34f).dp
 
     BackHandler(enabled = true) { onExit() }
 
@@ -557,8 +553,10 @@ fun CleanChatMode(
                 }
             }
 
-            // Centered sphere — takes the slack so the flow + composer keep a
-            // stable bottom anchor as lines come and go.
+            // Centered sphere — shares the vertical slack with the text flow
+            // below via a weight split instead of claiming all of it, so the
+            // flow gets a materially taller viewport while the sphere stays a
+            // stable, prominent size as lines come and go.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -588,10 +586,16 @@ fun CleanChatMode(
                 streaming = flowStreaming,
                 messageId = lastAssistant?.id,
                 motionEnabled = textMotionEnabled,
+                // Take the larger share of the vertical slack (weight > the
+                // sphere's) so the calm flow has room to accumulate + scroll.
+                // The weight is itself a screen-relative upper bound — no
+                // fragile percentage math — and the min floor keeps short
+                // replies tidy without crowding the composer below.
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 560.dp)
-                    .heightIn(min = 96.dp, max = maxFlowHeight)
+                    .weight(1.1f)
+                    .heightIn(min = 96.dp)
                     .padding(bottom = 12.dp),
             )
 
