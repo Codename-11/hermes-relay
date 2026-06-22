@@ -1480,7 +1480,7 @@ fun AgentInfoSheet(
                             val hostname = com.hermesandroid.relay.data.Connection
                                 .extractDefaultLabel(connection.apiServerUrl)
                             val statusLine = when {
-                                connection.pairedAt == null -> "$hostname • Vanilla Hermes"
+                                connection.pairedAt == null -> "$hostname • Hermes"
                                 else -> "$hostname • Paired"
                             }
                             ProfileRadioRow(

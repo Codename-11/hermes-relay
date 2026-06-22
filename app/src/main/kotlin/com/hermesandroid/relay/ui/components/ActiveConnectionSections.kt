@@ -101,7 +101,7 @@ import kotlinx.coroutines.launch
  */
 
 /**
- * Standard Hermes status rows (API / Dashboard). Dashboard auth is surfaced
+ * Hermes status rows (API / Dashboard). Dashboard auth is surfaced
  * here so users do not have to open Manage just to discover sign-in is needed.
  */
 @Composable
@@ -330,7 +330,7 @@ fun ActiveCardFeaturesSection(
     ) {
         Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
             CapabilityRow(
-                label = "Vanilla Hermes API",
+                label = "Hermes API",
                 value = apiValue,
                 tone = apiTone,
                 onClick = onOpenApiInfo,
@@ -344,7 +344,7 @@ fun ActiveCardFeaturesSection(
             )
             CapabilityDivider()
             CapabilityRow(
-                label = "Vanilla Hermes voice",
+                label = "Hermes voice",
                 value = voiceValue,
                 tone = voiceTone,
                 onClick = if (standardVoiceAvailability ==
@@ -623,7 +623,7 @@ private fun ManualUrlSubsection(
                         when {
                             result.apiReachable && result.voiceConfigReachable ->
                                 if (result.voiceRoute == "standard") {
-                                    "API and standard voice reachable"
+                                    "API and Hermes voice reachable"
                                 } else {
                                     "API and relay voice reachable"
                                 }
@@ -665,7 +665,7 @@ private fun ManualUrlSubsection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Relay is optional for voice. Vanilla Hermes voice uses the Hermes API; Relay voice uses this route when selected or needed.",
+                text = "Relay is optional for voice. Hermes voice uses the Hermes API; Relay voice uses this route when selected or needed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -710,7 +710,7 @@ private fun ManualUrlSubsection(
             Text(
                 text = if (result.voiceConfigReachable) {
                     if (result.voiceRoute == "standard") {
-                        "Voice ready via standard Hermes API"
+                        "Voice ready via Hermes API"
                     } else {
                         "Voice ready via ${result.relayUrl ?: "relay"}"
                     }

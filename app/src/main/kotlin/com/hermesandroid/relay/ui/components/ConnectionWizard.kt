@@ -99,7 +99,7 @@ import kotlinx.coroutines.withTimeout
 
 /**
  * Shared connection wizard used by both onboarding (first run) and
- * Settings → Connections. Standard Hermes setup is the default path:
+ * Settings → Connections. Hermes setup is the default path:
  * save the API URL/key, derive the dashboard URL, and verify sessions.
  * Relay pairing remains available for power tools such as Terminal,
  * Bridge, Relay sessions, channel grants, and relay-backed media routes.
@@ -107,7 +107,7 @@ import kotlinx.coroutines.withTimeout
  * Steps:
  *
  *  1. **Method** — pick a setup path. Four tiles:
- *     - **Standard Hermes**: API URL + API key. → StandardEntry.
+ *     - **Hermes**: API URL + API key. → StandardEntry.
  *     - **Scan QR**: standard convenience path for API URL/key QRs; Relay
  *       plugin QRs still work and route through Confirm/Relay pair.
  *     - **Pair Relay by code**: server already minted a code via
@@ -1013,7 +1013,7 @@ private fun MethodStep(
 
         MethodTile(
             icon = Icons.Filled.Check,
-            title = "Vanilla Hermes",
+            title = "Hermes",
             subtitle = "API/dashboard setup for Chat, Manage, Skills, Cron, MCP, Profiles, Models, and Settings",
             onClick = onPickStandard,
             isPrimary = true,
@@ -1022,7 +1022,7 @@ private fun MethodStep(
         MethodTile(
             icon = Icons.Filled.QrCodeScanner,
             title = "Scan setup QR",
-            subtitle = "Scan a QR with API URL/key for Standard; Relay QR details require the Hermes-Relay plugin",
+            subtitle = "Scan a QR with API URL/key for Hermes; Relay QR details require the Relay plugin",
             onClick = onPickScan,
         )
 
@@ -1039,7 +1039,7 @@ private fun MethodStep(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Terminal, Bridge, Relay sessions, and grants require the Hermes-Relay plugin.",
+                    text = "Terminal, Bridge, Relay sessions, and grants require the Relay plugin.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1251,7 +1251,7 @@ private fun StandardEntryStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Vanilla Hermes",
+            text = "Hermes",
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
@@ -1617,7 +1617,7 @@ private fun StandardSetupResultCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "Vanilla Hermes connected",
+                text = "Hermes connected",
                 style = MaterialTheme.typography.titleMedium,
             )
             ReadinessLine(
@@ -2481,7 +2481,7 @@ private fun ConfirmStep(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Connecting to Vanilla Hermes",
+                            text = "Connecting to Hermes",
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Text(

@@ -799,7 +799,7 @@ fun QrPairingScanner(
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "Ask Hermes: \"Generate a QR code with my API URL and API key.\" Relay pairing QRs require the Hermes-Relay plugin.",
+                    text = "Ask Hermes: \"Generate a QR code with my API URL and API key.\" Relay pairing QRs require the Relay plugin.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
