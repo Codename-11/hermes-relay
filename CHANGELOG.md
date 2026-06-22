@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Hold-to-talk no longer releases on accidental drift (Android).** The mic button holds until the finger genuinely lifts, instead of cancelling when it drifts off the button.
 - **Voice overlay is readable (Android).** The voice dropdown panel and its status bubbles are opaque (no bleed-through), and the Focus/Overlay/Exit labels no longer wrap to two lines; invalid engine/route combinations are no longer selectable.
 - **Connection status overlay clears faster (Android).** Resolved (error/warning) connection toasts auto-dismiss within ~5s instead of lingering.
+- **Realtime Agent: brokered Hermes turns no longer fail with `session_not_found`.** When the Realtime Agent reached back to Hermes for context or tool work, it could hand the API Server a session id that belonged to a different session namespace (the gateway/client store), which the API Server rejected. The broker now mints a valid API Server session and retries the turn once when that happens, and reuses an existing API Server session when the id is already valid. It also reads the API Server's current nested `{"session": {"id": …}}` create-session response (previously only the legacy flat shape), so session creation no longer errored with "created a session without an id." Provider-native turns are unaffected.
 
 ## [1.2.0] - 2026-06-20
 
