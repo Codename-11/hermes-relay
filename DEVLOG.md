@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-21 — Realtime Agent API Server session handoff (issue #101)
+
+**Why.** The Realtime Agent's brokered Hermes path (`hermes_run_task`) could fail two ways when reaching back to the API Server. (1) A caller-supplied `chat_session_id` that originated in a different session namespace (the gateway/client session store) was passed straight to `POST /api/sessions/{id}/chat/stream`, which the API Server rejects with `404 session_not_found`. (2) `_create_session()` only read a flat `id`/`session_id`, but the current API Server returns the created session nested under `{"object":"hermes.session","session":{"id":"api_…"}}` — so creation raised "Hermes API created a session without an id."
+
+**Verified against upstream first.** `gateway/platforms/api_server.py` confirms the contract: create-session returns the nested `session` object at status 201 (`_session_response`, line ~1426); `_get_existing_session_or_404` emits `{"error":{"code":"session_not_found"}}` at 404 (line ~1349). Coded to the verified shapes, not the docs.
+
+- **`hermes_tool_broker.py` — nested create-session parse.** Extracted `_session_id_from_create_response()` that accepts top-level `id`/`session_id` *and* nested `session.id`/`session.session_id`, preferring the flat form for back-compat with older/partial builds. `_create_session()` now delegates to it.
+- **`hermes_tool_broker.py` — `session_not_found` handoff + single retry.** `stream_task()` tracks whether it owns the API Server session (`api_session_owned`). When a caller-supplied id 404s with `session_not_found` (matched by `_is_session_not_found()`, structured-or-substring), the broker mints a fresh API Server session, emits a second `hermes.session.bound` event with `reason: "session_not_found_handoff"` (so the orchestrator rebinds `session.chat_session_id`), and retries the chat/stream POST once. A session the broker created itself, or a second failure, is not retried — no loop. The 404 is raised before any SSE bytes stream, so the retry never double-emits chat content. Valid existing API sessions are reused untouched.
+- **Tests.** New `plugin/tests/test_hermes_tool_broker.py` (13): pure-function coverage for both parsers (nested/flat/precedence/empty, 404-only `session_not_found` detection) plus end-to-end `stream_task` against a local aiohttp `TestServer` fake API Server — no-id-creates-session, existing-session-reused, namespace-mismatch handoff+retry, and single-retry-then-give-up. `aioresponses` isn't installed, so the tests drive the real aiohttp client path against a local server (the repo's existing pattern).
+
+**Verification.** `python -m unittest plugin.tests.test_hermes_tool_broker` → 13/13 green. `plugin.tests.test_realtime_agent_routes` → 34/34 green (no regression). Server-side only; no Android/CLI changes.
+
 ## 2026-06-21 — Profile lock + voice fixes (orchestration batch)
 
 **Why.** User-requested batch (TODO User-Added) covering the profile-lock setting and the concrete voice TODOs. Investigated and implemented via a planning→implementation orchestration pass: four read-only investigators, then three disjoint file-ownership implementation lanes. All changes are client-side Kotlin; the server-side realtime-voice half is deferred to TODO. **Unbuilt at time of writing — pending Studio build + `./gradlew lint`.**
