@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -48,6 +49,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.ui.components.UpdateDebugOverride
+import com.hermesandroid.relay.update.UpdateStatus
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -392,6 +398,107 @@ fun DeveloperSettingsScreen(
                     }
                 }
             }
+
+            // Test harness — debug builds only. Triggers for surfaces that
+            // unit tests can't reach and that don't occur on demand (a crash, a
+            // logged error, a live update). Gated by isDevBuild so it never
+            // ships in a release APK.
+            if (FeatureFlags.isDevBuild) {
+                Text(
+                    text = "Test harness",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .gradientBorder(
+                            shape = RoundedCornerShape(12.dp),
+                            isDarkTheme = isDarkTheme,
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TestHarnessRow(
+                            title = "Emit sample diagnostics",
+                            subtitle = "Push Info / Warning / Error entries into the diagnostics log",
+                            icon = Icons.Filled.Science,
+                            onClick = {
+                                DiagnosticsLog.record(
+                                    category = DiagnosticCategory.Api,
+                                    severity = DiagnosticSeverity.Info,
+                                    title = "Sample info diagnostic",
+                                    detail = "Emitted from the Developer options test harness.",
+                                )
+                                DiagnosticsLog.record(
+                                    category = DiagnosticCategory.Relay,
+                                    severity = DiagnosticSeverity.Warning,
+                                    title = "Sample warning diagnostic",
+                                    detail = "Relay reachability degraded (synthetic).",
+                                )
+                                DiagnosticsLog.recordError(
+                                    category = DiagnosticCategory.Voice,
+                                    title = "Sample error diagnostic",
+                                    detail = "Synthetic failure for the detail view.",
+                                    throwable = RuntimeException(
+                                        "Sample stacktrace — Developer options test harness",
+                                    ),
+                                )
+                                Toast.makeText(context, "3 sample diagnostics emitted", Toast.LENGTH_SHORT).show()
+                            },
+                        )
+
+                        HorizontalDivider()
+
+                        TestHarnessRow(
+                            title = "Preview update banner",
+                            subtitle = "Cycle the in-app update banner: Available → Downloaded → off",
+                            icon = Icons.Filled.Science,
+                            onClick = {
+                                UpdateDebugOverride.cycle()
+                                val state = when (UpdateDebugOverride.flow.value) {
+                                    is UpdateStatus.Available -> "Available"
+                                    is UpdateStatus.Downloaded -> "Downloaded"
+                                    else -> "off"
+                                }
+                                Toast.makeText(context, "Update banner preview: $state", Toast.LENGTH_SHORT).show()
+                            },
+                        )
+
+                        HorizontalDivider()
+
+                        TestHarnessRow(
+                            title = "Show What's New",
+                            subtitle = "Open the What's New dialog now",
+                            icon = Icons.Filled.Science,
+                            onClick = {
+                                connectionViewModel.showWhatsNewNow()
+                                onBack()
+                            },
+                        )
+
+                        HorizontalDivider()
+
+                        TestHarnessRow(
+                            title = "Force a test crash",
+                            subtitle = "Throws an uncaught exception — the crash report shows on next launch",
+                            icon = Icons.Filled.Warning,
+                            tint = MaterialTheme.colorScheme.error,
+                            onClick = {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    throw RuntimeException("Test crash from Developer options")
+                                }
+                            },
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -479,5 +586,32 @@ fun DeveloperSettingsScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun TestHarnessRow(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.tertiary,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onClick) {
+            Icon(imageVector = icon, contentDescription = title, tint = tint)
+        }
     }
 }

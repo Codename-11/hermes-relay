@@ -48,11 +48,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hermesandroid.relay.BuildConfig
 import com.hermesandroid.relay.update.UpdateAvailabilitySource
 import com.hermesandroid.relay.update.UpdateDismissalPreferences
 import com.hermesandroid.relay.update.UpdateStatus
 import com.hermesandroid.relay.update.createUpdateAvailabilitySource
 import com.hermesandroid.relay.update.dismissKey
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -61,6 +63,30 @@ import kotlinx.coroutines.launch
  * than this don't need a fresh Play/GitHub round-trip.
  */
 private const val AUTO_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
+
+/**
+ * Debug-only injected status for previewing [UpdateAvailableBanner] from
+ * Developer options — the real Play / GitHub sources can't be triggered without
+ * an actual new release. Honoured by [rememberUpdateAvailability] ONLY in debug
+ * builds, and cleared the moment the previewed banner is actioned or dismissed.
+ * Never read in release builds.
+ */
+object UpdateDebugOverride {
+    val flow = MutableStateFlow<UpdateStatus?>(null)
+
+    /** Cycle the preview: off → Available → Downloaded → off. */
+    fun cycle() {
+        flow.value = when (flow.value) {
+            null -> UpdateStatus.Available(versionLabel = "9.9.9", versionCode = 999_999L)
+            is UpdateStatus.Available -> UpdateStatus.Downloaded(versionLabel = "9.9.9", versionCode = 999_999L)
+            else -> null
+        }
+    }
+
+    fun clear() {
+        flow.value = null
+    }
+}
 
 /**
  * Handle returned by [rememberUpdateAvailability] for the host
@@ -131,6 +157,11 @@ fun rememberUpdateAvailability(): UpdateAvailabilityHandle {
         .dismissedKey(appContext)
         .collectAsState(initial = null)
 
+    // Debug-only preview override (Developer options → Test harness). Forced to
+    // null in release builds so production never surfaces a fake banner.
+    val debugOverride by UpdateDebugOverride.flow.collectAsState()
+    val debugOverrideState = rememberUpdatedState(if (BuildConfig.DEBUG) debugOverride else null)
+
     // Visible status = raw, but Available/Downloading suppressed when dismissed.
     // Downloaded is never suppressed (restart prompt must always show).
     // derivedStateOf tracks both snapshot inputs (rawStatus + the collected
@@ -139,15 +170,20 @@ fun rememberUpdateAvailability(): UpdateAvailabilityHandle {
     val dismissedKeyState = rememberUpdatedState(dismissedKey)
     val visibleStatus = remember {
         derivedStateOf {
-            when (val raw = rawStatus) {
-                UpdateStatus.UpToDate, UpdateStatus.Unsupported -> null
-                is UpdateStatus.Downloaded -> raw
-                is UpdateStatus.Available, is UpdateStatus.Downloading ->
-                    if (UpdateDismissalPreferences.isDismissed(raw, dismissedKeyState.value)) {
-                        null
-                    } else {
-                        raw
-                    }
+            val dbg = debugOverrideState.value
+            if (dbg != null) {
+                dbg
+            } else {
+                when (val raw = rawStatus) {
+                    UpdateStatus.UpToDate, UpdateStatus.Unsupported -> null
+                    is UpdateStatus.Downloaded -> raw
+                    is UpdateStatus.Available, is UpdateStatus.Downloading ->
+                        if (UpdateDismissalPreferences.isDismissed(raw, dismissedKeyState.value)) {
+                            null
+                        } else {
+                            raw
+                        }
+                }
             }
         }
     }
@@ -179,16 +215,25 @@ fun rememberUpdateAvailability(): UpdateAvailabilityHandle {
         UpdateAvailabilityHandle(
             visibleStatus = visibleStatus,
             onUpdateClick = {
-                val current = visibleStatus.value
-                if (current is UpdateStatus.Downloaded) {
-                    source.completeUpdate()
+                if (UpdateDebugOverride.flow.value != null) {
+                    // Preview mode — the action just dismisses the fake banner.
+                    UpdateDebugOverride.clear()
                 } else {
-                    source.startUpdate(activityState.value)
+                    val current = visibleStatus.value
+                    if (current is UpdateStatus.Downloaded) {
+                        source.completeUpdate()
+                    } else {
+                        source.startUpdate(activityState.value)
+                    }
                 }
             },
             onDismiss = {
-                visibleStatus.value?.dismissKey?.let { key ->
-                    scope.launch { UpdateDismissalPreferences.dismiss(appContext, key) }
+                if (UpdateDebugOverride.flow.value != null) {
+                    UpdateDebugOverride.clear()
+                } else {
+                    visibleStatus.value?.dismissKey?.let { key ->
+                        scope.launch { UpdateDismissalPreferences.dismiss(appContext, key) }
+                    }
                 }
             },
         )

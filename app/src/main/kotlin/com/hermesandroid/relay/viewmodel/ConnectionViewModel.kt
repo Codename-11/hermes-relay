@@ -5008,6 +5008,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // --- What's New + Version tracking ---
 
+    /** Dev/test hook (Developer options → Test harness): show What's New now. */
+    fun showWhatsNewNow() {
+        _showWhatsNew.value = true
+    }
+
     fun dismissWhatsNew() {
         _showWhatsNew.value = false
         viewModelScope.launch {
