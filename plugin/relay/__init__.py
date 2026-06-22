@@ -19,7 +19,7 @@ See ``plugin/relay/server.py`` for the aiohttp server,
 # CLI releases use desktop/package.json and cli-v* tags. The /health endpoint
 # reports this plugin version, and stale values make live diagnosis harder than
 # it should be.
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 from .server import create_app, main  # noqa: E402 — must come after __version__
 
