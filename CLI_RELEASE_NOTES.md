@@ -1,36 +1,25 @@
 # Hermes-Relay-CLI v__VERSION__
 
-**Release Date:** <!-- YYYY-MM-DD -->
-**Since the previous CLI release:** <!-- one line: the theme of this release -->
+**Release Date:** 2026-06-21
+**Since the previous CLI release:** a first-class command surface — activity audit, relay inspection, a background daemon, a polished visual layer, and v1.2.0 server parity.
 
-<!-- One short paragraph: what this desktop/CLI release is about and who should care. -->
-
-<!--
-═══ RELEASE-PREP CHECKLIST (delete this comment block when done) ═══
-• This file is the GitHub Release body for `cli-v*` tags. The release workflow
-  substitutes __VERSION__ (bare, e.g. 0.3.0) and __TAG__ (full, e.g. cli-v0.3.0) —
-  leave those tokens in the Install section; do NOT hardcode versions there.
-• Rewrite the Summary + the Added/Changed/Fixed groups from the CLI/desktop-relevant
-  bullets in CHANGELOG.md's promoted version block.
-• Keep-a-Changelog rules: include only the groups that have entries; delete empty ones.
-• Keep the "Experimental phase" notice until the CLI reaches GA.
-• Scrub for public distribution (RELEASE.md §2): no personal names, no private infra,
-  no fork-branch plumbing, no AI self-narration.
-═══════════════════════════════════════════════════════════════════
--->
+This is a broad CLI uplift: new commands for seeing what the agent did and inspecting the relay, a daemon you can run in the background, and a consistent themed interface with per-command help. Everything is additive — existing commands, flags, and scripts keep working.
 
 **Experimental phase.** Assets are unsigned — Windows SmartScreen and macOS Gatekeeper will warn on first launch. Windows ships a tray installer as the primary desktop surface; CLI binaries remain available for terminal/headless use and for macOS/Linux.
 
 ## What's changed
 
 ### Added
--
+- **`hermes-relay audit`** — see what the remote agent has run on this machine through the desktop tools (tool, status, detail), read from a local log. No network, no auth; works whether the relay is local or remote.
+- **`hermes-relay relay`** — inspect the relay server: `relay context` audits the system-prompt context the relay injects into the agent (works from any paired machine), and `relay info` / `relay security` report server state for operators on the relay host.
+- **Background daemon.** `hermes-relay daemon start` runs the headless tool router in the background — no console window, survives closing the terminal — with `daemon stop` and `daemon status` to manage it. Bare `daemon` still runs in the foreground. Logs go to `~/.hermes/daemon.log`.
+- **Per-command help.** Every subcommand answers `--help`, and `devices` / `sessions` / `plugins` / `voice` / `relay` print their own usage (sub-commands, flags, examples) instead of a terse "unknown sub-verb".
+- **Startup banner.** A slim "Hermes Relay" wordmark shows atop `--help`, the first-run welcome, and the chat REPL; `hermes-relay logo` prints it on demand. Suppressed for piped / `--json` / `--no-color` output.
 
 ### Changed
--
-
-### Fixed
--
+- **Visual + ergonomics refresh.** One consistent color theme across the CLI, aligned tables for `devices` / `sessions`, on/off status dots, and progress spinners for slow operations (the multi-endpoint pairing probe and the gateway connect) so nothing looks hung. Errors now suggest the fix (e.g. re-pair on auth failure).
+- **Smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
+- **Voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 
 ## Install
 
