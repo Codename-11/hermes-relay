@@ -65,8 +65,8 @@ You can also override from the phone: **Settings -> Connections -> active connec
 
 Route fields want the **API server** (port `8642` by default) — never the
 dashboard (`9119`) or relay (`8767`); those are derived from the host
-automatically. You can type just a host or IP: `100.71.8.56` is saved as
-`http://100.71.8.56:8642`, and the editor previews the exact URL before you
+automatically. You can type just a host or IP: `100.64.0.1` is saved as
+`http://100.64.0.1:8642`, and the editor previews the exact URL before you
 save.
 
 Pick the scheme by how the server is reached:

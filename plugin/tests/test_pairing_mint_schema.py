@@ -235,9 +235,9 @@ class PairingMintSchemaTests(AioHTTPTestCase):
             {
                 "role": "lan",
                 "priority": 0,
-                "api": {"host": "172.16.24.250", "port": 8642, "tls": False},
+                "api": {"host": "192.168.1.100", "port": 8642, "tls": False},
                 "relay": {
-                    "url": "ws://172.16.24.250:8767",
+                    "url": "ws://192.168.1.100:8767",
                     "transport_hint": "ws",
                 },
             },
@@ -245,12 +245,12 @@ class PairingMintSchemaTests(AioHTTPTestCase):
                 "role": "tailscale",
                 "priority": 1,
                 "api": {
-                    "host": "docker-server.tail6f460.ts.net",
+                    "host": "hermes-host.tailnet.ts.net",
                     "port": 8642,
                     "tls": True,
                 },
                 "relay": {
-                    "url": "wss://docker-server.tail6f460.ts.net:8767",
+                    "url": "wss://hermes-host.tailnet.ts.net:8767",
                     "transport_hint": "wss",
                 },
             },
@@ -260,8 +260,8 @@ class PairingMintSchemaTests(AioHTTPTestCase):
             "plugin.pair._tailscale_status",
             return_value={
                 "available": True,
-                "hostname": "docker-server.tail6f460.ts.net",
-                "tailscale_ip": "100.71.8.56",
+                "hostname": "hermes-host.tailnet.ts.net",
+                "tailscale_ip": "100.64.0.1",
                 "serve_ports": [],
             },
         ):
@@ -270,9 +270,9 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         tailscale = qr["endpoints"][1]
 
         self.assertEqual(qr["hermes"], 3)
-        self.assertEqual(tailscale["api"]["host"], "100.71.8.56")
+        self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
         self.assertFalse(tailscale["api"]["tls"])
-        self.assertEqual(tailscale["relay"]["url"], "ws://100.71.8.56:8767")
+        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
         self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
         self.assertEqual(result.get("endpoints"), qr["endpoints"])
 

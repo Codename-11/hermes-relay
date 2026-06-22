@@ -539,7 +539,7 @@ class VoiceRoutesTests(AioHTTPTestCase):
     async def test_voice_config_returns_providers(self) -> None:
         sys.modules["tools.tts_tool"]._load_tts_config = lambda: {
             "provider": "elevenlabs",
-            "voice_id": "XZEfcFyBnzsNJrdvkWdI",
+            "voice_id": "<your-voice-id>",
             "model": "eleven_turbo_v2_5",
         }
         sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {
@@ -559,7 +559,7 @@ class VoiceRoutesTests(AioHTTPTestCase):
         body = await resp.json()
         self.assertTrue(body["success"])
         self.assertEqual(body["tts"]["provider"], "elevenlabs")
-        self.assertEqual(body["tts"]["voice_id"], "XZEfcFyBnzsNJrdvkWdI")
+        self.assertEqual(body["tts"]["voice_id"], "<your-voice-id>")
         self.assertTrue(body["tts"]["enabled"])
         self.assertEqual(body["stt"]["provider"], "openai")
         self.assertEqual(body["stt"]["model"], "whisper-1")

@@ -7,7 +7,7 @@
 
 ## Goal
 
-`hermes --remote wss://docker-server.ts.net:8767` on Windows (or any machine with Node ≥ 20) opens the Hermes TUI with full feature parity — approvals, tool cards, image paste, voice, session resume — against a remote `hermes-agent` brain. No SSH, no X11 forwarding, no `mosh`. WSS transport, bearer auth, TOFU cert pinning, reconnect-safe.
+`hermes --remote wss://hermes-host.tailnet.ts.net:8767` on Windows (or any machine with Node ≥ 20) opens the Hermes TUI with full feature parity — approvals, tool cards, image paste, voice, session resume — against a remote `hermes-agent` brain. No SSH, no X11 forwarding, no `mosh`. WSS transport, bearer auth, TOFU cert pinning, reconnect-safe.
 
 This is the **v0.1 / Option C (hybrid)** shipping target from the high-level design. All tools still execute **server-side**. Per-tool client-side routing (Option B) is explicitly v2.
 
@@ -95,7 +95,7 @@ Confirm exact invocation by reading `hermes_cli/main.py:1034` area (agent will d
 - `~/.hermes/remote-sessions.json` storage (mirror Android `SessionTokenStore` semantics — fail closed, atomic write).
 - Desktop cert-pin store (JSON file, SHA-256 SPKI per `host:port`, first-seen TOFU).
 - Reconnect/backoff logic in `RelayTransport`.
-- **End-to-end test:** from this Docker-Server → start relay → paste code → from Windows → `hermes --remote wss://docker-server.ts.net:8767` → full session works (prompt, tool use, image paste, approval modal).
+- **End-to-end test:** from this hermes-host → start relay → paste code → from Windows → `hermes --remote wss://hermes-host.tailnet.ts.net:8767` → full session works (prompt, tool use, image paste, approval modal).
 
 ### Phase 4 — Polish + docs *(post-smoke)*
 - Update `~/.hermes/hermes-relay/README.md` with desktop install section.
@@ -136,7 +136,7 @@ Confirm exact invocation by reading `hermes_cli/main.py:1034` area (agent will d
 
 ## Success Metric
 
-From a fresh Windows machine: install Node 20, `npm install -g @codename-11/hermes-tui-remote` (or equivalent), `hermes --remote wss://docker-server.ts.net:8767 --pair ABC123`, and do a full interactive session (prompt → tool use → image paste → approval) without a single "feature missing" or "protocol mismatch" error.
+From a fresh Windows machine: install Node 20, `npm install -g @codename-11/hermes-tui-remote` (or equivalent), `hermes --remote wss://hermes-host.tailnet.ts.net:8767 --pair ABC123`, and do a full interactive session (prompt → tool use → image paste → approval) without a single "feature missing" or "protocol mismatch" error.
 
 ## Follow-up Ideas (explicit non-MVP)
 

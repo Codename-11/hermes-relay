@@ -1,5 +1,5 @@
 param(
-    [string]$RemoteHost = "bailey@docker-server.local",
+    [string]$RemoteHost = "you@hermes-host",
     [string]$Package = "com.axiomlabs.hermesrelay.sideload",
     [string]$OutputRoot = "voice-lab-runs\phone-smoke",
     [int]$SinceMinutes = 15,

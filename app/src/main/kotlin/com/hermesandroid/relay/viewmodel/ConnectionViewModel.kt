@@ -4568,7 +4568,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             )
             if (candidate == null) {
                 onResult(
-                    "Enter the API server URL — e.g. 100.71.8.56 or " +
+                    "Enter the API server URL — e.g. 100.64.0.1 or " +
                         "http://host:8642 (http/https only; port defaults to 8642)",
                 )
                 return@launch

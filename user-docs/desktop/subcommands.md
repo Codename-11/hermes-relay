@@ -146,7 +146,7 @@ hermes-relay status --json --reveal-tokens   # full tokens (careful — don't pa
 
 Output per URL:
 ```
-ws://172.16.24.250:8767
+ws://192.168.1.100:8767
     server:   0.6.0
     paired:   2h ago
     token:    79d2cf41…8d8c

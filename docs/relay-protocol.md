@@ -717,12 +717,12 @@ Top-level `key` is the Hermes API bearer used for direct chat/session HTTP; the 
 ```json
 {
   "hermes": 3,
-  "host": "172.16.24.250",
+  "host": "192.168.1.100",
   "port": 8642,
   "key": "<api_key>",
   "tls": false,
   "relay": {
-    "url": "ws://172.16.24.250:8767",
+    "url": "ws://192.168.1.100:8767",
     "code": "ABC123",
     "ttl_seconds": 604800,
     "transport_hint": "ws"

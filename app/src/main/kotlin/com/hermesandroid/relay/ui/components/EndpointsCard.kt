@@ -601,7 +601,7 @@ fun RouteEditorDialog(
                         errorText = null
                     },
                     label = { Text("API server URL or host") },
-                    placeholder = { Text("100.71.8.56 or http://host:8642") },
+                    placeholder = { Text("100.64.0.1 or http://host:8642") },
                     singleLine = true,
                     isError = errorText != null,
                     supportingText = {

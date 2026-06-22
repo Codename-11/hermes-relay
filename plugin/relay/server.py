@@ -326,8 +326,8 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     ```json
     {
       "hermes": 2,
-      "host": "172.16.24.250", "port": 8642, "key": "<api-key>", "tls": false,
-      "relay": {"url": "ws://172.16.24.250:8767", "code": "ABC123",
+      "host": "192.168.1.100", "port": 8642, "key": "<api-key>", "tls": false,
+      "relay": {"url": "ws://192.168.1.100:8767", "code": "ABC123",
                 "ttl_seconds": 604800, "transport_hint": "ws"}
     }
     ```
@@ -340,7 +340,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     POST /pairing/mint
       body (all optional — fall back to RelayConfig / local Hermes defaults):
-        - host: "172.16.24.250"        API server host override (LAN IP)
+        - host: "192.168.1.100"        API server host override (LAN IP)
         - port: 8642                    API server port override
         - tls: false                    API server TLS override
         - api_key: "<token>"            API bearer token override (goes in

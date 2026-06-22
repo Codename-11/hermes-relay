@@ -243,7 +243,7 @@ python -m unittest plugin.tests.test_realtime_voice_routes plugin.tests.test_voi
 1. Land capability guard first if OpenAI remains selectable before native support is ready.
 2. Implement the OpenAI provider behind tests.
 3. Register OpenAI as native only after adapter and broker tests pass.
-4. Deploy relay-only files to `bailey@docker-server.local`.
+4. Deploy relay-only files to `you@hermes-host`.
 5. Restart `hermes-relay.service`.
 6. Verify `/health`.
 7. Test Android Realtime Agent with `openai_realtime`, including:

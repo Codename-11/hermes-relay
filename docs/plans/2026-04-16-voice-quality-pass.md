@@ -12,7 +12,7 @@
 > - [`ROADMAP.md`](../../ROADMAP.md) — where this pass sits in the broader arc
 > - [`docs/plans/2026-04-13-bridge-feature-expansion.md`](./2026-04-13-bridge-feature-expansion.md) — precedent for plan-file format
 > - [`DEVLOG.md`](../../DEVLOG.md) — append session entry on completion
-> - Upstream reference: `~/.hermes/hermes-agent/tools/tts_tool.py` on hermes-host (`bailey@172.16.24.250`)
+> - Upstream reference: `~/.hermes/hermes-agent/tools/tts_tool.py` on hermes-host (`you@hermes-host`)
 
 ## How to use this file
 
@@ -83,11 +83,11 @@ cd ../hermes-android-voice
 
 **Implementation notes.**
 - `eleven_flash_v2_5` costs fewer characters per dollar than `multilingual_v2` — net win on billing too.
-- Voice ID stays at `XZEfcFyBnzsNJrdvkWdI` (Bailey's current custom voice).
+- Voice ID stays at `<your-voice-id>` (Bailey's current custom voice).
 - Rollback: revert the config line, restart gateway. Zero risk.
 
 **Agent brief.**
-> This is an operator-executed step, not an agent task. The orchestrator should SSH to `bailey@172.16.24.250` (key auth), edit `~/.hermes/config.yaml`, restart `hermes-gateway.service`, and verify with a single voice request. Document the before/after impression in the session commit message of Wave 1.
+> This is an operator-executed step, not an agent task. The orchestrator should SSH to `you@hermes-host` (key auth), edit `~/.hermes/config.yaml`, restart `hermes-gateway.service`, and verify with a single voice request. Document the before/after impression in the session commit message of Wave 1.
 
 **Dependencies.** None.
 
@@ -210,7 +210,7 @@ cd ../hermes-android-voice
 - Keep the PR scope narrow — one function + one config key + one docs page. Don't bundle other voice improvements.
 
 **Agent brief.**
-> SSH to `bailey@172.16.24.250`. Work in `~/.hermes/hermes-agent/` on the `Codename-11/hermes-agent` fork. Create branch `feat/elevenlabs-voice-settings`. Patch `tools/tts_tool.py::_generate_elevenlabs` to accept `voice_settings` from the elevenlabs config block and pass through a `VoiceSettings(...)` object (defaults: stability=0.65, similarity_boost=0.8, style=0.0, use_speaker_boost=True). Add a graceful degradation for older elevenlabs SDKs. Update the upstream `docs/configuration/tts.md` reference. Run the project's test suite. Push the branch, open a PR against `NousResearch/hermes-agent` — cross-reference PR #8556 for style. Then apply the patch locally on the running `axiom` branch and restart `hermes-gateway` so V2/V3/V4 can benefit during testing. Report back the PR URL and the locally-applied confirmation.
+> SSH to `you@hermes-host`. Work in `~/.hermes/hermes-agent/` on the `Codename-11/hermes-agent` fork. Create branch `feat/elevenlabs-voice-settings`. Patch `tools/tts_tool.py::_generate_elevenlabs` to accept `voice_settings` from the elevenlabs config block and pass through a `VoiceSettings(...)` object (defaults: stability=0.65, similarity_boost=0.8, style=0.0, use_speaker_boost=True). Add a graceful degradation for older elevenlabs SDKs. Update the upstream `docs/configuration/tts.md` reference. Run the project's test suite. Push the branch, open a PR against `NousResearch/hermes-agent` — cross-reference PR #8556 for style. Then apply the patch locally on the running `axiom` branch and restart `hermes-gateway` so V2/V3/V4 can benefit during testing. Report back the PR URL and the locally-applied confirmation.
 
 **Dependencies.** Benefits from Cfg1 being done first (both ship settings for ElevenLabs — makes config review cleaner).
 

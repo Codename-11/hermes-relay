@@ -143,11 +143,11 @@ In the tray app, open **Pair** and paste the `hermes-relay://pair?...` URL into
 hermes-relay pair --pair-qr 'hermes-relay://pair?payload=...' --grant-tools
 # ✓ Paired. Token stored in ~/.hermes/remote-sessions.json
 #   Server: 0.6.0
-#   Relay:  ws://172.16.24.250:8767
+#   Relay:  ws://192.168.1.100:8767
 ```
 
 Manual URL + six-character code pairing still works with
-`hermes-relay pair --remote ws://172.16.24.250:8767`, but the invite URL is
+`hermes-relay pair --remote ws://192.168.1.100:8767`, but the invite URL is
 the preferred path because it carries endpoint candidates and the correct
 relay one-shot code.
 
@@ -195,7 +195,7 @@ Herm uses `bun add -g herm-tui` when Bun is available and falls back to `npm ins
 If you plan to run `daemon` (headless tool serving), tack `--grant-tools` onto `pair` to capture the per-URL desktop-tool consent in the same step. That removes the historical `pair` → `shell` (consent prompt) → `daemon` dance:
 
 ```sh
-hermes-relay pair   --remote ws://172.16.24.250:8767 --grant-tools
+hermes-relay pair   --remote ws://192.168.1.100:8767 --grant-tools
 # ...prompts for code, then prompts for tool consent, stamps it on the stored session.
 
 hermes-relay daemon
@@ -206,7 +206,7 @@ For non-interactive provisioning (CI, install scripts, automated boxes) use `--a
 
 ```sh
 HERMES_RELAY_CODE=F3W7EY hermes-relay pair \
-  --remote ws://172.16.24.250:8767 --auto-grant-tools --non-interactive
+  --remote ws://192.168.1.100:8767 --auto-grant-tools --non-interactive
 ```
 
 The two flags are deliberately separate so consent is never implicit — `--grant-tools` means "ask me", `--auto-grant-tools` means "I've already decided". Plain `pair` (no flag) leaves consent untouched, matching the original behavior.
@@ -326,7 +326,7 @@ hermes-relay
 ```
 
 ```
-Connecting to ws://172.16.24.250:8767...
+Connecting to ws://192.168.1.100:8767...
 Connected (server 0.6.0).
 Session 4a3c1f2e… on claude-opus-4-7
 
@@ -374,7 +374,7 @@ hermes-relay tools
 ```
 
 ```
-Server: ws://172.16.24.250:8767
+Server: ws://192.168.1.100:8767
 Version: 0.6.0
 Toolsets: 18 (12 enabled)
 
@@ -433,7 +433,7 @@ $ hermes-relay daemon status
 hermes-relay daemon
   state:    ● connected
   pid:      48213
-  relay:    ws://172.16.24.250:8767
+  relay:    ws://192.168.1.100:8767
   uptime:   3h 12m
   updated:  4s ago
   server:   1.2.0

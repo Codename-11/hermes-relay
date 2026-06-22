@@ -230,12 +230,12 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 ```json
 {
   "hermes": 3,
-  "host": "172.16.24.250",
+  "host": "192.168.1.100",
   "port": 8642,
   "key": "api-bearer-token",
   "tls": false,
   "relay": {
-    "url": "ws://172.16.24.250:8767",
+    "url": "ws://192.168.1.100:8767",
     "code": "ABCD12",
     "ttl_seconds": 2592000,
     "grants": { "terminal": 2592000, "bridge": 604800 },

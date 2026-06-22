@@ -125,7 +125,7 @@ Beyond the terminal, the tray adds GUI surfaces the headless CLI can't: a **Gran
 
 They're not the same thing:
 
-- **`shell`** pipes the host's actual `hermes` CLI through a PTY. You see exactly what `ssh bailey@hermes-host hermes` would show — same banner, same skin, same slash commands. Best for interactive use.
+- **`shell`** pipes the host's actual `hermes` CLI through a PTY. You see exactly what `ssh you@hermes-host hermes` would show — same banner, same skin, same slash commands. Best for interactive use.
 - **`chat`** speaks the relay's structured `tui` channel (JSON-RPC-over-WSS), renders events as plain lines. Scriptable, pipeable, survives non-TTY environments. Best for automation / CI / one-shot queries.
 
 Use `shell` when you want to drive interactively; use `chat --json` from scripts. Chat mode is maintained for automation — it isn't where new features land, and it isn't a desktop chat app (that's [hermes-desktop](https://github.com/NousResearch/hermes-agent)'s job).

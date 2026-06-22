@@ -708,7 +708,7 @@ else
         # Was the service already running? If yes we MUST `restart` it
         # explicitly — `enable --now` is a no-op on already-active services
         # and the editable-install code refresh would never reach the live
-        # process. (Spent way too long debugging this on Docker-Server
+        # process. (Spent way too long debugging this on hermes-host
         # 2026-04-12 — every install.sh run looked successful but the live
         # relay kept serving stale code from before the last git pull.)
         if systemctl --user is-active hermes-relay.service >/dev/null 2>&1; then

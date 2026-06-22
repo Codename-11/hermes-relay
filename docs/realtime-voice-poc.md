@@ -985,7 +985,7 @@ quota.
 ## Tested Relay Command Flow
 
 These commands were used on 2026-05-18 to verify the relay-owned output path
-against the Docker-server deployment target.
+against the hermes-host deployment target.
 
 ```powershell
 # Local repo checks
@@ -996,20 +996,20 @@ python -m compileall plugin\relay plugin\voice_lab
 .\gradlew.bat :app:installSideloadDebug
 
 # Remote relay checks
-ssh bailey@172.16.24.250 "cd ~/.hermes/hermes-relay && ~/.hermes/hermes-agent/venv/bin/python -m compileall plugin/relay plugin/voice_lab"
-ssh bailey@172.16.24.250 "cd ~/.hermes/hermes-relay && ~/.hermes/hermes-agent/venv/bin/python -m unittest plugin.tests.test_voice_output_routes plugin.tests.test_voice_lab -v"
-ssh bailey@172.16.24.250 "systemctl --user restart hermes-relay.service"
-ssh bailey@172.16.24.250 "curl -fsS http://127.0.0.1:8767/health"
+ssh you@hermes-host "cd ~/.hermes/hermes-relay && ~/.hermes/hermes-agent/venv/bin/python -m compileall plugin/relay plugin/voice_lab"
+ssh you@hermes-host "cd ~/.hermes/hermes-relay && ~/.hermes/hermes-agent/venv/bin/python -m unittest plugin.tests.test_voice_output_routes plugin.tests.test_voice_lab -v"
+ssh you@hermes-host "systemctl --user restart hermes-relay.service"
+ssh you@hermes-host "curl -fsS http://127.0.0.1:8767/health"
 ```
 
 Live relay smoke used the configured server token without printing secrets:
 
 ```bash
 set -a
-. /home/bailey/.hermes/.env >/dev/null 2>&1 || true
+. $HOME/.hermes/.env >/dev/null 2>&1 || true
 set +a
-cd /home/bailey/.hermes/hermes-relay
-/home/bailey/.hermes/hermes-agent/venv/bin/python - <<'PY'
+cd $HOME/.hermes/hermes-relay
+$HOME/.hermes/hermes-agent/venv/bin/python - <<'PY'
 import asyncio, base64, json, os, time, aiohttp
 
 BASE = "http://127.0.0.1:8767"
@@ -1056,7 +1056,7 @@ PY
 
 Expected shape for the successful xAI/Grok TTS smoke is
 `provider=xai_tts`, `model=xai-tts`, `voice=eve`, nonzero `audio_bytes`, and
-`voice.response.done`. The 2026-05-18 Docker-server smoke produced first audio
+`voice.response.done`. The 2026-05-18 hermes-host smoke produced first audio
 in roughly 330 ms and completed a short tool-status phrase in roughly 605 ms.
 
 ### Live Phone Smoke
@@ -1081,7 +1081,7 @@ On the phone:
 1. Unlock the device.
 2. Open Hermes Relay sideload build `0.8.0-sideload`.
 3. Confirm it reconnects to the active relay route, for example
-   `ws://172.16.24.250:8767/ws` or the configured Tailscale route.
+   `ws://192.168.1.100:8767/ws` or the configured Tailscale route.
 4. Start tap-to-talk and say: `check the relay status`.
 5. Wait for the spoken status/tool narration and assistant reply.
 6. Interrupt while it is speaking to verify barge-in cancellation/resume.
@@ -1105,7 +1105,7 @@ adb logcat -d -v time |
   Select-String -Pattern "VoiceViewModel|RelayVoiceClient|voice/output|voice.response|voice.audio|voice.session|voice.replay|session.resume|replayed|RealtimePcmPlayer|BargeIn|transcribe|synthesize|auth.ok|sendMessage|tool|ConnectionManager|endpoint fallback|probeAndReconnect" |
   Select-Object -Last 260
 
-ssh bailey@docker-server.local 'journalctl --user -u hermes-relay.service --since "10 minutes ago" --no-pager | grep -E "Client connected|Client disconnected|voice.output|voice/output|voice/realtime|voice.session|voice.replay|session.resume|detached|resumed|resume_failed|voice/config|voice/transcribe|voice/synthesize|ERROR|Traceback" | tail -160'
+ssh you@hermes-host 'journalctl --user -u hermes-relay.service --since "10 minutes ago" --no-pager | grep -E "Client connected|Client disconnected|voice.output|voice/output|voice/realtime|voice.session|voice.replay|session.resume|detached|resumed|resume_failed|voice/config|voice/transcribe|voice/synthesize|ERROR|Traceback" | tail -160'
 ```
 
 Pass criteria:

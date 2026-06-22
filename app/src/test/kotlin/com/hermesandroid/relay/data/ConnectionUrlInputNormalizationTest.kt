@@ -18,8 +18,8 @@ class ConnectionUrlInputNormalizationTest {
     @Test
     fun bareIp_getsSchemeAndDefaultPort() {
         assertEquals(
-            "http://100.71.8.56:8642",
-            Connection.normalizeApiUrlInput("100.71.8.56"),
+            "http://100.64.0.1:8642",
+            Connection.normalizeApiUrlInput("100.64.0.1"),
         )
     }
 
@@ -60,8 +60,8 @@ class ConnectionUrlInputNormalizationTest {
     @Test
     fun whitespaceAndTrailingSlash_areTrimmed() {
         assertEquals(
-            "http://100.71.8.56:8642",
-            Connection.normalizeApiUrlInput("  100.71.8.56/  "),
+            "http://100.64.0.1:8642",
+            Connection.normalizeApiUrlInput("  100.64.0.1/  "),
         )
     }
 
@@ -95,7 +95,7 @@ class ConnectionUrlInputNormalizationTest {
         // End-to-end: the exact user journey from the bug report — typing a
         // bare Tailscale IP must yield a plain-HTTP (tls=false) candidate on
         // port 8642 with the tailscale role inferred.
-        val normalized = Connection.normalizeApiUrlInput("100.71.8.56")
+        val normalized = Connection.normalizeApiUrlInput("100.64.0.1")
         val candidate = Connection.endpointCandidateFromApiUrl(
             role = "",
             priority = 1,
@@ -103,7 +103,7 @@ class ConnectionUrlInputNormalizationTest {
             relayUrl = "",
         )
         assertEquals("tailscale", candidate?.role)
-        assertEquals("100.71.8.56", candidate?.api?.host)
+        assertEquals("100.64.0.1", candidate?.api?.host)
         assertEquals(8642, candidate?.api?.port)
         assertEquals(false, candidate?.api?.tls)
     }
