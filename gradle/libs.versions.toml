@@ -2,7 +2,7 @@
 appVersionName = "1.2.1"
 appVersionCode = "15"
 agp = "9.2.1"
-kotlin = "2.3.21"
+kotlin = "2.4.0"
 compose-bom = "2026.06.00"
 navigation-compose = "2.9.8"
 okhttp = "5.4.0"
