@@ -79,7 +79,7 @@ fun StatsForNerds(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Analytics",
+                    text = "Overview",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -106,10 +106,10 @@ fun StatsForNerds(
             val tokensPerMsg = if (appStats.totalMessagesSent > 0)
                 totalTokens / appStats.totalMessagesSent else 0L
             Text(
-                text = "${appStats.totalMessagesSent} messages | " +
+                text = "${appStats.totalMessagesSent} messages · " +
                     "${formatTokenCount(totalTokens)} tokens" +
                     (if (tokensPerMsg > 0) " (~${formatTokenCount(tokensPerMsg)}/msg)" else "") +
-                    " | ${appStats.sessionCount} sessions",
+                    " · ${appStats.sessionCount} sessions",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -8,8 +8,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -33,12 +35,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ToolCallEvent
+import com.hermesandroid.relay.diagnostics.CheckStatus
+import com.hermesandroid.relay.diagnostics.StatusCheck
 import com.hermesandroid.relay.viewmodel.VoiceStats
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -179,6 +185,234 @@ private fun LegendEntry(label: String, color: Color) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+// -----------------------------------------------------------------------------
+// Status-check timeline (Diagnostics)
+// -----------------------------------------------------------------------------
+
+/**
+ * Vertical timeline of derived [StatusCheck]s for the Diagnostics screen.
+ *
+ * Shares the dot + colour-legend visual language of [TimelineView] above, but
+ * adds a connecting rail between dots and renders each check's failure
+ * [StatusCheck.reason] inline — the whole point of the screen. Rows whose check
+ * carries a concrete log entry ([StatusCheck.timestampMs] != null) are tappable
+ * so the host can open the full diagnostic detail.
+ */
+@Composable
+fun StatusCheckTimeline(
+    checks: List<StatusCheck>,
+    modifier: Modifier = Modifier,
+    onCheckClick: (StatusCheck) -> Unit = {},
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Status checks",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = statusSummary(checks),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            StatusCheckLegend()
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (checks.isEmpty()) {
+                Text(
+                    text = "No checks yet — connect to a server to populate diagnostics.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                checks.forEachIndexed { index, check ->
+                    StatusCheckRow(
+                        check = check,
+                        isFirst = index == 0,
+                        isLast = index == checks.lastIndex,
+                        onClick = { onCheckClick(check) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusCheckLegend() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        LegendEntry("Pass", CheckStatus.Pass.statusColor())
+        LegendEntry("Warn", CheckStatus.Warn.statusColor())
+        LegendEntry("Fail", CheckStatus.Fail.statusColor())
+        LegendEntry("Unknown", CheckStatus.Unknown.statusColor())
+    }
+}
+
+@Composable
+private fun StatusCheckRow(
+    check: StatusCheck,
+    isFirst: Boolean,
+    isLast: Boolean,
+    onClick: () -> Unit,
+) {
+    val dotColor = check.status.statusColor()
+    val railColor = MaterialTheme.colorScheme.outlineVariant
+    // Only rows backed by a concrete log entry (timestamp captured) open a
+    // deep-detail view — keeps the "tap for detail" affordance honest.
+    val hasDetail = check.timestampMs != null
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .then(if (hasDetail) Modifier.clickable(onClick = onClick) else Modifier),
+    ) {
+        // Rail gutter: a vertical connecting line through the column with the
+        // status dot punched over it. Drawn in a draw-scope so dp→px and the
+        // first/last segment trimming stay self-contained.
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(22.dp)
+                .drawBehind {
+                    val cx = size.width / 2f
+                    val dotCenterY = 12.dp.toPx()
+                    val dotRadius = 5.dp.toPx()
+                    val lineWidth = 2.dp.toPx()
+                    if (!isFirst) {
+                        drawLine(
+                            color = railColor,
+                            start = Offset(cx, 0f),
+                            end = Offset(cx, dotCenterY),
+                            strokeWidth = lineWidth,
+                        )
+                    }
+                    if (!isLast) {
+                        drawLine(
+                            color = railColor,
+                            start = Offset(cx, dotCenterY),
+                            end = Offset(cx, size.height),
+                            strokeWidth = lineWidth,
+                        )
+                    }
+                    drawCircle(
+                        color = dotColor,
+                        radius = dotRadius,
+                        center = Offset(cx, dotCenterY),
+                    )
+                },
+        )
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 4.dp, bottom = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = check.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                StatusPill(check.status)
+            }
+
+            check.reason?.let { reason ->
+                Text(
+                    text = reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (check.status == CheckStatus.Fail) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+
+            if (hasDetail) {
+                Text(
+                    text = "Tap for log detail",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(status: CheckStatus) {
+    val color = status.statusColor()
+    val label = when (status) {
+        CheckStatus.Pass -> "PASS"
+        CheckStatus.Warn -> "WARN"
+        CheckStatus.Fail -> "FAIL"
+        CheckStatus.Unknown -> "UNKNOWN"
+    }
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = color.copy(alpha = 0.16f),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+        )
+    }
+}
+
+/** One-line "N failing · N warning · N passing" summary for the header. */
+private fun statusSummary(checks: List<StatusCheck>): String {
+    if (checks.isEmpty()) return "no checks"
+    val fail = checks.count { it.status == CheckStatus.Fail }
+    val warn = checks.count { it.status == CheckStatus.Warn }
+    val pass = checks.count { it.status == CheckStatus.Pass }
+    return buildList {
+        if (fail > 0) add("$fail failing")
+        if (warn > 0) add("$warn warning")
+        add("$pass passing")
+    }.joinToString(" · ")
+}
+
+/** Dot/pill colour per [CheckStatus]: green / amber / error-red / gray. */
+@Composable
+private fun CheckStatus.statusColor(): Color = when (this) {
+    CheckStatus.Pass -> Color(0xFF4CAF50)
+    CheckStatus.Warn -> Color(0xFFFFB300)
+    CheckStatus.Fail -> MaterialTheme.colorScheme.error
+    CheckStatus.Unknown -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable

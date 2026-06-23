@@ -115,6 +115,7 @@ import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
+import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
@@ -270,6 +271,7 @@ sealed class Screen(
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
+    data object Diagnostics : Screen("settings/diagnostics", "Diagnostics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
     data object RealtimeVoiceTest : Screen("settings/developer/realtime_voice", "Realtime voice", Icons.Filled.Settings)
     data object About : Screen("settings/about", "About", Icons.Filled.Settings)
@@ -1740,6 +1742,9 @@ fun RelayApp() {
                         onNavigateToAnalytics = {
                             navController.navigate(Screen.Analytics.route)
                         },
+                        onNavigateToDiagnostics = {
+                            navController.navigate(Screen.Diagnostics.route)
+                        },
                         onNavigateToVoiceSettings = {
                             navController.navigate(Screen.VoiceSettings.route)
                         },
@@ -2066,6 +2071,12 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         voiceViewModel = voiceViewModel,
                         chatViewModel = chatViewModel,
+                    )
+                }
+                composable(Screen.Diagnostics.route) {
+                    DiagnosticsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.DeveloperSettings.route) {
