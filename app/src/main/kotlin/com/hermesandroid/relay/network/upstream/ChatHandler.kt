@@ -275,10 +275,10 @@ class ChatHandler {
                     "memory.updated" -> "Memory"
                     else -> "Skill"
                 }
-                setMessageBadges(messageId, listOf(label))
+                addMessageBadges(messageId, listOf(label))
             }
             "artifact.created" -> {
-                setMessageBadges(messageId, listOf("Artifact"))
+                addMessageBadges(messageId, listOf("Artifact"))
                 textField("url", "path", "preview", "title")?.takeIf { it.isNotBlank() }?.let {
                     onThinkingDelta(messageId, "Artifact: $it")
                 }
@@ -291,7 +291,10 @@ class ChatHandler {
                 }
             }
             "run.completed", "done" -> onStreamComplete(messageId)
-            "error" -> onStreamError(textField("message", "error") ?: "Unknown error")
+            "error" -> {
+                addMessageBadges(messageId, listOf("Error"))
+                onStreamError(textField("message", "error") ?: "Unknown error")
+            }
             "session.created", "run.started" -> Unit
             else -> Log.d(TAG, "Unhandled relay stream event: ${envelope.event}")
         }
@@ -2027,6 +2030,22 @@ class ChatHandler {
             messages.map { msg ->
                 if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(badges = cleaned)
+                } else {
+                    msg
+                }
+            }
+        }
+    }
+
+    private fun addMessageBadges(messageId: String, badges: List<String>) {
+        val cleaned = badges
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        if (cleaned.isEmpty()) return
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                    msg.copy(badges = (msg.badges + cleaned).distinct().take(4))
                 } else {
                     msg
                 }
