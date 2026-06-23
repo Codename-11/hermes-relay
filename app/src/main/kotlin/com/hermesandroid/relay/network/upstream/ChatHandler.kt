@@ -12,6 +12,7 @@ import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.upstream.GatewaySubagentEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -226,6 +227,78 @@ class ChatHandler {
 
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
+
+
+    /**
+     * Apply a versioned Relay `stream.event` payload to native chat state.
+     *
+     * This is the WebSocket counterpart to the direct Hermes SSE mapper in
+     * HermesApiClient: assistant deltas mutate message text, tool lifecycle
+     * events update ToolProgressCard rows, progress/thinking stays in the
+     * subdued reasoning area, artifacts/skill/memory notices become low-noise
+     * status chips, and terminal/error/completion events explicitly settle the
+     * streaming state.
+     */
+    fun applyRelayStreamEvent(messageId: String, envelope: RelayStreamEventEnvelope) {
+        if (envelope.type != "stream.event" || envelope.schemaVersion != 1) {
+            Log.d(TAG, "Ignoring unsupported relay stream event schema: ${envelope.type} v${envelope.schemaVersion}")
+            return
+        }
+        val payload = envelope.payload
+        fun textField(vararg names: String): String? = names
+            .asSequence()
+            .mapNotNull { name -> (payload[name] as? JsonPrimitive)?.contentOrNull }
+            .firstOrNull { it.isNotBlank() }
+        fun boolField(name: String): Boolean? = (payload[name] as? JsonPrimitive)?.booleanOrNull
+        val toolName = textField("tool_name", "tool", "name") ?: "unknown"
+        val callId = textField("call_id", "tool_call_id") ?: toolName
+
+        when (envelope.event) {
+            "message.started" -> {
+                val msgObj = payload["message"] as? JsonObject
+                val serverMsgId = (msgObj?.get("id") as? JsonPrimitive)?.contentOrNull
+                if (!serverMsgId.isNullOrBlank()) replaceMessageId(messageId, serverMsgId)
+            }
+            "assistant.delta" -> {
+                textField("delta", "content", "text")?.let { onTextDelta(messageId, it) }
+            }
+            "tool.progress" -> {
+                textField("delta", "thinking_delta", "thinking", "text", "message")?.let {
+                    onThinkingDelta(messageId, it)
+                }
+            }
+            "tool.pending", "tool.started" -> onToolCallStart(messageId, callId, toolName)
+            "tool.completed" -> onToolCallComplete(messageId, callId, textField("result_preview", "summary", "message"))
+            "tool.failed" -> onToolCallFailed(messageId, callId, textField("error", "message") ?: "Tool failed")
+            "memory.updated", "skill.loaded" -> {
+                val label = when (envelope.event) {
+                    "memory.updated" -> "Memory"
+                    else -> "Skill"
+                }
+                addMessageBadges(messageId, listOf(label))
+            }
+            "artifact.created" -> {
+                addMessageBadges(messageId, listOf("Artifact"))
+                textField("url", "path", "preview", "title")?.takeIf { it.isNotBlank() }?.let {
+                    onThinkingDelta(messageId, "Artifact: $it")
+                }
+            }
+            "assistant.completed" -> {
+                if (boolField("interrupted") == true) {
+                    onStreamError("Response interrupted")
+                } else {
+                    onTurnComplete(messageId)
+                }
+            }
+            "run.completed", "done" -> onStreamComplete(messageId)
+            "error" -> {
+                addMessageBadges(messageId, listOf("Error"))
+                onStreamError(textField("message", "error") ?: "Unknown error")
+            }
+            "session.created", "run.started" -> Unit
+            else -> Log.d(TAG, "Unhandled relay stream event: ${envelope.event}")
+        }
+    }
 
     // --- Message management ---
 
@@ -1957,6 +2030,22 @@ class ChatHandler {
             messages.map { msg ->
                 if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(badges = cleaned)
+                } else {
+                    msg
+                }
+            }
+        }
+    }
+
+    private fun addMessageBadges(messageId: String, badges: List<String>) {
+        val cleaned = badges
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        if (cleaned.isEmpty()) return
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                    msg.copy(badges = (msg.badges + cleaned).distinct().take(4))
                 } else {
                     msg
                 }

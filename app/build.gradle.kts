@@ -27,7 +27,7 @@ android {
     // and `applicationId` is the runtime install identity; they don't have
     // to match.
     namespace = "com.hermesandroid.relay"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         // Axiom-Labs, LLC Play Console listing. Changed from the original

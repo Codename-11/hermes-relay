@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-22 — Typed stream.event Relay passthrough first slice
+
+**Why.** AXI-75 asks Relay/native clients to stop flattening Hermes SSE into assistant text and preserve runtime structure for native UI cards/timelines.
+
+- **Protocol + fixture.** `docs/relay-protocol.md` now defines auth capability negotiation (`supports.typed_stream_events` + `event_schema_version: 1`), the versioned `chat`/`stream.event` envelope, stable event families, ordering/de-dupe semantics, payload safety, fallback behavior, and native rendering guidance. Added `docs/fixtures/typed-stream-v1.jsonl` as a golden tool-using stream.
+- **Relay server.** `plugin/relay/server.py` records per-WebSocket client capabilities during `system/auth` and passes them to `ChatHandler`. `plugin/relay/channels/chat.py` now forwards Hermes/API-server SSE as ordered `stream.event` payloads for capable clients, emits final `done`, redacts secret-shaped keys, truncates large result fields, and keeps legacy `chat.delta`/`chat.tool.*`/`chat.completed` fallback for old clients.
+- **Native clients.** Android and Desktop auth envelopes advertise typed-stream support. Android gained `RelayStreamEventEnvelope` plus `ChatHandler.applyRelayStreamEvent()` that maps typed events to existing native assistant text, thinking/progress, tool-card, artifact/memory/skill chip, error, and completion state.
+- **Verification.** `PYTHONPATH=$PWD python -m unittest discover -s plugin/tests -p test_chat_typed_stream.py` green (typed ordering/final done/redaction + legacy fallback). `python -m py_compile plugin/relay/channels/chat.py plugin/relay/server.py plugin/tests/test_chat_typed_stream.py` green. `desktop/npm ci` then `npm run type-check` green. Android unit task was attempted with `ANDROID_HOME=/home/bailey/Android/Sdk ./gradlew :app:testSideloadDebugUnitTest --tests ...`; it is blocked before Kotlin compile by the current dependency/SDK mismatch (AAR metadata requires compileSdk 37; installed SDK only has android-36). Follow-up commits bump app/relay-core/relay-ui/quest compileSdk to 37 to satisfy current AndroidX/Markdown AAR metadata in CI without changing targetSdk.
+
 ## 2026-06-22 — Released plugin-v1.2.1
 
 Cut the Plugin 1.2.1 release — a Realtime Agent reliability patch. Both fixes were already on `dev`: the `session_not_found` brokered-handoff fix (`f6b965a`) and the realtime voice heartbeat-during-long-runs fix (`d1820fb`); 1.2.1 only adds the version bump and release packaging. Release-prep bumped the six plugin version sources via `scripts/bump-plugin-version.sh` (sync check green), folded the relay `session_not_found` fix into the existing `[1.2.1]` `CHANGELOG.md` line (the Desktop-CLI entries stay under `[Unreleased]` for their own `cli-v*` cut), and rewrote `PLUGIN_RELEASE_NOTES.md` as a Fixed-only release body.
