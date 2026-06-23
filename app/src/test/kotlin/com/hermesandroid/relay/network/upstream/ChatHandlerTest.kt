@@ -8,8 +8,11 @@ import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -1194,6 +1197,128 @@ class ChatHandlerTest {
         // No crash, plain message preserved unchanged
         assertEquals(1, handler.messages.value.size)
         assertNull(handler.messages.value[0].voiceIntent)
+    }
+
+
+    // --- Relay typed stream.event rendering ---
+
+    @Test
+    fun applyRelayStreamEvent_rendersAssistantDeltaToolLifecycleAndDone() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assist-relay",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            )
+        )
+
+        handler.applyRelayStreamEvent(
+            "assist-relay",
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 1,
+                event = "assistant.delta",
+                payload = buildJsonObject { put("delta", "Hello") },
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            "assist-relay",
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 2,
+                event = "tool.started",
+                payload = buildJsonObject {
+                    put("tool_name", "terminal")
+                    put("call_id", "call-1")
+                },
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            "assist-relay",
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 3,
+                event = "tool.completed",
+                payload = buildJsonObject {
+                    put("tool_name", "terminal")
+                    put("call_id", "call-1")
+                    put("result_preview", "ok")
+                },
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            "assist-relay",
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 4,
+                event = "done",
+                payload = buildJsonObject { put("state", "final") },
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals("Hello", msg.content)
+        assertFalse(msg.isStreaming)
+        assertEquals(1, msg.toolCalls.size)
+        assertEquals("terminal", msg.toolCalls[0].name)
+        assertTrue(msg.toolCalls[0].isComplete)
+        assertEquals("ok", msg.toolCalls[0].result)
+    }
+
+    @Test
+    fun applyRelayStreamEvent_rendersProgressArtifactAndErrorStates() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assist-relay",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            )
+        )
+
+        handler.applyRelayStreamEvent(
+            "assist-relay",
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 1,
+                event = "tool.progress",
+                payload = buildJsonObject { put("delta", "Thinking...") },
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            "assist-relay",
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 2,
+                event = "artifact.created",
+                payload = buildJsonObject { put("url", "https://example.invalid/artifact") },
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            "assist-relay",
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 3,
+                event = "error",
+                payload = buildJsonObject { put("message", "boom") },
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertTrue(msg.thinkingContent.contains("Thinking..."))
+        assertTrue(msg.thinkingContent.contains("Artifact:"))
+        assertTrue(msg.badges.contains("Error"))
+        assertEquals("boom", handler.error.value)
     }
 
     // --- Helper ---
