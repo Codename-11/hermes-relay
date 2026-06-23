@@ -1,6 +1,6 @@
 [versions]
-appVersionName = "1.2.1"
-appVersionCode = "15"
+appVersionName = "1.2.2"
+appVersionCode = "16"
 agp = "9.2.1"
 kotlin = "2.4.0"
 compose-bom = "2026.06.00"
@@ -12,12 +12,18 @@ mockk = "1.14.9"
 robolectric = "4.16.1"
 konsist = "0.17.3"
 security-crypto = "1.1.0"
-lifecycle = "2.11.0"
+# Pinned to 2.10.0: 2.11.0 (Dependabot wave 2026-06-22) requires compileSdk 37;
+# we target compileSdk 36. Bump only alongside a compileSdk bump. See the
+# markdown-renderer pin below and TODO.md "Dependabot auto-merge guardrails".
+lifecycle = "2.10.0"
 activity-compose = "1.13.0"
 core-ktx = "1.18.0"
 datastore = "1.2.1"
 splashscreen = "1.2.0"
-markdown-renderer = "0.42.0"
+# Pinned to 0.41.0: 0.42.0 (Dependabot #117) requires compileSdk 37; we target
+# compileSdk 36. 0.41.0 is the last version that builds on 36 and is the API
+# MarkdownContent.kt is written against. Bump only alongside a compileSdk bump.
+markdown-renderer = "0.41.0"
 coil = "3.5.0"
 haze = "1.7.2"
 mlkit-barcode = "17.3.0"

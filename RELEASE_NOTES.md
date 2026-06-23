@@ -1,22 +1,22 @@
-# Hermes-Relay-Android v1.2.1
+# Hermes-Relay-Android v1.2.2
 
-**Release Date:** June 21, 2026
-**Since v1.2.0:** A focused follow-up to the big personalization release — add a **profile lock**, an in-app **changelog**, a clean **diagnostics → report** flow, and a non-nagging **update nudge**, plus a round of voice and realtime reliability fixes.
+**Release Date:** June 22, 2026
+**Since v1.2.1:** A multi-profile reliability pass. Switching agent profiles now keeps your chats straight — **deleting a session on a non-default profile sticks**, and a **cold start opens the session list on the right profile** instead of flashing the default one — plus a **full-screen Diagnostics** view that leads with subsystem health checks, simpler connection wording, and a roomier distraction-free chat mode.
 
-v1.2.1 builds on 1.2.0's personalization and transparency themes with quality-of-life and reliability work. Pin the app to one agent profile, review past release notes any time, turn a logged error into a one-tap GitHub issue, and get a tasteful in-app prompt when a newer build is live. Voice mode is calmer and more correct — Stop actually stops, hold-to-talk is steadier, the overlay is readable — and realtime turns that reach back to Hermes no longer fail with a session error.
+v1.2.2 is a focused follow-up to 1.2.1, sharpened by real multi-profile use. The two profile fixes remove the most confusing rough edges when you run more than one agent profile, Diagnostics becomes a place you can actually read at a glance, and a couple of small touches make the default path clearer.
 
 ---
 
 ## Download
 
-v1.2.1 ships in two Android build flavors. APK and AAB filenames are version-tagged:
+v1.2.2 ships in two Android build flavors. APK and AAB filenames are version-tagged:
 
 | Flavor | File | Who it's for |
 |---|---|---|
-| Google Play | `hermes-relay-1.2.1-googlePlay-release.aab` | Upload this Android App Bundle to Play Console. It has no AccessibilityService, screen reading, screenshots, gestures, SMS/calls, contacts/location, overlays, or unattended phone control. |
-| sideload | `hermes-relay-1.2.1-sideload-release.apk` | Direct-install APK for full Device Control. Installs as `com.axiomlabs.hermesrelay.sideload`. |
-| googlePlay APK | `hermes-relay-1.2.1-googlePlay-release.apk` | Parity/testing artifact. |
-| sideload AAB | `hermes-relay-1.2.1-sideload-release.aab` | Parity/testing artifact. |
+| Google Play | `hermes-relay-1.2.2-googlePlay-release.aab` | Upload this Android App Bundle to Play Console. It has no AccessibilityService, screen reading, screenshots, gestures, SMS/calls, contacts/location, overlays, or unattended phone control. |
+| sideload | `hermes-relay-1.2.2-sideload-release.apk` | Direct-install APK for full Device Control. Installs as `com.axiomlabs.hermesrelay.sideload`. |
+| googlePlay APK | `hermes-relay-1.2.2-googlePlay-release.apk` | Parity/testing artifact. |
+| sideload AAB | `hermes-relay-1.2.2-sideload-release.aab` | Parity/testing artifact. |
 
 Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 
@@ -24,25 +24,19 @@ Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload 
 
 ## Highlights
 
-### Make it yours
-- **Profile lock.** Pin the app to a single agent profile from Settings → Profile lock. Every other profile picker collapses to a locked state, and the lock screen stays the one place that lists every profile — with a clear notice if the locked profile isn't on the current server.
+### Profiles that behave
+- **Deleting a session on a non-default profile now sticks.** A non-default profile keeps its sessions in its own store; the delete now scopes to the active profile, so a removed chat no longer reappears after the list refreshes.
+- **Cold start opens on the right profile.** Launching with a non-default profile selected used to briefly show the default profile's chats before snapping to the correct ones. The session list (and the restored session context) now wait for the profile to resolve and load the right list directly.
 
-### Find your way back
-- **In-app What's New & changelog.** A new Settings entry shows the current and past release notes any time, not just the post-update popup.
+### Clearer diagnostics
+- **Diagnostics status timeline.** Diagnostics is now a full screen that leads with a top-to-bottom list of subsystem health checks — network, API server, chat transport, pairing, relay, and voice — each with a pass / warning / fail state and the reason when something's wrong. Tap a failing check for full detail; the recent-activity log stays below.
 
-### When something breaks
-- **Diagnostics → tap for detail + report.** Logged errors now carry clean titles and open a detail view with **Copy / Share / Create-GitHub-issue** — the same flow as crash reports. Classified errors across voice, chat, and connection are captured centrally.
-- **Update-available nudge.** A dismissable in-app banner when a newer version is live — Google Play In-App Update on Play installs, GitHub Releases on sideload. Per-version dismissal, throttled, never nags.
-
-### Voice & realtime
-- **Voice override applies in Auto mode.** A chosen per-profile/enhanced voice now takes effect on Auto with the relay paired (previously only "Relay" mode applied it); voice settings are also namespaced per connection.
-- **Realtime "Stop" stops immediately**, over-chatty spoken status is throttled, and long background tasks no longer time out the turn.
-- **Steadier voice controls.** Hold-to-talk holds until you genuinely lift your finger, and the voice overlay is readable — opaque panel and status bubbles, non-wrapping labels, and invalid engine/route combinations disabled.
-- **Connection status overlay** clears faster — resolved (error/warning) toasts auto-dismiss within ~5s instead of lingering.
+### Small touches
+- **Simpler connection wording.** The default connection is now just **"Hermes"** (previously "Vanilla" / "Standard Hermes"), and the optional power features are labelled **"Relay"** / "Relay plugin", across setup, the switcher, voice, and permissions.
+- **Roomier clean chat.** Distraction-free chat mode gives its text a taller, scrollable area instead of capping it near a third of the screen.
 
 ---
 
 ## Upgrade notes
-- All new app features are available on **both** flavors (client-side; no Device Control needed).
-- **Relay-side fix (ships in the plugin, not the APK):** brokered Realtime Agent turns that reach back to Hermes no longer fail with `session_not_found` — the relay now mints/reuses a valid API-server session and reads the current nested create-session response. Relay operators pick this up via `hermes-relay-update`.
-- `appVersionCode` is **15**.
+- All changes are client-side and available on **both** flavors (no Device Control needed).
+- `appVersionCode` is **16**.

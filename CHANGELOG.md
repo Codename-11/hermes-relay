@@ -13,13 +13,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: background daemon.** `hermes-relay daemon start` runs the headless tool router in the background (no console window, survives closing the terminal), with `daemon stop` and `daemon status` to manage it. `daemon status` reports state, uptime, relay, and advertised-tool count; bare `daemon` still runs in the foreground. Logs go to `~/.hermes/daemon.log`.
 - **Desktop CLI: per-command help.** Every subcommand now answers `--help`, and `devices`/`sessions`/`plugins`/`voice`/`relay` print their own usage (sub-commands, flags, examples) instead of a terse "unknown sub-verb".
 - **Desktop CLI: startup banner.** A slim "Hermes Relay" wordmark shows atop `--help`, the first-run welcome, and the chat REPL — and `hermes-relay logo` prints it on demand. Suppressed for piped/`--json`/`--no-color` output.
-- **Diagnostics: status checks.** Diagnostics now opens full-screen and leads with a top-to-bottom list of subsystem health checks — network, API server, chat transport, pairing, relay, and voice — each with a clear pass / warning / fail state and, when something's wrong, the reason why; tap a failing check for full detail. The recent-activity log stays below it.
 
 ### Changed
 
 - **Desktop CLI: visual + ergonomics refresh.** A single color theme across the CLI, aligned tables for `devices`/`sessions`, status dots for on/off states, and progress spinners for slow operations (the multi-endpoint pairing probe and the gateway connect) so nothing looks hung. Errors now suggest the fix (e.g. re-pair on auth failure).
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
+
+## [1.2.2] - 2026-06-22
+
+### Added
+
+- **Diagnostics: status timeline.** Diagnostics now opens full-screen and leads with a top-to-bottom list of subsystem health checks — network, API server, chat transport, pairing, relay, and voice — each with a clear pass / warning / fail state and, when something's wrong, the reason why; tap a failing check for full detail. The recent-activity log stays below it.
+
+### Changed
+
 - **Connections wording simplified.** The default connection is now just "Hermes" (previously "Vanilla" / "Standard Hermes"), and the optional power features are labelled "Relay" / "Relay plugin", across the connection setup, switcher, voice, and permissions screens.
 - **Clean chat mode shows more text.** The distraction-free chat view gives its text a noticeably taller, scrollable area instead of capping it near a third of the screen.
 

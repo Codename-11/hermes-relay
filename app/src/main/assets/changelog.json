@@ -1,6 +1,66 @@
 {
   "versions": [
     {
+      "version": "1.2.2",
+      "title": "Multi-profile polish",
+      "date": "2026-06-22",
+      "sections": [
+        {
+          "header": "Profiles that behave",
+          "bullets": [
+            "Deleting a session while a non-default agent profile is active now sticks — it no longer reappears after the list refreshes.",
+            "On a cold start with a non-default profile selected, the session drawer opens on that profile's chats directly instead of briefly showing the default profile's."
+          ]
+        },
+        {
+          "header": "Clearer diagnostics",
+          "bullets": [
+            "Diagnostics is now a full screen led by a top-to-bottom list of subsystem health checks — network, API server, chat transport, pairing, relay, and voice — each with a pass / warning / fail state and the reason when something's wrong; tap a failing check for full detail. The recent-activity log stays below."
+          ]
+        },
+        {
+          "header": "Small touches",
+          "bullets": [
+            "The default connection is now simply \"Hermes\" (and the optional power features are labelled \"Relay\"), across setup, the switcher, voice, and permissions.",
+            "Distraction-free chat mode gives its text a taller, scrollable area."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.2.1",
+      "title": "Polish & control",
+      "date": "2026-06-21",
+      "sections": [
+        {
+          "header": "Yours to control",
+          "bullets": [
+            "Lock the app to a single agent profile (Settings → Profile lock) and hide the rest from the pickers."
+          ]
+        },
+        {
+          "header": "Find your way back",
+          "bullets": [
+            "A new \"What's New\" entry in Settings shows current and past release notes any time — not just after an update."
+          ]
+        },
+        {
+          "header": "When something breaks",
+          "bullets": [
+            "Diagnostics show clean error titles — tap any entry for a detail view with Copy, Share, and a one-tap GitHub issue.",
+            "A tasteful in-app banner tells you when a newer version is live (Play or sideload) — dismissable, and it never nags."
+          ]
+        },
+        {
+          "header": "Voice fixes",
+          "bullets": [
+            "Stop now halts realtime speech instantly, hold-to-talk is steadier, the voice overlay is easier to read, and a chosen voice applies in Auto mode.",
+            "Realtime turns that reach back to Hermes no longer drop with a session error."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.0",
       "title": "Make it yours",
       "date": "2026-06-20",
