@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Deleting a session on a non-default profile now sticks.** Removing a chat while a non-default agent profile was active could leave it on the server, so it reappeared after the list refreshed; the delete is now scoped to the active profile.
+- **Session drawer opens on the right profile from a cold start.** When launching with a non-default profile selected, the session list could briefly show the default profile's chats and then snap to the correct ones; it now waits for the profile to resolve and loads the right list directly.
 
 ## [1.2.1] - 2026-06-21
 
