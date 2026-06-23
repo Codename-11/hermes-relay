@@ -1059,6 +1059,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
 
+    /**
+     * True once the active connection's persisted profile selection has settled,
+     * so cold-start profile-scoped reads (e.g. the session drawer + restored
+     * session context) don't race the restore and load the server-default
+     * profile. See [ProfileController.selectionSettled].
+     */
+    val profileSelectionSettled: StateFlow<Boolean> get() = profileController.selectionSettled
+
     val profileDisplayAlias: StateFlow<String?> get() = profileController.profileDisplayAlias
 
     fun setProfileDisplayAlias(alias: String?) = profileController.setProfileDisplayAlias(alias)

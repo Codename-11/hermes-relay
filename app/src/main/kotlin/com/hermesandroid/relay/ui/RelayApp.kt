@@ -397,6 +397,7 @@ fun RelayApp() {
     val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
@@ -667,15 +668,29 @@ fun RelayApp() {
     // refreshSessions() that would flash/reload the chat. `switchProfileContext`
     // already no-ops when the context key + session are unchanged.
     val chatClientReady = chatApiClient != null
-    LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId) {
+    LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId, profileSelectionSettled) {
         if (!chatClientReady) return@LaunchedEffect
-        // Coalesce the rapid lastSessionId null→value churn a profile switch
-        // produces: selectProfile() nulls lastSessionId, then the persisted
-        // per-profile session resolves a tick later. This effect re-fires on that
-        // change, cancelling the delay below before it commits — so we skip
-        // painting the intermediate empty draft and land straight on the resolved
-        // session (or a genuine fresh draft when the profile has no history).
-        delay(160)
+        // Cold-start profile-isolation guard: hold the first profile-scoped load
+        // until the persisted profile selection has SETTLED, so the session
+        // drawer (and the restored session context) don't briefly load the
+        // SERVER-DEFAULT profile and then visibly snap to the real one. While a
+        // non-default profile is still resolving we wait on a backstop instead of
+        // fetching now; this effect re-fires the instant the profile resolves
+        // (selectedProfile / profileSelectionSettled change), cancelling the wait
+        // so only the correct, profile-scoped load lands. The backstop guarantees
+        // the drawer is never permanently empty if the profile list never lands.
+        if (!profileSelectionSettled) {
+            delay(2_500L)
+        } else {
+            // Coalesce the rapid lastSessionId null→value churn a profile switch
+            // produces: selectProfile() nulls lastSessionId, then the persisted
+            // per-profile session resolves a tick later. This effect re-fires on
+            // that change, cancelling the delay below before it commits — so we
+            // skip painting the intermediate empty draft and land straight on the
+            // resolved session (or a genuine fresh draft when the profile has no
+            // history).
+            delay(160)
+        }
         chatViewModel.switchProfileContext(
             contextKey = AgentDisplay.profileContextKey(
                 connectionId = activeConnectionId,
