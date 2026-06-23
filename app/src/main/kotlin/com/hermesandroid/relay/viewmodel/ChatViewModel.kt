@@ -1052,6 +1052,17 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * Deletes a session scoped to the active profile on gateway connections
+     * (dashboard `DELETE /api/sessions/{id}?profile=`). The write twin of
+     * [profileSessionLister]: a non-default profile's row lives in that profile's
+     * own DB, so the unscoped api_server delete leaves it behind and the next
+     * profile-scoped list resurrects it. Returns `true` on success. Wired from
+     * RelayApp to
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.deleteProfileScopedSession].
+     */
+    var profileSessionDeleter: (suspend (String) -> Boolean)? = null
+
+    /**
      * Loads a session's transcript scoped to the active profile (dashboard
      * `/api/sessions/{id}/messages?profile=`). Twin of [profileSessionLister]:
      * once the drawer lists a non-default profile's sessions, opening one must
@@ -1819,8 +1830,24 @@ class ChatViewModel : ViewModel() {
         }
 
         viewModelScope.launch {
-            val success = client.deleteSession(sessionId)
-            if (!success && removedSession != null) {
+            // On the gateway, the session lives in the ACTIVE PROFILE's own
+            // state.db, so it must be deleted through the dashboard
+            // `/api/sessions/{id}?profile=` surface — the same scoping
+            // refreshSessions() uses for the listing. The unscoped api_server
+            // delete leaves a non-default profile's row intact and the next
+            // profile-scoped list resurrects it. Off the gateway (one shared
+            // api_server DB, no profiles) the plain delete is correct; the
+            // deleter is also null until RelayApp wires it, so fall back then.
+            val success = if (streamingEndpoint == "gateway") {
+                profileSessionDeleter?.invoke(sessionId) ?: client.deleteSession(sessionId)
+            } else {
+                client.deleteSession(sessionId)
+            }
+            if (success) {
+                // Re-fetch so a server that still has the row can't leave it
+                // resurrected in the drawer; mirrors session create's refresh.
+                refreshSessions()
+            } else if (removedSession != null) {
                 // Restore on failure
                 handler.addSession(removedSession)
             }

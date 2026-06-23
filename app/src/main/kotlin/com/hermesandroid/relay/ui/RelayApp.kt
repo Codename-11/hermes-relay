@@ -648,6 +648,11 @@ fun RelayApp() {
         chatViewModel.setProfileMessageLoader { sessionId ->
             connectionViewModel.loadProfileScopedMessages(sessionId)
         }
+        // …and delete from that same profile's DB so a non-default profile's
+        // session can't be resurrected by the next profile-scoped list.
+        chatViewModel.profileSessionDeleter = { sessionId ->
+            connectionViewModel.deleteProfileScopedSession(sessionId)
+        }
 
         // Wire session persistence callback
         chatViewModel.onSessionChanged = { sessionId ->
