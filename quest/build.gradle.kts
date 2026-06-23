@@ -26,7 +26,7 @@ apply(plugin = "com.meta.spatial.plugin")
 
 android {
     namespace = "com.axiomlabs.hermesquest"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.axiomlabs.hermesquest"

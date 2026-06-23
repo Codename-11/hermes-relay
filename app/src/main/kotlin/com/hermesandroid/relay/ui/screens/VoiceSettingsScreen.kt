@@ -562,22 +562,22 @@ private fun VoiceForThisProfileCard(
             val relayStatus = if (relayVoiceReady) "Ready" else "Relay not configured"
             val autoStatus = when {
                 relayVoiceReady -> "Ready — using Relay"
-                standardOk -> "Ready — using standard Hermes"
+                standardOk -> "Ready — using Hermes"
                 else -> "No route available yet"
             }
             listOf(
                 RouteOption(
                     route = VoiceAudioRoute.Auto,
                     label = "Auto",
-                    detail = "Relay when paired; otherwise the standard Hermes dashboard. Recommended.",
+                    detail = "Relay when paired; otherwise the Hermes dashboard. Recommended.",
                     status = autoStatus,
                     statusOk = relayVoiceReady || standardOk,
                 ),
                 RouteOption(
                     route = VoiceAudioRoute.Standard,
-                    label = "Vanilla Hermes",
+                    label = "Hermes",
                     detail = "The dashboard audio path Hermes Desktop uses — works on a " +
-                        "vanilla Hermes install, no Relay plugin required.",
+                        "Hermes install, no Relay plugin required.",
                     status = standardStatus,
                     statusOk = standardOk,
                 ),
@@ -2104,7 +2104,7 @@ private fun TestCurrentEngineCard(
                     ).joinToString(" / ").ifBlank { "loading..." },
                 )
             } else {
-                ProviderRow(label = "Route", value = "standard Hermes")
+                ProviderRow(label = "Route", value = "Hermes")
                 ProviderRow(label = "Voice", value = "server-configured TTS")
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

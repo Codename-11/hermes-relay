@@ -123,6 +123,11 @@ class RelayServer:
         # In-flight tasks per client (for cancellation on disconnect)
         self._client_tasks: dict[web.WebSocketResponse, set[asyncio.Task[Any]]] = {}
 
+        # Negotiated websocket capabilities per connected client. Kept outside
+        # Session so reconnects can renegotiate independently and older stored
+        # tokens do not accidentally opt in to a new protocol.
+        self._client_capabilities: dict[web.WebSocketResponse, dict[str, Any]] = {}
+
     @property
     def client_count(self) -> int:
         return len(self._clients)
@@ -326,8 +331,8 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     ```json
     {
       "hermes": 2,
-      "host": "172.16.24.250", "port": 8642, "key": "<api-key>", "tls": false,
-      "relay": {"url": "ws://172.16.24.250:8767", "code": "ABC123",
+      "host": "192.168.1.100", "port": 8642, "key": "<api-key>", "tls": false,
+      "relay": {"url": "ws://192.168.1.100:8767", "code": "ABC123",
                 "ttl_seconds": 604800, "transport_hint": "ws"}
     }
     ```
@@ -340,7 +345,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     POST /pairing/mint
       body (all optional — fall back to RelayConfig / local Hermes defaults):
-        - host: "172.16.24.250"        API server host override (LAN IP)
+        - host: "192.168.1.100"        API server host override (LAN IP)
         - port: 8642                    API server port override
         - tls: false                    API server TLS override
         - api_key: "<token>"            API bearer token override (goes in
@@ -3222,6 +3227,8 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
         session_token = await _authenticate(ws, server, remote_ip, request)
     except _AuthFailed as exc:
         logger.info("Auth failed from %s: %s", remote_ip, exc)
+        server._client_capabilities.pop(ws, None)
+        server.chat.detach_ws(ws)
         # WebSocket was already sent an auth.fail message
         if not ws.closed:
             await ws.close()
@@ -3281,6 +3288,25 @@ def _detect_transport_hint(request: web.Request) -> str:
     except Exception:  # pragma: no cover — defensive
         pass
     return "unknown"
+
+
+def _extract_client_capabilities(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize optional client capability negotiation from auth payload."""
+    supports = payload.get("supports")
+    if not isinstance(supports, dict):
+        supports = {}
+    typed = supports.get("typed_stream_events") is True
+    version = supports.get("event_schema_version", supports.get("typed_stream_event_schema_version", 1))
+    try:
+        version_int = int(version)
+    except (TypeError, ValueError):
+        version_int = 0
+    return {
+        "supports": {
+            "typed_stream_events": bool(typed and version_int == 1),
+            "event_schema_version": 1 if typed and version_int == 1 else version_int,
+        }
+    }
 
 
 def _build_auth_ok_payload(
@@ -3352,6 +3378,9 @@ async def _authenticate(
         ))
 
     payload = envelope.get("payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    server._client_capabilities[ws] = _extract_client_capabilities(payload)
     pairing_code = payload.get("pairing_code", "")
     session_token_attempt = payload.get("session_token", "")
     refresh_token_attempt = str(payload.get("refresh_token", "") or "").strip()
@@ -3510,8 +3539,14 @@ async def _on_message(
     if channel == "system":
         await _handle_system(ws, server, envelope)
     elif channel == "chat":
-        # Run chat handling as a tracked task so we can cancel on disconnect
-        task = asyncio.create_task(server.chat.handle(ws, envelope))
+        # Run chat handling as a tracked task so we can cancel on disconnect.
+        # Capability negotiation happens at system/auth; the chat channel uses
+        # it to decide typed stream.event passthrough vs legacy text envelopes.
+        task = asyncio.create_task(
+            server.chat.handle(
+                ws, envelope, server._client_capabilities.get(ws)
+            )
+        )
         _track_task(server, ws, task)
     elif channel == "terminal":
         task = asyncio.create_task(server.terminal.handle(ws, envelope))
@@ -3611,6 +3646,8 @@ async def _on_disconnect(
     """Clean up after a client disconnects."""
     token = server._clients.pop(ws, None)
     tasks = server._client_tasks.pop(ws, set())
+    server._client_capabilities.pop(ws, None)
+    server.chat.detach_ws(ws)
 
     # === PHASE3-bridge-server: fail in-flight bridge commands on phone disconnect ===
     # If this ws was the currently-latched phone, detach_ws flips phone_ws

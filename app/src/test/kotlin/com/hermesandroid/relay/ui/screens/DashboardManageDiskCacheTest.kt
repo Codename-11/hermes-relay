@@ -25,7 +25,7 @@ class DashboardManageDiskCacheTest {
     }
 
     private fun sampleEntries(): Map<String, PersistedDashboardPayload> = mapOf(
-        "conn-1|http://100.71.8.56:9119|/api/skills" to PersistedDashboardPayload(
+        "conn-1|http://100.64.0.1:9119|/api/skills" to PersistedDashboardPayload(
             status = DashboardStatus(
                 authRequired = true,
                 authProviders = listOf("password"),

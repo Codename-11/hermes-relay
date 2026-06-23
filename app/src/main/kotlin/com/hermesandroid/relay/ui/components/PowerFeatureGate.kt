@@ -40,9 +40,8 @@ enum class PowerFeatureGateStatus(
     RequiresPairing(
         label = "Requires pairing",
         actionLabel = "Pair to unlock",
-        explanation = "This feature runs over the Hermes Relay plugin. Make sure the Relay " +
-            "plugin is installed and running on your Hermes server, then pair this device " +
-            "to unlock it.",
+        explanation = "This feature requires the Relay plugin. Make sure it is installed " +
+            "and running on your Hermes server, then pair this device to unlock it.",
     ),
     PairingExpired(
         label = "Pairing expired",

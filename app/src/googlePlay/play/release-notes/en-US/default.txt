@@ -1,7 +1,7 @@
-v1.2.1 — Polish & control.
+v1.2.2 — Multi-profile polish.
 
-• Lock the app to a single agent profile and hide the rest.
-• In-app "What's New" with current and past release notes.
-• Diagnostics with clean error titles and one-tap reporting.
-• A tasteful, dismissable "update available" nudge.
-• Voice fixes: Stop halts speech instantly, steadier hold-to-talk, a more readable overlay, and chosen voices apply in Auto mode.
+• Deleting a session on a non-default profile now sticks — no more reappearing.
+• Cold start opens the session list on the right profile instead of flashing the default one.
+• Diagnostics is now a full-screen health-check list with clear status and the reason when something's wrong.
+• The default connection is simply "Hermes" (power features are "Relay").
+• Distraction-free chat mode gives its text more room and scrolls.

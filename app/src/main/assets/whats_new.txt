@@ -1,21 +1,17 @@
-v1.2.1 - Polish & control
+v1.2.2 - Multi-profile polish
 
-Yours to control
-* Lock the app to a single agent profile (Settings → Profile lock) and hide
-  the rest from the pickers.
+Profiles that behave
+* Deleting a session on a non-default agent profile now sticks — it no longer
+  reappears after the list refreshes.
+* On a cold start with a non-default profile selected, the session list opens
+  on that profile's chats directly instead of flashing the default profile's.
 
-Find your way back
-* A new "What's New" entry in Settings shows current and past release notes
-  any time — not just after an update.
+Clearer diagnostics
+* Diagnostics is now a full screen that leads with a top-to-bottom list of
+  health checks — network, server, chat, pairing, relay, and voice — each with
+  a clear status and the reason when something's wrong. Tap a failing check for
+  detail; the recent-activity log stays below.
 
-When something breaks
-* Diagnostics now show clean error titles — tap any entry for a detail view
-  with Copy, Share, and a one-tap GitHub issue.
-* A tasteful in-app banner tells you when a newer version is live (Play or
-  sideload) — dismissable, and it never nags.
-
-Voice fixes
-* Stop now halts realtime speech instantly, hold-to-talk is steadier, the
-  voice overlay is easier to read, and a chosen voice applies in Auto mode.
-* Realtime turns that reach back to Hermes no longer drop with a session
-  error.
+Small touches
+* The default connection is simply "Hermes" now (power features are "Relay").
+* Distraction-free chat mode gives its text a taller, scrollable area.

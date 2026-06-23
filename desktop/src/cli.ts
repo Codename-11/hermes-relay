@@ -222,7 +222,7 @@ Flags:
 
 Examples:
   # First time: pair with the relay (one-time code from \`hermes-pair\` on the server)
-  hermes-relay pair --remote ws://172.16.24.250:8767
+  hermes-relay pair --remote ws://192.168.1.100:8767
   # ...prompts for code, stores a token in ~/.hermes/remote-sessions.json
 
   # REPL — reuses the tray-selected active relay or stored token
@@ -248,7 +248,7 @@ Examples:
   hermes-relay plugins launch herm
 
   # Two-command bring-up: pair with consent, then run headless. No \`shell\` round-trip.
-  hermes-relay pair   --remote ws://172.16.24.250:8767 --grant-tools
+  hermes-relay pair   --remote ws://192.168.1.100:8767 --grant-tools
   hermes-relay daemon
 
 Config files:

@@ -178,7 +178,7 @@ If the agent says "desktop_terminal is not available" or calls time out immediat
 
 ```bash
 # On the server, verify the channel sees your client
-ssh bailey@<host> curl -s "http://127.0.0.1:8767/desktop/_ping?tool=desktop_terminal"
+ssh you@<host> curl -s "http://127.0.0.1:8767/desktop/_ping?tool=desktop_terminal"
 ```
 
 Expected (the default-advertised set — `desktop_computer_*` appears only when the client runs with `--experimental-computer-use`):

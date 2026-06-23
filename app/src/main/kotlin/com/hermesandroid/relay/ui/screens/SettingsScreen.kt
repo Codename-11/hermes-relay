@@ -51,7 +51,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -60,7 +59,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -87,7 +85,6 @@ import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
-import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -143,6 +140,7 @@ fun SettingsScreen(
     onNavigateToMediaSettings: () -> Unit,
     onNavigateToAppearanceSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
+    onNavigateToDiagnostics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
     onNavigateToPermissions: () -> Unit,
@@ -271,13 +269,11 @@ fun SettingsScreen(
     // the sheet renders inline over Settings so closing drops the user
     // back where they started.
     var showAgentSheet by remember { mutableStateOf(false) }
-    var showDiagnosticsSheet by remember { mutableStateOf(false) }
     var showProfileLockDialog by remember { mutableStateOf(false) }
     // What's New / Changelog — opens the full release history as a
     // self-contained full-screen Dialog (no nav route). Always available, not
     // gated on the post-update "seen" state that drives the auto dialog.
     var showChangelog by remember { mutableStateOf(false) }
-    val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // Profile lock state — this card/dialog is the ONE surface that always
     // lists every profile, so it does NOT gate on isProfileLocked.
@@ -521,8 +517,8 @@ fun SettingsScreen(
             SettingsCategoryRow(
                 icon = Icons.Filled.Info,
                 title = "Diagnostics",
-                subtitle = "Recent API, relay, session, and voice activity",
-                onClick = { showDiagnosticsSheet = true },
+                subtitle = "Status checks, plus recent API, relay, session, and voice activity",
+                onClick = onNavigateToDiagnostics,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -571,36 +567,6 @@ fun SettingsScreen(
         )
     }
 
-    if (showDiagnosticsSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showDiagnosticsSheet = false },
-            sheetState = diagnosticsSheetState,
-        ) {
-            Column(
-                modifier = Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-                    .navigationBarsPadding(),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    text = "Diagnostics",
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Text(
-                    text = "Recent app-level connection and voice events. Secrets and raw payloads are hidden.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                DiagnosticsLogPanel(
-                    limit = 80,
-                    showCategory = true,
-                    showClear = true,
-                )
-            }
-        }
-    }
-
     if (showProfileLockDialog) {
         ProfileLockDialog(
             profiles = agentProfiles,
@@ -614,7 +580,8 @@ fun SettingsScreen(
 
     // Full-screen changelog. Hosted as a self-contained Dialog (no nav route)
     // so it stacks over Settings and dismisses back here — mirroring the
-    // showAgentSheet / showDiagnosticsSheet inline-surface pattern above.
+    // showAgentSheet inline-surface pattern above. (Diagnostics moved to its
+    // own nav route — see Screen.Diagnostics.)
     if (showChangelog) {
         Dialog(
             onDismissRequest = { showChangelog = false },

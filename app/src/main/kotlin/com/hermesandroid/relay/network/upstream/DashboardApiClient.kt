@@ -448,6 +448,18 @@ class DashboardApiClient(
         }
     }
 
+    /**
+     * Delete a session scoped to its owning profile via the dashboard
+     * `DELETE /api/sessions/{id}?profile=`. The write twin of [listSessions]:
+     * a non-default profile's sessions live in that profile's own `state.db`, so
+     * deleting through the api_server (one shared DB, no profile) leaves the row
+     * intact and the next profile-scoped list resurrects it. [profile] null/blank
+     * → the launch profile's DB (param omitted). Mirrors [deleteCronJob]'s
+     * profile-scoped delete plumbing.
+     */
+    suspend fun deleteSession(sessionId: String, profile: String? = null): Result<JsonObject> =
+        deleteJsonObject("/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}")
+
     private fun parseProfiles(root: JsonObject): List<Profile> {
         fun decode(element: JsonElement, nameOverride: String?): Profile? = runCatching {
             val obj = element as? JsonObject ?: return null

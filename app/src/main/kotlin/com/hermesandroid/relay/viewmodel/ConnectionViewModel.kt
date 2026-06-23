@@ -18,6 +18,7 @@ import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
@@ -1037,7 +1038,34 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? =
         profileController.loadProfileScopedMessages(sessionId)
 
+    /**
+     * Delete a session scoped to the ACTIVE PROFILE via the dashboard
+     * `DELETE /api/sessions/{id}?profile=` surface — the write twin of
+     * [listProfileScopedSessions]. A non-default profile's sessions live in that
+     * profile's own `state.db`, so the unscoped api_server delete leaves the row
+     * intact and the next profile-scoped list resurrects it. Resolves the active
+     * connection + dashboard URL + profile name exactly as the lister does;
+     * returns `false` when there's no dashboard surface so the caller can fall
+     * back to the shared api_server delete.
+     */
+    suspend fun deleteProfileScopedSession(sessionId: String): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrl() ?: return false
+        val profileName = AgentDisplay.profileRequestName(profileController.selectedProfile.value?.name)
+        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
+            .deleteSession(sessionId, profileName)
+            .isSuccess
+    }
+
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
+
+    /**
+     * True once the active connection's persisted profile selection has settled,
+     * so cold-start profile-scoped reads (e.g. the session drawer + restored
+     * session context) don't race the restore and load the server-default
+     * profile. See [ProfileController.selectionSettled].
+     */
+    val profileSelectionSettled: StateFlow<Boolean> get() = profileController.selectionSettled
 
     val profileDisplayAlias: StateFlow<String?> get() = profileController.profileDisplayAlias
 
@@ -4568,7 +4596,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             )
             if (candidate == null) {
                 onResult(
-                    "Enter the API server URL — e.g. 100.71.8.56 or " +
+                    "Enter the API server URL — e.g. 100.64.0.1 or " +
                         "http://host:8642 (http/https only; port defaults to 8642)",
                 )
                 return@launch

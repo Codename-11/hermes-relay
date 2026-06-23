@@ -1852,7 +1852,7 @@ fun ChatScreen(
                                             verticalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
                                             Text(
-                                                text = "Chat needs a Vanilla Hermes API connection.",
+                                                text = "Chat needs a Hermes API connection.",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -1860,7 +1860,7 @@ fun ChatScreen(
                                                 onClick = onNavigateToConnect,
                                                 modifier = Modifier.fillMaxWidth(),
                                             ) {
-                                                Text("Connect Vanilla Hermes")
+                                                Text("Connect Hermes")
                                             }
                                         }
                                     }

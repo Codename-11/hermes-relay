@@ -10,16 +10,16 @@ class RelayUrlDeriverTest {
     @Test
     fun derivesPlainLanRelayUrlFromApiUrl() {
         assertEquals(
-            "ws://172.16.24.250:8767",
-            RelayUrlDeriver.deriveFromApiUrl("http://172.16.24.250:8642"),
+            "ws://192.168.1.100:8767",
+            RelayUrlDeriver.deriveFromApiUrl("http://192.168.1.100:8642"),
         )
     }
 
     @Test
     fun derivesTlsRelayUrlFromApiUrl() {
         assertEquals(
-            "wss://docker-server.tailnet.ts.net:8767",
-            RelayUrlDeriver.deriveFromApiUrl("https://docker-server.tailnet.ts.net:8642"),
+            "wss://hermes-host.tailnet.ts.net:8767",
+            RelayUrlDeriver.deriveFromApiUrl("https://hermes-host.tailnet.ts.net:8642"),
         )
     }
 

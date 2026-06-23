@@ -245,7 +245,7 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
     """Mint a fresh pairing code + return a signed QR payload.
 
     Body (all fields optional — relay fills them from its config):
-      - host: "172.16.24.250"     API server host the phone will hit
+      - host: "192.168.1.100"     API server host the phone will hit
                                   (defaults to RelayConfig.webapi_url host,
                                   resolved to a LAN-routable IP)
       - port: 8642                API server port

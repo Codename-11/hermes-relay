@@ -107,6 +107,43 @@ class ProfileController(
     private val _pendingSelectedProfileName = MutableStateFlow<String?>(null)
 
     /**
+     * True once the active connection's persisted profile selection has SETTLED
+     * — i.e. profile-scoped reads (session drawer, transcript restore, voice
+     * prefs) can run without racing the cold-start restore and wrongly loading
+     * the SERVER-DEFAULT profile. Settled when any of these hold:
+     *  - there's no active connection yet (nothing profile-scoped to gate), or
+     *  - the selection has resolved into [selectedProfile], or
+     *  - no NON-default profile is pending for the active connection (server
+     *    default / nothing to wait for), or
+     *  - the agent-profile list has arrived, so resolution has been ATTEMPTED —
+     *    a genuinely-missing profile then falls back to server default rather
+     *    than gating forever.
+     *
+     * False only in the cold-start window where a non-default profile name is
+     * persisted but the profile list hasn't landed yet to resolve it — exactly
+     * when an unscoped read would load the server-default profile by mistake.
+     */
+    val selectionSettled: StateFlow<Boolean> = combine(
+        activeConnectionId,
+        selectedProfile,
+        _pendingSelectedProfileConnectionId,
+        _pendingSelectedProfileName,
+        agentProfiles,
+    ) { connId, selected, pendingConnId, pendingName, profiles ->
+        when {
+            connId == null -> true
+            selected != null -> true
+            // Pending state still points at a previous connection mid-switch —
+            // hold until this connection's restore re-stamps the pending name.
+            pendingConnId != connId -> false
+            pendingName == null || AgentDisplay.isServerDefaultAlias(pendingName) -> true
+            // Non-default name pending: settled once the profile list is present
+            // (resolution attempted), even if the name turns out to be gone.
+            else -> profiles.isNotEmpty()
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    /**
      * DataStore-backed persistence for the selected profile keyed by
      * connection id. Public so the ViewModel's connection-lifecycle
      * orchestrators can clear them; otherwise driven from here.

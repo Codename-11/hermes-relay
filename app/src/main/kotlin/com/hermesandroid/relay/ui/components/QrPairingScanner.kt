@@ -87,11 +87,11 @@ import kotlin.math.max
  * ```json
  * {
  *   "hermes": 1,
- *   "host": "172.16.24.250",
+ *   "host": "192.168.1.100",
  *   "port": 8642,
  *   "key": "bearer-token",
  *   "tls": false,
- *   "relay": { "url": "ws://172.16.24.250:8767", "code": "ABCD12" }
+ *   "relay": { "url": "ws://192.168.1.100:8767", "code": "ABCD12" }
  * }
  * ```
  *
@@ -187,7 +187,7 @@ data class HermesPairingPayload(
  * Relay connection details carried in a Hermes pairing QR.
  *
  * - [url] is the full WebSocket URL the phone should connect to, e.g.
- *   `ws://172.16.24.250:8767` for dev or `wss://relay.example.com:8767`
+ *   `ws://192.168.1.100:8767` for dev or `wss://relay.example.com:8767`
  *   for a TLS-fronted relay.
  * - [code] is a 6-char one-shot pairing code that the relay has already
  *   registered via its localhost-only `/pairing/register` endpoint. The
@@ -799,7 +799,7 @@ fun QrPairingScanner(
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "Ask Hermes: \"Generate a QR code with my API URL and API key.\" Relay pairing QRs require the Hermes-Relay plugin.",
+                    text = "Ask Hermes: \"Generate a QR code with my API URL and API key.\" Relay pairing QRs require the Relay plugin.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center

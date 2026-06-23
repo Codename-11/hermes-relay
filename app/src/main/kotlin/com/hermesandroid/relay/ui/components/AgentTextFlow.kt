@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -57,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -85,8 +88,8 @@ import kotlinx.coroutines.delay
  *  visual line so the bounded buffer maps cleanly to "≤6 lines". */
 private const val FLOW_MAX_CHARS = 42
 
-/** Soft-wrap target only — the visible buffer is now bounded by the ~1/3
- *  screen viewport + scroll, not a hard line count. */
+/** Soft-wrap target only — the visible buffer is now bounded by the
+ *  scrollable viewport height + scroll, not a hard line count. */
 private const val FLOW_MAX_LINES = 6
 
 /** Memory ceiling for the persistent line buffer. Lines past this (already
@@ -276,7 +279,9 @@ fun AgentTextFlow(
         Column(
             modifier = modifier
                 .semantics { liveRegion = LiveRegionMode.Polite }
-                .topFadeEdge()
+                // Fade the top edge ONLY when there's content scrolled above it —
+                // a message that fits shows its first line crisply (no cut-off look).
+                .topFadeEdge(fade = if (staticScroll.canScrollBackward) 28.dp else 0.dp)
                 .verticalScroll(staticScroll),
             verticalArrangement = Arrangement.Bottom,
         ) {
@@ -297,41 +302,38 @@ fun AgentTextFlow(
     // --- Animated path ----------------------------------------------------
     val flowLines = remember(messageId) { mutableStateListOf<FlowLine>() }
     val currentContent by rememberUpdatedState(content)
-    val currentStreaming by rememberUpdatedState(streaming)
 
     LaunchedEffect(messageId) {
         flowLines.clear()
         // Largest segment index ever materialized — guards against re-adding a
         // line that was dropped from the front by the memory cap.
         var maxKeyAdded = -1
+        var lastText: String? = null
         while (true) {
             val text = currentContent
-            val isStreamingNow = currentStreaming
-            val segs = segmentFlowLines(text, FLOW_MAX_CHARS)
-
-            // Add new lines (they slide in) and grow the still-streaming tail.
-            // Lines PERSIST — they never fade out; older ones simply scroll up
-            // within the bounded ~1/3-height viewport and dissolve at the top
-            // fade edge. (No dwell / fade-out / removal anymore.)
-            segs.forEachIndexed { i, s ->
-                val existing = flowLines.firstOrNull { it.key == i }
-                if (existing == null) {
-                    if (i > maxKeyAdded) {
-                        flowLines.add(FlowLine(key = i, initialText = s))
-                        maxKeyAdded = i
+            // Re-diff only when the transcript changed, so an idle clean mode
+            // (no streaming, no new turn) doesn't churn. We never permanently
+            // exit: a new turn appended to the transcript must still slide in.
+            if (text != lastText) {
+                lastText = text
+                val segs = segmentFlowLines(text, FLOW_MAX_CHARS)
+                // Add new lines (they slide in); update a changed tail in place.
+                // Lines PERSIST — older ones simply scroll up within the bounded,
+                // scrollable viewport and dissolve at the top fade edge.
+                segs.forEachIndexed { i, s ->
+                    val existing = flowLines.firstOrNull { it.key == i }
+                    if (existing == null) {
+                        if (i > maxKeyAdded) {
+                            flowLines.add(FlowLine(key = i, initialText = s))
+                            maxKeyAdded = i
+                        }
+                    } else if (existing.text != s) {
+                        existing.text = s
                     }
-                } else if (existing.text != s) {
-                    existing.text = s
                 }
+                // Memory guard: drop the oldest lines once well past the viewport.
+                while (flowLines.size > FLOW_BUFFER_MAX) flowLines.removeAt(0)
             }
-
-            // Memory guard: drop the oldest lines once well past the viewport
-            // (already scrolled above the fade — invisible to the user).
-            while (flowLines.size > FLOW_BUFFER_MAX) flowLines.removeAt(0)
-
-            // Nothing left to do once the turn ended and every segment is in.
-            if (!isStreamingNow && maxKeyAdded >= segs.lastIndex) return@LaunchedEffect
-
             delay(FLOW_TICK_MS)
         }
     }
@@ -362,7 +364,9 @@ fun AgentTextFlow(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .topFadeEdge()
+                // Fade the top edge ONLY when content is scrolled above it, so a
+                // reply that fits the viewport shows its first line crisply.
+                .topFadeEdge(fade = if (scrollState.canScrollBackward) 28.dp else 0.dp)
                 .verticalScroll(scrollState),
             verticalArrangement = Arrangement.Bottom,
         ) {
@@ -516,11 +520,30 @@ fun CleanChatMode(
     val lastAssistant = remember(messages) {
         messages.lastOrNull { it.role == MessageRole.ASSISTANT }
     }
-    val flowContent = lastAssistant?.content.orEmpty()
+    // Clean mode shows the recent CONVERSATION (not just the last reply) as one
+    // faded, scrollable flow, so scrolling up brings history into view. The flow
+    // is append-only across turns; user turns get a subtle "›" so the
+    // back-and-forth stays legible. How far back it retains is bounded by the
+    // flow's line buffer (FLOW_BUFFER_MAX).
+    val flowContent = remember(messages) {
+        messages
+            .filter { it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT }
+            .joinToString("\n\n") { msg ->
+                val body = msg.content.trim()
+                if (msg.role == MessageRole.USER) "› $body" else body
+            }
+    }
+    // Stable per-conversation key so the flow buffer accumulates across turns and
+    // resets only on a new conversation (the oldest message's id changes).
+    val conversationKey = messages.firstOrNull()?.id
     val flowStreaming = lastAssistant?.isStreaming == true && isStreaming
-    // Cap the flow at ~1/3 of the screen so lines can slide up and accumulate
-    // without ever climbing into / blocking the avatar above them.
-    val maxFlowHeight = (LocalConfiguration.current.screenHeightDp * 0.34f).dp
+    // The sphere + text are a vertically-centered group (equal spacers above and
+    // below). The sphere is a fixed size so the group grows via the TEXT: a short
+    // reply sits centered, and as the reply lengthens the centered group gets
+    // taller — sliding the sphere up toward the top third while the text fills
+    // down toward the composer.
+    val sphereHeight = (LocalConfiguration.current.screenHeightDp * 0.34f).dp
+    val maxFlowHeight = (LocalConfiguration.current.screenHeightDp * 0.5f).dp
 
     BackHandler(enabled = true) { onExit() }
 
@@ -533,7 +556,19 @@ fun CleanChatMode(
             .fillMaxSize()
             // Opaque so the chat underneath is fully hidden — this is a mode,
             // not a translucent overlay.
-            .background(RelayRefresh.Background),
+            .background(RelayRefresh.Background)
+            // Consume any pointer event the children (composer, exit button, text
+            // scroll) didn't handle, so stray taps/swipes in the empty areas don't
+            // fall through to the chat + session drawer behind this mode. Children
+            // run leaf-first on the same Main pass, so this only catches the gaps
+            // (mirrors the voice overlay's focus-mode scrim).
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            },
     ) {
         Column(
             modifier = Modifier
@@ -557,12 +592,17 @@ fun CleanChatMode(
                 }
             }
 
-            // Centered sphere — takes the slack so the flow + composer keep a
-            // stable bottom anchor as lines come and go.
+            // Flexible top spacer — with the bottom one it vertically centers the
+            // sphere + text group; as the text grows the spacers yield and the
+            // sphere rises toward the top third.
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Bounded, centered sphere — a fixed size so the group grows via the
+            // text, sliding the sphere upward as the conversation lengthens.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .height(sphereHeight),
                 contentAlignment = Alignment.Center,
             ) {
                 Box(
@@ -586,14 +626,21 @@ fun CleanChatMode(
             AgentTextFlow(
                 content = flowContent,
                 streaming = flowStreaming,
-                messageId = lastAssistant?.id,
+                messageId = conversationKey,
                 motionEnabled = textMotionEnabled,
+                // Content-sized reading area (capped ~half the screen) directly
+                // below the sphere — no gap between them. Grows + scrolls with the
+                // reply, which is what lifts the centered group (and the sphere).
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 560.dp)
                     .heightIn(min = 96.dp, max = maxFlowHeight)
                     .padding(bottom = 12.dp),
             )
+
+            // Flexible bottom spacer — balances the top one to keep the
+            // sphere + text group vertically centered.
+            Spacer(modifier = Modifier.weight(1f))
 
             CleanModeComposer(
                 enabled = enabled,

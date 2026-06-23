@@ -115,6 +115,7 @@ import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
+import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
@@ -270,6 +271,7 @@ sealed class Screen(
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
+    data object Diagnostics : Screen("settings/diagnostics", "Diagnostics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
     data object RealtimeVoiceTest : Screen("settings/developer/realtime_voice", "Realtime voice", Icons.Filled.Settings)
     data object About : Screen("settings/about", "About", Icons.Filled.Settings)
@@ -395,6 +397,7 @@ fun RelayApp() {
     val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
@@ -646,6 +649,11 @@ fun RelayApp() {
         chatViewModel.setProfileMessageLoader { sessionId ->
             connectionViewModel.loadProfileScopedMessages(sessionId)
         }
+        // …and delete from that same profile's DB so a non-default profile's
+        // session can't be resurrected by the next profile-scoped list.
+        chatViewModel.profileSessionDeleter = { sessionId ->
+            connectionViewModel.deleteProfileScopedSession(sessionId)
+        }
 
         // Wire session persistence callback
         chatViewModel.onSessionChanged = { sessionId ->
@@ -660,15 +668,29 @@ fun RelayApp() {
     // refreshSessions() that would flash/reload the chat. `switchProfileContext`
     // already no-ops when the context key + session are unchanged.
     val chatClientReady = chatApiClient != null
-    LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId) {
+    LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId, profileSelectionSettled) {
         if (!chatClientReady) return@LaunchedEffect
-        // Coalesce the rapid lastSessionId null→value churn a profile switch
-        // produces: selectProfile() nulls lastSessionId, then the persisted
-        // per-profile session resolves a tick later. This effect re-fires on that
-        // change, cancelling the delay below before it commits — so we skip
-        // painting the intermediate empty draft and land straight on the resolved
-        // session (or a genuine fresh draft when the profile has no history).
-        delay(160)
+        // Cold-start profile-isolation guard: hold the first profile-scoped load
+        // until the persisted profile selection has SETTLED, so the session
+        // drawer (and the restored session context) don't briefly load the
+        // SERVER-DEFAULT profile and then visibly snap to the real one. While a
+        // non-default profile is still resolving we wait on a backstop instead of
+        // fetching now; this effect re-fires the instant the profile resolves
+        // (selectedProfile / profileSelectionSettled change), cancelling the wait
+        // so only the correct, profile-scoped load lands. The backstop guarantees
+        // the drawer is never permanently empty if the profile list never lands.
+        if (!profileSelectionSettled) {
+            delay(2_500L)
+        } else {
+            // Coalesce the rapid lastSessionId null→value churn a profile switch
+            // produces: selectProfile() nulls lastSessionId, then the persisted
+            // per-profile session resolves a tick later. This effect re-fires on
+            // that change, cancelling the delay below before it commits — so we
+            // skip painting the intermediate empty draft and land straight on the
+            // resolved session (or a genuine fresh draft when the profile has no
+            // history).
+            delay(160)
+        }
         chatViewModel.switchProfileContext(
             contextKey = AgentDisplay.profileContextKey(
                 connectionId = activeConnectionId,
@@ -1740,6 +1762,9 @@ fun RelayApp() {
                         onNavigateToAnalytics = {
                             navController.navigate(Screen.Analytics.route)
                         },
+                        onNavigateToDiagnostics = {
+                            navController.navigate(Screen.Diagnostics.route)
+                        },
                         onNavigateToVoiceSettings = {
                             navController.navigate(Screen.VoiceSettings.route)
                         },
@@ -2066,6 +2091,12 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         voiceViewModel = voiceViewModel,
                         chatViewModel = chatViewModel,
+                    )
+                }
+                composable(Screen.Diagnostics.route) {
+                    DiagnosticsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.DeveloperSettings.route) {

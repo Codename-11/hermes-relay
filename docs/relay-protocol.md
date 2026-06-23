@@ -41,7 +41,11 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
     "device_id": "android-device-uuid",
     "ttl_seconds": 2592000,
     "grants": {"chat": 2592000, "terminal": 604800, "bridge": 604800, "voice:stt": 2592000},
-    "session_token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    "session_token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "supports": {
+      "typed_stream_events": true,
+      "event_schema_version": 1
+    }
   }
 }
 ```
@@ -53,6 +57,7 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
 - `device_id` — unique persistent identifier.
 - `ttl_seconds` — requested session lifetime; `0` means never expire. Ignored if pairing code carried pre-set metadata from host.
 - `grants` — per-channel seconds-from-now. Keys include `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`, and `voice:realtime`.
+- `supports` — optional capability negotiation. `typed_stream_events: true` with `event_schema_version: 1` opts the client into first-class `chat`/`stream.event` envelopes (§3.3.2). Omit it or set it false for legacy text/final-response mode.
 
 Source: `plugin/relay/server.py:2804-2850`.
 
@@ -211,9 +216,109 @@ Sources: `plugin/relay/channels/bridge.py`, `app/src/main/kotlin/.../network/han
 
 ### 3.3 Chat
 
-**Note:** Chat does **not** traverse the relay. It rides the vanilla upstream Hermes surfaces — the dashboard `/api/ws` gateway transport (live thinking) when Manage auth is ready, falling back to the API server's SSE routes.
+**Purpose:** Native chat turn streaming and session listing.
+**Direction:** Client → Server (`chat.send`, `chat.sessions.list`); Server → Client (legacy chat envelopes or typed stream events).
+**Handler:** `plugin/relay/channels/chat.py`.
 
-Relay involvement is limited to session management routes (`/api/sessions/*`) for create/list/delete/extend. See hermes-relay CLAUDE.md §"Upstream Hermes API Reference" for the endpoint catalog.
+Modern Android/Desktop usually talk directly to Hermes dashboard/API-server for chat, but Relay also exposes a chat channel for paired native clients that need a single WSS route. Relay proxies `/api/sessions/{id}/chat/stream` SSE and preserves old text-first behavior unless the client explicitly advertises typed stream support in `system/auth.payload.supports`.
+
+#### 3.3.1 Legacy chat envelopes
+
+Clients that do not send `supports.typed_stream_events=true` receive the historical flattened messages:
+
+| Type | Payload |
+|------|---------|
+| `chat.session` | `{session_id,title,model}` after Relay creates a session |
+| `chat.delta` | `{session_id,message_id,delta}` assistant text only |
+| `chat.progress` | `{session_id,message_id,delta}` subdued thinking/progress text |
+| `chat.tool.started` | `{tool_name,tool_call_id?,preview,args}` |
+| `chat.tool.completed` | `{tool_name,tool_call_id?,result_preview,success}` |
+| `chat.tool.failed` | `{tool_name,tool_call_id?,error}` |
+| `chat.turn.completed` | one assistant turn finished but run may continue |
+| `chat.completed` | whole run/stream finished |
+| `chat.error` | `{message}` |
+
+This mode deliberately drops unknown/informational Hermes SSE events so older clients continue to work without UI changes.
+
+#### 3.3.2 Typed stream.event mode
+
+Capability negotiation:
+
+```json
+{
+  "channel": "system",
+  "type": "auth",
+  "payload": {
+    "session_token": "...",
+    "supports": {
+      "typed_stream_events": true,
+      "event_schema_version": 1
+    }
+  }
+}
+```
+
+When negotiated, each Hermes/API-server SSE event is forwarded on the chat channel as a Relay envelope whose payload is the versioned stream envelope:
+
+```json
+{
+  "channel": "chat",
+  "type": "stream.event",
+  "id": "<uuid>",
+  "payload": {
+    "type": "stream.event",
+    "schema_version": 1,
+    "session_id": "sess_123",
+    "run_id": "run_123",
+    "seq": 42,
+    "event": "tool.started",
+    "ts": "2026-06-05T00:00:00Z",
+    "payload": {
+      "tool_name": "terminal",
+      "call_id": "call_123",
+      "preview": "npm test"
+    }
+  }
+}
+```
+
+Stable top-level fields:
+
+| Field | Stability | Notes |
+|-------|-----------|-------|
+| `type` | stable | always `stream.event` |
+| `schema_version` | stable | v1 for this document. New incompatible shapes must increment. |
+| `session_id` | stable | Hermes chat session id, copied from upstream or Relay-created session |
+| `run_id` | stable nullable | upstream run id when present |
+| `seq` | stable | monotonic per Relay stream (`session_id + run_id + request id`) when upstream does not supply one; clients use it for order/de-dupe |
+| `event` | stable | event family below |
+| `ts` | stable | ISO-8601 UTC string; Relay-generated when upstream omits timestamp |
+| `payload` | event-specific | JSON object; unknown fields are preview-only unless documented by the upstream Hermes SSE contract |
+
+Stable event families forwarded by Relay v1:
+
+`session.created`, `run.started`, `message.started`, `assistant.delta`, `tool.progress`, `tool.pending`, `tool.started`, `tool.completed`, `tool.failed`, `memory.updated`, `skill.loaded`, `artifact.created`, `assistant.completed`, `run.completed`, `error`, `done`.
+
+Relay-specific events must be namespaced: `relay.connection.*`, `relay.resume.*`, `relay.client_ack`.
+
+Rendering guidance:
+
+| Event | Native rendering |
+|-------|------------------|
+| `assistant.delta` | append to assistant bubble incrementally |
+| `tool.progress` | subdued progress/thinking row, not assistant text |
+| `tool.pending`/`tool.started`/`tool.completed`/`tool.failed` | collapsible tool card lifecycle |
+| `artifact.created` | tappable/downloadable attachment row; payload may contain `url`, `path`, `title`, or a preview |
+| `memory.updated`/`skill.loaded` | low-noise timeline chip/badge |
+| `assistant.completed` | finish current assistant turn; run may continue |
+| `run.completed`/`done` | explicit terminal completion state |
+| `error` | explicit error/partial/interrupted affordance |
+
+Reconnect/resume v1: Relay preserves in-order delivery on a live WebSocket and emits sequence numbers. Guaranteed replay/resume is not implemented for chat v1; clients should de-dupe by `(run_id || session_id, seq)` after reconnect and treat missing sequence gaps as best-effort live-stream loss. Future guaranteed resume belongs under `relay.resume.*`.
+
+Payload safety: Relay redacts common secret-shaped keys (`token`, `api_key`, `authorization`, `password`, `secret`) and truncates large result-like fields to previews before sending typed events. Native clients must still treat payloads as previews, not as an authority for full tool results.
+
+Golden fixture: `docs/fixtures/typed-stream-v1.jsonl` contains an ordered tool-using stream for native renderer tests and manual smoke.
 
 ### 3.4 Terminal
 
@@ -717,12 +822,12 @@ Top-level `key` is the Hermes API bearer used for direct chat/session HTTP; the 
 ```json
 {
   "hermes": 3,
-  "host": "172.16.24.250",
+  "host": "192.168.1.100",
   "port": 8642,
   "key": "<api_key>",
   "tls": false,
   "relay": {
-    "url": "ws://172.16.24.250:8767",
+    "url": "ws://192.168.1.100:8767",
     "code": "ABC123",
     "ttl_seconds": 604800,
     "transport_hint": "ws"

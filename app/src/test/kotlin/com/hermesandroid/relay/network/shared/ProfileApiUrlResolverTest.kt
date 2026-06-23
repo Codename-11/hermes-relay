@@ -9,10 +9,10 @@ class ProfileApiUrlResolverTest {
     @Test
     fun resolveForConnection_rewritesLoopbackProfileHostToBaseHost() {
         assertEquals(
-            "http://172.16.24.250:8647",
+            "http://192.168.1.100:8647",
             ProfileApiUrlResolver.resolveForConnection(
                 profileApiUrl = "http://127.0.0.1:8647",
-                baseApiUrl = "http://172.16.24.250:8642",
+                baseApiUrl = "http://192.168.1.100:8642",
             ),
         )
     }
@@ -20,10 +20,10 @@ class ProfileApiUrlResolverTest {
     @Test
     fun resolveForConnection_rewritesZeroBindHostToBaseHost() {
         assertEquals(
-            "https://docker-server.tailnet.ts.net:8646",
+            "https://hermes-host.tailnet.ts.net:8646",
             ProfileApiUrlResolver.resolveForConnection(
                 profileApiUrl = "http://0.0.0.0:8646/",
-                baseApiUrl = "https://docker-server.tailnet.ts.net:8642/",
+                baseApiUrl = "https://hermes-host.tailnet.ts.net:8642/",
             ),
         )
     }
@@ -34,7 +34,7 @@ class ProfileApiUrlResolverTest {
             "http://192.168.1.50:8647",
             ProfileApiUrlResolver.resolveForConnection(
                 profileApiUrl = "http://192.168.1.50:8647",
-                baseApiUrl = "http://172.16.24.250:8642",
+                baseApiUrl = "http://192.168.1.100:8642",
             ),
         )
     }
@@ -55,7 +55,7 @@ class ProfileApiUrlResolverTest {
         assertNull(
             ProfileApiUrlResolver.resolveForConnection(
                 profileApiUrl = " ",
-                baseApiUrl = "http://172.16.24.250:8642",
+                baseApiUrl = "http://192.168.1.100:8642",
             ),
         )
     }

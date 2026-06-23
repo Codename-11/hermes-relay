@@ -36,6 +36,35 @@ data class DiagnosticLogEntry(
     val stacktrace: String? = null,
 )
 
+/**
+ * Current health of a single subsystem on the Diagnostics status timeline.
+ *
+ * Distinct from [DiagnosticSeverity], which classifies a *logged event* after
+ * the fact. A [CheckStatus] is the *live* state of a subsystem, derived
+ * read-only from connection state + the recent [DiagnosticsLog]. [Unknown] is
+ * a first-class, honest state — "not checked / not applicable" — never an
+ * implied pass or fail.
+ */
+enum class CheckStatus { Pass, Warn, Fail, Unknown }
+
+/**
+ * One row on the Diagnostics status timeline: a named subsystem check with its
+ * current [status] and, when not [CheckStatus.Pass], a human [reason] — the
+ * whole point of the screen is answering "why is this failing?".
+ *
+ * [category] links the check back to a [DiagnosticCategory]; when [timestampMs]
+ * is non-null the reason came from a concrete [DiagnosticLogEntry], so the row
+ * is tappable and the UI can open that entry's full detail.
+ */
+data class StatusCheck(
+    val name: String,
+    val status: CheckStatus,
+    val reason: String? = null,
+    val category: DiagnosticCategory? = null,
+    val timestampMs: Long? = null,
+    val durationMs: Long? = null,
+)
+
 object DiagnosticsLog {
     private const val MAX_ENTRIES = 200
     private const val MAX_TEXT_LENGTH = 180

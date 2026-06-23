@@ -251,7 +251,7 @@ Expect the agent to render:
 }
 ```
 
-The key signal: `stdout` contains **your local hostname**, not the server's. That proves the call routed from hermes → relay → WSS → this machine → shell exec → response back. If the agent instead sees the server's hostname (e.g., `Docker-Server`), the tool is running on the server — check consent and `/desktop/_ping` from the host:
+The key signal: `stdout` contains **your local hostname**, not the server's. That proves the call routed from hermes → relay → WSS → this machine → shell exec → response back. If the agent instead sees the server's hostname (e.g., `hermes-host`), the tool is running on the server — check consent and `/desktop/_ping` from the host:
 
 ```bash
 # On the host
