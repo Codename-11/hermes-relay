@@ -3446,6 +3446,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     url = dashboardUrl,
                 )
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Defense-in-depth: this runs in a viewModelScope (Main) coroutine,
+            // so an unexpected throw from any probe sub-call would crash the
+            // app (see the currentSession() stale-connection crash). A probe
+            // failure must only degrade the UI, never be fatal.
+            android.util.Log.w("ConnectionVM", "probeStandardVoice failed: ${e.message}")
+            _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
+            _standardAudioApiReachable.value = false
+            _serverChatDisplaySettings.value = null
+            updateGatewayAvailability(GatewayAvailability.Unreachable)
         } finally {
             client.shutdown()
         }
