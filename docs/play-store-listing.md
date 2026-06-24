@@ -83,13 +83,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.2.1 — Polish & control.
+v1.2.3 — Connection crash fix.
 
-• Lock the app to a single agent profile and hide the rest.
-• In-app "What's New" with current and past release notes.
-• Diagnostics with clean error titles and one-tap reporting.
-• A tasteful, dismissable "update available" nudge.
-• Voice fixes: Stop halts speech instantly, steadier hold-to-talk, a more readable overlay, and chosen voices apply in Auto mode.
+• Fixed a crash that could close the app right after connecting over an encrypted link (Tailscale or HTTPS). Connecting over a secured connection is now stable. Plain local-network connections were never affected.
 ```
 
 ## Category

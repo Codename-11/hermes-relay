@@ -5366,21 +5366,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     override fun onCleared() {
         super.onCleared()
-        connectionManager.shutdown()
-        // ViewModel.onCleared runs on the main thread and viewModelScope
-        // is already being cancelled — fire-and-forget the client
-        // shutdown on a plain background Thread so
-        // ConnectionPool.evictAll doesn't trip
+        // onCleared runs on the main thread, but every client's shutdown()
+        // routes ConnectionPool.evictAll() (a synchronous TLS socket close /
+        // network write) off the main thread internally via
+        // shutdownOffMainThread, so these direct calls can't trip
         // NetworkOnMainThreadException on live SSL sockets.
-        _apiClient.value?.let { client ->
-            Thread({ runCatching { client.shutdown() } }, "HermesApiClient-shutdown").start()
-        }
-        profileChatApiClient?.let { client ->
-            Thread(
-                { runCatching { client.shutdown() } },
-                "HermesProfileApiClient-shutdown",
-            ).start()
-        }
+        connectionManager.shutdown()
+        _apiClient.value?.shutdown()
+        profileChatApiClient?.shutdown()
         tailscaleDetector.shutdown()
         // Release the cached VirtualDisplay + ImageReader + HandlerThread
         // built by ScreenCapture on the first /screenshot call. Without

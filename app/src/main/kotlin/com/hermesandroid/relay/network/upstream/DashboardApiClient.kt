@@ -2,6 +2,7 @@ package com.hermesandroid.relay.network.upstream
 
 import android.content.Context
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.network.shutdownOffMainThread
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.MessageListResponse
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -574,7 +575,7 @@ class DashboardApiClient(
     fun gatewayWebSocketUrl(ticket: String, path: String = "/api/ws"): String? =
         gatewayWebSocketUrl(baseUrl = baseUrl, ticket = ticket, path = path)
 
-    fun shutdown() {
+    fun shutdown() = shutdownOffMainThread("DashboardApiClient-shutdown") {
         okHttpClient.dispatcher.executorService.shutdown()
         okHttpClient.connectionPool.evictAll()
     }

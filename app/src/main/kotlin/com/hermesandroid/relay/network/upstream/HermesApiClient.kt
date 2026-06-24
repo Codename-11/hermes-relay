@@ -5,6 +5,7 @@ import android.os.Looper
 import android.util.Log
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
+import com.hermesandroid.relay.network.shutdownOffMainThread
 import com.hermesandroid.relay.network.upstream.models.CreateSessionRequest
 import com.hermesandroid.relay.network.upstream.models.HermesSseEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
@@ -1343,7 +1344,7 @@ class HermesApiClient(
 
     // --- Lifecycle ---
 
-    fun shutdown() {
+    fun shutdown() = shutdownOffMainThread("HermesApiClient-shutdown") {
         client.dispatcher.executorService.shutdown()
         try {
             if (!client.dispatcher.executorService.awaitTermination(2, TimeUnit.SECONDS)) {

@@ -1,7 +1,3 @@
-v1.2.2 — Multi-profile polish.
+v1.2.3 — Connection crash fix.
 
-• Deleting a session on a non-default profile now sticks — no more reappearing.
-• Cold start opens the session list on the right profile instead of flashing the default one.
-• Diagnostics is now a full-screen health-check list with clear status and the reason when something's wrong.
-• The default connection is simply "Hermes" (power features are "Relay").
-• Distraction-free chat mode gives its text more room and scrolls.
+• Fixed a crash that could close the app right after connecting over an encrypted link (Tailscale or HTTPS). Connecting over a secured connection is now stable. Plain local-network connections were never affected.
