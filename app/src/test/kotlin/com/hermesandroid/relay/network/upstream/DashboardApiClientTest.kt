@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -54,6 +55,20 @@ class DashboardApiClientTest {
         assertEquals(listOf("basic", "nous"), status.authProviders)
         assertEquals("basic", status.authProviderDetails.first().name)
         assertEquals("0.16.0", status.version)
+    }
+
+    @Test
+    fun currentSession_onConnectionAbort_returnsFailure_doesNotThrow() = runTest {
+        // Reproduces the crash: a stale pooled connection aborting mid-flight
+        // ("Software caused connection abort"). currentSession() returns a
+        // Result, so a network failure MUST surface as Result.failure — never a
+        // throw that escapes withContext(IO) and crashes the Main coroutine.
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val result = client.currentSession()
+
+        assertTrue("network abort must be Result.failure, not a throw", result.isFailure)
     }
 
     @Test

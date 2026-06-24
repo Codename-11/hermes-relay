@@ -514,15 +514,26 @@ class DashboardApiClient(
             .get()
             .build()
 
-        okHttpClient.newCall(request).execute().use { response ->
-            if (response.code == 401 || response.code == 403) {
-                return@withContext Result.success(DashboardAuthSession(authenticated = false))
+        // try/catch is NOT optional here: currentSession() returns a Result and
+        // callers (probeStandardVoice on a viewModelScope/Main coroutine) rely
+        // on it NEVER throwing. A raw execute() re-threw transient network
+        // failures — e.g. a stale pooled connection over Tailscale aborting
+        // ("Software caused connection abort") — straight past withContext(IO)
+        // and crashed the app on the main thread. Mirror executeJson()'s
+        // contract: every failure becomes Result.failure.
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                when {
+                    response.code == 401 || response.code == 403 ->
+                        Result.success(DashboardAuthSession(authenticated = false))
+                    !response.isSuccessful ->
+                        Result.failure(apiFailure(response, "Dashboard session"))
+                    else ->
+                        Result.success(parseAuthSession(response.readJsonObject(json)))
+                }
             }
-            if (!response.isSuccessful) {
-                return@withContext Result.failure(apiFailure(response, "Dashboard session"))
-            }
-            val root = response.readJsonObject(json)
-            Result.success(parseAuthSession(root))
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 

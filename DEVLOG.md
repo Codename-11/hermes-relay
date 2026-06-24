@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-24 — Fix SocketTimeoutException crash from DashboardApiClient.currentSession()
+
+**Why.** An in-app crash report (`FATAL EXCEPTION: main`, `SocketTimeoutException`, `Caused by: java.net.SocketException: Software caused connection abort`) captured on-device over a Tailscale connection. The visible dialog truncated the trace; the full stack was recovered from a background `adb logcat` capture that happened to be running when it fired.
+
+**Root cause.** `DashboardApiClient.currentSession()` declared `Result<DashboardAuthSession>` but performed a **raw `okHttpClient.newCall(req).execute()` with no try/catch** — the lone outlier among the client's methods (`executeJson`/`executeJsonElement`/`audioRoutesPresent` all catch). Its `.execute()` correctly ran on `Dispatchers.IO`, but a transient network failure (a stale pooled connection aborting over Tailscale) **re-threw** out of `withContext(IO)`. The caller chain — `ConnectionViewModel.probeStandardVoice()` → `viewModelScope.launch` (`Dispatchers.Main.immediate`, the `Suppressed` frame in the trace) — used `try/finally` with **no `catch`**, so the exception was uncaught on the main thread and killed the app. The `.execute()` being off-main is why StrictMode never fired; the uncaught *propagation* to the Main coroutine was the bug.
+
+**Fix.** (1) `currentSession()` now wraps its request in `try/catch`, returning `Result.failure` on any exception — honoring the `Result` contract every caller relies on (mirrors `executeJson`). (2) Defense-in-depth: `probeStandardVoice()` gained a `catch` (rethrowing `CancellationException`) that degrades the voice/gateway availability state instead of letting any probe sub-call crash the Main coroutine.
+
+**Verification.** New `DashboardApiClientTest.currentSession_onConnectionAbort_returnsFailure_doesNotThrow` (MockWebServer `DISCONNECT_AT_START`) asserts a connection abort yields `Result.failure`, not a throw. `:app:testSideloadDebugUnitTest` + `:app:lintSideloadDebug` green. On-device confirmation pending a build.
+
 ## 2026-06-23 — Fix NetworkOnMainThreadException crash on TLS connect
 
 **Why.** Two external bug reports (#118, #124) and the later comment on #70 reported the app hard-closing on connect over an encrypted link (Tailscale Serve / public HTTPS). The auto-captured traces were identical: `android.os.NetworkOnMainThreadException` from `okhttp3.ConnectionPool.evictAll()`, with a suppressed `Dispatchers.Main.immediate [Cancelling]` frame — i.e. a `viewModelScope` coroutine.

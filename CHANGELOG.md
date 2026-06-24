@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 
+### Fixed
+
+- **Crash when a dashboard connection drops mid-check.** A transient network blip on the dashboard session check (e.g. a pooled connection aborting over Tailscale) could close the app: the check returned a result type but re-threw the network error instead of reporting it, and it surfaced on the main thread. The check now reports the failure cleanly, and the connection probe degrades gracefully instead of ever crashing.
+
 ## [1.2.3] - 2026-06-23
 
 ### Fixed
