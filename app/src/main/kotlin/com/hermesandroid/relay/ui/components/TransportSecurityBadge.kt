@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -22,6 +23,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.ConnectionSecurity
+import com.hermesandroid.relay.data.ConnectionSecurityLevel
+import com.hermesandroid.relay.data.SurfaceSecurityKind
 
 /**
  * Visual badge for the current relay transport security posture.
@@ -293,4 +297,124 @@ fun isUrlSecure(url: String?): Boolean {
     if (url.isNullOrBlank()) return false
     val lower = url.trim().lowercase()
     return lower.startsWith("wss://") || lower.startsWith("https://")
+}
+
+// ---------------------------------------------------------------------------
+// ConnectionSecurity-driven badge (single source of truth — see
+// data/ConnectionSecurity.kt). Mechanism-first copy: a Tailscale/WireGuard
+// route reads "Encrypted · Tailscale", NOT "Secure — TLS". Both TLS and
+// overlay are green; only true plaintext-without-overlay warns.
+// ---------------------------------------------------------------------------
+
+private data class ConnSecAppearance(
+    val label: String,
+    val icon: ImageVector,
+    val bg: Color,
+    val fg: Color,
+)
+
+@Composable
+private fun connSecAppearance(security: ConnectionSecurity): ConnSecAppearance {
+    val green = Color(0xFF2E7D32)
+    val amber = Color(0xFFF9A825)
+    val red = MaterialTheme.colorScheme.error
+    return when (security.level) {
+        ConnectionSecurityLevel.Tls -> ConnSecAppearance(
+            label = "Encrypted · TLS",
+            icon = Icons.Filled.Lock,
+            bg = green.copy(alpha = 0.14f),
+            fg = green,
+        )
+        ConnectionSecurityLevel.Overlay -> ConnSecAppearance(
+            label = "Encrypted · ${security.mechanism}",
+            icon = Icons.Filled.Shield,
+            bg = green.copy(alpha = 0.14f),
+            fg = green,
+        )
+        ConnectionSecurityLevel.Mixed -> ConnSecAppearance(
+            label = "Mixed routes",
+            icon = Icons.Filled.Shield,
+            bg = amber.copy(alpha = 0.16f),
+            fg = amber,
+        )
+        ConnectionSecurityLevel.Plain -> ConnSecAppearance(
+            label = if (security.mechanism.isNotBlank() && security.mechanism != "Plain") {
+                "Not encrypted · ${security.mechanism}"
+            } else {
+                "Not encrypted"
+            },
+            icon = Icons.Filled.LockOpen,
+            bg = red.copy(alpha = 0.16f),
+            fg = red,
+        )
+        ConnectionSecurityLevel.Unknown -> ConnSecAppearance(
+            label = "Checking…",
+            icon = Icons.Filled.Shield,
+            bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            fg = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * The connection-level security badge every surface should use. Renders the
+ * rollup from [ConnectionSecurity]; tap (when [onClick] is set) opens the
+ * per-surface detail sheet. Renders nothing while the verdict is Unknown.
+ */
+@Composable
+fun ConnectionSecurityBadge(
+    security: ConnectionSecurity,
+    modifier: Modifier = Modifier,
+    size: TransportSecuritySize = TransportSecuritySize.Chip,
+    onClick: (() -> Unit)? = null,
+) {
+    if (security.level == ConnectionSecurityLevel.Unknown) return
+    val a = connSecAppearance(security)
+    RenderBadge(
+        label = a.label,
+        bg = a.bg,
+        fg = a.fg,
+        icon = a.icon,
+        size = size,
+        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
+    )
+}
+
+/** Icon-only security marker for tight spots (chat status strip). */
+@Composable
+fun ConnectionSecurityGlyph(
+    security: ConnectionSecurity,
+    modifier: Modifier = Modifier,
+) {
+    if (security.level == ConnectionSecurityLevel.Unknown) return
+    val a = connSecAppearance(security)
+    Icon(
+        imageVector = a.icon,
+        contentDescription = a.label,
+        tint = a.fg,
+        modifier = modifier.size(14.dp),
+    )
+}
+
+/** Per-route security glyph for the route picker (one [SurfaceSecurityKind]). */
+@Composable
+fun SurfaceSecurityGlyph(
+    kind: SurfaceSecurityKind,
+    modifier: Modifier = Modifier,
+) {
+    val green = Color(0xFF2E7D32)
+    val amber = Color(0xFFF9A825)
+    val (icon, tint, desc) = when (kind) {
+        SurfaceSecurityKind.Tls -> Triple(Icons.Filled.Lock, green, "Encrypted (TLS)")
+        SurfaceSecurityKind.Overlay -> Triple(Icons.Filled.Shield, green, "Encrypted")
+        // Per-route plaintext is amber (informational), not red — a secure
+        // route may exist alongside it.
+        SurfaceSecurityKind.Plain -> Triple(Icons.Filled.LockOpen, amber, "Not encrypted")
+    }
+    Icon(
+        imageVector = icon,
+        contentDescription = desc,
+        tint = tint,
+        modifier = modifier.size(14.dp),
+    )
 }

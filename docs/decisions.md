@@ -438,7 +438,7 @@ The bare-path fetch is therefore safe as long as operators treat the allowed-roo
 
 **Decision:** Replace the minimal pairing model (one-shot code → fixed-30-day session token → no channel separation → `EncryptedSharedPreferences` storage) with a layered architecture built around four ideas:
 
-1. **User chooses session TTL at pair time** — 1 day / 7 days / 30 days / 90 days / 1 year / **never expire**. The Android TTL picker dialog always opens on QR scan so the user explicitly confirms. Defaults depend on transport: wss or Tailscale → 30d; plain ws → 7d. Never-expire is ALWAYS selectable with an inline warning — per operator direction, trust the user's intent rather than gating on secure-transport detection.
+1. **User chooses session TTL at pair time** — 1 day / 7 days / 30 days / 90 days / 1 year / **never expire**. The Android TTL picker dialog always opens on QR scan so the user explicitly confirms. Defaults depend on transport: wss or Tailscale → 30d; plain ws → 7d. (Both `wss` and Tailscale are treated as *secure transports* here — but for different reasons: `wss` is TLS, while Tailscale's security comes from WireGuard end-to-end encryption, not TLS. See [`user-docs/architecture/connection-security.md`](../user-docs/architecture/connection-security.md).) Never-expire is ALWAYS selectable with an inline warning — per operator direction, trust the user's intent rather than gating on secure-transport detection.
 2. **Per-channel grants** — one session token, separate expiries for `chat` / `terminal` / `bridge`; later releases added `tui` and split voice grants (`voice:config`, `voice:stt`, `voice:tts`). Blast-radius-heavy channels can have shorter caps, and all grants are clamped to the session lifetime. Chat runs through the hermes-agent API server rather than the relay, so the chat grant is informational only (used by the phone UI to show scope).
 3. **Hardware-backed token storage with graceful fallback** — `KeystoreTokenStore` requests StrongBox-backed keys via `setRequestStrongBoxBacked(true)` on Android 9+ devices that advertise `FEATURE_STRONGBOX_KEYSTORE`. Falls back to the existing `LegacyEncryptedPrefsTokenStore` (TEE-backed `EncryptedSharedPreferences`) on older devices or when the Keystore path throws. Migration is one-shot and lossless — users never lose a session to an app upgrade.
 4. **TOFU cert pinning with explicit reset on re-pair** — `CertPinStore` records SHA-256 SPKI fingerprints per `host:port` on the first successful wss connect. Subsequent connects build an OkHttp `CertificatePinner` from the stored pin. A user-initiated QR re-pair (`applyServerIssuedCodeAndReset(code, relayUrl)`) wipes the pin for the target host — re-pair is explicit consent to potentially-new cert material. Plaintext ws:// short-circuits pinning entirely.
@@ -1077,8 +1077,14 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
   phone falls through to the next candidate in priority order.
 - **TTL defaults by role** (informational — operator can override at
   pair time): `lan` → 7 days, `tailscale` → 30 days, `public` → 30 days,
-  unknown role → 7 days (conservative). Plaintext-`ws://` consent still
-  gates any candidate with `transport_hint = "ws"`.
+  unknown role → 7 days (conservative). The longer `tailscale` default
+  reflects that the tailnet is a *secure transport* (WireGuard end-to-end
+  encryption + device identity) — not that the link is TLS. A
+  `tailscale` candidate can carry a plain `transport_hint = "ws"` and
+  still be encrypted; that's WireGuard, not TLS. See
+  [`user-docs/architecture/connection-security.md`](../user-docs/architecture/connection-security.md).
+  Plaintext-`ws://` consent still gates any candidate with
+  `transport_hint = "ws"`.
 
 **Canonicalization for the HMAC signature:** `canonicalize()` in
 `plugin/relay/qr_sign.py` uses `json.dumps(sort_keys=True,

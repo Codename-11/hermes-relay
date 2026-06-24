@@ -86,6 +86,7 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
+import com.hermesandroid.relay.ui.components.ConnectionSecurityGlyph
 import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
 import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
@@ -962,6 +963,7 @@ fun RelayApp() {
         val relayReady by connectionViewModel.relayReady.collectAsState()
         val activeConnection by connectionViewModel.activeConnection.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+        val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
@@ -1410,6 +1412,11 @@ fun RelayApp() {
                         // Connections — preserves the affordance the dropped
                         // header endpoint chip used to provide.
                         onClick = openConnections,
+                        securityGlyph = if (transportStatus.tier != ChatTransportTier.Offline) {
+                            { ConnectionSecurityGlyph(connectionSecurity) }
+                        } else {
+                            null
+                        },
                     )
                 }
             }

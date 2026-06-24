@@ -26,8 +26,10 @@ import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.ConnectionSecurity
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
+import com.hermesandroid.relay.data.computeConnectionSecurity
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.SessionTransport
@@ -1121,6 +1123,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         relayUrlProvider = { effectiveRelayUrlSnapshot() },
     )
     val isTailscaleDetected: StateFlow<Boolean> = tailscaleDetector.isTailscaleDetected
+
+    /**
+     * Single source of truth for the connection-security indicator (chat
+     * status chip, connection header, route picker, detail sheet). Rolls up
+     * the per-surface scheme of API / dashboard / relay against the active
+     * route — overlay transports (Tailscale/WireGuard/proxy) count as
+     * encrypted, not just TLS. Declared after [isTailscaleDetected] because it
+     * reads it. See `data/ConnectionSecurity.kt`.
+     */
+    val connectionSecurity: StateFlow<ConnectionSecurity> = combine(
+        effectiveApiServerUrl,
+        effectiveDashboardUrl,
+        effectiveRelayUrl,
+        relayConfigured,
+        activeEndpoint,
+    ) { api, dashboard, relay, relayCfg, endpoint ->
+        arrayOf(api, dashboard, relay, relayCfg, endpoint)
+    }.combine(isTailscaleDetected) { values, tailscale ->
+        computeConnectionSecurity(
+            apiUrl = values[0] as String,
+            dashboardUrl = values[1] as String,
+            relayUrl = values[2] as String,
+            relayConfigured = values[3] as Boolean,
+            activeEndpoint = values[4] as EndpointCandidate?,
+            isTailscaleDetected = tailscale,
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionSecurity.UNKNOWN)
 
     // What's New tracking
     private val _showWhatsNew = MutableStateFlow(false)
