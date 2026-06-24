@@ -14,6 +14,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.network.shared.EndpointResolver
+import com.hermesandroid.relay.network.shutdownOffMainThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -705,8 +706,12 @@ class ConnectionManager(
         disconnect()
         unregisterNetworkCallback()
         supervisorJob.cancel()
-        client.dispatcher.executorService.shutdown()
-        client.connectionPool.evictAll()
+        // evictAll() closes live wss sockets synchronously; on a TLS keep-alive
+        // that close is a network write, so keep it off the main thread.
+        shutdownOffMainThread("ConnectionManager-shutdown") {
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+        }
     }
 
     fun send(envelope: Envelope) {
