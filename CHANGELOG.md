@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 
+### Fixed
+
+- **Crash on connect over TLS / Tailscale.** Connecting to a server over an encrypted link (Tailscale Serve or public HTTPS) could hard-close the app with `NetworkOnMainThreadException`. Tearing down an HTTP client closed live SSL sockets on the main thread, and a TLS socket close performs a network write — which Android forbids on the main thread. Client shutdown now always closes sockets off the main thread, so connecting over a secured link no longer crashes. (#118, #124; likely the v1.1.0 / Tailscale crash in #70)
+
 ## [1.2.2] - 2026-06-22
 
 ### Added
