@@ -1,17 +1,6 @@
-v1.2.2 - Multi-profile polish
+v1.2.3 - Connection crash fix
 
-Profiles that behave
-* Deleting a session on a non-default agent profile now sticks — it no longer
-  reappears after the list refreshes.
-* On a cold start with a non-default profile selected, the session list opens
-  on that profile's chats directly instead of flashing the default profile's.
-
-Clearer diagnostics
-* Diagnostics is now a full screen that leads with a top-to-bottom list of
-  health checks — network, server, chat, pairing, relay, and voice — each with
-  a clear status and the reason when something's wrong. Tap a failing check for
-  detail; the recent-activity log stays below.
-
-Small touches
-* The default connection is simply "Hermes" now (power features are "Relay").
-* Distraction-free chat mode gives its text a taller, scrollable area.
+Stability
+* Fixed a crash that could close the app right after connecting over an
+  encrypted link (Tailscale or HTTPS). Securing your connection no longer
+  force-closes the app. Plain-LAN connections were never affected.

@@ -1,6 +1,19 @@
 {
   "versions": [
     {
+      "version": "1.2.3",
+      "title": "Connection crash fix",
+      "date": "2026-06-23",
+      "sections": [
+        {
+          "header": "Stability",
+          "bullets": [
+            "Fixed a crash that could close the app right after connecting over an encrypted link (Tailscale or HTTPS) — a live secure connection was being torn down on the main thread as it came up. Securing your connection no longer force-closes the app; plain-LAN connections were never affected."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.2",
       "title": "Multi-profile polish",
       "date": "2026-06-22",
