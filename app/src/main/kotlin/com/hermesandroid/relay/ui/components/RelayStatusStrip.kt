@@ -33,6 +33,8 @@ fun RelayStatusStrip(
     trailing: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    /** Optional security marker rendered just before the route label. */
+    securityGlyph: (@Composable () -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -65,6 +67,9 @@ fun RelayStatusStrip(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 leadingBadge()
+                if (securityGlyph != null) {
+                    securityGlyph()
+                }
                 if (routeLabel.isNotBlank()) {
                     Text(
                         text = "· $routeLabel",

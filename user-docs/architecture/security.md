@@ -103,8 +103,19 @@ Every command is logged to the Bridge tab's activity log (timestamp, status, res
 
 ## Recommendations
 
-1. **Use HTTPS** in production — the network security config enforces it by default
+1. **Use an encrypted route** in production. Two independent ways to get there, both secure:
+   - **TLS** (`https://`/`wss://`) — via a reverse proxy (Caddy/nginx/Cloudflare) or
+     `tailscale serve --https`. Pinned on first connect (TOFU).
+   - **Tailscale / WireGuard** — even a plain `http://`/`ws://` route over your tailnet is
+     **encrypted end-to-end by WireGuard**. This is *not* TLS, but it *is* secure transport;
+     a Tailscale link is not "plaintext on the wire."
+
+   Don't conflate the two: TLS and WireGuard are different mechanisms that both make a
+   connection secure. See [Is my connection secure?](./connection-security.md) for how the
+   app reports each (🔒 TLS vs 🛡️ Tailscale, both green).
 2. **Rotate API keys** periodically in your Hermes server config
 3. **Disconnect when idle** — especially if bridge is enabled (or let the auto-disable timer handle it)
-4. **Avoid public WiFi** for relay connections without additional encryption
+4. **Avoid plaintext on untrusted networks** — a plain `ws://`/`http://` route with no
+   Tailscale/WireGuard or TLS wrapping it is readable on public Wi-Fi. The app shows
+   ⚠️ **Not encrypted** for exactly this case.
 5. **Keep the app updated** — security patches ship with new releases
