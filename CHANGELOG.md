@@ -8,7 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Connection security indicator.** The chat status chip, the connection card, and the route picker now show at a glance whether your connection is encrypted — 🔒 **Encrypted · TLS**, 🛡️ **Encrypted · Tailscale** (both secure), 🛡️ **Mixed routes**, or ⚠️ **Not encrypted** — and tapping it opens a per-transport breakdown (chat, API, relay tools). A Tailscale/WireGuard route is now correctly shown as encrypted rather than implied insecure. Adds a new "Is my connection secure?" docs page explaining the difference between TLS and overlay (WireGuard) encryption.
 - **Desktop CLI: `hermes-relay audit`.** Shows what the remote agent has actually run on this machine through the desktop tools — tool, status, and a short detail per call — read from a local log, no network or auth. Answers "what did the agent just do?" at a glance.
 - **Desktop CLI: `hermes-relay relay`.** Inspect the relay server itself: `relay info` (version, uptime, sessions — on the relay host), `relay security` (runtime auth toggles), and `relay context` (audit the system-prompt context the relay injects into the agent, which works from a remote machine with your session).
 - **Desktop CLI: background daemon.** `hermes-relay daemon start` runs the headless tool router in the background (no console window, survives closing the terminal), with `daemon stop` and `daemon status` to manage it. `daemon status` reports state, uptime, relay, and advertised-tool count; bare `daemon` still runs in the foreground. Logs go to `~/.hermes/daemon.log`.
@@ -21,9 +20,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 
+## [1.2.4] - 2026-06-25
+
+### Added
+
+- **Connection security indicator.** The chat status chip, the connection card, and the route picker now show at a glance whether your connection is encrypted — 🔒 **Encrypted · TLS**, 🛡️ **Encrypted · Tailscale** (both secure), 🛡️ **Mixed routes**, or ⚠️ **Not encrypted** — and tapping it opens a per-transport breakdown (chat, API, relay tools). A Tailscale/WireGuard route is now correctly shown as encrypted rather than implied insecure. Adds a new "Is my connection secure?" docs page explaining the difference between TLS and overlay (WireGuard) encryption.
+
 ### Fixed
 
-- **Crash when a dashboard connection drops mid-check.** A transient network blip on the dashboard session check (e.g. a pooled connection aborting over Tailscale) could close the app: the check returned a result type but re-threw the network error instead of reporting it, and it surfaced on the main thread. The check now reports the failure cleanly, and the connection probe degrades gracefully instead of ever crashing.
+- **Crash when a dashboard connection drops mid-check.** A transient network blip on the dashboard session check (e.g. a pooled connection aborting or timing out over Tailscale) could close the app: the check returned a result type but re-threw the network error instead of reporting it, and it surfaced on the main thread. The check now reports the failure cleanly, and the connection probe degrades gracefully instead of ever crashing. (#129)
 
 ## [1.2.3] - 2026-06-23
 

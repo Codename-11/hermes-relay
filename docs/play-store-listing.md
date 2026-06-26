@@ -83,9 +83,10 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.2.3 — Connection crash fix.
+v1.2.4 — Stability + connection security.
 
-• Fixed a crash that could close the app right after connecting over an encrypted link (Tailscale or HTTPS). Connecting over a secured connection is now stable. Plain local-network connections were never affected.
+• Fixed a crash that could close the app when the dashboard connection dropped mid-check (e.g. a brief Tailscale blip) — it now fails gracefully instead of force-closing.
+• New: see whether your connection is encrypted at a glance (TLS or Tailscale) from the chat chip, connection card, and route picker, with a per-transport breakdown on tap.
 ```
 
 ## Category

@@ -1,6 +1,25 @@
 {
   "versions": [
     {
+      "version": "1.2.4",
+      "title": "Stability + connection security",
+      "date": "2026-06-25",
+      "sections": [
+        {
+          "header": "Stability",
+          "bullets": [
+            "Fixed a crash that could close the app when the dashboard connection check hit a transient network failure — a pooled connection aborting or timing out over Tailscale. The check now reports the failure cleanly and the connection probe degrades gracefully instead of force-closing."
+          ]
+        },
+        {
+          "header": "See if you're secure",
+          "bullets": [
+            "The chat status chip, connection card, and route picker now show at a glance whether your connection is encrypted — Encrypted · TLS, Encrypted · Tailscale (both secure), Mixed routes, or Not encrypted — and tapping it opens a per-transport breakdown (chat, API, relay tools). A Tailscale or WireGuard route is now correctly shown as encrypted rather than implied insecure."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.3",
       "title": "Connection crash fix",
       "date": "2026-06-23",
