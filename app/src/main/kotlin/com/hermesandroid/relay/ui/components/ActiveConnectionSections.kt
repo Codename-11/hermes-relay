@@ -116,6 +116,15 @@ fun ActiveCardStandardStatusSection(
     val dashboardStatus = activeConnection?.dashboardLastStatus
     val dashboardSignInRequired =
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+    val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
+
+    // At-a-glance security rollup, promoted out of the Advanced fold. Tap for
+    // the per-surface breakdown. Single source of truth: ConnectionSecurity.
+    ConnectionSecurityBadgeWithSheet(
+        security = connectionSecurity,
+        size = TransportSecuritySize.Row,
+        modifier = Modifier.fillMaxWidth(),
+    )
 
     ConnectionStatusRow(
         label = "API Server",
@@ -1110,56 +1119,19 @@ fun ActiveCardSecurityPosture(
     connectionViewModel: ConnectionViewModel,
     onNavigateToPairedDevices: () -> Unit,
 ) {
-    val relayUrl by connectionViewModel.relayUrl.collectAsState()
-    val effectiveApiServerUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
-    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
-    val effectiveRelayUrl by connectionViewModel.effectiveRelayUrl.collectAsState()
-    val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
-    val insecureReason by connectionViewModel.insecureReason.collectAsState()
+    val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val pairedDevices by connectionViewModel.pairedDevices.collectAsState()
-    // ADR 24 — surface the live endpoint role so the insecure badge can
-    // say "Plain (on LAN)" instead of "Insecure (network unknown)" when
-    // the resolver already knows which candidate we're on.
-    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
-    val selectedRouteUrls = buildList {
-        effectiveApiServerUrl.trim().takeIf { it.isNotBlank() }?.let(::add)
-        effectiveDashboardUrl.trim().takeIf { it.isNotBlank() }?.let(::add)
-        val selectedRelayUrl = effectiveRelayUrl.ifBlank { relayUrl }
-        if (relayConfigured || selectedRelayUrl.isNotBlank()) {
-            selectedRelayUrl.trim().takeIf { it.isNotBlank() }?.let(::add)
-        }
-    }
-    val secureUrlCount = selectedRouteUrls.count { url ->
-        isSelectedRouteUrlSecure(
-            url = url,
-            activeEndpoint = activeEndpoint,
-            isTailscaleDetected = isTailscaleDetected,
-        )
-    }
-    val transportState = when {
-        selectedRouteUrls.isEmpty() -> null
-        secureUrlCount == selectedRouteUrls.size -> TransportSecurityState.AllSecure
-        secureUrlCount > 0 -> TransportSecurityState.Mixed
-        else -> TransportSecurityState.AllInsecure
-    }
 
-    if (transportState != null) {
-        TransportSecurityBadge(
-            state = transportState,
-            size = TransportSecuritySize.Row,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    } else {
-        TransportSecurityBadge(
-            isSecure = isUrlSecure(relayUrl),
-            reason = insecureReason.ifBlank { null },
-            size = TransportSecuritySize.Row,
-            modifier = Modifier.fillMaxWidth(),
-            activeRole = activeEndpoint?.role,
-        )
-    }
+    // Connection-level security rollup (single source of truth —
+    // ConnectionSecurity). Tap for the per-surface breakdown + the
+    // mechanism explainer (TLS vs Tailscale/WireGuard vs plain).
+    ConnectionSecurityBadgeWithSheet(
+        security = connectionSecurity,
+        size = TransportSecuritySize.Row,
+        modifier = Modifier.fillMaxWidth(),
+    )
 
     if (isTailscaleDetected) {
         Row(
@@ -1228,29 +1200,6 @@ fun ActiveCardSecurityPosture(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-}
-
-private fun isSelectedRouteUrlSecure(
-    url: String,
-    activeEndpoint: EndpointCandidate?,
-    isTailscaleDetected: Boolean,
-): Boolean {
-    if (isUrlSecure(url)) return true
-    return activeEndpoint.isEncryptedOverlayRoute(isTailscaleDetected)
-}
-
-private fun EndpointCandidate?.isEncryptedOverlayRoute(isTailscaleDetected: Boolean): Boolean {
-    if (this == null) return false
-    val role = role.lowercase()
-    val securityHint = security.orEmpty().lowercase()
-    return role == "tailscale" ||
-        (isTailscaleDetected && securityHint.contains("tailscale")) ||
-        role == "plugin_proxy" ||
-        role == "plugin-proxy" ||
-        hasSecureProxy() ||
-        securityHint.contains("wireguard") ||
-        securityHint.contains("https") ||
-        securityHint.contains("tls")
 }
 
 /**

@@ -1,6 +1,11 @@
-v1.2.3 - Connection crash fix
+v1.2.4 - Stability + connection security
 
 Stability
-* Fixed a crash that could close the app right after connecting over an
-  encrypted link (Tailscale or HTTPS). Securing your connection no longer
-  force-closes the app. Plain-LAN connections were never affected.
+* Fixed a crash that could close the app when the dashboard connection
+  dropped mid-check (e.g. a brief Tailscale blip). The check now fails
+  gracefully instead of force-closing.
+
+New
+* See whether your connection is encrypted at a glance — the chat chip,
+  connection card, and route picker now show TLS or Tailscale encryption,
+  with a per-transport breakdown on tap.

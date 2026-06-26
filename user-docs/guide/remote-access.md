@@ -1,6 +1,6 @@
 # Remote Access
 
-Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The recommended path is Tailscale because it works behind CGNAT, gives you managed TLS, and keeps access inside your tailnet ACLs.
+Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The recommended path is Tailscale because it works behind CGNAT, encrypts traffic end-to-end (WireGuard), keeps access inside your tailnet ACLs, and can *optionally* front TLS for you. (Note: the WireGuard encryption is what makes a tailnet link secure — TLS via `tailscale serve --https` is a separate, optional layer on top. See [Is my connection secure?](../architecture/connection-security.md).)
 
 ## What Uses Which Connection
 
@@ -24,7 +24,7 @@ hermes-relay-tailscale enable
 hermes pair --mode auto --prefer tailscale
 ```
 
-The Tailscale helper publishes both required loopback services:
+The Tailscale helper publishes both required loopback services, fronting each with TLS:
 
 ```bash
 tailscale serve --bg --https=8767 http://127.0.0.1:8767
@@ -32,6 +32,15 @@ tailscale serve --bg --https=8642 http://127.0.0.1:8642
 ```
 
 Port `8767` carries relay WSS and relay HTTP routes. Port `8642` carries the Hermes API server for chat, API-key voice auth, and endpoint health probes. If only `8767` is served, terminal/bridge may work while chat and API-key voice still fail remotely.
+
+::: tip Two layers, both optional-to-stack
+Your tailnet is already encrypted by WireGuard, so even a plain `http://100.x.y.z` route is
+secure over Tailscale. `tailscale serve --https` adds a *separate* TLS layer on top, giving
+you a `wss://`/`https://` route fronted by a real certificate (the dashboard on `:9119` is
+not fronted by the helper — front it yourself if you want TLS there). See
+[Is my connection secure?](../architecture/connection-security.md) for which the app reports
+as 🔒 TLS vs 🛡️ Tailscale (both secure).
+:::
 
 Check the served ports with:
 
@@ -75,10 +84,14 @@ Pick the scheme by how the server is reached:
   The Hermes API server speaks plain HTTP; an `https://` route against it
   fails its TLS handshake on every probe and never wins. This also requires
   the API server to listen beyond loopback (`0.0.0.0:8642` or the tailnet
-  interface).
+  interface). Note that an `http://` route over a raw Tailscale IP is **not
+  plaintext on the wire** — WireGuard encrypts it end-to-end. It's secure
+  transport, just not TLS (the app reports it as 🛡️ Tailscale, not ⚠️ Not
+  encrypted). A plain LAN IP, by contrast, has no such wrapping.
 - **`*.ts.net` hostname fronted by `hermes-relay-tailscale enable`** →
   `https://` — Tailscale terminates TLS for the MagicDNS hostname (the cert
-  is only valid for that name, not for the raw `100.x` IP).
+  is only valid for that name, not for the raw `100.x` IP). This adds TLS
+  *on top of* the WireGuard encryption you already had over the tailnet.
 - **Public reverse proxy** → `https://` with whatever host/port the proxy
   exposes.
 

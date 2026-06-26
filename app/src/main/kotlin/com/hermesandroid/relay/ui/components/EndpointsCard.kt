@@ -48,8 +48,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.SurfaceSecurityKind
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.isEncryptedOverlayRoute
 import com.hermesandroid.relay.data.isKnownRole
+import com.hermesandroid.relay.data.isTlsUrl
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -241,6 +244,7 @@ private fun EndpointRow(
                         text = candidate.displayLabel(),
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    SurfaceSecurityGlyph(kind = candidate.routeSecurityKind())
                     if (isActive) {
                         ActiveChip()
                     } else if (isPreferred) {
@@ -496,6 +500,18 @@ private fun roleIcon(role: String): ImageVector = when (role.lowercase()) {
     "tailscale" -> Icons.Filled.VpnKey
     "public" -> Icons.Filled.Public
     else -> Icons.Filled.Shield
+}
+
+/**
+ * Per-route security classification for the picker glyph. Keyed on the
+ * candidate's own scheme + role (no device-level Tailscale detection needed —
+ * a `tailscale`/`plugin_proxy` role is encrypted regardless), so each row can
+ * be classified independently before it's the active route.
+ */
+private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
+    isTlsUrl(api.url) -> SurfaceSecurityKind.Tls
+    isEncryptedOverlayRoute(isTailscaleDetected = false) -> SurfaceSecurityKind.Overlay
+    else -> SurfaceSecurityKind.Plain
 }
 
 /**

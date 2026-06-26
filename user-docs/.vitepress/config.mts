@@ -137,6 +137,7 @@ export default defineConfig({
             { text: 'Flavor Differences', link: '/architecture/flavor-differences' },
             { text: 'Decisions', link: '/architecture/decisions' },
             { text: 'Security', link: '/architecture/security' },
+            { text: 'Is my connection secure?', link: '/architecture/connection-security' },
             { text: 'Privacy', link: '/architecture/privacy' },
           ],
         },
