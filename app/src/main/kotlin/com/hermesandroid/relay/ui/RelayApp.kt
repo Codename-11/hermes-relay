@@ -1588,6 +1588,11 @@ fun RelayApp() {
                                 launchSingleTop = true
                             }
                         },
+                        // Empty-chat "needs connection" card also offers the offline
+                        // demo, so a skipped / never-connected first run can explore
+                        // without leaving Chat. Safe here — this state only shows when
+                        // nothing is configured, so there's no placeholder in flight.
+                        onTryDemo = enterDemo,
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {

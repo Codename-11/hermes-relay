@@ -136,9 +136,9 @@ fun OnboardingScreen(
                 title = { Text("Skip setup?") },
                 text = {
                     Text(
-                        "You can configure your Hermes connection later in Settings → Connections. " +
-                            "Without a connection, Chat and Manage won't load. Relay pairing can " +
-                            "be added later for power tools."
+                        "No problem — you can explore the demo to see how Hermes-Relay works, " +
+                            "and connect your own Hermes server anytime from Settings → Connections. " +
+                            "Relay pairing for power tools can be added later too."
                     )
                 },
                 confirmButton = {
@@ -146,7 +146,7 @@ fun OnboardingScreen(
                         showSkipConfirm = false
                         onComplete()
                     }) {
-                        Text("Skip anyway")
+                        Text("Skip for now")
                     }
                 },
                 dismissButton = {
