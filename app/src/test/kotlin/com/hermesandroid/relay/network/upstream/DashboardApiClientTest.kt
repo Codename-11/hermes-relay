@@ -72,6 +72,26 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun malformedBaseUrl_returnsFailure_doesNotThrow() = runTest {
+        // The #131 crash: a non-URL value (here the exact reported UI label,
+        // normalized to http://<spaces> at save) reached the client as baseUrl.
+        // okhttp's Request.Builder.url(String) THROWS IllegalArgumentException
+        // ("Invalid URL host") on it; before this guard that throw escaped
+        // withContext(IO) onto a Main coroutine and force-closed the app. Every
+        // request method must now short-circuit to Result.failure instead.
+        val client = DashboardApiClient(baseUrl = "http://Manage sign-in and admin screens")
+
+        // A representative spread across the verb helpers — none may throw.
+        assertTrue(client.getStatus().isFailure)
+        assertTrue(client.currentSession().isFailure)
+        assertTrue(client.requestWsTicket().isFailure)
+        assertTrue(client.getJsonObject("/api/config").isFailure)
+        assertTrue(client.loginPassword(username = "u", password = "p").isFailure)
+        // Boolean probe degrades to false rather than throwing.
+        assertFalse(client.audioRoutesPresent())
+    }
+
+    @Test
     fun getStatus_acceptsProviderObjects() = runTest {
         server.enqueue(
             MockResponse()
