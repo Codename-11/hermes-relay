@@ -1,5 +1,9 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-25 — Released android-v1.2.4
+
+Cut Android **1.2.4** (appVersionName 1.2.4 / appVersionCode 18) — "Stability + connection security". Driven by **#129**: an external user's auto-captured crash report on the **1.2.3 Play build** showed a `SocketTimeoutException` to the dashboard (`:9119`) over Tailscale surfacing on the main thread — the same crash class as 1.2.3's `NetworkOnMainThreadException` fix, on the sibling `DashboardApiClient.currentSession()` call site that 1.2.3 didn't cover. 1.2.3 tagged 2026-06-23; the `currentSession()` fix (`99b9cf1`, #128) landed 2026-06-24 — one day after release — so the published build was still exposed. Confirmed the fix is comprehensive: all four dashboard `.execute()` sites (`currentSession`, `audioRoutesPresent`, `executeJson`, `executeJsonElement`) and `StandardHermesVoiceClient` are now `try/catch`-guarded. 1.2.4 bundles that fix plus the connection security indicator (#127, already on `dev`). Release commit `2e58449` on `dev` (CHANGELOG `[1.2.4]` promotes only the Android items; Desktop CLI items stay in `[Unreleased]` for a future `cli-v*` cut); release PR **#130** (`dev` → `main`, merge `0327012`) merged on green Required-checks + claude-review; `android-v1.2.4` tagged from the `main` tip → `release-android.yml` builds signed APK/AAB (googlePlay + sideload) + `SHA256SUMS.txt` → GitHub Release. Play upload is owner-driven.
+
 ## 2026-06-24 — Fix SocketTimeoutException crash from DashboardApiClient.currentSession()
 
 **Why.** An in-app crash report (`FATAL EXCEPTION: main`, `SocketTimeoutException`, `Caused by: java.net.SocketException: Software caused connection abort`) captured on-device over a Tailscale connection. The visible dialog truncated the trace; the full stack was recovered from a background `adb logcat` capture that happened to be running when it fired.
