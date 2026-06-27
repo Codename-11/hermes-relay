@@ -6,6 +6,12 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Crash-class follow-ups
+
+- **Audit remaining throwing URL-build sites for the "Invalid URL host" class (#131).** The #131 fix guarded the two clients that take a user-entered base URL on the Manage/voice path (`DashboardApiClient`, `StandardHermesVoiceClient`) and validates input at entry, but two lower-risk site groups still call okhttp's throwing `url(String)` / `.toHttpUrl()`:
+  - `HermesApiClient` streaming methods (`sendChatStream` / `sendCompletionsStream` / `sendRunStream`) build `authRequest("$baseUrl/…")` *outside* the surrounding `try`. Latent only — the non-streaming methods (incl. `checkHealth`) already `try/catch`, so a bad `apiServerUrl` is caught and marks the connection unreachable before streaming is reached. Consider a non-throwing `authRequestOrNull()` chokepoint → `onError`.
+  - Relay clients (`RelayHttpClient`, `RelayProfileInspectorClient`, `RelayVoiceClient`, `ConnectionManager`) use `.toHttpUrl()` on `$httpBase/…`. These ride post-pairing relay URLs (from a signed QR / pairing payload), not free-text fields, so the input-validation layer doesn't cover them — route them through `ServerAddress`/`toHttpUrlOrNull` for defense-in-depth.
+
 ## User-Added:
 
 - [x] **Clean-chat: taller scrollable text viewport** *(impl 2026-06-22, orchestration batch — unbuilt; verify in Studio.)* Replaced the fragile `screenHeightDp*0.34f` cap with a weight split (sphere `weight(1f)` / flow `weight(1.1f)` ≈ 52% of the vertical slack); kept the internal scroll + top-fade + `min=96.dp` floor. `AgentTextFlow.kt` (`1dca285`).

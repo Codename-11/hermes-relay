@@ -90,6 +90,7 @@ import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.network.shared.HermesLanDiscovery
 import com.hermesandroid.relay.network.shared.HermesLanDiscoveryResult
+import com.hermesandroid.relay.util.ServerAddress
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import kotlinx.coroutines.TimeoutCancellationException
@@ -1206,28 +1207,34 @@ private fun MethodTile(
 private fun apiUrlSchemeError(url: String): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
-    return when {
-        trimmed.startsWith("ws://", ignoreCase = true) ||
-            trimmed.startsWith("wss://", ignoreCase = true) ->
-            "Looks like a relay URL — API server expects http:// or https://"
-        else -> null
+    // Wrong-scheme paste gets a precise message first…
+    if (trimmed.startsWith("ws://", ignoreCase = true) ||
+        trimmed.startsWith("wss://", ignoreCase = true)
+    ) {
+        return "Looks like a relay URL — API server expects http:// or https://"
     }
+    // …then reject anything that won't actually parse as a host/URL. Without
+    // this, a non-address such as "Manage sign-in and admin screens" passed
+    // validation, was normalized to http://<spaces> at save, and crashed the
+    // app when okhttp's url(String) threw on the malformed host (issue #131).
+    return ServerAddress.fieldError(trimmed, "API server URL")
 }
 
 private fun optionalHttpUrlError(url: String, fieldLabel: String): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     // Bare hosts/IPs are fine — save paths run them through
-    // [Connection.normalizeApiUrlInput], which assumes http://. Only an
-    // explicit non-http scheme is an error, because it would otherwise be
-    // preserved verbatim and silently dropped at candidate-build time.
+    // [Connection.normalizeApiUrlInput], which assumes http://. An explicit
+    // non-http scheme is an error (it would be preserved verbatim and dropped
+    // at candidate-build time)…
     val scheme = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://").find(trimmed)
         ?.groupValues?.get(1)?.lowercase()
-        ?: return null
-    return when (scheme) {
-        "http", "https" -> null
-        else -> "$fieldLabel expects http:// or https:// (bare hosts get http://)"
+    if (scheme != null && scheme != "http" && scheme != "https") {
+        return "$fieldLabel expects http:// or https:// (bare hosts get http://)"
     }
+    // …and a value that won't parse as a real http(s) host (spaces, junk) is
+    // rejected here rather than reaching a request builder that throws (#131).
+    return ServerAddress.fieldError(trimmed, fieldLabel)
 }
 
 /** Mirror of [apiUrlSchemeError] for the relay field. */
