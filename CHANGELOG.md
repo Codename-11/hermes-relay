@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 
+### Fixed
+
+- **Crash when a non-address is entered as a server URL.** Typing or pasting non-URL text (for example a label, or a line copied from the docs) into the API server or Dashboard URL field could force-close the app on the Manage / sign-in screen: the value was handed to the networking layer as a host, which rejected it with an uncaught error on the main thread. The setup fields now reject anything that isn't a valid host or `http(s)://` URL with an inline error, and the dashboard and voice request paths treat a malformed address as "unreachable" instead of ever crashing. (#131, #132)
+
 ## [1.2.4] - 2026-06-25
 
 ### Added
