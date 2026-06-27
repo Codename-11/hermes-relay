@@ -28,6 +28,16 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 - [x] **Per-profile agent icon + static-image avatar (shipped 2026-06-20 —** `d827e46`**, see DEVLOG).** Per-profile icon: client-side `ProfileIconStore` (per `(connection, profile)`, never sent to Hermes; stores a copied-file path) → small Coil image beside the agent name in `MessageBubble` via `LocalAgentIconPath`; picker is `AgentIconRow` under the local-name row in `ConnectionInfoSheet`. Static image: "Add a pet" accepts a single image (magic-byte detect → one-frame static pet). Scope shipped: small name-adjacent icon only; big avatar stays global. Follow-ups: on-device smoke (import an image as a pet; set a profile icon, confirm it shows by the name + persists across restart); optionally also show the icon in the profile picker.
 
+## Demo mode (2026-06-27) — deferred polish
+
+Shipped offline Demo / Explore mode (see DEVLOG 2026-06-27). Core is in; these are non-blocking polish items, none required for the Play "App access" fix:
+
+- **On-device verify (Studio).** Confirm: "Try the demo" on the onboarding Connect page and the standalone Connect screen lands on Chat showing the canned transcript (Markdown, tool-progress card, weather card, code block); the persistent banner shows and its Connect exits demo into the real wizard; demo runs in airplane mode with no network; Manage/Voice show the demo empty state; Bridge/Terminal show their pair-gate; backing out of demo Chat clears the flag so a real connection still works.
+- **Demo composer is a silent no-op.** `ChatViewModel.sendMessage()` early-returns with no API client, so typing + Send in demo does nothing. Polish: intercept sends while `isDemoMode` to append a canned "This is a demo — connect your Hermes server to chat for real" assistant bubble (or disable the composer with a hint), so it doesn't read as broken.
+- **Live voice mode in demo.** The voice-mode overlay (mic) launched from Chat isn't demo-gated — a tap would attempt a transcribe (fails gracefully, no crash). Add a demo notice / disable the mic in demo. (Voice settings screen already shows the demo empty state.)
+- **Light typewriter/stream simulation.** The transcript is statically populated; an optional per-token reveal on first entry would better convey the "streaming" feel. Acceptable as static for v1.
+- **Optional richer demo.** Could add a second tool type or an image attachment to the transcript to showcase more surfaces; kept minimal/one-file for now.
+
 ## Orchestration batch (2026-06-22) — deferred follow-ups
 
 Four User-Added items resolved via a 4-worker orchestration pass (disjoint file ownership, coordinator-serialized commits): clean-chat viewport (`1dca285`), connections reframe (`c9fa8f7`), diagnostics/analytics (`c3098a9`), session-delete fix (`6552566`). Plus a follow-on profile-isolation fix raised mid-session: cold-start session-drawer hydration (`889273a`). **Committed to `dev`, NOT built/linted/verified.** Remaining:

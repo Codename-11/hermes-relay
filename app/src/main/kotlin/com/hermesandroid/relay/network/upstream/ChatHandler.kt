@@ -770,6 +770,21 @@ class ChatHandler {
     }
 
     /**
+     * Load a fully-static, offline transcript for Demo / Explore mode (see
+     * [com.hermesandroid.relay.data.DemoContent]). Clears any prior state and
+     * replaces the message list wholesale — these messages are terminal
+     * ([ChatMessage.isStreaming] = false), so no streaming/dedupe machinery
+     * runs against them. Drives the canned conversation through the same
+     * `_messages` flow the live chat surface renders, so demo reuses the real
+     * UI rather than a parallel one. No network is touched.
+     */
+    fun loadDemoTranscript(demoMessages: List<ChatMessage>) {
+        clearMessages()
+        _isStreaming.value = false
+        _messages.value = demoMessages
+    }
+
+    /**
      * Repair assistant labels after late-arriving agent config. History can
      * load before GET /api/config returns, leaving default-profile messages
      * with the generic "Hermes" label. Keep local phone/voice action trace
