@@ -1,6 +1,25 @@
 {
   "versions": [
     {
+      "version": "1.2.5",
+      "title": "Stability + Try the demo",
+      "date": "2026-06-27",
+      "sections": [
+        {
+          "header": "Stability",
+          "bullets": [
+            "Fixed a crash that could close the app when a non-URL value — a UI label, or a line copied from the docs — was entered in the API server or Dashboard URL field. The setup fields now reject anything that isn't a valid host or http(s) URL with an inline error, and the dashboard and voice request paths treat a bad address as unreachable instead of crashing."
+          ]
+        },
+        {
+          "header": "Try the demo",
+          "bullets": [
+            "A new \"Try the demo\" option on the setup screen — and on the empty chat screen if you skip setup — opens an offline preview of the real chat experience: a sample conversation with Markdown, a tool-progress card, and a rich card, with no server, account, or network. A banner shows it's a demo, with a one-tap Connect to set up for real."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.4",
       "title": "Stability + connection security",
       "date": "2026-06-25",

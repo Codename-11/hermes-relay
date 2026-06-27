@@ -1,11 +1,11 @@
-v1.2.4 - Stability + connection security
+v1.2.5 - Stability + Try the demo
 
 Stability
-* Fixed a crash that could close the app when the dashboard connection
-  dropped mid-check (e.g. a brief Tailscale blip). The check now fails
-  gracefully instead of force-closing.
+* Fixed a crash that could close the app when a non-URL value — like a
+  label or a line copied from the docs — was entered in a server address
+  field. It now shows an inline error instead of force-closing.
 
 New
-* See whether your connection is encrypted at a glance — the chat chip,
-  connection card, and route picker now show TLS or Tailscale encryption,
-  with a per-transport breakdown on tap.
+* Try the demo — explore an offline preview of the chat experience with
+  no server, account, or network, right from the welcome screen (and the
+  empty chat screen if you skip setup).
