@@ -101,6 +101,23 @@ class DashboardApiClient(
 ) {
     private val baseUrl: String = baseUrl.trim().trimEnd('/')
 
+    /**
+     * Resolve a request URL without ever throwing. okhttp's
+     * [Request.Builder.url] (String overload) throws `IllegalArgumentException`
+     * (`Invalid URL host: "..."`) on a malformed host — e.g. a non-URL value
+     * such as a UI label / docs line reaching the dashboard-URL slot (#131). If
+     * that throw escapes one of this client's `withContext(IO)` suspend lambdas
+     * on a Main-dispatched caller, the app force-closes. Parsing via
+     * [toHttpUrlOrNull] lets every method short-circuit to [Result.failure]
+     * instead. Returns null when `baseUrl + pathAndQuery` is not a valid http(s)
+     * URL.
+     */
+    private fun resolveUrl(pathAndQuery: String): HttpUrl? =
+        "$baseUrl$pathAndQuery".toHttpUrlOrNull()
+
+    private fun invalidUrlException(): IOException =
+        IOException("Dashboard URL \"$baseUrl\" is not a valid http(s) address")
+
     suspend fun getStatus(): Result<DashboardStatus> = withContext(Dispatchers.IO) {
         getJson("/api/status").mapCatching { parseStatus(it) }
     }
@@ -118,8 +135,9 @@ class DashboardApiClient(
 
     suspend fun getJsonElement(path: String): Result<JsonElement> = withContext(Dispatchers.IO) {
         val normalized = if (path.startsWith("/")) path else "/$path"
+        val httpUrl = resolveUrl(normalized) ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl$normalized")
+            .url(httpUrl)
             .get()
             .build()
         executeJsonElement(request, normalized)
@@ -130,8 +148,9 @@ class DashboardApiClient(
         payload: JsonObject = JsonObject(emptyMap()),
     ): Result<JsonObject> = withContext(Dispatchers.IO) {
         val normalized = if (path.startsWith("/")) path else "/$path"
+        val httpUrl = resolveUrl(normalized) ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl$normalized")
+            .url(httpUrl)
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .build()
         executeJson(request, normalized)
@@ -142,8 +161,9 @@ class DashboardApiClient(
         payload: JsonObject,
     ): Result<JsonObject> = withContext(Dispatchers.IO) {
         val normalized = if (path.startsWith("/")) path else "/$path"
+        val httpUrl = resolveUrl(normalized) ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl$normalized")
+            .url(httpUrl)
             .put(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .build()
         executeJson(request, normalized)
@@ -151,8 +171,9 @@ class DashboardApiClient(
 
     suspend fun deleteJsonObject(path: String): Result<JsonObject> = withContext(Dispatchers.IO) {
         val normalized = if (path.startsWith("/")) path else "/$path"
+        val httpUrl = resolveUrl(normalized) ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl$normalized")
+            .url(httpUrl)
             .delete()
             .build()
         executeJson(request, normalized)
@@ -164,8 +185,9 @@ class DashboardApiClient(
         payload: JsonObject,
     ): Result<JsonObject> = withContext(Dispatchers.IO) {
         val normalized = if (path.startsWith("/")) path else "/$path"
+        val httpUrl = resolveUrl(normalized) ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl$normalized")
+            .url(httpUrl)
             .delete(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .build()
         executeJson(request, normalized)
@@ -494,8 +516,10 @@ class DashboardApiClient(
             put("password", password)
             put("next", next)
         }
+        val httpUrl = resolveUrl("/auth/password-login")
+            ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl/auth/password-login")
+            .url(httpUrl)
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .build()
 
@@ -509,8 +533,10 @@ class DashboardApiClient(
     }
 
     suspend fun currentSession(): Result<DashboardAuthSession> = withContext(Dispatchers.IO) {
+        val httpUrl = resolveUrl("/api/auth/me")
+            ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl/api/auth/me")
+            .url(httpUrl)
             .get()
             .build()
 
@@ -553,7 +579,8 @@ class DashboardApiClient(
         // audio routes and treat the surface as present if EITHER answers
         // non-404 (they ship together upstream, so one reachable implies both).
         fun probe(path: String): Boolean {
-            val request = Request.Builder().url("$baseUrl$path").head().build()
+            val httpUrl = resolveUrl(path) ?: return false
+            val request = Request.Builder().url(httpUrl).head().build()
             return try {
                 okHttpClient.newCall(request).execute().use { it.code != 404 }
             } catch (_: Exception) {
@@ -564,8 +591,10 @@ class DashboardApiClient(
     }
 
     suspend fun requestWsTicket(): Result<DashboardWsTicket> = withContext(Dispatchers.IO) {
+        val httpUrl = resolveUrl("/api/auth/ws-ticket")
+            ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl/api/auth/ws-ticket")
+            .url(httpUrl)
             .post(ByteArray(0).toRequestBody(null))
             .build()
 
@@ -592,8 +621,9 @@ class DashboardApiClient(
     }
 
     private suspend fun getJson(path: String): Result<JsonObject> = withContext(Dispatchers.IO) {
+        val httpUrl = resolveUrl(path) ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
-            .url("$baseUrl$path")
+            .url(httpUrl)
             .get()
             .build()
         executeJson(request, path)

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -75,13 +76,20 @@ class StandardHermesVoiceClient(
             )
         }
 
+        // Resolve via toHttpUrlOrNull() — okhttp's url(String) THROWS on a
+        // malformed dashboard URL (a non-address pasted into that field, #131),
+        // and this runs before executeJson()'s try/catch, so the throw would
+        // escape withContext(IO) onto the calling coroutine and crash the app.
+        val httpUrl = "$baseUrl/api/audio/transcribe".toHttpUrlOrNull()
+            ?: return@withContext Result.failure(IOException("Hermes dashboard URL is not a valid address: $baseUrl"))
+
         val dataUrl = buildAudioDataUrl(audioFile)
         val payload = buildJsonObject {
             put("data_url", dataUrl)
             put("mime_type", mediaTypeForAudioFile(audioFile))
         }
         val request = Request.Builder()
-            .url("$baseUrl/api/audio/transcribe")
+            .url(httpUrl)
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .header("Accept", "application/json")
             .build()
@@ -105,6 +113,11 @@ class StandardHermesVoiceClient(
             return@withContext Result.failure(IllegalArgumentException("Cannot synthesize blank text"))
         }
 
+        // See transcribe(): guard the throwing url(String) so a malformed
+        // dashboard URL is a clean Result.failure, never a Main-thread crash.
+        val httpUrl = "$baseUrl/api/audio/speak".toHttpUrlOrNull()
+            ?: return@withContext Result.failure(IOException("Hermes dashboard URL is not a valid address: $baseUrl"))
+
         val payload = buildJsonObject {
             put("text", cleanText)
             // Defensive only — upstream /api/audio/speak ignores it (text-only
@@ -112,7 +125,7 @@ class StandardHermesVoiceClient(
             profileProvider()?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
         }
         val request = Request.Builder()
-            .url("$baseUrl/api/audio/speak")
+            .url(httpUrl)
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .header("Accept", "application/json")
             .build()

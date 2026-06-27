@@ -380,6 +380,9 @@ fun ChatScreen(
     // don't wire navigation.
     onNavigateToConnections: () -> Unit = {},
     onNavigateToConnect: () -> Unit = onNavigateToConnections,
+    // Offline demo entry, surfaced on the empty-chat "needs connection" card so a
+    // skipped / never-connected first run can explore without a server. null hides it.
+    onTryDemo: (() -> Unit)? = null,
     onNavigateToManage: () -> Unit = {},
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
@@ -1852,7 +1855,7 @@ fun ChatScreen(
                                             verticalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
                                             Text(
-                                                text = "Chat needs a Hermes API connection.",
+                                                text = "Connect your Hermes server to start chatting — or explore a quick demo first. You can connect anytime.",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -1861,6 +1864,14 @@ fun ChatScreen(
                                                 modifier = Modifier.fillMaxWidth(),
                                             ) {
                                                 Text("Connect Hermes")
+                                            }
+                                            if (onTryDemo != null) {
+                                                TextButton(
+                                                    onClick = onTryDemo,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Text("Try the demo")
+                                                }
                                             }
                                         }
                                     }

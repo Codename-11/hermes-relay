@@ -90,6 +90,7 @@ import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.network.shared.HermesLanDiscovery
 import com.hermesandroid.relay.network.shared.HermesLanDiscoveryResult
+import com.hermesandroid.relay.util.ServerAddress
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import kotlinx.coroutines.TimeoutCancellationException
@@ -166,6 +167,15 @@ fun ConnectionWizard(
      * flow; re-pair surfaces leave it null so the chooser stays available.
      */
     autoStart: String? = null,
+    /**
+     * Optional "Try the demo" affordance shown atop the Method step. When
+     * non-null, the wizard surfaces an offline Demo / Explore entry point so a
+     * first-run user (or a Play reviewer with no server) can see the app work
+     * with zero setup. Null hides it — Settings → Connections passes null
+     * because there's nothing to "first-run" there; onboarding + the Connect
+     * screen pass a callback that enters demo and routes to Chat.
+     */
+    onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -464,6 +474,7 @@ fun ConnectionWizard(
                         step = WizardStep.ShowCode
                     },
                     onSkip = if (showSkip) onCancel else null,
+                    onTryDemo = onTryDemo,
                 )
 
                 WizardStep.StandardEntry -> StandardEntryStep(
@@ -963,6 +974,7 @@ private fun MethodStep(
     onPickEnterCode: () -> Unit,
     onPickShowCode: () -> Unit,
     onSkip: (() -> Unit)?,
+    onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(
@@ -980,6 +992,39 @@ private fun MethodStep(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        // Offline "Try the demo" entry point — only surfaced where a first-run
+        // user benefits (onboarding + the Connect screen). Lets a reviewer or
+        // curious user see the app work with zero setup and zero network
+        // before committing to connecting a real server.
+        if (onTryDemo != null) {
+            OutlinedButton(
+                onClick = onTryDemo,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp),
+                ) {
+                    Text(
+                        text = "Try the demo",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Explore offline — no server needed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                )
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1162,28 +1207,34 @@ private fun MethodTile(
 private fun apiUrlSchemeError(url: String): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
-    return when {
-        trimmed.startsWith("ws://", ignoreCase = true) ||
-            trimmed.startsWith("wss://", ignoreCase = true) ->
-            "Looks like a relay URL — API server expects http:// or https://"
-        else -> null
+    // Wrong-scheme paste gets a precise message first…
+    if (trimmed.startsWith("ws://", ignoreCase = true) ||
+        trimmed.startsWith("wss://", ignoreCase = true)
+    ) {
+        return "Looks like a relay URL — API server expects http:// or https://"
     }
+    // …then reject anything that won't actually parse as a host/URL. Without
+    // this, a non-address such as "Manage sign-in and admin screens" passed
+    // validation, was normalized to http://<spaces> at save, and crashed the
+    // app when okhttp's url(String) threw on the malformed host (issue #131).
+    return ServerAddress.fieldError(trimmed, "API server URL")
 }
 
 private fun optionalHttpUrlError(url: String, fieldLabel: String): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     // Bare hosts/IPs are fine — save paths run them through
-    // [Connection.normalizeApiUrlInput], which assumes http://. Only an
-    // explicit non-http scheme is an error, because it would otherwise be
-    // preserved verbatim and silently dropped at candidate-build time.
+    // [Connection.normalizeApiUrlInput], which assumes http://. An explicit
+    // non-http scheme is an error (it would be preserved verbatim and dropped
+    // at candidate-build time)…
     val scheme = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://").find(trimmed)
         ?.groupValues?.get(1)?.lowercase()
-        ?: return null
-    return when (scheme) {
-        "http", "https" -> null
-        else -> "$fieldLabel expects http:// or https:// (bare hosts get http://)"
+    if (scheme != null && scheme != "http" && scheme != "https") {
+        return "$fieldLabel expects http:// or https:// (bare hosts get http://)"
     }
+    // …and a value that won't parse as a real http(s) host (spaces, junk) is
+    // rejected here rather than reaching a request builder that throws (#131).
+    return ServerAddress.fieldError(trimmed, fieldLabel)
 }
 
 /** Mirror of [apiUrlSchemeError] for the relay field. */

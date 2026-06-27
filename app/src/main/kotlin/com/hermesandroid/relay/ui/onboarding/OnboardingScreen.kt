@@ -103,6 +103,12 @@ fun OnboardingScreen(
     onComplete: () -> Unit,
     onManageSignIn: () -> Unit = onComplete,
     onOpenPermissions: () -> Unit = {},
+    /**
+     * Enter offline Demo mode from the Connect page's "Try the demo" button.
+     * RelayApp wires this to enter demo + navigate to Chat without completing
+     * onboarding. Defaults to no-op so previews/older callers still compile.
+     */
+    onTryDemo: () -> Unit = {},
 ) {
     val pages = remember {
         buildList {
@@ -130,9 +136,9 @@ fun OnboardingScreen(
                 title = { Text("Skip setup?") },
                 text = {
                     Text(
-                        "You can configure your Hermes connection later in Settings → Connections. " +
-                            "Without a connection, Chat and Manage won't load. Relay pairing can " +
-                            "be added later for power tools."
+                        "No problem — you can explore the demo to see how Hermes-Relay works, " +
+                            "and connect your own Hermes server anytime from Settings → Connections. " +
+                            "Relay pairing for power tools can be added later too."
                     )
                 },
                 confirmButton = {
@@ -140,7 +146,7 @@ fun OnboardingScreen(
                         showSkipConfirm = false
                         onComplete()
                     }) {
-                        Text("Skip anyway")
+                        Text("Skip for now")
                     }
                 },
                 dismissButton = {
@@ -193,6 +199,7 @@ fun OnboardingScreen(
                             onComplete = onComplete,
                             onManageSignIn = onManageSignIn,
                             onSkip = { showSkipConfirm = true },
+                            onTryDemo = onTryDemo,
                         )
                     }
                 }
@@ -522,6 +529,7 @@ private fun ConnectPage(
     onComplete: () -> Unit,
     onManageSignIn: () -> Unit,
     onSkip: () -> Unit,
+    onTryDemo: () -> Unit = {},
 ) {
     Box(
         modifier = Modifier
@@ -535,6 +543,7 @@ private fun ConnectPage(
             onCancel = onSkip,
             onManageSignIn = onManageSignIn,
             showSkip = true,
+            onTryDemo = onTryDemo,
         )
     }
 }

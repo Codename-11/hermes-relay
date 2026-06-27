@@ -68,6 +68,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.CrashReportGate
+import com.hermesandroid.relay.ui.components.DemoModeBanner
+import com.hermesandroid.relay.ui.components.DemoUnavailableContent
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
@@ -902,10 +904,31 @@ fun RelayApp() {
         // composable registered below; optional args default to null/false.
         val startDestination = if (onboardingCompleted) Screen.Chat.route else Screen.Onboarding.route
 
+        // Offline Demo / Explore mode. Treated like "onboarding complete" for
+        // CHROME purposes (so the demo Chat shows the normal scaffold + status
+        // strip and the user can move around) WITHOUT actually completing
+        // onboarding — exiting demo returns to the real Connect flow. The demo
+        // is entered by navigating to Chat on top of Onboarding, so a process
+        // restart cleanly lands back in setup.
+        val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
+
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
         val isOnboarding = currentRoute == Screen.Onboarding.route
-        val suppressGlobalChrome = !onboardingCompleted || isOnboarding
+        val suppressGlobalChrome = (!onboardingCompleted && !isDemoMode) || isOnboarding
+
+        // Safety net: landing on a real connect surface (onboarding or the
+        // Connect/Pair wizard) while demo is still active — via the banner's
+        // Connect action OR a system-back out of the demo Chat — drops demo so
+        // the offline network guards don't block the real connection the user
+        // is now setting up.
+        LaunchedEffect(currentRoute, isDemoMode) {
+            if (isDemoMode &&
+                (currentRoute == Screen.Onboarding.route || currentRoute == Screen.Pair.route)
+            ) {
+                connectionViewModel.exitDemoMode()
+            }
+        }
         var bridgePrimaryReturnRoute by remember { mutableStateOf<String?>(null) }
         var bridgePrimaryReturnLabel by remember { mutableStateOf<String?>(null) }
 
@@ -1146,7 +1169,11 @@ fun RelayApp() {
         val showStartupSphere =
             !suppressGlobalChrome &&
                 !startupGateReleased &&
-                !voiceUiState.voiceMode
+                !voiceUiState.voiceMode &&
+                // Demo mode skips the startup connect-narration sphere entirely
+                // — there's no server to contact, so the canned chat shows
+                // immediately.
+                !isDemoMode
 
         // Hydrate the Manage payload cache from its plain-JSON disk mirror
         // as early as possible — independent of connectivity or auth, so a
@@ -1248,6 +1275,10 @@ fun RelayApp() {
             !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
+        // Persistent Demo-mode strip — visible on every demo surface so the
+        // user always knows the chat is sample data with no live server, and
+        // can exit into the real Connect flow with one tap.
+        val showDemoBanner = isDemoMode && !voiceUiState.voiceMode
         // Update availability (unified): googlePlay = Play In-App Update FLEXIBLE,
         // sideload = GitHub releases. The handle filters dismissed versions +
         // throttles checks internally, exposing a surfaceable status for the
@@ -1296,6 +1327,32 @@ fun RelayApp() {
         // Scaffold goes back to default TopAppBar status-bar padding.
         val connectionChipVisible = false
 
+        // --- Offline Demo mode navigation ---------------------------------
+        // Enter: load the canned transcript + bind it to the chat VM (no
+        // network), then land on Chat WITHOUT completing onboarding. Binding
+        // synchronously before navigating means ChatScreen's first composition
+        // already sees the demo messages. Exit: clear demo + return to the
+        // real Connect flow (onboarding for a fresh install, the Pair wizard
+        // for an already-set-up app).
+        val enterDemo: () -> Unit = {
+            connectionViewModel.enterDemoMode()
+            chatViewModel.bindDemoHandler(connectionViewModel.chatHandler)
+            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                launchSingleTop = true
+            }
+        }
+        val exitDemoToConnect: () -> Unit = {
+            connectionViewModel.exitDemoMode()
+            if (onboardingCompleted) {
+                navController.navigate(Screen.Pair.route()) { launchSingleTop = true }
+            } else {
+                navController.navigate(Screen.Onboarding.route) {
+                    popUpTo(Screen.Chat.route) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+
         Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
         // The banner takes its own vertical space above the Scaffold so
@@ -1318,6 +1375,14 @@ fun RelayApp() {
                     }
                 },
             )
+        }
+
+        AnimatedVisibility(
+            visible = showDemoBanner,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
         // The update banner AND the connection-status indicator now render as
@@ -1357,7 +1422,7 @@ fun RelayApp() {
                     // The connection-status toast is now a floating overlay and
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
-                    if (showUnattendedBanner || connectionChipVisible) {
+                    if (showUnattendedBanner || showDemoBanner || connectionChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
@@ -1469,6 +1534,7 @@ fun RelayApp() {
                         onOpenPermissions = {
                             navController.navigate(Screen.PermissionsSettings.route)
                         },
+                        onTryDemo = enterDemo,
                     )
                 }
                 composable(
@@ -1522,6 +1588,11 @@ fun RelayApp() {
                                 launchSingleTop = true
                             }
                         },
+                        // Empty-chat "needs connection" card also offers the offline
+                        // demo, so a skipped / never-connected first run can explore
+                        // without leaving Chat. Safe here — this state only shows when
+                        // nothing is configured, so there's no placeholder in flight.
+                        onTryDemo = enterDemo,
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
@@ -1567,6 +1638,15 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.Manage.route) {
+                    if (isDemoMode) {
+                        // Demo is offline — Manage talks to the live dashboard,
+                        // so show a friendly demo empty state instead of
+                        // attempting a sign-in / fetch.
+                        DemoUnavailableContent(
+                            feature = "Manage",
+                            onConnect = exitDemoToConnect,
+                        )
+                    } else {
                     DashboardManagementScreen(
                         connectionViewModel = connectionViewModel,
                         onNavigateToConnections = {
@@ -1605,6 +1685,7 @@ fun RelayApp() {
                             }
                         },
                     )
+                    }
                 }
                 composable(Screen.Terminal.route) {
                     if (coldStartAuthState is AuthState.Paired) {
@@ -1803,6 +1884,14 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.VoiceSettings.route) {
+                    if (isDemoMode) {
+                        // Voice runs through the live server (transcribe /
+                        // synthesize) — show the demo empty state offline.
+                        DemoUnavailableContent(
+                            feature = "Voice",
+                            onConnect = exitDemoToConnect,
+                        )
+                    } else {
                     val standardVoiceSignInRouteHint by
                         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
                     VoiceSettingsScreen(
@@ -1824,6 +1913,7 @@ fun RelayApp() {
                         },
                         onBack = { navController.popBackStack() }
                     )
+                    }
                 }
                 // === PHASE3-notif-listener-followup: notification companion route ===
                 composable(Screen.NotificationCompanionSettings.route) {
@@ -2041,6 +2131,11 @@ fun RelayApp() {
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
                         autoStart = autoStartArg,
+                        // Offer demo only on the bare "Connect" entry (the
+                        // "No Hermes connection" path) — not on add-connection /
+                        // re-pair flows, which have a placeholder connection in
+                        // flight that enterDemo would leave un-discarded.
+                        onTryDemo = if (connectionIdArg == null) enterDemo else null,
                         onComplete = {
                             // Both "add new" and "re-pair in place" now
                             // route to this screen with connectionIdArg

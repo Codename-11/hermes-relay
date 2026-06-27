@@ -1375,6 +1375,45 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * Bind a [ChatHandler] for offline Demo / Explore mode, *without* the
+     * network-touching fetches [initialize] performs (skills / personalities /
+     * models all hit the server). Demo has no API client, so we only need the
+     * [messages] delegation to point at the handler that holds the canned
+     * transcript ([com.hermesandroid.relay.network.upstream.ChatHandler.loadDemoTranscript]).
+     *
+     * Called from [RelayApp][com.hermesandroid.relay.ui.RelayApp] the moment
+     * demo mode is entered, before navigating to Chat, so the chat surface
+     * renders the demo conversation through the real composables. Safe to call
+     * repeatedly; re-subscribes the tool-call history collector.
+     */
+    fun bindDemoHandler(handler: ChatHandler) {
+        this.chatHandler = handler
+        toolHistoryJob?.cancel()
+        toolHistoryJob = viewModelScope.launch {
+            handler.messages.collect { msgs ->
+                _toolCallHistory.value = msgs
+                    .asSequence()
+                    .flatMap { msg -> msg.toolCalls.asSequence() }
+                    .map { tc ->
+                        ToolCallEvent(
+                            id = tc.id ?: "${tc.name}-${tc.startedAt}",
+                            name = tc.name,
+                            startedAtMs = tc.startedAt,
+                            completedAtMs = tc.completedAt,
+                            isComplete = tc.isComplete,
+                            success = tc.success,
+                            resultSummary = tc.result,
+                            errorSummary = tc.error,
+                        )
+                    }
+                    .toList()
+                    .sortedByDescending { it.completedAtMs ?: it.startedAtMs }
+                    .take(TOOL_CALL_HISTORY_LIMIT)
+            }
+        }
+    }
+
+    /**
      * Wire inbound-media dependencies. Called from [RelayApp][com.hermesandroid.relay.ui.RelayApp]
      * once after the singleton services are constructed.
      *

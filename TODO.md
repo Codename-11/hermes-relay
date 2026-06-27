@@ -6,6 +6,12 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Crash-class follow-ups
+
+- **Audit remaining throwing URL-build sites for the "Invalid URL host" class (#131).** The #131 fix guarded the two clients that take a user-entered base URL on the Manage/voice path (`DashboardApiClient`, `StandardHermesVoiceClient`) and validates input at entry, but two lower-risk site groups still call okhttp's throwing `url(String)` / `.toHttpUrl()`:
+  - `HermesApiClient` streaming methods (`sendChatStream` / `sendCompletionsStream` / `sendRunStream`) build `authRequest("$baseUrl/…")` *outside* the surrounding `try`. Latent only — the non-streaming methods (incl. `checkHealth`) already `try/catch`, so a bad `apiServerUrl` is caught and marks the connection unreachable before streaming is reached. Consider a non-throwing `authRequestOrNull()` chokepoint → `onError`.
+  - Relay clients (`RelayHttpClient`, `RelayProfileInspectorClient`, `RelayVoiceClient`, `ConnectionManager`) use `.toHttpUrl()` on `$httpBase/…`. These ride post-pairing relay URLs (from a signed QR / pairing payload), not free-text fields, so the input-validation layer doesn't cover them — route them through `ServerAddress`/`toHttpUrlOrNull` for defense-in-depth.
+
 ## User-Added:
 
 - [x] **Clean-chat: taller scrollable text viewport** *(impl 2026-06-22, orchestration batch — unbuilt; verify in Studio.)* Replaced the fragile `screenHeightDp*0.34f` cap with a weight split (sphere `weight(1f)` / flow `weight(1.1f)` ≈ 52% of the vertical slack); kept the internal scroll + top-fade + `min=96.dp` floor. `AgentTextFlow.kt` (`1dca285`).
@@ -21,6 +27,16 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 - [x] **Voice dropdown state mixes + label overflow** *(impl 2026-06-21, orchestration batch — unbuilt.)* Invalid engine/route combos made unreachable (RealtimeAgent disabled without relay, unavailable routes disabled, `coerceAudioRoute` auto-corrects); long dropdown/provider labels get `maxLines=1`+ellipsis. Original note: *Fix the voice dropdown mode toggles to not allow weird state mixes - labels need overflow control to prevent 2 lines or crunching.*
 
 - [x] **Per-profile agent icon + static-image avatar (shipped 2026-06-20 —** `d827e46`**, see DEVLOG).** Per-profile icon: client-side `ProfileIconStore` (per `(connection, profile)`, never sent to Hermes; stores a copied-file path) → small Coil image beside the agent name in `MessageBubble` via `LocalAgentIconPath`; picker is `AgentIconRow` under the local-name row in `ConnectionInfoSheet`. Static image: "Add a pet" accepts a single image (magic-byte detect → one-frame static pet). Scope shipped: small name-adjacent icon only; big avatar stays global. Follow-ups: on-device smoke (import an image as a pet; set a profile icon, confirm it shows by the name + persists across restart); optionally also show the icon in the profile picker.
+
+## Demo mode (2026-06-27) — deferred polish
+
+Shipped offline Demo / Explore mode (see DEVLOG 2026-06-27). Core is in; these are non-blocking polish items, none required for the Play "App access" fix:
+
+- **On-device verify (Studio).** Confirm: "Try the demo" on the onboarding Connect page and the standalone Connect screen lands on Chat showing the canned transcript (Markdown, tool-progress card, weather card, code block); the persistent banner shows and its Connect exits demo into the real wizard; demo runs in airplane mode with no network; Manage/Voice show the demo empty state; Bridge/Terminal show their pair-gate; backing out of demo Chat clears the flag so a real connection still works.
+- **Demo composer is a silent no-op.** `ChatViewModel.sendMessage()` early-returns with no API client, so typing + Send in demo does nothing. Polish: intercept sends while `isDemoMode` to append a canned "This is a demo — connect your Hermes server to chat for real" assistant bubble (or disable the composer with a hint), so it doesn't read as broken.
+- **Live voice mode in demo.** The voice-mode overlay (mic) launched from Chat isn't demo-gated — a tap would attempt a transcribe (fails gracefully, no crash). Add a demo notice / disable the mic in demo. (Voice settings screen already shows the demo empty state.)
+- **Light typewriter/stream simulation.** The transcript is statically populated; an optional per-token reveal on first entry would better convey the "streaming" feel. Acceptable as static for v1.
+- **Optional richer demo.** Could add a second tool type or an image attachment to the transcript to showcase more surfaces; kept minimal/one-file for now.
 
 ## Orchestration batch (2026-06-22) — deferred follow-ups
 
