@@ -166,6 +166,15 @@ fun ConnectionWizard(
      * flow; re-pair surfaces leave it null so the chooser stays available.
      */
     autoStart: String? = null,
+    /**
+     * Optional "Try the demo" affordance shown atop the Method step. When
+     * non-null, the wizard surfaces an offline Demo / Explore entry point so a
+     * first-run user (or a Play reviewer with no server) can see the app work
+     * with zero setup. Null hides it — Settings → Connections passes null
+     * because there's nothing to "first-run" there; onboarding + the Connect
+     * screen pass a callback that enters demo and routes to Chat.
+     */
+    onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -464,6 +473,7 @@ fun ConnectionWizard(
                         step = WizardStep.ShowCode
                     },
                     onSkip = if (showSkip) onCancel else null,
+                    onTryDemo = onTryDemo,
                 )
 
                 WizardStep.StandardEntry -> StandardEntryStep(
@@ -963,6 +973,7 @@ private fun MethodStep(
     onPickEnterCode: () -> Unit,
     onPickShowCode: () -> Unit,
     onSkip: (() -> Unit)?,
+    onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(
@@ -980,6 +991,39 @@ private fun MethodStep(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        // Offline "Try the demo" entry point — only surfaced where a first-run
+        // user benefits (onboarding + the Connect screen). Lets a reviewer or
+        // curious user see the app work with zero setup and zero network
+        // before committing to connecting a real server.
+        if (onTryDemo != null) {
+            OutlinedButton(
+                onClick = onTryDemo,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp),
+                ) {
+                    Text(
+                        text = "Try the demo",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Explore offline — no server needed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                )
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),

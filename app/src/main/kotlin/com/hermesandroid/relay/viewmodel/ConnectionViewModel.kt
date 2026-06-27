@@ -20,6 +20,8 @@ import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.DataManager
+import com.hermesandroid.relay.data.DemoContent
+import com.hermesandroid.relay.data.DemoMode
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.MediaSettingsRepository
@@ -235,6 +237,38 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Relay (bridge/terminal)
     val multiplexer = ChannelMultiplexer()
     val chatHandler = ChatHandler()
+
+    // --- Offline Demo / Explore mode ------------------------------------
+    // Additive, network-free path layered on top of the real connection
+    // model: "Try the demo" loads a canned transcript through the real chat
+    // pipeline so a fresh install (or a Play reviewer) can see the app work
+    // with zero setup. While active, the network entry points below
+    // (reconnectIfStale / revalidate / connectRelay) early-return so demo
+    // runs with airplane mode on. State lives in the pure-JVM [DemoMode]
+    // holder for testability; we delegate `isDemoMode` to it.
+    private val demoMode = DemoMode()
+    val isDemoMode: StateFlow<Boolean> = demoMode.active
+
+    /**
+     * Enter offline Demo mode: load the canned transcript into the chat
+     * handler and flip the demo flag. Does NOT mark onboarding complete and
+     * does NOT start any connection. [com.hermesandroid.relay.ui.RelayApp]
+     * binds the chat handler + navigates to Chat after calling this.
+     */
+    fun enterDemoMode() {
+        demoMode.enter()
+        chatHandler.loadDemoTranscript(DemoContent.transcript())
+    }
+
+    /**
+     * Exit Demo mode: clear the demo flag and wipe the canned transcript,
+     * returning the chat surface to a clean "no connection" state. The caller
+     * routes the user back to the real Connect flow.
+     */
+    fun exitDemoMode() {
+        demoMode.exit()
+        chatHandler.clearMessages()
+    }
 
     // Multi-connection: the ConnectionStore is the source of truth for the
     // list of Hermes server connections and which one is active. Constructed
@@ -3358,6 +3392,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * debounce themselves.
      */
     fun revalidate() {
+        if (isDemoMode.value) return // Demo mode is offline — skip all probes.
         if (revalidationJob?.isActive == true) return
         revalidationJob = viewModelScope.launch {
             val apiRouteBefore = effectiveApiServerUrlSnapshot()
@@ -3404,6 +3439,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * when the client isn't configured.
      */
     private suspend fun probeApiHealth() {
+        if (isDemoMode.value) {
+            // Demo mode is offline — report Unknown without touching the network.
+            _apiServerHealth.value = HealthStatus.Unknown
+            _apiServerReachable.value = false
+            return
+        }
         val client = _apiClient.value
         if (client == null) {
             _apiServerHealth.value = HealthStatus.Unknown
@@ -3536,6 +3577,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * [testRelayReachable] which is the user-facing Save & Test action.
      */
     private suspend fun probeRelayHealth(force: Boolean = false) {
+        if (isDemoMode.value) {
+            // Demo mode is offline — never probe the relay.
+            _relayServerHealth.value = HealthStatus.Unknown
+            return
+        }
         if (!force && !activeRelayConfiguredSnapshot()) {
             _relayServerHealth.value = HealthStatus.Unknown
             return
@@ -4518,6 +4564,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * probes `GET /health` without touching the WSS channel.
      */
     private fun connectRelayInternal(url: String) {
+        if (isDemoMode.value) return // Demo mode is offline — never open the WSS channel.
         if (!authManager.hasPairContext) {
             android.util.Log.i(
                 "ConnectionVM",
@@ -4897,6 +4944,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * avoids duplicate connect calls that would interrupt an in-flight auth.
      */
     fun reconnectIfStale() {
+        if (isDemoMode.value) return // Demo mode is offline — never open a socket.
         val paired = authState.value is AuthState.Paired
         val disconnected = relayConnectionState.value == ConnectionState.Disconnected
         val relayUrl = effectiveRelayUrlSnapshot()

@@ -103,6 +103,12 @@ fun OnboardingScreen(
     onComplete: () -> Unit,
     onManageSignIn: () -> Unit = onComplete,
     onOpenPermissions: () -> Unit = {},
+    /**
+     * Enter offline Demo mode from the Connect page's "Try the demo" button.
+     * RelayApp wires this to enter demo + navigate to Chat without completing
+     * onboarding. Defaults to no-op so previews/older callers still compile.
+     */
+    onTryDemo: () -> Unit = {},
 ) {
     val pages = remember {
         buildList {
@@ -193,6 +199,7 @@ fun OnboardingScreen(
                             onComplete = onComplete,
                             onManageSignIn = onManageSignIn,
                             onSkip = { showSkipConfirm = true },
+                            onTryDemo = onTryDemo,
                         )
                     }
                 }
@@ -522,6 +529,7 @@ private fun ConnectPage(
     onComplete: () -> Unit,
     onManageSignIn: () -> Unit,
     onSkip: () -> Unit,
+    onTryDemo: () -> Unit = {},
 ) {
     Box(
         modifier = Modifier
@@ -535,6 +543,7 @@ private fun ConnectPage(
             onCancel = onSkip,
             onManageSignIn = onManageSignIn,
             showSkip = true,
+            onTryDemo = onTryDemo,
         )
     }
 }

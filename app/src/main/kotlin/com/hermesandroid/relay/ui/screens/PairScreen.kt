@@ -41,6 +41,12 @@ fun PairScreen(
     onCancel: () -> Unit,
     onManageSignIn: (() -> Unit)? = null,
     autoStart: String? = null,
+    /**
+     * Optional offline "Try the demo" entry, forwarded to [ConnectionWizard].
+     * Wired by [RelayApp] only for the bare Connect entry (no placeholder
+     * connection in flight); null on add-connection / re-pair flows.
+     */
+    onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -83,6 +89,7 @@ fun PairScreen(
                 onManageSignIn = onManageSignIn,
                 showSkip = false,
                 autoStart = autoStart,
+                onTryDemo = onTryDemo,
             )
         }
     }

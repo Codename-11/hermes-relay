@@ -18,6 +18,8 @@ QUICK START
 2. Install Hermes-Relay and enter your server's address (for example [http://192.168.1.100:8642](http://192.168.1.100:8642)).
 3. The setup wizard checks what your server supports and shows a readiness card — then you're talking.
 
+No server yet? Tap "Try the demo" on the setup screen to explore the app offline — a sample conversation, no login or server required.
+
 A plain Hermes install is enough. Chat, management, and voice all work with no plugin or extra services.
 
 HOW IT WORKS
@@ -127,6 +129,26 @@ path-filtered Play Store Listing workflow or publish locally with:
 ## Play Console Declarations
 
 Submission-time declarations the Play Console requires — keep in sync with the merged `googlePlay` manifest.
+
+### App access
+
+Hermes-Relay is a client for a **user-run Hermes server**, so a fresh install with no server configured has no content of its own — which is what a reviewer hits first. **All functionality is reachable offline via Demo mode**, so no test server or credentials are required to review the app.
+
+Fill **App content → App access** as *All functionality is available without special access* (no login required), and provide these instructions:
+
+```
+This app is a client for a Hermes agent server the user runs themselves, so a
+fresh install has no content until you connect one. To review the app without a
+server:
+
+  Open the app → on the setup / Connect screen, tap "Try the demo".
+
+This opens an offline demo of the real Chat UI with a sample conversation
+(streaming-style reply, Markdown, a tool-progress card, and a rich card). It
+needs no login, no account, and no network — it works in airplane mode. A
+"Demo mode — sample data, not connected" banner is shown throughout, with a
+Connect action that opens the real setup wizard.
+```
 
 ### Foreground service permissions
 
