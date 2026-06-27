@@ -1,5 +1,9 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-27 — Released android-v1.2.5
+
+Bundles the day's Android work: the #131/#132 non-address-URL crash guard, the offline Demo / Explore mode, and the demo-reachability + App-access polish. Bumped `appVersionName` 1.2.4 → 1.2.5 and `appVersionCode` 18 → 19. Promoted the Android items into a `## [1.2.5]` CHANGELOG block; the Desktop CLI items stay in `[Unreleased]` for a future `cli-v*` release. Refreshed `RELEASE_NOTES.md`, the in-app `whats_new.txt` + `changelog.json`, and the Play `what's-new`. Released via a `dev → main` merge and the `android-v1.2.5` tag; `release-android.yml` builds the signed APK/AAB + GitHub Release. Play upload and the App-access "Try the demo" declaration are owner-driven.
+
 ## 2026-06-27 — Add in-app Demo / Explore mode (offline, for Play review + first-run UX)
 
 **Why.** Google Play rejected v1.2.4 under "App access": a reviewer opened the app, had no Hermes server to point it at, hit the empty Connect/setup wall, and bounced. The app is a client for a user-run Hermes server, so there is no content without a connection — and there was no offline path. This adds an in-app Demo mode so anyone (a reviewer or a first-run user) can see the app work with zero setup and zero network; Play Console "App access" can then declare that all functionality is reachable via "Try the demo" (no login). It doubles as a first-run UX win.
