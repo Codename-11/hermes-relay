@@ -1,5 +1,31 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-27 — Profile-scope session rename + manual drawer refresh (#133 follow-up)
+
+**Why.** Auditing the #133 work surfaced that `ChatViewModel.renameSession` always called the unscoped `apiClient.renameSession` (`PATCH /api/sessions/{id}` on the shared api_server DB). There was a `profileSessionDeleter`/`profileSessionLister`/`profileMessageLoader` but no rename twin — so on a non-default **gateway** profile (whose sessions live in that profile's own `state.db`) a manual rename patched the wrong DB and never appeared in the profile-scoped list. Same class as the delete bug fixed in `6552566`. Profiles are first-class, so every session write must be profile-scoped.
+
+**What.**
+- **Scoped rename.** New `DashboardApiClient.renameSession(sessionId, title, profile)` + a `patchJsonObject` helper (`PATCH /api/sessions/{id}?profile=`), `ConnectionViewModel.renameProfileScopedSession` (twin of `deleteProfileScopedSession`), and `ChatViewModel.profileSessionRenamer` wired from `RelayApp`. `renameSession` uses it when `streamingEndpoint == "gateway"`, falling back to the unscoped PATCH otherwise (shared api_server DB, no profiles).
+- **Audit.** Confirmed rename was the only remaining gap — list/messages/delete are scoped, gateway create goes through `session.create` over `/api/ws`, the SSE auto-title PATCH targets the shared DB (no profiles), and `/branch` is a server-side slash command.
+- **Manual drawer refresh.** `SessionDrawerContent` gained a header refresh icon (`onRefresh` → `refreshSessions`) so a title the post-turn auto-reconcile window missed can be pulled on demand. Placed in the header rather than the per-session ⋮ menu since refresh is a list-level action.
+
+**Remaining "Untitled" causes (after these fixes).** The optimistic preview only covers sessions this app run created/sent in; it isn't persisted on the SSE path. So sessions made by other clients, or any SSE session after an app restart, still read "Untitled" because the api_server surface never auto-titles and we hold no local preview for them. Closing that fully needs the upstream api_server titler PR or the opt-in client-side LLM titling feature (both in TODO).
+
+**Verification.** Compiles in the sideload flavor (assembleSideloadDebug). On-device rename-persists-on-non-default-profile check pending.
+
+## 2026-06-27 — Fix sessions showing as "Untitled" in the drawer (#133)
+
+**Why.** A user reported most chat sessions read "Untitled" in the drawer. Tracing both sides: session titles are not set at creation — upstream generates them in a fire-and-forget background thread after the first exchange (`agent/title_generator.py::maybe_auto_title`), and that titler is wired into the gateway/CLI/ACP agent loops but **not** `APIServerAdapter._run_agent`, so the api_server SSE/runs/completions surfaces never auto-title at all. On the client, `ChatHandler.updateSessions` copied the server's title verbatim, so a re-list that arrived before (or without) the async write would overwrite the optimistic first-message preview with `null` → the drawer's `title ?: "Untitled"` rendered "Untitled". Both effects compound; title generation can also silently fail when a profile's auxiliary model has no working key (matches the reporter's intermittency).
+
+**What (client-side mitigations, this change).**
+- **Clobber guard.** `ChatHandler.updateSessions` now merges the title field instead of overwriting it: the server wins when it returns a non-blank title, otherwise the known local title is preserved. Stops a too-early/empty re-list from erasing the optimistic preview. New `ChatHandlerTest` cases cover null-server-title preservation, blank-server-title preservation, and real-server-title-wins.
+- **Post-turn title reconcile.** `ChatViewModel.scheduleTitleReconcile()` re-lists at +3s/+7s after a gateway turn completes so a title written after the response (and the flushed message_count/model) replaces the preview; cancel-and-replace keeps one job in flight. Gated to the gateway transport (SSE/runs never title, so retrying there is pointless).
+- **Subtle drawer note.** `ChatViewModel.serverAutoTitles` (true only on the gateway transport, kept in sync from the `streamingEndpoint` setter) feeds a quiet "Chats aren't auto-named on this connection — use ⋮ → Rename." caption in `SessionDrawerContent`, shown only on the SSE surfaces so consistently-untitled chats read as expected rather than broken.
+
+**Deferred (see TODO "Session titles (#133)").** Upstream PR to call `maybe_auto_title` from `APIServerAdapter._run_agent` (proper fix for the SSE surface); an interim relay-side titler option; and a separate opt-in feature to generate titles client-side via the main LLM.
+
+**Verification.** `:app:testGooglePlayDebugUnitTest --tests "*ChatHandlerTest"` green (BUILD SUCCESSFUL; 3 new clobber-guard tests pass). Warnings emitted are pre-existing in unrelated test files. Not built in Studio / not on-device verified.
+
 ## 2026-06-27 — Released android-v1.2.5
 
 Bundles the day's Android work: the #131/#132 non-address-URL crash guard, the offline Demo / Explore mode, and the demo-reachability + App-access polish. Bumped `appVersionName` 1.2.4 → 1.2.5 and `appVersionCode` 18 → 19. Promoted the Android items into a `## [1.2.5]` CHANGELOG block; the Desktop CLI items stay in `[Unreleased]` for a future `cli-v*` release. Refreshed `RELEASE_NOTES.md`, the in-app `whats_new.txt` + `changelog.json`, and the Play `what's-new`. Released via a `dev → main` merge and the `android-v1.2.5` tag; `release-android.yml` builds the signed APK/AAB + GitHub Release. Play upload and the App-access "Try the demo" declaration are owner-driven.
