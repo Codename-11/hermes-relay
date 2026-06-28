@@ -169,6 +169,19 @@ class DashboardApiClient(
         executeJson(request, normalized)
     }
 
+    suspend fun patchJsonObject(
+        path: String,
+        payload: JsonObject,
+    ): Result<JsonObject> = withContext(Dispatchers.IO) {
+        val normalized = if (path.startsWith("/")) path else "/$path"
+        val httpUrl = resolveUrl(normalized) ?: return@withContext Result.failure(invalidUrlException())
+        val request = Request.Builder()
+            .url(httpUrl)
+            .patch(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
+            .build()
+        executeJson(request, normalized)
+    }
+
     suspend fun deleteJsonObject(path: String): Result<JsonObject> = withContext(Dispatchers.IO) {
         val normalized = if (path.startsWith("/")) path else "/$path"
         val httpUrl = resolveUrl(normalized) ?: return@withContext Result.failure(invalidUrlException())
@@ -482,6 +495,19 @@ class DashboardApiClient(
      */
     suspend fun deleteSession(sessionId: String, profile: String? = null): Result<JsonObject> =
         deleteJsonObject("/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}")
+
+    /**
+     * Rename a session scoped to a profile via the dashboard
+     * `PATCH /api/sessions/{id}?profile=` surface — the write twin of
+     * [deleteSession]. A non-default profile's sessions live in that profile's
+     * own `state.db`, so the unscoped api_server rename would patch the wrong
+     * DB and the new title would never appear in the profile-scoped list.
+     */
+    suspend fun renameSession(sessionId: String, title: String, profile: String? = null): Result<JsonObject> =
+        patchJsonObject(
+            "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
+            buildJsonObject { put("title", title) },
+        )
 
     private fun parseProfiles(root: JsonObject): List<Profile> {
         fun decode(element: JsonElement, nameOverride: String?): Profile? = runCatching {

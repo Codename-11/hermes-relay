@@ -1353,13 +1353,27 @@ class ChatHandler {
      * Update sessions list from API response.
      */
     fun updateSessions(items: List<SessionItem>) {
+        // Index the current rows so a server row that arrives without a title
+        // can inherit a title we already know locally. Auto-titling is a
+        // fire-and-forget background job on the server (upstream
+        // agent.title_generator.maybe_auto_title) — and on the api_server
+        // SSE/runs surfaces it never runs at all — so a freshly persisted
+        // session is routinely returned with title == null for a few seconds
+        // (or forever) even though we're already showing the optimistic
+        // first-message preview. Blindly copying that null is what surfaced
+        // sessions as "Untitled" in the drawer (issue #133). Preserve the known
+        // local title whenever the server hasn't supplied a non-blank one.
+        val existingById = _sessions.value.associateBy { it.sessionId }
         val mapped = items.map { item ->
             val startedAtMs = timestampToMillis(item.startedAt)
             val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
             val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
+            val serverTitle = item.title?.takeIf { it.isNotBlank() }
+            val resolvedTitle = serverTitle
+                ?: existingById[item.id]?.title?.takeIf { it.isNotBlank() }
             ChatSession(
                 sessionId = item.id,
-                title = item.title,
+                title = resolvedTitle,
                 model = item.model,
                 messageCount = item.messageCount ?: 0,
                 updatedAt = activityAtMs,

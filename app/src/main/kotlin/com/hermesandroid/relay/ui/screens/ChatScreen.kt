@@ -466,6 +466,7 @@ fun ChatScreen(
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
+    val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
@@ -1330,6 +1331,8 @@ fun ChatScreen(
                 scopeSubtitle = drawerSubtitle,
                 isLoading = isLoadingSessions,
                 isOpen = drawerState.isOpen,
+                autoTitlesSupported = serverAutoTitles,
+                onRefresh = { chatViewModel.refreshSessions() },
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }

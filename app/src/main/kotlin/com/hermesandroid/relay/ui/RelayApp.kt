@@ -657,6 +657,12 @@ fun RelayApp() {
         chatViewModel.profileSessionDeleter = { sessionId ->
             connectionViewModel.deleteProfileScopedSession(sessionId)
         }
+        // …and rename in that same profile's DB so a non-default profile's
+        // title actually persists (the unscoped api_server PATCH hits the
+        // shared DB). Write twin of the scoped list/delete.
+        chatViewModel.profileSessionRenamer = { sessionId, title ->
+            connectionViewModel.renameProfileScopedSession(sessionId, title)
+        }
 
         // Wire session persistence callback
         chatViewModel.onSessionChanged = { sessionId ->
