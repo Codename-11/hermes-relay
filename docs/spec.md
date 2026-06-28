@@ -318,6 +318,7 @@ Implementation references:
 - **Biometric:** AndroidX Biometric
 - **Min SDK:** 26 (Android 8.0)
 - **Target SDK:** 35
+- **Compile SDK:** 37
 
 ### Server (Relay)
 - **Language:** Python 3.11+
