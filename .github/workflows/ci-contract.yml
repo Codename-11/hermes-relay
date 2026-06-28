@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout hermes-relay
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Resolve upstream ref
         id: ref
@@ -64,7 +64,7 @@ jobs:
           echo "Checking standard-path route contract against upstream ref: $REF"
 
       - name: Checkout vanilla upstream (no plugin, no bootstrap)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: NousResearch/hermes-agent
           ref: ${{ steps.ref.outputs.ref }}
