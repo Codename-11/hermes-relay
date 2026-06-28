@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 
@@ -21,18 +22,26 @@ import androidx.compose.ui.unit.Density
  * @param appThemeId id from [AppThemes]; defaults to the Hermes Relay brand.
  * @param themePreference mode axis — "auto" / "light" / "dark". Only meaningful
  *   for [ThemeMode.BOTH] themes; fixed-mode themes ignore it.
+ * @param appFontId id from [AppFont]; selects the body typeface for the whole
+ *   app. Defaults to Inter. Code/metadata styles stay monospaced regardless.
  */
 @Composable
 fun HermesRelayTheme(
     appThemeId: String = AppThemes.DEFAULT_ID,
     themePreference: String = "auto",
     fontScale: Float = 1.0f,
+    appFontId: String = AppFont.DEFAULT.id,
     content: @Composable () -> Unit
 ) {
     val appTheme = AppThemes.byId(appThemeId)
     val useDarkTheme = appTheme.resolveDark(themePreference, isSystemInDarkTheme())
     val palette = appTheme.paletteFor(useDarkTheme)
     val colorScheme = palette.toColorScheme()
+
+    // Build the Material typography from the selected font. Remembered per id so
+    // a recomposition (e.g. theme/mode change) doesn't rebuild the FontFamily
+    // graph; a font-pick changes appFontId, which re-themes every Text live.
+    val typography = remember(appFontId) { appTypography(AppFont.byId(appFontId).fontFamily()) }
 
     // Mirror into the legacy façade after commit so snapshot reads in existing
     // call sites observe the active palette. SideEffect runs post-composition,
@@ -50,7 +59,7 @@ fun HermesRelayTheme(
         if (fontScale == 1.0f) {
             MaterialTheme(
                 colorScheme = colorScheme,
-                typography = Typography,
+                typography = typography,
                 content = content
             )
         } else {

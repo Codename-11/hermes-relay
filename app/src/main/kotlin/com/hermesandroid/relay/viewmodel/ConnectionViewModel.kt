@@ -11,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.components.avatar.PetImporter
 import com.hermesandroid.relay.ui.components.avatar.PetImportResult
@@ -184,6 +185,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected app theme id (palette/personality). Orthogonal to KEY_THEME,
         // which is the light/dark/auto mode axis honored by BOTH-mode themes.
         private val KEY_APP_THEME = stringPreferencesKey("app_theme")
+        // Selected app font id (body typeface). Resolved against AppFont at the
+        // Compose theme root; defaults to Inter. Orthogonal to KEY_FONT_SCALE
+        // (which scales sizes); this picks the family.
+        private val KEY_APP_FONT = stringPreferencesKey("app_font")
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
@@ -983,6 +988,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             preferences[KEY_APP_THEME] ?: AppThemes.DEFAULT_ID
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
+
+    // Selected app font id (body typeface). Defaults to Inter. Resolved against
+    // AppFont.byId at the Compose theme root, which rebuilds Typography so the
+    // whole app re-themes live when this changes.
+    val appFont: StateFlow<String> = application.relayDataStore.data
+        .map { preferences ->
+            preferences[KEY_APP_FONT] ?: AppFont.DEFAULT.id
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppFont.DEFAULT.id)
 
     // Selected sphere skin id ("auto" follows the theme). Resolved against
     // SphereRegistry + loaded user skins at the Compose root.
@@ -5285,6 +5299,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_APP_THEME] = themeId
+            }
+        }
+    }
+
+    /** Persist the selected body font; the Compose root re-themes live. */
+    fun setAppFont(fontId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_APP_FONT] = fontId
             }
         }
     }

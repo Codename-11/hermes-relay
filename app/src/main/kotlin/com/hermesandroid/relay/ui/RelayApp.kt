@@ -813,6 +813,7 @@ fun RelayApp() {
     val themePreference by connectionViewModel.theme.collectAsState()
     val appThemeId by connectionViewModel.appTheme.collectAsState()
     val fontScale by connectionViewModel.fontScale.collectAsState()
+    val appFontId by connectionViewModel.appFont.collectAsState()
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
@@ -873,6 +874,7 @@ fun RelayApp() {
         appThemeId = appThemeId,
         themePreference = themePreference,
         fontScale = fontScale,
+        appFontId = appFontId,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;

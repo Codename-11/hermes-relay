@@ -64,6 +64,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.SphereRegistry
@@ -76,6 +77,7 @@ import com.hermesandroid.relay.ui.components.avatar.AvatarSource
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppTheme
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.BrandPalette
@@ -318,6 +320,50 @@ fun AppearanceSettingsScreen(
                         ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            // Font section — pick the app-wide body typeface. Each option renders
+            // its own label + sample line IN that font so the choice is legible
+            // before tapping; the selection re-themes every screen live.
+            Text(
+                text = "Font",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                val appFontId by connectionViewModel.appFont.collectAsState()
+                val selectedFont = AppFont.byId(appFontId)
+
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Sets the typeface across the whole app. Code and " +
+                            "timestamps stay monospaced.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    AppFont.entries.forEach { font ->
+                        FontOptionRow(
+                            font = font,
+                            selected = font.id == selectedFont.id,
+                            onClick = { connectionViewModel.setAppFont(font.id) },
+                        )
+                    }
                 }
             }
 
@@ -716,6 +762,71 @@ fun AppearanceSettingsScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * A single font option — its name + a sample line, both rendered in the option's
+ * own [AppFont.fontFamily] so the typeface is visible before selecting. Selected
+ * state shows a brand border + check badge. Tapping persists immediately and the
+ * app re-themes live.
+ */
+@Composable
+private fun FontOptionRow(
+    font: AppFont,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val family = font.fontFamily()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = RoundedCornerShape(10.dp),
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = font.label,
+                style = MaterialTheme.typography.titleMedium.copy(fontFamily = family),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+            Text(
+                text = font.preview,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = family),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 10.dp)
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(13.dp),
+                )
             }
         }
     }
