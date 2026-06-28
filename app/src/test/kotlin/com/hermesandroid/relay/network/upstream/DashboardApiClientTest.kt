@@ -607,6 +607,103 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun getElevenLabsVoices_parsesAvailableVoices() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "available": true,
+                      "voices": [
+                        {"voice_id": "pNInz6obpgDQGcFmaJgB", "name": "Adam", "label": "Adam (premade)"},
+                        {"voice_id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel", "label": "Rachel (premade)"}
+                      ]
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val result = client.getElevenLabsVoices().getOrThrow()
+
+        assertEquals("/api/audio/elevenlabs/voices", server.takeRequest().path)
+        assertTrue(result.available)
+        assertEquals(2, result.voices.size)
+        assertEquals("pNInz6obpgDQGcFmaJgB", result.voices[0].voiceId)
+        assertEquals("Adam", result.voices[0].name)
+        assertEquals("Rachel (premade)", result.voices[1].label)
+    }
+
+    @Test
+    fun getElevenLabsVoices_reportsUnavailableWhenNoApiKey() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"available": false, "voices": []}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val result = client.getElevenLabsVoices().getOrThrow()
+
+        assertFalse(result.available)
+        assertTrue(result.voices.isEmpty())
+    }
+
+    @Test
+    fun updateConfig_putsWholeTreeWithProfile() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok": true}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val tree = Json.parseToJsonElement(
+            """{"model":"claude-opus-4-8","tts":{"provider":"elevenlabs"}}""",
+        ).jsonObject
+        client.updateConfig(tree, profile = "work").getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("PUT", request.method)
+        assertEquals("/api/config", request.path)
+        val body = request.body.readUtf8()
+        // The whole tree must be nested under "config" (upstream ConfigUpdate),
+        // and the profile must ride along.
+        assertTrue(body.contains(""""config":{"""))
+        assertTrue(body.contains(""""model":"claude-opus-4-8""""))
+        assertTrue(body.contains(""""provider":"elevenlabs""""))
+        assertTrue(body.contains(""""profile":"work""""))
+    }
+
+    @Test
+    fun updateConfig_omitsProfileWhenBlank() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok": true}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.updateConfig(Json.parseToJsonElement("""{"stt":{"provider":"local"}}""").jsonObject)
+            .getOrThrow()
+
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body.contains("profile"))
+    }
+
+    @Test
+    fun getConfigAndSchema_hitExpectedPaths() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"tts":{}}"""))
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"fields":{},"category_order":[]}"""))
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.getConfig().getOrThrow()
+        client.getConfigSchema().getOrThrow()
+
+        assertEquals("/api/config", server.takeRequest().path)
+        assertEquals("/api/config/schema", server.takeRequest().path)
+    }
+
+    @Test
     fun parseChatDisplaySettings_mapsToolProgressNoneToOff() {
         val root = Json.parseToJsonElement(
             """

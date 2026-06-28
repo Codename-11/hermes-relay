@@ -82,6 +82,23 @@ data class DashboardChatDisplaySettings(
     val toolDisplay: String? = null,
 )
 
+/** One entry from `GET /api/audio/elevenlabs/voices` — non-secret voice metadata. */
+data class ElevenLabsVoice(
+    val voiceId: String,
+    val name: String,
+    val label: String,
+)
+
+/**
+ * Result of `GET /api/audio/elevenlabs/voices`. [available] is false when the
+ * server has no `ELEVENLABS_API_KEY` configured (the picker degrades to a free
+ * text field in that case); true with a populated [voices] list otherwise.
+ */
+data class ElevenLabsVoices(
+    val available: Boolean,
+    val voices: List<ElevenLabsVoice>,
+)
+
 /**
  * Native client for the Hermes dashboard/admin server (:9119).
  *
@@ -210,6 +227,48 @@ class DashboardApiClient(
 
     suspend fun getChatDisplaySettings(): Result<DashboardChatDisplaySettings> =
         getJsonObject("/api/config").mapCatching { root -> parseChatDisplaySettings(root) }
+
+    // --- Config tree (dashboard parity with hermes-desktop Settings → config.yaml) ---
+
+    /**
+     * The full runtime config VALUES as a nested tree (model/tts/stt/...).
+     * Upstream strips internal `_`-prefixed keys server-side, so the object is
+     * safe to mutate and round-trip back through [updateConfig].
+     */
+    suspend fun getConfig(): Result<JsonObject> = getJsonObject("/api/config")
+
+    /**
+     * The config SCHEMA: `{fields: {<dot.path>: {type, description, category,
+     * options?}}, category_order: [...]}`. Describes how to render each field;
+     * pair it with [getConfig] for current values. Note this is distinct from
+     * the values tree — `fields` keys are flat dot-paths, the values are nested.
+     */
+    suspend fun getConfigSchema(): Result<JsonObject> = getJsonObject("/api/config/schema")
+
+    /**
+     * Replace the runtime config (`PUT /api/config`). Upstream `save_config`
+     * writes the WHOLE document, so [config] MUST be the full values tree
+     * (read [getConfig], mutate, write back) — a partial object would drop
+     * every key it omits. [profile] null/blank targets the launch profile.
+     */
+    suspend fun updateConfig(config: JsonObject, profile: String? = null): Result<JsonObject> =
+        putJsonObject(
+            path = "/api/config",
+            payload = buildJsonObject {
+                put("config", config)
+                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
+            },
+        )
+
+    /**
+     * ElevenLabs voice catalog for the `tts.elevenlabs.voice_id` picker
+     * (`GET /api/audio/elevenlabs/voices`, dashboard cookie auth). Returns
+     * `available=false` with an empty list when the server has no API key
+     * configured; the API key itself never leaves the server.
+     */
+    suspend fun getElevenLabsVoices(): Result<ElevenLabsVoices> = withContext(Dispatchers.IO) {
+        getJson("/api/audio/elevenlabs/voices").mapCatching { parseElevenLabsVoices(it) }
+    }
 
     /** Full provider/model universe — REST twin of the TUI's `model.options` RPC. */
     suspend fun getModelOptions(): Result<JsonObject> = getJsonObject("/api/model/options")
@@ -843,6 +902,20 @@ class DashboardApiClient(
         private fun isPasswordProvider(name: String): Boolean =
             name.equals("basic", ignoreCase = true) ||
                 name.equals("password", ignoreCase = true)
+
+        fun parseElevenLabsVoices(root: JsonObject): ElevenLabsVoices {
+            val available = root.booleanField("available") ?: false
+            val voices = (root["voices"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val voiceId = obj.stringField("voice_id") ?: return@mapNotNull null
+                ElevenLabsVoice(
+                    voiceId = voiceId,
+                    name = obj.stringField("name") ?: voiceId,
+                    label = obj.stringField("label") ?: obj.stringField("name") ?: voiceId,
+                )
+            }
+            return ElevenLabsVoices(available = available, voices = voices)
+        }
 
         fun parseChatDisplaySettings(root: JsonObject): DashboardChatDisplaySettings {
             val config = root["config"] as? JsonObject
