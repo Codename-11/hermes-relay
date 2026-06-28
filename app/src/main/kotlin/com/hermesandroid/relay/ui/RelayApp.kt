@@ -139,6 +139,7 @@ import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
+import com.hermesandroid.relay.ui.screens.HermesInboxScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
 import com.hermesandroid.relay.ui.theme.AppThemes
@@ -265,6 +266,8 @@ sealed class Screen(
     // === END PHASE3-notif-listener-followup ===
     data object ProactiveSettings :
         Screen("settings/proactive", "Hermes messages", Icons.Filled.Settings)
+    data object HermesInbox :
+        Screen("hermes_inbox", "Hermes inbox", Icons.Filled.Settings)
     data object PermissionsSettings : Screen("settings/permissions", "Permissions", Icons.Filled.Settings)
     // === PHASE3-safety-rails: bridge safety route ===
     data object BridgeSafetySettings :
@@ -900,6 +903,21 @@ fun RelayApp() {
             }
         }
         // === END PHASE3-safety-rails-followup ===
+
+        // Wire the proactive "session" surfacing once: a message with
+        // surfacing="session" is injected into the active chat conversation.
+        // ChatViewModel isn't available where ConnectionViewModel builds the
+        // handler, so the session sink is set here at the app root where both
+        // ViewModels are in scope.
+        LaunchedEffect(connectionViewModel, chatViewModel) {
+            connectionViewModel.proactiveMessageHandler.toSession = { msg ->
+                val text = buildString {
+                    msg.title?.takeIf { it.isNotBlank() }?.let { append(it); append(": ") }
+                    append(msg.text)
+                }
+                chatViewModel.injectProactiveMessage(text)
+            }
+        }
 
         LaunchedEffect(onboardingCompleted, postOnboardingRoute) {
             val route = postOnboardingRoute
@@ -1979,6 +1997,13 @@ fun RelayApp() {
                 // === END PHASE3-notif-listener-followup ===
                 composable(Screen.ProactiveSettings.route) {
                     ProactiveSettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onOpenInbox = { navController.navigate(Screen.HermesInbox.route) },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Screen.HermesInbox.route) {
+                    HermesInboxScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
                     )

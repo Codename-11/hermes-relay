@@ -32,19 +32,25 @@ import kotlinx.serialization.json.jsonPrimitive
  * }
  * ```
  *
- * Phase 1c surfaces every message as a system notification. The `surfacing`
- * hint and [onReceived] callback are the seams for Phase 2 (a dedicated
- * Hermes inbox surface) and session injection — the routing decision keyed on
- * `surfacing` is centralized in [dispatch] so those phases extend one place.
+ * The inbox is the **always-present** durable log — every received message is
+ * recorded there. The `surfacing` hint then selects the *additional* surface:
+ *  - `null` / `"default"` / `"notification"` → also raise a system notification
+ *  - `"inbox"`                               → inbox only (silent)
+ *  - `"session"`                             → also inject into the active chat
+ *      session ([toSession]); falls back to a notification when no session sink
+ *      is wired
+ *
+ * The [toInbox] / [toSession] sinks are injected by [ConnectionViewModel] so
+ * the handler stays free of ViewModel/DataStore dependencies and unit-testable.
+ * [toSession] is a `var` so it can be wired after construction (the ChatViewModel
+ * isn't available when the handler is built).
  */
 class ProactiveMessageHandler(
     private val context: Context,
-    /**
-     * Optional downstream sink for parsed messages (Phase 2: inbox store /
-     * session injection). Invoked for every received message regardless of
-     * surfacing; the notification decision is separate.
-     */
-    private val onReceived: ((ProactiveMessage) -> Unit)? = null,
+    /** Sink for the dedicated Hermes inbox (Phase 2a) — the always-present log. */
+    private val toInbox: ((ProactiveMessage) -> Unit)? = null,
+    /** Sink for injecting into the active chat session (Phase 2b). */
+    var toSession: ((ProactiveMessage) -> Unit)? = null,
 ) {
 
     fun onMessage(envelope: Envelope) {
@@ -63,19 +69,32 @@ class ProactiveMessageHandler(
         }
     }
 
-    /**
-     * Route a parsed message to the right surface(s). Phase 1c: always raise a
-     * notification. Phase 2 will branch on [ProactiveMessage.surfacing]
-     * (notification / inbox / session) here.
-     */
+    /** Route a parsed message: inbox always, plus the surface its hint selects. */
     private fun dispatch(msg: ProactiveMessage) {
+        // The inbox is the always-present durable log of agent-initiated
+        // messages — record every one regardless of surfacing.
+        toInbox?.invoke(msg)
+        when (msg.surfacing?.lowercase()) {
+            "inbox" -> { /* inbox only — already recorded above */ }
+            "session" -> {
+                val sink = toSession
+                // Inject into the active session; if no session sink is wired
+                // (or no active chat), fall back to a notification so it isn't
+                // silently missed (the inbox copy already exists either way).
+                if (sink != null) sink.invoke(msg) else notify(msg)
+            }
+            // null / "default" / "notification" / anything unrecognized.
+            else -> notify(msg)
+        }
+    }
+
+    private fun notify(msg: ProactiveMessage) {
         ProactiveMessageNotifier.notify(
             context = context,
             title = msg.title,
             text = msg.text,
             messageId = msg.messageId,
         )
-        onReceived?.invoke(msg)
     }
 
     private fun parse(payload: JsonObject): ProactiveMessage? {

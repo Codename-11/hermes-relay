@@ -38,6 +38,8 @@ import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.data.proactiveEnabledFlow
 import com.hermesandroid.relay.data.setProactiveEnabled
+import com.hermesandroid.relay.data.ProactiveInboxEntry
+import com.hermesandroid.relay.data.ProactiveInboxRepository
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -1752,11 +1754,34 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // === END PHASE3-accessibility (plus safety-rails wiring above) ===
 
     // === Proactive (agent → phone) messages ===
-    // Handles inbound `phone.message` envelopes (raises a system notification).
-    // Receiving is gated by [proactiveEnabled]: the relay only pushes when the
-    // app has sent `proactive.subscribe`, which we only do when the toggle is
-    // on. Off by default.
-    val proactiveMessageHandler = ProactiveMessageHandler(application)
+    // Handles inbound `phone.message` envelopes. Receiving is gated by
+    // [proactiveEnabled]: the relay only pushes when the app has sent
+    // `proactive.subscribe`, which we only do when the toggle is on. Off by
+    // default.
+
+    /** Persisted "Hermes" inbox of agent-initiated messages (Phase 2a). */
+    val proactiveInbox = ProactiveInboxRepository(application)
+
+    val inboxMessages: StateFlow<List<ProactiveInboxEntry>> =
+        proactiveInbox.entries.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // The handler centralizes surfacing (notification / inbox / session). The
+    // inbox sink persists messages here; the session sink lands in Phase 2b.
+    val proactiveMessageHandler = ProactiveMessageHandler(
+        context = application,
+        toInbox = { msg ->
+            viewModelScope.launch {
+                proactiveInbox.add(
+                    ProactiveInboxEntry(
+                        id = msg.messageId ?: java.util.UUID.randomUUID().toString(),
+                        title = msg.title ?: "Hermes",
+                        text = msg.text,
+                        receivedAt = msg.sentAt ?: System.currentTimeMillis(),
+                    ),
+                )
+            }
+        },
+    )
 
     /** "Let Hermes message me" — off by default. */
     val proactiveEnabled: StateFlow<Boolean> = application.proactiveEnabledFlow()
@@ -1779,6 +1804,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().setProactiveEnabled(enabled)
         }
+    }
+
+    /** Clear the Hermes inbox of agent-initiated messages. */
+    fun clearProactiveInbox() {
+        viewModelScope.launch { proactiveInbox.clear() }
     }
     // === END Proactive ===
 

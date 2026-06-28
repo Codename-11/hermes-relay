@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Phone platform (Phase 2: inbox surface + session injection)
+
+**Why.** Phase 1 surfaced proactive messages as a transient notification only. Phase 2 adds the other two config-driven surfacings from the brief: a dedicated always-present Hermes inbox, and injection into the active chat session — selected per-message by the `surfacing` hint.
+
+**What.**
+- **Always-present inbox is the durable log.** `ProactiveMessageHandler.dispatch` now records *every* received message to the inbox, then adds the surface its `surfacing` hint selects: `null`/`"default"`/`"notification"` → also notify; `"inbox"` → silent (inbox only); `"session"` → also inject into the active chat (falls back to a notification when no session sink/active chat). Centralized in one `when`.
+- **`data/ProactiveInboxStore.kt`** (new). `ProactiveInboxRepository` — DataStore-backed, newest-first, deduped by id, capped at 100, survives restart. Separate `ProactiveInboxEntry` model so on-disk shape doesn't track the wire protocol.
+- **`ui/screens/HermesInboxScreen.kt`** (new). A flat newest-first list (self-contained cards — deliberately NOT reusing the chat-ux-owned `MessageBubble`), empty state, relative timestamps, clear-all action. Reached from the notification tap (route now `hermes_inbox`) and a "View messages" button on `ProactiveSettingsScreen`.
+- **Session injection (Phase 2b).** `ChatHandler.addProactiveMessage` appends a **SYSTEM-role `clientOnly`** bubble — SYSTEM keeps it out of the voice TTS stream observer (which only voices ASSISTANT messages), so injection can't trigger uncontrolled speech (Phase 3 owns TTS-on-voice); `clientOnly` preserves it across the history reconcile. `ChatViewModel.injectProactiveMessage` is the small localized entry point; `ProactiveMessageHandler.toSession` is wired once at the RelayApp root (where both ViewModels exist) since ChatViewModel isn't available when the handler is built.
+- **Wiring.** `ConnectionViewModel` gains `proactiveInbox` + `inboxMessages` + `clearProactiveInbox()` and feeds the handler's `toInbox` sink. `Screen.HermesInbox` route + NavHost entry added.
+
+**Scope guardrails.** No chat *visuals* touched (`MessageBubble`/theme untouched — inbox renders its own cards). No voice internals touched — the SYSTEM-role choice avoids the TTS observer entirely; Phase 3's TTS-on-voice will call the existing voice player API explicitly.
+
+**Verification.** `./gradlew :app:lintSideloadDebug` over the combined Phase 2 changes — see commit. On-device end-to-end (surfacing=inbox/session/default) is a maintainer step.
+
 ## 2026-06-28 — Phone platform (Phase 1d: off-by-default enablement surface)
 
 **Why.** Phase 1c wired the receive path but gated it behind a flag with no UI. Phase 1d adds the user-facing opt-in ("Let Hermes message me") and the notification-permission prompt, completing the end-to-end Phase 1 spine: `send_message target=phone` → phone notification, only when both server and phone have opted in and the phone is paired.

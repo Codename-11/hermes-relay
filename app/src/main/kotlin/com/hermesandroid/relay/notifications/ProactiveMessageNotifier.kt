@@ -31,8 +31,7 @@ import com.hermesandroid.relay.R
  *    into and should see promptly, so the channel is `IMPORTANCE_HIGH`.
  *
  * Tap routes through the existing deep-link path (MainActivity
- * [MainActivity.EXTRA_NAV_ROUTE] → NavRouteRequest). Until the dedicated
- * Hermes inbox lands (Phase 2a), tap opens the Chat tab.
+ * [MainActivity.EXTRA_NAV_ROUTE] → NavRouteRequest) to the Hermes inbox.
  */
 object ProactiveMessageNotifier {
 
@@ -43,8 +42,12 @@ object ProactiveMessageNotifier {
     /** Base for derived notification ids — keeps us clear of other slots. */
     private const val ID_BASE = 0x48524D00 // "HRM" + 00
 
-    /** Default tap route until the inbox surface exists (Phase 2a). */
-    private const val CHAT_ROUTE = "chat"
+    /**
+     * Tap route — the dedicated Hermes inbox (Phase 2a). Must match
+     * `Screen.HermesInbox.route` in RelayApp. Routed via the EXTRA_NAV_ROUTE
+     * deep-link path (MainActivity → NavRouteRequest → RelayApp collector).
+     */
+    private const val INBOX_ROUTE = "hermes_inbox"
 
     /**
      * Post (or replace) a proactive-message notification.
@@ -70,7 +73,7 @@ object ProactiveMessageNotifier {
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(MainActivity.EXTRA_NAV_ROUTE, CHAT_ROUTE)
+            putExtra(MainActivity.EXTRA_NAV_ROUTE, INBOX_ROUTE)
         }
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         // Distinct requestCode per slot so each notification gets its own
