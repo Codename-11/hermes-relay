@@ -36,6 +36,7 @@ import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
+import com.hermesandroid.relay.data.proactiveEnabledFlow
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -70,6 +71,8 @@ import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.accessibility.BridgeStatusReporter
 import com.hermesandroid.relay.accessibility.ScreenCapture
 import com.hermesandroid.relay.network.relay.BridgeCommandHandler
+import com.hermesandroid.relay.network.relay.ProactiveMessageHandler
+import com.hermesandroid.relay.network.relay.models.Envelope
 // === END PHASE3-accessibility ===
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.viewmodel.connection.PairingController
@@ -606,6 +609,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
         _authManagerFlow
             .flatMapLatest { it.profilesUpdatedEvents }
+            .shareIn(
+                scope = viewModelScope,
+                started = SharingStarted.Eagerly,
+                replay = 0,
+            )
+
+    /**
+     * Per-connection auth-success signal, sourced from the *current*
+     * [AuthManager] so it follows connection switches (the `var authManager`
+     * is rebuilt on switch). Drives proactive re-subscribe on every reconnect.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val authOkEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _authManagerFlow
+            .flatMapLatest { it.authOkEvents }
             .shareIn(
                 scope = viewModelScope,
                 started = SharingStarted.Eagerly,
@@ -1732,6 +1750,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
     // === END PHASE3-accessibility (plus safety-rails wiring above) ===
 
+    // === Proactive (agent → phone) messages ===
+    // Handles inbound `phone.message` envelopes (raises a system notification).
+    // Receiving is gated by [proactiveEnabled]: the relay only pushes when the
+    // app has sent `proactive.subscribe`, which we only do when the toggle is
+    // on. Off by default.
+    val proactiveMessageHandler = ProactiveMessageHandler(application)
+
+    /** "Let Hermes message me" — off by default. */
+    val proactiveEnabled: StateFlow<Boolean> = application.proactiveEnabledFlow()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private fun sendProactiveSubscribe() {
+        multiplexer.send(Envelope(channel = "proactive", type = "proactive.subscribe"))
+    }
+
+    private fun sendProactiveUnsubscribe() {
+        multiplexer.send(Envelope(channel = "proactive", type = "proactive.unsubscribe"))
+    }
+    // === END Proactive ===
+
     // --- Connection switch orchestration ----------------------------------
     //
     // Multi-connection v0.5.0: the coordinator owns the heavy swap sequence
@@ -2602,6 +2640,34 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             bridgeCommandHandler.onMessage(envelope)
         }
         bridgeStatusReporter.start()
+
+        // === Proactive (agent → phone) wiring ===
+        // Inbound `phone.message` → notification handler.
+        multiplexer.registerHandler("proactive") { envelope ->
+            proactiveMessageHandler.onMessage(envelope)
+        }
+        // Re-send `proactive.subscribe` on every auth.ok (the relay tracks the
+        // subscription per-WebSocket, so it must be re-established on each
+        // reconnect). Only when the user opted in. Sent AFTER auth.ok so it
+        // never races ahead of the auth handshake.
+        viewModelScope.launch {
+            authOkEvents.collect {
+                if (proactiveEnabled.value) sendProactiveSubscribe()
+            }
+        }
+        // React to the toggle flipping while already connected. drop(1) skips
+        // the initial DataStore replay (a fresh connect's auth.ok handles the
+        // first subscribe). Best-effort: a send while disconnected is dropped,
+        // and the auth.ok collector re-subscribes on the next connect.
+        viewModelScope.launch {
+            proactiveEnabled
+                .drop(1)
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    if (enabled) sendProactiveSubscribe() else sendProactiveUnsubscribe()
+                }
+        }
+        // === END Proactive wiring ===
 
         // === PHASE3-status: push status immediately on master toggle flip ===
         // The periodic tick is 30 s, but the relay-side cache (and the

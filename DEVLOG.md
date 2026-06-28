@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Phone platform (Phase 1c: app receive + system notification)
+
+**Why.** The relay now pushes `phone.message` envelopes over the phone WSS (Phase 1b); the app needs to receive them and surface the agent's message. Phase 1c lands the receive path + a system notification, gated off by default.
+
+**What.**
+- **`network/relay/ProactiveMessageHandler.kt`.** Sibling of `BridgeCommandHandler`. Parses `phone.message` payloads into a `ProactiveMessage` and dispatches them. `dispatch()` centralizes surfacing so Phase 2 (inbox / session injection) extends one place; Phase 1c always raises a notification. Drops malformed payloads; logs the `proactive.subscribed` ack.
+- **`notifications/ProactiveMessageNotifier.kt`.** Twin of `TurnCompleteNotifier` (channel-ensure → permission-gate → tap PendingIntent) with two differences: it **stacks per message** (slot derived from `message_id` so re-delivery replaces but distinct messages stack) and uses an `IMPORTANCE_HIGH` "Hermes messages" channel (a proactive ping the user opted into). Tap opens Chat for now (inbox route arrives in Phase 2a).
+- **`network/relay/ChannelMultiplexer.kt`.** Adds the `"proactive"` route branch.
+- **`data/ProactivePrefs.kt`.** `KEY_PROACTIVE_ENABLED` ("Let Hermes message me") + setter + reactive read, default **off**. The app half of the two-sided gate.
+- **`auth/AuthManager.kt`.** Adds an additive `authOkEvents` SharedFlow (mirrors the existing `profilesUpdatedEvents`), emitted on every `auth.ok` — the per-connection signal needed to re-subscribe after reconnects.
+- **`viewmodel/ConnectionViewModel.kt`.** Registers the proactive handler; exposes `proactiveEnabled`; sends `proactive.subscribe` on each `auth.ok` when enabled (sourced via `_authManagerFlow.flatMapLatest` so it survives connection switches), and subscribe/unsubscribe when the toggle flips. The subscribe rides *after* the auth handshake, so it never races the `auth` envelope.
+
+**Verification.** New files are self-contained; the receive path is gated by `proactiveEnabled` (default off) and the relay's per-socket subscribe latch, so nothing surfaces until the user opts in (Phase 1d adds the Settings switch + notification-permission prompt). `./gradlew :app:lint` is run once over the app spine after Phase 1d (same compilation unit). On-device end-to-end is a maintainer step.
+
 ## 2026-06-28 — Phone platform (Phase 1b: relay forward route)
 
 **Why.** The phone platform adapter (Phase 1a) POSTs proactive messages to the relay; the relay needs a route to receive them and a channel to push them over the live phone WSS. This is the server→app push counterpart to the existing bridge channel.
