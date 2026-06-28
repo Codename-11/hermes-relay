@@ -20,6 +20,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
 
+## [1.2.6] - 2026-06-27
+
+### Added
+
+- **Session drawer refresh.** A refresh button in the session drawer re-pulls the chat list on demand, so a title the server generates a moment after a turn shows up without waiting for the next reload.
+
+### Changed
+
+- **Calmer connection status.** Transient connection status — reconnecting, checking, LAN↔Tailscale handoffs — now renders as a thin banner at the top that takes its own space (the screen slides down) instead of a card floating over the chat. The floating alert is reserved for persistent errors. Frequent confirmations (copied, profiles updated, profile/personality switches) moved to the same top banner instead of the bottom pop-up.
+
+### Fixed
+
+- **Chats stuck showing "Untitled".** The session drawer no longer overwrites a chat's first-message preview with a blank title when the server hasn't auto-named it yet (and the SSE path never does), so chats stop reading "Untitled"; titles also reconcile once the turn settles. (#133)
+- **Rename on a non-default agent profile.** Renaming a chat while a non-default profile is active now persists to that profile's own store instead of the shared one — matching the earlier session-delete fix.
+
 ## [1.2.5] - 2026-06-27
 
 ### Added

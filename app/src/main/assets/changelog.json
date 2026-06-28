@@ -1,6 +1,25 @@
 {
   "versions": [
     {
+      "version": "1.2.6",
+      "title": "Tidier chats & calmer status",
+      "date": "2026-06-27",
+      "sections": [
+        {
+          "header": "Tidier chats",
+          "bullets": [
+            "Chats no longer get stuck showing \"Untitled\" — your first message stands in as the title until the chat is named, titles refresh once a turn settles, and a new refresh button in the session drawer pulls the latest on demand. Renaming a chat now sticks when you're on a non-default agent profile."
+          ]
+        },
+        {
+          "header": "Calmer status",
+          "bullets": [
+            "Connection status — reconnecting, checking, network handoffs — now shows as a thin banner at the top that gently slides the screen down, instead of a card floating over your chat; the floating alert is kept for persistent errors. Quick confirmations (copied, profiles updated, profile/personality switches) land in the same calm banner instead of a pop-up at the bottom."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.5",
       "title": "Stability + Try the demo",
       "date": "2026-06-27",

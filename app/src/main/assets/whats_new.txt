@@ -1,11 +1,13 @@
-v1.2.5 - Stability + Try the demo
+v1.2.6 - Tidier chats & calmer status
 
-Stability
-* Fixed a crash that could close the app when a non-URL value — like a
-  label or a line copied from the docs — was entered in a server address
-  field. It now shows an inline error instead of force-closing.
+Chats
+* Chats no longer get stuck on "Untitled" — your first message stands
+  in as the title until the chat is named, titles refresh once a turn
+  settles, and a new refresh button in the session drawer pulls the
+  latest. Renaming a chat now sticks on non-default agent profiles.
 
-New
-* Try the demo — explore an offline preview of the chat experience with
-  no server, account, or network, right from the welcome screen (and the
-  empty chat screen if you skip setup).
+Calmer status
+* Connection status (reconnecting, checking, network handoffs) now
+  shows as a thin banner at the top that gently slides the screen
+  down, instead of a card floating over your chat — the floating alert
+  is kept for persistent errors. Quick confirmations land there too.
