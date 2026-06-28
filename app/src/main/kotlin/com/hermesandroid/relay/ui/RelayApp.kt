@@ -70,6 +70,7 @@ import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.CrashReportGate
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
+import com.hermesandroid.relay.ui.components.MessageBannerHost
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
@@ -84,6 +85,7 @@ import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
 import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
@@ -150,6 +152,7 @@ import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
+import com.hermesandroid.relay.viewmodel.ConnectionStatusTone
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
@@ -1235,7 +1238,7 @@ fun RelayApp() {
         // this only fires when the profile list actually changed.
         LaunchedEffect(connectionViewModel) {
             connectionViewModel.profilesUpdatedEvents.collect {
-                snackbarHostState.showSnackbar("Profiles updated")
+                UiMessageBus.success("Profiles updated")
             }
         }
 
@@ -1285,6 +1288,11 @@ fun RelayApp() {
         // user always knows the chat is sample data with no live server, and
         // can exit into the real Connect flow with one tap.
         val showDemoBanner = isDemoMode && !voiceUiState.voiceMode
+        // Transient info/status banner (UiMessageBus) — thin, takes its own
+        // space, auto-dismisses. Folded into the inset accounting below so a
+        // child TopAppBar doesn't double-pad when this banner owns the top edge.
+        val activeMessageCount by UiMessageBus.activeCount.collectAsState()
+        val showMessageBanner = activeMessageCount > 0
         // Update availability (unified): googlePlay = Play In-App Update FLEXIBLE,
         // sideload = GitHub releases. The handle filters dismissed versions +
         // throttles checks internally, exposing a surfaceable status for the
@@ -1304,6 +1312,16 @@ fun RelayApp() {
                 !suppressGlobalChrome &&
                 !showStartupSphere &&
                 !voiceUiState.voiceMode
+        // Split the connection-status surface by severity (user request): the
+        // frequent transient/active/warning states render as a take-space top
+        // BANNER (content slides down, no overlay), while a persistent ERROR
+        // keeps the floating overlay so it still demands attention. Steady
+        // state is null (buildGlobalConnectionStatus → else null), so the
+        // banner only occupies space during a transition/problem.
+        val connectionStatusIsError =
+            globalConnectionStatus?.tone == ConnectionStatusTone.Error
+        val showConnectionStatusBanner = showConnectionStatusToast && !connectionStatusIsError
+        val showConnectionStatusOverlay = showConnectionStatusToast && connectionStatusIsError
         val onConnectionStatusBannerClick: () -> Unit = {
             val title = globalConnectionStatus?.title.orEmpty()
             val destination = when {
@@ -1391,6 +1409,29 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
+        // Connection status as a take-space banner (non-error). Replaces the
+        // floating ConnectionStatusToast for the frequent transient/active/
+        // warning states so content slides down instead of being covered.
+        AnimatedVisibility(
+            visible = showConnectionStatusBanner,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            ConnectionStatusBanner(
+                status = globalConnectionStatus,
+                includeStatusBarPadding = !showUnattendedBanner && !showDemoBanner,
+                onClick = onConnectionStatusBannerClick,
+            )
+        }
+
+        // Transient info/status banner. Sits below the persistent banners and
+        // owns the status-bar inset only when no banner is above it (otherwise
+        // that banner already padded the top — avoid double padding).
+        MessageBannerHost(
+            includeStatusBarPadding =
+                !showUnattendedBanner && !showDemoBanner && !showConnectionStatusBanner,
+        )
+
         // The update banner AND the connection-status indicator now render as
         // floating overlay TOASTS in the Box below (see the top-overlay Column
         // after the Scaffold), so they slide down OVER the content instead of
@@ -1428,7 +1469,9 @@ fun RelayApp() {
                     // The connection-status toast is now a floating overlay and
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
-                    if (showUnattendedBanner || showDemoBanner || connectionChipVisible) {
+                    if (showUnattendedBanner || showDemoBanner || connectionChipVisible ||
+                        showMessageBanner || showConnectionStatusBanner
+                    ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
@@ -2036,9 +2079,7 @@ fun RelayApp() {
                         activeRelayUiState = activeRelayUiState,
                         onReconnectActive = {
                             connectionViewModel.connectRelay()
-                            connectionSwitchScope.launch {
-                                snackbarHostState.showSnackbar("Reconnecting to relay…")
-                            }
+                            UiMessageBus.status("Reconnecting to relay…")
                         },
                         // Multi-connection: typed VM helpers (Worker B2)
                         // handle the full mutations — rename persists via
@@ -2350,7 +2391,7 @@ fun RelayApp() {
                 }
             }
             AnimatedVisibility(
-                visible = showConnectionStatusToast,
+                visible = showConnectionStatusOverlay,
                 enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
                 exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
             ) {
