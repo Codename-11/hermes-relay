@@ -1,5 +1,16 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Phone platform (Phase 1b: relay forward route)
+
+**Why.** The phone platform adapter (Phase 1a) POSTs proactive messages to the relay; the relay needs a route to receive them and a channel to push them over the live phone WSS. This is the server→app push counterpart to the existing bridge channel.
+
+**What.**
+- **`plugin/relay/channels/proactive.py`.** `ProactiveChannel` — the mirror of the bridge handler, reversed. It latches the phone's WebSocket on a `proactive.subscribe` envelope (acked with `proactive.subscribed`), exposes `push(payload)` that sends a `phone.message` envelope over that socket, and releases on `proactive.unsubscribe` / disconnect. No awaited reply — push is best-effort (notification semantics). `phone.message` from a phone is rejected (server→app only).
+- **`plugin/relay/server.py`.** Wires `self.proactive = ProactiveChannel()` onto `RelayServer`; adds the `channel == "proactive"` dispatch branch; releases the subscriber on client disconnect; closes it on shutdown; and registers `POST /phone/message` (`handle_phone_message`) — **loopback-only** (the adapter runs in the gateway process on the same host; an outbound push could spam notifications, so it is not exposed to the LAN). Returns 503 when no phone is subscribed, 502 on socket-write failure, 400 on empty/invalid body.
+- **Opt-in is structural.** The relay can only push when it holds a latched `phone_ws`, which it only gets when the app subscribes — which the app does only when the user enables "Let Hermes message me." Combined with the server-side `PHONE_ENABLED` adapter gate, both sides must opt in.
+
+**Verification.** `python -m py_compile` clean. `python -m unittest plugin.tests.test_proactive_channel` — 11 tests pass (subscribe/ack, take-over, unsubscribe/detach, push envelope shape + supplied-id passthrough, no-subscriber/closed/failed-send raises, spoofed-inbound + unknown-type ignored). `import plugin.relay.server` succeeds and the route registers; bridge + proactive + phone suites pass together (40 tests). End-to-end with a live phone and the app-side receive handler is Phase 1c.
+
 ## 2026-06-28 — Phone as a first-class Hermes platform (Phase 1a: plugin adapter)
 
 **Why.** The paired phone could receive agent output only by being on the chat screen. Making it a registered Hermes *platform* — a peer of Discord/Telegram/ntfy — lets the agent push to it proactively (`send_message target=phone`, cron `deliver=phone`). This is delivered additively through the upstream platform-plugin API (`ctx.register_platform`); no fork, no upstream core change.
