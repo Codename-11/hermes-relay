@@ -169,8 +169,11 @@ BRIEF="${WTDIR}/ISSUE-BRIEF.md"
   echo
   echo "## Automated triage / deep-dive notes"
   echo
+  # Triage/deep-dive/follow-up comments are posted by the Claude GitHub App
+  # (author "claude"), NOT "github-actions" — so match on our comment signatures
+  # (identity-proof), with the known bot logins as a fallback.
   BOTNOTES="$(gh issue view "$N" --json comments \
-    --jq '.comments[] | select(.author.login=="github-actions" or .author.login=="github-actions[bot]") | "_" + .createdAt + "_\n\n" + .body + "\n\n---\n"')"
+    --jq '.comments[] | select(((.body // "") | test("automated triage|Deep-dive analysis|automated follow-up")) or ((.author.login // "") | test("^(claude|github-actions)"))) | "_" + .createdAt + "_\n\n" + .body + "\n\n---\n"')"
   if [ -n "$BOTNOTES" ]; then
     printf '%s\n' "$BOTNOTES"
   else

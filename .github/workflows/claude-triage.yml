@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Label from title prefix + keyword area
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
         with:
@@ -258,7 +258,8 @@ jobs:
             2. INVESTIGATE: trace the relevant code paths. Identify the specific files/functions involved.
                Distinguish what you VERIFIED in the code from what remains a hypothesis.
             3. POST one comment (`gh issue comment ${{ github.event.issue.number }} --body "..."`) with these
-               sections, in Markdown:
+               sections, in Markdown. The `##`/`**bold**` headings below ARE the section separators — do NOT add
+               horizontal rules (`---`) between sections or directly under the H2; keep it clean and scannable:
 
                ## 🔬 Deep-dive analysis
                **Root-cause hypothesis** — your best explanation with the supporting code evidence. Label your
