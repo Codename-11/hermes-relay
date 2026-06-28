@@ -1999,7 +1999,7 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 16.dp),
+                            .padding(horizontal = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }

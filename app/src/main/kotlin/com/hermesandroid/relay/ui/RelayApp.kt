@@ -1597,13 +1597,17 @@ fun RelayApp() {
                         },
                     ),
                 ) { backStackEntry ->
-                    // Responsive bubble width based on screen width
+                    // Responsive bubble width based on screen width. The "Blend"
+                    // chat look favors wider bubbles: on compact phones the cap is
+                    // raised so long turns fill most of the row (binding on the
+                    // available width minus the assistant avatar gutter) instead
+                    // of wrapping early in a narrow column.
                     val configuration = LocalConfiguration.current
                     val screenWidthDp = configuration.screenWidthDp.dp
                     val maxBubbleWidth = when {
-                        screenWidthDp >= 840.dp -> 600.dp  // Expanded (tablet)
-                        screenWidthDp >= 600.dp -> 480.dp  // Medium (landscape / small tablet)
-                        else -> 300.dp                      // Compact (phone portrait)
+                        screenWidthDp >= 840.dp -> 640.dp  // Expanded (tablet)
+                        screenWidthDp >= 600.dp -> 520.dp  // Medium (landscape / small tablet)
+                        else -> 340.dp                      // Compact (phone portrait)
                     }
 
                     // Consume-once semantics: ChatScreen only treats the
