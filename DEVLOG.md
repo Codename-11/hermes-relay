@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Phone platform (Phase 1d: off-by-default enablement surface)
+
+**Why.** Phase 1c wired the receive path but gated it behind a flag with no UI. Phase 1d adds the user-facing opt-in ("Let Hermes message me") and the notification-permission prompt, completing the end-to-end Phase 1 spine: `send_message target=phone` → phone notification, only when both server and phone have opted in and the phone is paired.
+
+**What.**
+- **`ui/screens/ProactiveSettingsScreen.kt`** (new). A dedicated "Hermes messages" screen: the enablement switch (bound to `proactiveEnabled` / `setProactiveEnabled`), a POST_NOTIFICATIONS request fired on enable (API 33+), a not-paired hint, and an About section that documents the server-side `PHONE_ENABLED` requirement. This is the permanent home Phase 3 expands (quiet hours, per-profile, rate limiting).
+- **`viewmodel/ConnectionViewModel.kt`.** `setProactiveEnabled(enabled)` persists the flag; subscribe/unsubscribe is already driven reactively by the `proactiveEnabled` collector from Phase 1c.
+- **`ui/screens/SettingsScreen.kt`.** New "Hermes messages" category row in the Hermes section + `onNavigateToProactiveSettings` param.
+- **`ui/RelayApp.kt`.** `Screen.ProactiveSettings` route + NavHost entry + nav wiring at the Settings call site.
+- **Server side.** The `PHONE_ENABLED` gate already lives in the adapter (Phase 1a); documented in-app on the new screen.
+
+**Verification.** `POST_NOTIFICATIONS` is already declared in the manifest; `rememberLauncherForActivityResult` is used across existing screens (dependency present). `./gradlew :app:lintSideloadDebug` run over the combined Phase 1c+1d app spine (same compilation unit) — see commit. On-device end-to-end (enable → server `send_message target=phone` → notification) is a maintainer step.
+
 ## 2026-06-28 — Phone platform (Phase 1c: app receive + system notification)
 
 **Why.** The relay now pushes `phone.message` envelopes over the phone WSS (Phase 1b); the app needs to receive them and surface the agent's message. Phase 1c lands the receive path + a system notification, gated off by default.

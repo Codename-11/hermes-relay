@@ -37,6 +37,7 @@ import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.data.proactiveEnabledFlow
+import com.hermesandroid.relay.data.setProactiveEnabled
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -1767,6 +1768,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun sendProactiveUnsubscribe() {
         multiplexer.send(Envelope(channel = "proactive", type = "proactive.unsubscribe"))
+    }
+
+    /**
+     * Flip the "Let Hermes message me" preference. The actual
+     * subscribe/unsubscribe over the WSS is driven reactively by the
+     * [proactiveEnabled] collector in init, so this only persists the flag.
+     */
+    fun setProactiveEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().setProactiveEnabled(enabled)
+        }
     }
     // === END Proactive ===
 

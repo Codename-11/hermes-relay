@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
@@ -143,6 +144,7 @@ fun SettingsScreen(
     onNavigateToDiagnostics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
+    onNavigateToProactiveSettings: () -> Unit,
     onNavigateToPermissions: () -> Unit,
     // === PHASE3-safety-rails: bridge safety entry-point ===
     onNavigateToBridgeSafety: () -> Unit,
@@ -426,6 +428,14 @@ fun SettingsScreen(
                 title = "Voice mode",
                 subtitle = "Dashboard voice, realtime relay options, providers",
                 onClick = onNavigateToVoiceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.AutoMirrored.Filled.Message,
+                title = "Hermes messages",
+                subtitle = "Let the agent message you on its own (off by default)",
+                onClick = onNavigateToProactiveSettings,
                 isDarkTheme = isDarkTheme,
             )
 
