@@ -19,19 +19,23 @@ import kotlinx.coroutines.flow.distinctUntilChanged
  *
  * - [interactionMode] how the mic button behaves: "tap" | "hold" | "continuous".
  *   Drives the VoiceViewModel's InteractionMode enum at startup.
- * - [silenceThresholdMs] auto-stop threshold for listening: after this many
- *   ms of amplitude below the silence floor, stopListening() is called.
- * - [autoTts] future — read TTS on every non-voice assistant message.
- * - [language] STT language hint. Stored; not yet wired to /voice/transcribe
- *   (V1 doesn't accept a language param).
+ * - [silenceThresholdMs] end-of-speech threshold for listening: after this many
+ *   ms of amplitude below the silence floor (once speech has been heard),
+ *   stopListening() is called. Default 1250 ms matches hermes-desktop
+ *   voice_mode `silenceMs`. (Idle/no-speech 12 s and a 60 s hard turn cap are
+ *   fixed in VoiceViewModel, not user-tunable — see startSilenceWatchdog.)
+ *
+ * Note: the standard path has no client-side auto-TTS or STT-language pref.
+ * hermes-desktop only speaks responses during an active voice conversation
+ * (no "read every typed message"), and STT language is a server-side
+ * `stt.*.language` config edited via the Server voice config card, not a
+ * client param — so neither is faked here.
  */
 data class VoiceSettings(
     val engineMode: String = VoiceEngineMode.HermesVoiceOutput.storageValue,
     val audioRoute: String = VoiceAudioRoute.Auto.storageValue,
     val interactionMode: String = "tap",
-    val silenceThresholdMs: Long = 3000L,
-    val autoTts: Boolean = false,
-    val language: String = "",
+    val silenceThresholdMs: Long = 1250L,
     val realtimeTraceDetails: Boolean = false,
     /**
      * When true (default), Realtime Agent keeps one provider session/socket open
@@ -167,15 +171,12 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         // Why these stay global: interaction-mode and silence-threshold are
         // ergonomic input preferences about *how the user drives the mic*, not
         // about the agent's voice — a user wants the same tap/hold/continuous
-        // habit regardless of which profile is active. auto-tts and the STT
-        // language hint are dead/experimental controls today, and the two
-        // realtime diagnostic toggles (trace details, persistent session) are
+        // habit regardless of which profile is active. The two realtime
+        // diagnostic toggles (trace details, persistent session) are
         // engine-behaviour switches that aren't profile-specific. Keeping them
         // un-namespaced means switching profiles never churns these.
         private val KEY_INTERACTION_MODE = stringPreferencesKey("voice_interaction_mode")
         private val KEY_SILENCE_THRESHOLD_MS = longPreferencesKey("voice_silence_threshold_ms")
-        private val KEY_AUTO_TTS = booleanPreferencesKey("voice_auto_tts")
-        private val KEY_LANGUAGE = stringPreferencesKey("voice_language")
         private val KEY_REALTIME_TRACE_DETAILS = booleanPreferencesKey("voice_realtime_trace_details")
         private val KEY_REALTIME_PERSISTENT_SESSION =
             booleanPreferencesKey("voice_realtime_persistent_session")
@@ -183,9 +184,8 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         const val DEFAULT_ENGINE_MODE = "hermes_voice_output"
         const val DEFAULT_AUDIO_ROUTE = "auto"
         const val DEFAULT_INTERACTION_MODE = "tap"
-        const val DEFAULT_SILENCE_THRESHOLD_MS = 3000L
-        const val DEFAULT_AUTO_TTS = false
-        const val DEFAULT_LANGUAGE = ""
+        // 1250 ms matches hermes-desktop voice_mode `silenceMs` end-of-speech.
+        const val DEFAULT_SILENCE_THRESHOLD_MS = 1250L
         const val DEFAULT_REALTIME_TRACE_DETAILS = false
         const val DEFAULT_REALTIME_PERSISTENT_SESSION = true
 
@@ -251,8 +251,6 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
             // --- global (shared across profiles) ---
             interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
             silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
-            autoTts = prefs[KEY_AUTO_TTS] ?: DEFAULT_AUTO_TTS,
-            language = prefs[KEY_LANGUAGE] ?: DEFAULT_LANGUAGE,
             realtimeTraceDetails = prefs[KEY_REALTIME_TRACE_DETAILS]
                 ?: DEFAULT_REALTIME_TRACE_DETAILS,
             realtimePersistentSession = prefs[KEY_REALTIME_PERSISTENT_SESSION]
@@ -337,14 +335,6 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setSilenceThresholdMs(ms: Long) {
         dataStore.edit { it[KEY_SILENCE_THRESHOLD_MS] = ms.coerceAtLeast(500L) }
-    }
-
-    suspend fun setAutoTts(enabled: Boolean) {
-        dataStore.edit { it[KEY_AUTO_TTS] = enabled }
-    }
-
-    suspend fun setLanguage(language: String) {
-        dataStore.edit { it[KEY_LANGUAGE] = language }
     }
 
     suspend fun setRealtimeTraceDetails(enabled: Boolean) {

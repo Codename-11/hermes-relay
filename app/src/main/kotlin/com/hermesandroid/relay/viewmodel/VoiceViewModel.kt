@@ -382,6 +382,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val SILENCE_WATCHDOG_POLL_MS: Long = 150L
 
         /**
+         * Idle/no-speech auto-close for a Listening turn that never hears
+         * speech — parity with hermes-desktop voice_mode `idleSilenceMs`. The
+         * turn is cancelled WITHOUT transcribing (nothing was said), then the
+         * loop is free to re-arm.
+         */
+        private const val IDLE_NO_SPEECH_MS: Long = 12_000L
+
+        /**
+         * Hard ceiling on a single Listening turn — parity with hermes-desktop
+         * voice_mode's 60 s turn timeout. Whatever was captured is sent to
+         * transcription so a long monologue still completes.
+         */
+        private const val MAX_LISTEN_TURN_MS: Long = 60_000L
+
+        /**
          * Explicit allow-list of cancel utterances. Intentionally NOT
          * fuzzy — ambiguous words like "yes"/"ok" must NOT terminate a
          * pending SMS by accident. Matching: lowercase, trim, trim
@@ -1498,10 +1513,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * watchdog uses, already tuned to reject mic hiss and room tone on
      * Bailey's devices while catching whispered speech.
      *
-     * Grace window: auto-stop does NOT fire until we've seen at least one
-     * above-floor frame. If the user taps to start a turn and never
-     * speaks, we wait forever (or until a manual stop) rather than
-     * insta-closing the turn the moment recording begins.
+     * Three timeouts, aligned to hermes-desktop's voice_mode defaults so the
+     * standard-path loop feels like the official desktop:
+     *  - **End-of-speech** ([VoiceSettings.silenceThresholdMs], default 1250 ms,
+     *    desktop `silenceMs`): after speech is heard, this much silence
+     *    auto-stops and transcribes the turn.
+     *  - **Idle/no-speech** ([IDLE_NO_SPEECH_MS] = 12 s, desktop `idleSilenceMs`):
+     *    a turn that never hears speech is cancelled WITHOUT transcribing.
+     *  - **Hard cap** ([MAX_LISTEN_TURN_MS] = 60 s): any turn running this long
+     *    is stopped and transcribed.
+     *
+     * Grace window: the end-of-speech timeout does NOT fire until we've seen at
+     * least one above-floor frame. The amplitude floor [RESUME_SILENCE_THRESHOLD]
+     * (0.08) is the analog of desktop's `silenceLevel` (0.075).
      *
      * No-op when [voicePreferences] is unwired (pre-fix test call sites)
      * or when the threshold is <= 0 (reserved for a future "Off" option).
@@ -1517,18 +1541,35 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             val rec = recorder ?: return@launch
             var hasSpoken = false
             var lastVoiceMs = System.currentTimeMillis()
+            val turnStartedMs = System.currentTimeMillis()
 
             while (isActive && _uiState.value.state == VoiceState.Listening) {
                 val amp = rec.amplitude.value
                 val now = System.currentTimeMillis()
-                if (amp > RESUME_SILENCE_THRESHOLD) {
-                    hasSpoken = true
-                    lastVoiceMs = now
-                } else if (hasSpoken && (now - lastVoiceMs) >= thresholdMs) {
-                    Log.d(TAG, "silence watchdog: ${thresholdMs}ms of silence after speech — auto-stop")
-                    // stopListening() is state-guarded (early-returns if
-                    // already out of Listening), so a concurrent manual
-                    // stop between here and dispatch is a safe no-op.
+                when {
+                    amp > RESUME_SILENCE_THRESHOLD -> {
+                        hasSpoken = true
+                        lastVoiceMs = now
+                    }
+                    hasSpoken && (now - lastVoiceMs) >= thresholdMs -> {
+                        Log.d(TAG, "silence watchdog: ${thresholdMs}ms of silence after speech — auto-stop")
+                        // stopListening() is state-guarded (early-returns if
+                        // already out of Listening), so a concurrent manual
+                        // stop between here and dispatch is a safe no-op.
+                        stopListening()
+                        return@launch
+                    }
+                    !hasSpoken && (now - turnStartedMs) >= IDLE_NO_SPEECH_MS -> {
+                        Log.d(TAG, "silence watchdog: ${IDLE_NO_SPEECH_MS}ms with no speech — closing idle turn")
+                        cancelListeningWithoutProcessing(
+                            title = "No speech detected",
+                            detail = "No speech within ${IDLE_NO_SPEECH_MS / 1000}s",
+                        )
+                        return@launch
+                    }
+                }
+                if ((System.currentTimeMillis() - turnStartedMs) >= MAX_LISTEN_TURN_MS) {
+                    Log.d(TAG, "silence watchdog: ${MAX_LISTEN_TURN_MS}ms hard turn cap — auto-stop")
                     stopListening()
                     return@launch
                 }
