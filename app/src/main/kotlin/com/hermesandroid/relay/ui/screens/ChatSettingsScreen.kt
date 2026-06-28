@@ -6,9 +6,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -55,6 +59,11 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.components.ChatTransportStatus
+import com.hermesandroid.relay.ui.components.DotMatrixIndicator
+import com.hermesandroid.relay.ui.components.StreamingDots
+import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
+import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
+import com.hermesandroid.relay.ui.components.toColor
 import com.hermesandroid.relay.ui.components.ChatTransportTier
 import com.hermesandroid.relay.ui.components.ChatTransportTone
 import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
@@ -152,6 +161,156 @@ fun ChatSettingsScreen(
                             checked = smoothAutoScroll,
                             onCheckedChange = { connectionViewModel.setSmoothAutoScroll(it) }
                         )
+                    }
+
+                    HorizontalDivider()
+
+                    // Thinking indicator style — the in-bubble "working"
+                    // animation shown while a reply streams. Live preview on the
+                    // right reflects the current choice.
+                    val thinkingIndicatorStyle by
+                        connectionViewModel.thinkingIndicatorStyle.collectAsState()
+                    val thinkingMatrixPattern by
+                        connectionViewModel.thinkingMatrixPattern.collectAsState()
+                    val thinkingMatrixColor by
+                        connectionViewModel.thinkingMatrixColor.collectAsState()
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Thinking indicator",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "The animation shown in a reply bubble while Hermes is working.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Box(
+                                modifier = Modifier.padding(start = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (thinkingIndicatorStyle == "matrix") {
+                                    DotMatrixIndicator(
+                                        color = ThinkingMatrixColor.fromKey(thinkingMatrixColor)
+                                            .toColor(autoColor = MaterialTheme.colorScheme.onSurface),
+                                        pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
+                                    )
+                                } else {
+                                    StreamingDots(color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                        val styleOptions = listOf("dots", "matrix")
+                        val styleLabels = listOf("Dots", "Matrix")
+                        val selectedStyleIndex =
+                            styleOptions.indexOf(thinkingIndicatorStyle).coerceAtLeast(0)
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            styleOptions.forEachIndexed { index, option ->
+                                SegmentedButton(
+                                    shape = SegmentedButtonDefaults.itemShape(
+                                        index = index,
+                                        count = styleOptions.size
+                                    ),
+                                    onClick = { connectionViewModel.setThinkingIndicatorStyle(option) },
+                                    selected = index == selectedStyleIndex
+                                ) {
+                                    Text(
+                                        text = styleLabels[index],
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
+                            }
+                        }
+
+                        // Matrix-only: which authored motion the grid plays.
+                        AnimatedVisibility(visible = thinkingIndicatorStyle == "matrix") {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "Pattern",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                val patternOptions = ThinkingMatrixPattern.entries
+                                val selectedPatternIndex = patternOptions
+                                    .indexOfFirst { it.key == thinkingMatrixPattern }
+                                    .coerceAtLeast(0)
+                                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                    patternOptions.forEachIndexed { index, p ->
+                                        SegmentedButton(
+                                            shape = SegmentedButtonDefaults.itemShape(
+                                                index = index,
+                                                count = patternOptions.size
+                                            ),
+                                            onClick = {
+                                                connectionViewModel.setThinkingMatrixPattern(p.key)
+                                            },
+                                            selected = index == selectedPatternIndex,
+                                            // Drop the check icon — with 4 segments its
+                                            // reserved width crunches the labels.
+                                            icon = {},
+                                        ) {
+                                            Text(
+                                                text = p.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Color — Auto (match text) + brand-accent swatches.
+                                // Accents come from the active theme, so the same
+                                // choice re-themes (e.g. Amber → bronze in Ember).
+                                Text(
+                                    text = "Color",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    ThinkingMatrixColor.entries.forEach { choice ->
+                                        val swatch = choice.toColor(
+                                            autoColor = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        val selected = choice.key == thinkingMatrixColor
+                                        Box(
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .background(swatch)
+                                                .border(
+                                                    width = if (selected) 2.dp else 1.dp,
+                                                    color = if (selected) {
+                                                        MaterialTheme.colorScheme.primary
+                                                    } else {
+                                                        MaterialTheme.colorScheme.outlineVariant
+                                                    },
+                                                    shape = CircleShape
+                                                )
+                                                .clickable {
+                                                    connectionViewModel.setThinkingMatrixColor(choice.key)
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            // Mark Auto so it doesn't read as a literal color swatch.
+                                            if (choice == ThinkingMatrixColor.Auto) {
+                                                Text(
+                                                    text = "A",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.surface
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     HorizontalDivider()

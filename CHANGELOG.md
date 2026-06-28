@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: background daemon.** `hermes-relay daemon start` runs the headless tool router in the background (no console window, survives closing the terminal), with `daemon stop` and `daemon status` to manage it. `daemon status` reports state, uptime, relay, and advertised-tool count; bare `daemon` still runs in the foreground. Logs go to `~/.hermes/daemon.log`.
 - **Desktop CLI: per-command help.** Every subcommand now answers `--help`, and `devices`/`sessions`/`plugins`/`voice`/`relay` print their own usage (sub-commands, flags, examples) instead of a terse "unknown sub-verb".
 - **Desktop CLI: startup banner.** A slim "Hermes Relay" wordmark shows atop `--help`, the first-run welcome, and the chat REPL — and `hermes-relay logo` prints it on demand. Suppressed for piped/`--json`/`--no-color` output.
+- **Animated "thinking" indicator.** While a reply streams, the in-bubble working indicator can now be a small dot-matrix animation instead of the three dots. Pick a motion (Wave, Pulse, Bounce, Sparkle) and a color (match-text or a brand accent) in Chat settings, with a live preview. It follows light/dark and your app theme, and goes static when animations are turned off.
 
 ### Changed
 

@@ -459,11 +459,23 @@ fun MessageBubble(
                             showStillWorking = true
                         }
                     }
+                    val thinkingIndicator = LocalThinkingIndicator.current
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        StreamingDots(
-                            color = textColor.copy(alpha = 0.6f),
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
+                        when (thinkingIndicator.style) {
+                            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
+                                // Auto follows the bubble text color; accents
+                                // come from the brand palette. The grid modulates
+                                // its own alpha (idle dots ≈0.18, lit dots 1.0).
+                                color = thinkingIndicator.color.toColor(autoColor = textColor),
+                                pattern = thinkingIndicator.pattern,
+                                animated = thinkingIndicator.animated,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            ThinkingIndicatorStyle.Dots -> StreamingDots(
+                                color = textColor.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
                         if (showStillWorking && awaitingFirstToken) {
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
