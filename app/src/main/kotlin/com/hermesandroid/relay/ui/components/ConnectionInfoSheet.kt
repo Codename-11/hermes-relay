@@ -78,7 +78,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.ConnectionState
-import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -755,15 +755,13 @@ fun AgentInfoSheet(
 
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    val snackbar = LocalSnackbarHost.current
 
     // Transient confirmation when the user picks a different profile or
-    // personality from inside the sheet. Kept short — these fire on the
-    // tap, so a 1-line toast is enough; the UI state update on the next
-    // chat turn is the real confirmation. Suspend snackbar dispatch goes
-    // through the local coroutine scope so it doesn't block the radio tap.
+    // personality from inside the sheet. Routed to the top info-banner
+    // (UiMessageBus) instead of the snackbar so these frequent tap acks slide
+    // in quietly rather than popping an obtrusive overlay.
     fun toast(message: String) {
-        scope.launch { snackbar.showSnackbar(message) }
+        UiMessageBus.info(message)
     }
 
     ModalBottomSheet(

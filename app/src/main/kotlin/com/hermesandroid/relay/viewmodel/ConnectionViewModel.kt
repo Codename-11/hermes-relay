@@ -1093,6 +1093,24 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .isSuccess
     }
 
+    /**
+     * Rename a session scoped to the ACTIVE PROFILE via the dashboard
+     * `PATCH /api/sessions/{id}?profile=` surface — the write twin of
+     * [deleteProfileScopedSession]. Without this, a manual (or auto-) rename on
+     * a non-default gateway profile patches the shared api_server DB and the new
+     * title never lands in the profile's own `state.db`. Returns `false` when
+     * there's no dashboard surface so the caller can fall back to the shared
+     * api_server rename.
+     */
+    suspend fun renameProfileScopedSession(sessionId: String, title: String): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrl() ?: return false
+        val profileName = AgentDisplay.profileRequestName(profileController.selectedProfile.value?.name)
+        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
+            .renameSession(sessionId, title, profileName)
+            .isSuccess
+    }
+
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
 
     /**

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
@@ -71,6 +72,8 @@ fun SessionDrawerContent(
     scopeSubtitle: String? = null,
     isLoading: Boolean = false,
     isOpen: Boolean = true,
+    autoTitlesSupported: Boolean = true,
+    onRefresh: (() -> Unit)? = null,
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -143,10 +146,29 @@ fun SessionDrawerContent(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Header
-            Text(
-                text = scopeTitle,
-                style = MaterialTheme.typography.titleLarge
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = scopeTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                // Manual re-pull: the server titles a session asynchronously after
+                // the first turn (and never pushes a rename), so a refresh is the
+                // way to pick up a title the auto-reconcile window missed.
+                onRefresh?.let { refresh ->
+                    IconButton(onClick = refresh, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = "Refresh sessions",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            }
             scopeSubtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -198,6 +220,18 @@ fun SessionDrawerContent(
                         },
                     )
                 }
+            }
+            if (!autoTitlesSupported) {
+                // This connection runs chats over the api_server SSE path, which
+                // doesn't auto-name sessions (only the gateway transport does).
+                // A quiet hint so consistently-untitled chats read as expected
+                // rather than broken — rename is one tap away via ⋮. (issue #133)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Chats aren't auto-named on this connection — use ⋮ → Rename.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Spacer(modifier = Modifier.height(8.dp))
             HorizontalDivider()

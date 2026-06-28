@@ -155,7 +155,7 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 - **Single-activity** — Compose Navigation for all routing
 - **Namespace (Kotlin source tree):** `com.hermesandroid.relay` — stable, drives on-disk layout + class FQCNs
 - **applicationId:** `com.axiomlabs.hermesrelay` (googlePlay), `com.axiomlabs.hermesrelay.sideload` (sideload)
-- **Min SDK 26, Target SDK 35, Compile SDK 36** / **Kotlin 2.0+**, JVM toolchain 17
+- **Min SDK 26, Target SDK 35, Compile SDK 37** / **Kotlin 2.0+**, JVM toolchain 17
 
 ### Code Style — Desktop CLI (Node/TypeScript)
 - **Node ≥21** — uses built-in global `WebSocket` (no `ws`/`undici` dep). Strict TS, ES modules, `NodeNext` resolution.

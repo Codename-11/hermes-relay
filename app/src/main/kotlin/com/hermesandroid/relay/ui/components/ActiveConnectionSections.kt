@@ -67,6 +67,7 @@ import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -916,7 +917,7 @@ private fun ManualPairingCodeSubsection(
             }
             connectInProgress = false
             when (terminal) {
-                is AuthState.Paired -> snackbarHost.showSnackbar("Paired successfully")
+                is AuthState.Paired -> UiMessageBus.success("Paired successfully")
                 is AuthState.Failed -> {
                     val human = classifyError(
                         IllegalStateException(terminal.reason),
@@ -972,7 +973,7 @@ private fun ManualPairingCodeSubsection(
                     clipboard.setClipEntry(
                         ClipEntry(ClipData.newPlainText("Pairing code", pairingCode)),
                     )
-                    snackbarHost.showSnackbar("Pairing code copied")
+                    UiMessageBus.info("Pairing code copied")
                 }
             }) {
                 Icon(
@@ -1015,7 +1016,7 @@ private fun ManualPairingCodeSubsection(
                             clipboard.setClipEntry(
                                 ClipEntry(ClipData.newPlainText("hermes pair command", cmd)),
                             )
-                            snackbarHost.showSnackbar("Command copied")
+                            UiMessageBus.info("Command copied")
                         }
                     },
                     modifier = Modifier.size(32.dp),

@@ -134,22 +134,10 @@ Submission-time declarations the Play Console requires — keep in sync with the
 
 Hermes-Relay is a client for a **user-run Hermes server**. A fresh install with no server configured has no content of its own — which is what a reviewer hits first, and what triggered the v1.2.4 *App access* rejection. The core experience is reviewable **offline via Demo mode**, with **no test server, account, or credentials required**.
 
-In **App content → App access**, choose **"All or some functionality is restricted"** — full chat, Manage, and voice require the user to connect their own Hermes server, and choosing "restricted" is what exposes the instructions field that tells the reviewer how to get in. Add **one** access entry with **no username/password**, just these instructions:
+In **App content → App access**, choose **"All or some functionality is restricted"** — full chat, Manage, and voice require the user to connect their own Hermes server, and choosing "restricted" is what exposes the instructions field that tells the reviewer how to get in. Add **one** access entry with **no username/password**, just these instructions (Play Console caps this field at **500 characters** — the text below is 423):
 
 ```
-Hermes-Relay is a client for a Hermes agent server the user runs themselves,
-so a fresh install has no content until a server is connected. To review the
-app with no server and no account:
-
-  1. Launch the app — you land on the welcome / setup screen.
-  2. Tap "Try the demo". It is on the first Connect screen, and also on the
-     empty Chat screen if you tap Skip.
-
-This opens an offline demo of the real Chat UI — a sample conversation with a
-streaming-style reply, Markdown, a tool-progress card, and a rich card. No
-login, account, or network is needed; it runs in airplane mode. A "Demo mode —
-sample data, not connected" banner shows throughout, with a Connect action that
-opens the real setup wizard.
+This app is a client for a Hermes server the user runs themselves, so a fresh install has no content until one is connected. To review it with no server or account: launch the app, then tap "Try the demo" on the first/Connect screen (it's also on the empty Chat screen if you tap Skip). That opens an offline demo of the real chat UI - a sample conversation, no login, account, or network needed. It works in airplane mode.
 ```
 
 **Reviewer note** — paste into the resubmission / appeal message to pre-empt the same rejection:

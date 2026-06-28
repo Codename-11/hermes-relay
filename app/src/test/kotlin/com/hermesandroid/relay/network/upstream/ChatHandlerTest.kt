@@ -361,6 +361,35 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun updateSessions_preservesLocalTitle_whenServerReturnsNullTitle() {
+        // The server titles a session asynchronously after the first turn (and
+        // never on the SSE/runs surfaces), so a re-list often returns the row
+        // with title == null before/without the write. The optimistic preview
+        // we already show must survive that null instead of becoming "Untitled".
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = "Fix the build")))
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = null)))
+
+        assertEquals("Fix the build", handler.sessions.value.single().title)
+    }
+
+    @Test
+    fun updateSessions_preservesLocalTitle_whenServerReturnsBlankTitle() {
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = "Fix the build")))
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = "   ")))
+
+        assertEquals("Fix the build", handler.sessions.value.single().title)
+    }
+
+    @Test
+    fun updateSessions_serverTitleWins_overLocalPreview() {
+        // Once the server generates a real title it replaces the local preview.
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = "Fix the build")))
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = "CI pipeline failure")))
+
+        assertEquals("CI pipeline failure", handler.sessions.value.single().title)
+    }
+
+    @Test
     fun updateSessions_handlesNullMessageCount() {
         val item = SessionItem(id = "s1", messageCount = null)
         handler.updateSessions(listOf(item))

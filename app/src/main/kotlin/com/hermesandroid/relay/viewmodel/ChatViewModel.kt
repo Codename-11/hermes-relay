@@ -56,6 +56,7 @@ import com.hermesandroid.relay.util.PhoneSnapshot
 import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -750,6 +751,18 @@ class ChatViewModel : ViewModel() {
     var appContextSettings: AppContextSettings = AppContextSettings()
     // === END PHASE3-status ===
 
+    // Declared before [streamingEndpoint] so its setter can safely touch the
+    // backing field on first assignment (Kotlin initializers bypass the setter,
+    // but ordering it first removes any doubt).
+    private val _serverAutoTitles = MutableStateFlow(false)
+
+    /**
+     * Whether the active chat transport auto-generates session titles on the
+     * server. True only for the gateway (`/api/ws`) path. Drives the subtle
+     * "chats aren't auto-named here" hint in the session drawer.
+     */
+    val serverAutoTitles: StateFlow<Boolean> = _serverAutoTitles.asStateFlow()
+
     /**
      * Streaming endpoint to use for the next chat turn. Always one of
      * "sessions", "completions", or "runs" — never "auto", since the auto-resolver in
@@ -761,6 +774,16 @@ class ChatViewModel : ViewModel() {
      * OpenAI chat path instead of assuming `/v1/runs` is an SSE stream.
      */
     var streamingEndpoint: String = "completions"
+        set(value) {
+            field = value
+            // Only the gateway transport auto-names sessions server-side
+            // (tui_gateway runs the turn in a HermesCLI child that calls
+            // agent.title_generator.maybe_auto_title). The api_server SSE/runs/
+            // completions surfaces never do — see ChatHandler.updateSessions
+            // and the drawer note. Mirror the capability so the UI can explain
+            // why chats stay untitled on those transports (issue #133).
+            _serverAutoTitles.value = value == "gateway"
+        }
 
     /**
      * SSE endpoint used when a "gateway" turn can't run (gateway unreachable,
@@ -1061,6 +1084,16 @@ class ChatViewModel : ViewModel() {
      * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.deleteProfileScopedSession].
      */
     var profileSessionDeleter: (suspend (String) -> Boolean)? = null
+
+    /**
+     * Renames a session scoped to the active profile on gateway connections
+     * (dashboard `PATCH /api/sessions/{id}?profile=`). The write twin of
+     * [profileSessionDeleter]: without it, a rename on a non-default gateway
+     * profile patches the shared api_server DB and the new title never lands in
+     * the profile's own state.db. Returns `true` on success. Wired from RelayApp
+     * to [com.hermesandroid.relay.viewmodel.ConnectionViewModel.renameProfileScopedSession].
+     */
+    var profileSessionRenamer: (suspend (String, String) -> Boolean)? = null
 
     /**
      * Loads a session's transcript scoped to the active profile (dashboard
@@ -1725,6 +1758,34 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    private var titleReconcileJob: Job? = null
+
+    /**
+     * Re-sync the drawer a couple of times shortly after a turn completes so a
+     * title the server writes *after* the response lands replaces the
+     * optimistic first-message preview.
+     *
+     * The server titles a session in a fire-and-forget background thread once
+     * the first exchange finishes (upstream agent.title_generator), and it
+     * never pushes a rename event — the only way to observe the new title is to
+     * re-list. A single post-turn [refreshSessions] races ahead of that write
+     * and reads the row before its title (and its flushed message_count/model)
+     * settle. Gated to the gateway transport: the api_server SSE/runs surfaces
+     * never auto-title, so retrying there would just re-fetch the same null.
+     * Cancel-and-replace keeps at most one reconcile in flight regardless of
+     * how fast turns complete.
+     */
+    private fun scheduleTitleReconcile(sessionId: String?) {
+        if (sessionId.isNullOrBlank() || streamingEndpoint != "gateway") return
+        titleReconcileJob?.cancel()
+        titleReconcileJob = viewModelScope.launch {
+            for (delayMs in longArrayOf(3_000L, 7_000L)) {
+                delay(delayMs)
+                refreshSessions()
+            }
+        }
+    }
+
     fun createNewChat() {
         val client = apiClient ?: return
         val handler = chatHandler ?: return
@@ -1901,7 +1962,20 @@ class ChatViewModel : ViewModel() {
         handler.renameSessionLocal(sessionId, newTitle)
 
         viewModelScope.launch {
-            client.renameSession(sessionId, newTitle)
+            // On the gateway, the session lives in the ACTIVE PROFILE's own
+            // state.db, so the rename must go through the dashboard
+            // `PATCH /api/sessions/{id}?profile=` surface — the write twin of the
+            // scoped list/delete. The unscoped api_server rename patches the
+            // shared DB, so a non-default profile's title would silently never
+            // persist. Off the gateway (one shared api_server DB, no profiles)
+            // the plain rename is correct; the renamer is also null until
+            // RelayApp wires it, so fall back then.
+            if (streamingEndpoint == "gateway") {
+                val scoped = profileSessionRenamer?.invoke(sessionId, newTitle)
+                if (scoped != true) client.renameSession(sessionId, newTitle)
+            } else {
+                client.renameSession(sessionId, newTitle)
+            }
         }
     }
 
@@ -3329,6 +3403,7 @@ class ChatViewModel : ViewModel() {
                     // from the drawer (carried only by the optimistic row) until a
                     // manual reload. By message.complete the dashboard list includes it.
                     refreshSessions()
+                    scheduleTitleReconcile(sid)
                     drainQueue()
                 }
                 Unit
