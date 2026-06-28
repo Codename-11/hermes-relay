@@ -1,5 +1,16 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Dev-loop polish after the live smoke test
+
+**Why.** End-to-end testing the triage workflow on `main` (issue #150 through open → `triage:deep` → reply, plus a dispatch against #146) surfaced three things to tidy.
+
+**What.**
+- **`start-issue.sh` brief filter fix.** Triage/deep-dive/follow-up comments are posted by the **Claude GitHub App** (author `claude`), not `github-actions` — so the brief generator's `author.login=="github-actions"` filter would have produced an empty "Automated triage notes" section. Switched to an identity-proof match on the comment signatures (`automated triage` / `Deep-dive analysis` / `automated follow-up`), with the bot logins as a fallback.
+- **`actions/github-script@v7` → `@v8`.** Clears the Node 20 deprecation annotation (v8 targets Node 24).
+- **Deep-dive formatting.** Prompt now tells the deep-dive to use its `##`/bold headings as the section separators and not to add horizontal rules (`---`) between sections — the first run rendered a rule under every heading, which read heavy.
+
+**Verification.** Smoke test confirmed all four jobs behave as designed: auto-label + opinionated triage (3 real likely-files), label-gated deep-dive (root cause + fix + surface-aware verification + worktree quick-start), and follow-up gating (skips bot + owner comments; response path is external-reporter-only by design). The workflow tweaks here activate on the next `dev → main` merge; the script fix is live from `dev`.
+
 ## 2026-06-28 — Opinionated issue triage + deep-dive + follow-up loop + issue→worktree dev-loop
 
 **Why.** `claude-triage.yml` was a deliberately conservative classifier — label, dedupe, and one hedged note, with no root-cause opinion and no fix suggestion by design. To shorten the issue→fix loop, triage should also diagnose and hand off a starting branch/worktree, and do it surface-aware: plugin/CLI fixes can be CI-proven, while Android UI/behavior stays a manual on-device gate. Modeled on the MeshMonitor (`Yeraze/meshmonitor`) multi-job triage, ported to our `claude-code-action@v1` interface (`prompt` + `claude_args`, not the older `@beta` `direct_prompt`/`model`/`use_sticky_comment` shape), with the existing untrusted-input hardening kept.
