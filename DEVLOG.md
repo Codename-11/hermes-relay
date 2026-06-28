@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Opinionated issue triage + deep-dive + follow-up loop + issue→worktree dev-loop
+
+**Why.** `claude-triage.yml` was a deliberately conservative classifier — label, dedupe, and one hedged note, with no root-cause opinion and no fix suggestion by design. To shorten the issue→fix loop, triage should also diagnose and hand off a starting branch/worktree, and do it surface-aware: plugin/CLI fixes can be CI-proven, while Android UI/behavior stays a manual on-device gate. Modeled on the MeshMonitor (`Yeraze/meshmonitor`) multi-job triage, ported to our `claude-code-action@v1` interface (`prompt` + `claude_args`, not the older `@beta` `direct_prompt`/`model`/`use_sticky_comment` shape), with the existing untrusted-input hardening kept.
+
+**What.**
+- **`claude-triage.yml` (2 jobs → 4).** `auto-label` now also applies an `area:*` surface label from keywords. `triage-ai` adds a hedged probable-cause / likely-files / suggested-direction read (one ≤180-word note) and invites the `triage:deep` label. New `deep-dive` (opt-in via that label) investigates the codebase and posts a root-cause hypothesis, a fix plan, a surface-specific verification plan, and a maintainer worktree quick-start. New `triage-followup` re-reads a `bug` thread on reporter replies and escalates to `needs-maintainer-review` + the maintainer after ~2 rounds; not gated on commenter write-access (so external reporters get follow-up), and bot comments are excluded so it can't self-trigger.
+- **`claude-code-review.yml`.** Keeps the `/code-review` plugin depth, adds a constructive "Maintainer's-eye verdict" header and `use_sticky_comment` so re-pushes update one comment instead of stacking.
+- **`scripts/start-issue.sh`.** Local bridge — pulls an issue into a pre-briefed worktree (`fix|feature|docs/issue-N-slug` off `origin/dev`) with an `ISSUE-BRIEF.md` carrying the body, the bot triage notes, and the surface's verify commands. `ISSUE-BRIEF.md` is git-ignored.
+- **`docs/dev-loop.md`** documents the loop, the surface→verification matrix, the label setup, and the default-branch activation lag.
+- **Labels.** `triage:deep`, `needs-maintainer-review`, and `area:android|cli|plugin|dashboard|docs` created on the repo.
+- **Scope.** All jobs stay read-only against the repo; an auto-fix (`contents: write`) path was intentionally left out as an injection risk.
+
+**Verification.** Both workflow files parse (jobs enumerate as expected); `start-issue.sh` passes `bash -n`, is stored mode 755 with `eol=lf`. Issue/label/comment triggers run the default-branch copy, so the workflow stays dormant until a release-merge to `main`; end-to-end test pending on `main`. PR #147 → dev.
+
 ## 2026-06-28 — Drop unnecessary safe calls in the update banner/checker
 
 **Why.** A sideload build surfaced two Kotlin `w:` warnings — an unnecessary safe call in `UpdateAvailableBanner` and another in `UpdateChecker`.
