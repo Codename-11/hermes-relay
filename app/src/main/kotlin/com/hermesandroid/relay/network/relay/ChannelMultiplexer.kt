@@ -82,6 +82,13 @@ class ChannelMultiplexer {
             // flavor or by the master enable toggle in the UI).
             "bridge" -> handlers["bridge"]?.onMessage(envelope)
             // === END PHASE3-accessibility ===
+            // Proactive channel — agent-initiated messages pushed FROM the
+            // server (`send_message target=phone`). Routed to a
+            // [ProactiveMessageHandler] (registered by [ConnectionViewModel])
+            // which raises a system notification. The phone→server subscribe
+            // lifecycle is sent directly via [send]; this branch only handles
+            // inbound `phone.message` / `proactive.subscribed`.
+            "proactive" -> handlers["proactive"]?.onMessage(envelope)
             // Pairing channel — host-originated pushes that concern the
             // paired session itself (e.g. `profiles.updated` when the
             // server rescans its ~/.hermes/profiles tree). Routed to

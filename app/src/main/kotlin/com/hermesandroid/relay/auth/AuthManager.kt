@@ -898,6 +898,18 @@ class AuthManager(
     val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
         _profilesUpdatedEvents.asSharedFlow()
 
+    /**
+     * Emits once per successful `auth.ok` — i.e. on every (re)connect, not
+     * just the first pair. Lets connection-scoped consumers re-establish
+     * per-socket state. The proactive subscription is tracked per-WebSocket
+     * on the relay, so [com.hermesandroid.relay.viewmodel.ConnectionViewModel]
+     * collects this to re-send `proactive.subscribe` after each reconnect.
+     */
+    private val _authOkEvents =
+        kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val authOkEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _authOkEvents.asSharedFlow()
+
     fun regeneratePairingCode() {
         _pairingCode.value = generatePairingCode()
     }
@@ -965,6 +977,9 @@ class AuthManager(
                     }
                     _authState.value = AuthState.Paired(token)
                     Log.i(TAG, "handleAuthOk: Paired(token=${token.take(8)}…)")
+                    // Per-connection signal for socket-scoped consumers (e.g.
+                    // re-sending proactive.subscribe). Fires on every auth.ok.
+                    _authOkEvents.tryEmit(Unit)
                     // Server-issued code is one-shot — drop it once the
                     // upgrade to a long-lived session token has landed.
                     serverIssuedCode = null

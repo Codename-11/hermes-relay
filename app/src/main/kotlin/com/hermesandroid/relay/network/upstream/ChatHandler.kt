@@ -327,6 +327,27 @@ class ChatHandler {
     }
 
     /**
+     * Inject an agent-initiated ("proactive") message into the active session
+     * (the `phone` platform's `surfacing="session"` path). SYSTEM role — like
+     * [addSystemNotice] — keeps it out of the voice TTS stream observer (which
+     * only voices ASSISTANT messages) so injection can't trigger uncontrolled
+     * speech; Phase 3's TTS-on-voice will speak proactive messages explicitly.
+     * [ChatMessage.clientOnly] preserves it across the history reconcile.
+     */
+    fun addProactiveMessage(text: String) {
+        _messages.update { list ->
+            val msg = ChatMessage(
+                id = "proactive-msg-${java.util.UUID.randomUUID()}",
+                role = MessageRole.SYSTEM,
+                content = text,
+                timestamp = System.currentTimeMillis(),
+                clientOnly = true,
+            )
+            (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
      * Append an assistant message that carries ONLY a gateway ask card
      * (clarify / approval / sudo / secret). Local-only — the server never
      * stores the ask as a message, so the bubble is flagged

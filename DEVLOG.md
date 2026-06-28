@@ -1,5 +1,70 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Phone platform (Phase 2: inbox surface + session injection)
+
+**Why.** Phase 1 surfaced proactive messages as a transient notification only. Phase 2 adds the other two config-driven surfacings from the brief: a dedicated always-present Hermes inbox, and injection into the active chat session — selected per-message by the `surfacing` hint.
+
+**What.**
+- **Always-present inbox is the durable log.** `ProactiveMessageHandler.dispatch` now records *every* received message to the inbox, then adds the surface its `surfacing` hint selects: `null`/`"default"`/`"notification"` → also notify; `"inbox"` → silent (inbox only); `"session"` → also inject into the active chat (falls back to a notification when no session sink/active chat). Centralized in one `when`.
+- **`data/ProactiveInboxStore.kt`** (new). `ProactiveInboxRepository` — DataStore-backed, newest-first, deduped by id, capped at 100, survives restart. Separate `ProactiveInboxEntry` model so on-disk shape doesn't track the wire protocol.
+- **`ui/screens/HermesInboxScreen.kt`** (new). A flat newest-first list (self-contained cards — deliberately NOT reusing the chat-ux-owned `MessageBubble`), empty state, relative timestamps, clear-all action. Reached from the notification tap (route now `hermes_inbox`) and a "View messages" button on `ProactiveSettingsScreen`.
+- **Session injection (Phase 2b).** `ChatHandler.addProactiveMessage` appends a **SYSTEM-role `clientOnly`** bubble — SYSTEM keeps it out of the voice TTS stream observer (which only voices ASSISTANT messages), so injection can't trigger uncontrolled speech (Phase 3 owns TTS-on-voice); `clientOnly` preserves it across the history reconcile. `ChatViewModel.injectProactiveMessage` is the small localized entry point; `ProactiveMessageHandler.toSession` is wired once at the RelayApp root (where both ViewModels exist) since ChatViewModel isn't available when the handler is built.
+- **Wiring.** `ConnectionViewModel` gains `proactiveInbox` + `inboxMessages` + `clearProactiveInbox()` and feeds the handler's `toInbox` sink. `Screen.HermesInbox` route + NavHost entry added.
+
+**Scope guardrails.** No chat *visuals* touched (`MessageBubble`/theme untouched — inbox renders its own cards). No voice internals touched — the SYSTEM-role choice avoids the TTS observer entirely; Phase 3's TTS-on-voice will call the existing voice player API explicitly.
+
+**Verification.** `./gradlew :app:lintSideloadDebug` over the combined Phase 2 changes — see commit. On-device end-to-end (surfacing=inbox/session/default) is a maintainer step.
+
+## 2026-06-28 — Phone platform (Phase 1d: off-by-default enablement surface)
+
+**Why.** Phase 1c wired the receive path but gated it behind a flag with no UI. Phase 1d adds the user-facing opt-in ("Let Hermes message me") and the notification-permission prompt, completing the end-to-end Phase 1 spine: `send_message target=phone` → phone notification, only when both server and phone have opted in and the phone is paired.
+
+**What.**
+- **`ui/screens/ProactiveSettingsScreen.kt`** (new). A dedicated "Hermes messages" screen: the enablement switch (bound to `proactiveEnabled` / `setProactiveEnabled`), a POST_NOTIFICATIONS request fired on enable (API 33+), a not-paired hint, and an About section that documents the server-side `PHONE_ENABLED` requirement. This is the permanent home Phase 3 expands (quiet hours, per-profile, rate limiting).
+- **`viewmodel/ConnectionViewModel.kt`.** `setProactiveEnabled(enabled)` persists the flag; subscribe/unsubscribe is already driven reactively by the `proactiveEnabled` collector from Phase 1c.
+- **`ui/screens/SettingsScreen.kt`.** New "Hermes messages" category row in the Hermes section + `onNavigateToProactiveSettings` param.
+- **`ui/RelayApp.kt`.** `Screen.ProactiveSettings` route + NavHost entry + nav wiring at the Settings call site.
+- **Server side.** The `PHONE_ENABLED` gate already lives in the adapter (Phase 1a); documented in-app on the new screen.
+
+**Verification.** `POST_NOTIFICATIONS` is already declared in the manifest; `rememberLauncherForActivityResult` is used across existing screens (dependency present). `./gradlew :app:lintSideloadDebug` run over the combined Phase 1c+1d app spine (same compilation unit) — see commit. On-device end-to-end (enable → server `send_message target=phone` → notification) is a maintainer step.
+
+## 2026-06-28 — Phone platform (Phase 1c: app receive + system notification)
+
+**Why.** The relay now pushes `phone.message` envelopes over the phone WSS (Phase 1b); the app needs to receive them and surface the agent's message. Phase 1c lands the receive path + a system notification, gated off by default.
+
+**What.**
+- **`network/relay/ProactiveMessageHandler.kt`.** Sibling of `BridgeCommandHandler`. Parses `phone.message` payloads into a `ProactiveMessage` and dispatches them. `dispatch()` centralizes surfacing so Phase 2 (inbox / session injection) extends one place; Phase 1c always raises a notification. Drops malformed payloads; logs the `proactive.subscribed` ack.
+- **`notifications/ProactiveMessageNotifier.kt`.** Twin of `TurnCompleteNotifier` (channel-ensure → permission-gate → tap PendingIntent) with two differences: it **stacks per message** (slot derived from `message_id` so re-delivery replaces but distinct messages stack) and uses an `IMPORTANCE_HIGH` "Hermes messages" channel (a proactive ping the user opted into). Tap opens Chat for now (inbox route arrives in Phase 2a).
+- **`network/relay/ChannelMultiplexer.kt`.** Adds the `"proactive"` route branch.
+- **`data/ProactivePrefs.kt`.** `KEY_PROACTIVE_ENABLED` ("Let Hermes message me") + setter + reactive read, default **off**. The app half of the two-sided gate.
+- **`auth/AuthManager.kt`.** Adds an additive `authOkEvents` SharedFlow (mirrors the existing `profilesUpdatedEvents`), emitted on every `auth.ok` — the per-connection signal needed to re-subscribe after reconnects.
+- **`viewmodel/ConnectionViewModel.kt`.** Registers the proactive handler; exposes `proactiveEnabled`; sends `proactive.subscribe` on each `auth.ok` when enabled (sourced via `_authManagerFlow.flatMapLatest` so it survives connection switches), and subscribe/unsubscribe when the toggle flips. The subscribe rides *after* the auth handshake, so it never races the `auth` envelope.
+
+**Verification.** New files are self-contained; the receive path is gated by `proactiveEnabled` (default off) and the relay's per-socket subscribe latch, so nothing surfaces until the user opts in (Phase 1d adds the Settings switch + notification-permission prompt). `./gradlew :app:lint` is run once over the app spine after Phase 1d (same compilation unit). On-device end-to-end is a maintainer step.
+
+## 2026-06-28 — Phone platform (Phase 1b: relay forward route)
+
+**Why.** The phone platform adapter (Phase 1a) POSTs proactive messages to the relay; the relay needs a route to receive them and a channel to push them over the live phone WSS. This is the server→app push counterpart to the existing bridge channel.
+
+**What.**
+- **`plugin/relay/channels/proactive.py`.** `ProactiveChannel` — the mirror of the bridge handler, reversed. It latches the phone's WebSocket on a `proactive.subscribe` envelope (acked with `proactive.subscribed`), exposes `push(payload)` that sends a `phone.message` envelope over that socket, and releases on `proactive.unsubscribe` / disconnect. No awaited reply — push is best-effort (notification semantics). `phone.message` from a phone is rejected (server→app only).
+- **`plugin/relay/server.py`.** Wires `self.proactive = ProactiveChannel()` onto `RelayServer`; adds the `channel == "proactive"` dispatch branch; releases the subscriber on client disconnect; closes it on shutdown; and registers `POST /phone/message` (`handle_phone_message`) — **loopback-only** (the adapter runs in the gateway process on the same host; an outbound push could spam notifications, so it is not exposed to the LAN). Returns 503 when no phone is subscribed, 502 on socket-write failure, 400 on empty/invalid body.
+- **Opt-in is structural.** The relay can only push when it holds a latched `phone_ws`, which it only gets when the app subscribes — which the app does only when the user enables "Let Hermes message me." Combined with the server-side `PHONE_ENABLED` adapter gate, both sides must opt in.
+
+**Verification.** `python -m py_compile` clean. `python -m unittest plugin.tests.test_proactive_channel` — 11 tests pass (subscribe/ack, take-over, unsubscribe/detach, push envelope shape + supplied-id passthrough, no-subscriber/closed/failed-send raises, spoofed-inbound + unknown-type ignored). `import plugin.relay.server` succeeds and the route registers; bridge + proactive + phone suites pass together (40 tests). End-to-end with a live phone and the app-side receive handler is Phase 1c.
+
+## 2026-06-28 — Phone as a first-class Hermes platform (Phase 1a: plugin adapter)
+
+**Why.** The paired phone could receive agent output only by being on the chat screen. Making it a registered Hermes *platform* — a peer of Discord/Telegram/ntfy — lets the agent push to it proactively (`send_message target=phone`, cron `deliver=phone`). This is delivered additively through the upstream platform-plugin API (`ctx.register_platform`); no fork, no upstream core change.
+
+**What.**
+- **`plugin/phone_platform.py`.** A push-only `BasePlatformAdapter` subclass (`PhoneAdapter`) modeled on the bundled ntfy adapter. `send()` POSTs loopback to the relay (`/phone/message`, reusing `android_tool.py`'s relay-URL convention) rather than opening a socket — the relay forwards over the live phone WSS. `connect()` only marks the platform ready (the phone's inbound path is chat, so no inbound stream); `get_chat_info()` returns the device identity. Ships the full registry surface: `check_fn`/`validate_config`/`is_connected` (all gated on `PHONE_ENABLED`), `env_enablement_fn`, `cron_deliver_env_var=PHONE_HOME_CHANNEL`, and a `standalone_sender_fn` so out-of-process cron / `send_message` delivery works (without it, `deliver=phone` cron fails with "No live adapter"). `gateway.*` imports are guarded so the module (and its pure helpers) import without hermes-agent present.
+- **`plugin/__init__.py`.** Wires `register_phone_platform(ctx)` into `register()`, guarded like the existing slash/hook blocks so an older host (no `register_platform`) can't block tool/CLI registration.
+- **`plugin/plugin.yaml`.** Adds a `provides_platforms: [phone]` documentation key. The plugin stays `kind: standalone` (multi-capability) — it is not a dedicated `kind: platform` plugin; registration is programmatic.
+- **Off by default.** Nothing is advertised or pushed unless `PHONE_ENABLED` is truthy.
+
+**Verification.** `python -m py_compile` clean on the new + edited files. `python -m unittest plugin.tests.test_phone_platform` — 22 tests pass (env gating, relay-URL precedence, payload construction/truncation/surfacing-lift, `_env_enablement`, and the standalone sender over a fake httpx client: success / 503-no-phone / disabled / unreachable). Relay route, end-to-end routing, and the live-gateway plugin-discovery check are Phase 1b+ and a maintainer on-box step.
+
 ## 2026-06-28 — Dev-loop polish after the live smoke test
 
 **Why.** End-to-end testing the triage workflow on `main` (issue #150 through open → `triage:deep` → reply, plus a dispatch against #146) surfaced three things to tidy.

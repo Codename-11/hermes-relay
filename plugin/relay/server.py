@@ -54,6 +54,7 @@ from .channels.bridge import BridgeError, BridgeHandler
 from .channels.chat import ChatHandler
 from .channels.desktop import DesktopChannel
 from .channels.notifications import NotificationsChannel
+from .channels.proactive import ProactiveChannel, ProactiveError
 from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
@@ -112,6 +113,10 @@ class RelayServer:
         # === PHASE3-notif-listener: notifications channel ===
         self.notifications = NotificationsChannel()
         # === END PHASE3-notif-listener ===
+        # Proactive channel — agent-initiated messages pushed to the phone
+        # (send_message target=phone). Mirror of bridge, reversed: server→app
+        # push with no awaited reply. Latched on proactive.subscribe.
+        self.proactive = ProactiveChannel()
         # Desktop CLI awareness channel — stashes workspace + active-editor
         # hints per session (ephemeral; no persistence). Wired in alpha.6
         # as the keystone for future prompt-injection plugin hooks.
@@ -145,6 +150,7 @@ class RelayServer:
         await self.bridge.close()
         await self.desktop.close()
         await self.tui.close()
+        await self.proactive.close()
 
         # Close all WebSocket connections
         for ws in list(self._clients):
@@ -3174,6 +3180,51 @@ async def handle_notifications_recent(request: web.Request) -> web.Response:
 # === END PHASE3-notif-listener ===
 
 
+async def handle_phone_message(request: web.Request) -> web.Response:
+    """Forward an agent-initiated message to the subscribed phone.
+
+    Called by the phone platform adapter (``plugin/phone_platform.py``) over
+    loopback. The relay pushes a ``phone.message`` envelope over the phone's
+    WSS via the :class:`ProactiveChannel`.
+
+    Loopback-only: the adapter runs in the gateway process on the same host.
+    Unlike the bridge routes (which need a paired phone to do anything), an
+    outbound push could spam the user's notifications, so this route is not
+    exposed to the LAN.
+
+    POST /phone/message  {chat_id, text, title?, surfacing?, reply_to?, metadata?}
+      → 200 {"delivered": true, "message_id": "..."}
+      → 400 invalid body / empty text
+      → 403 non-loopback caller
+      → 502 socket write failed
+      → 503 no phone subscribed
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        return web.json_response({"error": "loopback only"}, status=403)
+
+    server: RelayServer = request.app["server"]
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return web.json_response({"error": "text is required"}, status=400)
+
+    try:
+        result = await server.proactive.push(payload)
+    except ProactiveError as exc:
+        msg = str(exc)
+        status = 503 if "subscrib" in msg.lower() or "no phone" in msg.lower() else 502
+        return web.json_response({"error": msg}, status=status)
+
+    return web.json_response(result, status=200)
+
+
 async def handle_context_injected(request: web.Request) -> web.Response:
     """Return the relay-owned system-prompt context audit shape.
 
@@ -3562,6 +3613,12 @@ async def _on_message(
         task = asyncio.create_task(server.notifications.handle(ws, envelope))
         _track_task(server, ws, task)
     # === END PHASE3-notif-listener ===
+    elif channel == "proactive":
+        # Phone subscribing to / unsubscribing from agent-initiated pushes.
+        # Outbound phone.message envelopes originate from the HTTP route, not
+        # here; this only handles the phone→server subscribe lifecycle.
+        task = asyncio.create_task(server.proactive.handle(ws, envelope))
+        _track_task(server, ws, task)
     elif channel == "desktop":
         # Desktop CLI awareness — workspace + active-editor hints. Stashed
         # on the session; never replied to. Dispatching as a tracked task
@@ -3656,6 +3713,11 @@ async def _on_disconnect(
     # the 30s timeout on every in-flight request_id.
     await server.bridge.detach_ws(ws, reason=f"client {remote_ip} disconnected")
     # === END PHASE3-bridge-server ===
+
+    # If this ws was the proactive subscriber, release it so the next
+    # /phone/message returns 503 (no phone) instead of writing to a dead
+    # socket.
+    await server.proactive.detach_ws(ws, reason=f"client {remote_ip} disconnected")
 
     # Desktop CLI context is per-ws and should not outlive the socket — the
     # next client connect will re-advertise its workspace anyway.
@@ -3938,6 +4000,9 @@ def create_app(config: RelayConfig) -> web.Application:
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
+    # Proactive push: agent → phone. Loopback-only (the phone platform
+    # adapter POSTs here). Forwards over the phone WSS via ProactiveChannel.
+    app.router.add_post("/phone/message", handle_phone_message)
 
     # Relay-owned agent context audit.
     app.router.add_get("/context/injected", handle_context_injected)

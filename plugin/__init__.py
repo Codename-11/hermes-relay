@@ -69,6 +69,22 @@ def register(ctx):
         # The lifecycle hook is best-effort; never block plugin load.
         pass
 
+    # Register the "phone" platform so the agent can proactively push to the
+    # paired device (`send_message target=phone`, cron `deliver=phone`).
+    # Additive + off-by-default (PHONE_ENABLED gate): guarded so an older
+    # hermes-agent without register_platform — or a host where gateway.* is
+    # unavailable at import — can't block tool/CLI registration above.
+    try:
+        from .phone_platform import register_phone_platform
+
+        register_phone_platform(ctx)
+    except (AttributeError, ImportError):
+        # Older hermes-agent (no register_platform) — platform not registered.
+        # Tools/CLI above still work.
+        pass
+    except Exception:
+        logger.debug("Phone platform registration failed; continuing", exc_info=True)
+
     # Apply relay-owned host enhancements. This is intentionally guarded so
     # older Hermes hosts without the system-prompt seam still load tools/CLI.
     try:

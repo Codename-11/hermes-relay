@@ -1337,6 +1337,18 @@ class ChatViewModel : ViewModel() {
     val currentSessionId: StateFlow<String?>
         get() = chatHandler?.currentSessionId ?: _emptySessionId
 
+    /**
+     * Inject an agent-initiated ("proactive") message into the active session
+     * so it continues that conversation (the `phone` platform's
+     * `surfacing="session"` path). Local-only bubble that survives the history
+     * reconcile; no-op when no session is active. Small, localized entry point —
+     * the routing decision lives in
+     * [com.hermesandroid.relay.network.relay.ProactiveMessageHandler].
+     */
+    fun injectProactiveMessage(text: String) {
+        chatHandler?.addProactiveMessage(text)
+    }
+
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
         val handler = chatHandler ?: return emptyList()
         return handler.messages.value
