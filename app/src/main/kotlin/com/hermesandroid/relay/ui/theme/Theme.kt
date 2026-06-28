@@ -71,7 +71,7 @@ fun HermesRelayTheme(
             CompositionLocalProvider(LocalDensity provides scaledDensity) {
                 MaterialTheme(
                     colorScheme = colorScheme,
-                    typography = Typography,
+                    typography = typography,
                     content = content
                 )
             }
