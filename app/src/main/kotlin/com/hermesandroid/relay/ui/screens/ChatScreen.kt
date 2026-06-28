@@ -173,6 +173,11 @@ import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.LocalThinkingIndicator
+import com.hermesandroid.relay.ui.components.ThinkingIndicatorConfig
+import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
+import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
+import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.SubagentLane
@@ -573,6 +578,9 @@ fun ChatScreen(
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+    val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
+    val thinkingMatrixPattern by connectionViewModel.thinkingMatrixPattern.collectAsState()
+    val thinkingMatrixColor by connectionViewModel.thinkingMatrixColor.collectAsState()
     var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
     // Clean-mode discoverability hint: a persistent pill shown ONLY on the
     // empty / new-chat view (no messages) — it teaches the long-press entry
@@ -1966,8 +1974,26 @@ fun ChatScreen(
                     val relayServerImageResolver = remember(chatViewModel) {
                         RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
                     }
+                    val thinkingIndicatorConfig = remember(
+                        thinkingIndicatorStyle,
+                        thinkingMatrixPattern,
+                        thinkingMatrixColor,
+                        animationEnabled,
+                    ) {
+                        ThinkingIndicatorConfig(
+                            style = if (thinkingIndicatorStyle == "matrix") {
+                                ThinkingIndicatorStyle.Matrix
+                            } else {
+                                ThinkingIndicatorStyle.Dots
+                            },
+                            pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
+                            color = ThinkingMatrixColor.fromKey(thinkingMatrixColor),
+                            animated = animationEnabled,
+                        )
+                    }
                     CompositionLocalProvider(
                         LocalRelayServerImageResolver provides relayServerImageResolver,
+                        LocalThinkingIndicator provides thinkingIndicatorConfig,
                     ) {
                     LazyColumn(
                         state = listState,

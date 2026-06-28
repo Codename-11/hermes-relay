@@ -199,6 +199,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val KEY_LAST_SESSION_ID = stringPreferencesKey("last_session_id")
         private val KEY_SHOW_THINKING = booleanPreferencesKey("show_thinking")
         private val KEY_TOOL_DISPLAY = stringPreferencesKey("tool_display")
+        private val KEY_THINKING_INDICATOR_STYLE = stringPreferencesKey("thinking_indicator_style")
+        private val KEY_THINKING_MATRIX_PATTERN = stringPreferencesKey("thinking_matrix_pattern")
+        private val KEY_THINKING_MATRIX_COLOR = stringPreferencesKey("thinking_matrix_color")
         private val KEY_APP_CONTEXT = booleanPreferencesKey("app_context_prompt")
         // === PHASE3-status: granular phone-status sub-toggles ===
         // Gated by the master KEY_APP_CONTEXT. Privacy-sensitive fields
@@ -1517,6 +1520,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_SMOOTH_AUTO_SCROLL] = enabled
+            }
+        }
+    }
+
+    // In-bubble streaming "thinking" indicator style: "dots" (classic three
+    // fading bullets) or "matrix" (the DotMatrixIndicator grid). Local-only
+    // display pref; defaults to "matrix".
+    val thinkingIndicatorStyle: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_THINKING_INDICATOR_STYLE] ?: "matrix" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "matrix")
+
+    fun setThinkingIndicatorStyle(value: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_THINKING_INDICATOR_STYLE] = if (value == "matrix") "matrix" else "dots"
+            }
+        }
+    }
+
+    // Which authored motion the "matrix" thinking indicator plays: "wave"
+    // (procedural sweep), "pulse", "bounce", or "sparkle". Local-only display
+    // pref; unknown values resolve to wave at the UI layer.
+    val thinkingMatrixPattern: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_THINKING_MATRIX_PATTERN] ?: "wave" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "wave")
+
+    fun setThinkingMatrixPattern(value: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_THINKING_MATRIX_PATTERN] = value
+            }
+        }
+    }
+
+    // Which color the "matrix" thinking indicator paints with: "auto" (follow
+    // the bubble text) or a brand accent ("relay"/"cyan"/"green"/"amber"/
+    // "purple"/"pink"). Local-only; unknown values resolve to auto at the UI.
+    val thinkingMatrixColor: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_THINKING_MATRIX_COLOR] ?: "auto" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
+    fun setThinkingMatrixColor(value: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_THINKING_MATRIX_COLOR] = value
             }
         }
     }
