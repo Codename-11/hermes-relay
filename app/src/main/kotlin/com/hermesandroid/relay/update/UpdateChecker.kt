@@ -70,8 +70,10 @@ object UpdateChecker {
                         "GitHub returned HTTP ${resp.code}"
                     )
                 }
-                val body = resp.body?.string()
-                    ?: return@withContext UpdateCheckResult.Error("Empty response body")
+                val body = resp.body.string()
+                if (body.isBlank()) {
+                    return@withContext UpdateCheckResult.Error("Empty response body")
+                }
                 val release = json.decodeFromString<List<GitHubRelease>>(body)
                     .asSequence()
                     .filter { !it.prerelease }

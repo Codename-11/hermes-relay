@@ -311,7 +311,7 @@ fun UpdateAvailableBanner(
     val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
 
     val title: String
-    val subtitle: String?
+    val subtitle: String
     val actionLabel: String?
     val showDismiss: Boolean
     val downloading = status as? UpdateStatus.Downloading
@@ -389,15 +389,13 @@ fun UpdateAvailableBanner(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    subtitle?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = contentColor.copy(alpha = 0.82f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = contentColor.copy(alpha = 0.82f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 if (actionLabel != null) {
                     Button(
