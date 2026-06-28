@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Drop unnecessary safe calls in the update banner/checker
+
+**Why.** A sideload build surfaced two Kotlin `w:` warnings — an unnecessary safe call in `UpdateAvailableBanner` and another in `UpdateChecker`.
+
+**What.**
+- **UpdateAvailableBanner.** `subtitle` is assigned a non-null value in every reachable branch of the status `when`, so the compiler narrows it to non-null at use. Declared it `String` (was `String?`) and render the subtitle `Text` unconditionally instead of via a redundant `?.let`.
+- **UpdateChecker.** OkHttp 5's `Response.body` is non-null, so the `?.` on `resp.body` was dead — and removing only the `?.` would leave an Elvis-on-non-null warning. Replaced with `resp.body.string()` plus an explicit `isBlank()` guard, preserving the original empty-body error path.
+
+**Verification.** Behavior-preserving; both warnings cleared. `:app:lint` green (BUILD SUCCESSFUL, no errors). PR #148 → dev.
+
 ## 2026-06-27 — Profile-scope session rename + manual drawer refresh (#133 follow-up)
 
 **Why.** Auditing the #133 work surfaced that `ChatViewModel.renameSession` always called the unscoped `apiClient.renameSession` (`PATCH /api/sessions/{id}` on the shared api_server DB). There was a `profileSessionDeleter`/`profileSessionLister`/`profileMessageLoader` but no rename twin — so on a non-default **gateway** profile (whose sessions live in that profile's own `state.db`) a manual rename patched the wrong DB and never appeared in the profile-scoped list. Same class as the delete bug fixed in `6552566`. Profiles are first-class, so every session write must be profile-scoped.
