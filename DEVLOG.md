@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Phone as a first-class Hermes platform (Phase 1a: plugin adapter)
+
+**Why.** The paired phone could receive agent output only by being on the chat screen. Making it a registered Hermes *platform* — a peer of Discord/Telegram/ntfy — lets the agent push to it proactively (`send_message target=phone`, cron `deliver=phone`). This is delivered additively through the upstream platform-plugin API (`ctx.register_platform`); no fork, no upstream core change.
+
+**What.**
+- **`plugin/phone_platform.py`.** A push-only `BasePlatformAdapter` subclass (`PhoneAdapter`) modeled on the bundled ntfy adapter. `send()` POSTs loopback to the relay (`/phone/message`, reusing `android_tool.py`'s relay-URL convention) rather than opening a socket — the relay forwards over the live phone WSS. `connect()` only marks the platform ready (the phone's inbound path is chat, so no inbound stream); `get_chat_info()` returns the device identity. Ships the full registry surface: `check_fn`/`validate_config`/`is_connected` (all gated on `PHONE_ENABLED`), `env_enablement_fn`, `cron_deliver_env_var=PHONE_HOME_CHANNEL`, and a `standalone_sender_fn` so out-of-process cron / `send_message` delivery works (without it, `deliver=phone` cron fails with "No live adapter"). `gateway.*` imports are guarded so the module (and its pure helpers) import without hermes-agent present.
+- **`plugin/__init__.py`.** Wires `register_phone_platform(ctx)` into `register()`, guarded like the existing slash/hook blocks so an older host (no `register_platform`) can't block tool/CLI registration.
+- **`plugin/plugin.yaml`.** Adds a `provides_platforms: [phone]` documentation key. The plugin stays `kind: standalone` (multi-capability) — it is not a dedicated `kind: platform` plugin; registration is programmatic.
+- **Off by default.** Nothing is advertised or pushed unless `PHONE_ENABLED` is truthy.
+
+**Verification.** `python -m py_compile` clean on the new + edited files. `python -m unittest plugin.tests.test_phone_platform` — 22 tests pass (env gating, relay-URL precedence, payload construction/truncation/surfacing-lift, `_env_enablement`, and the standalone sender over a fake httpx client: success / 503-no-phone / disabled / unreachable). Relay route, end-to-end routing, and the live-gateway plugin-discovery check are Phase 1b+ and a maintainer on-box step.
+
 ## 2026-06-28 — Dev-loop polish after the live smoke test
 
 **Why.** End-to-end testing the triage workflow on `main` (issue #150 through open → `triage:deep` → reply, plus a dispatch against #146) surfaced three things to tidy.

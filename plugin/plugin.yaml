@@ -82,3 +82,11 @@ provides_tools:
   - desktop_computer_action
   - desktop_computer_grant_request
   - desktop_computer_cancel
+# Gateway platforms this plugin registers programmatically via
+# ctx.register_platform() in register(). Documentation parity with
+# provides_tools — the plugin stays kind=standalone (multi-capability),
+# it is not a dedicated kind=platform plugin. The "phone" platform lets the
+# agent proactively push to the paired device (send_message target=phone,
+# cron deliver=phone); off by default behind PHONE_ENABLED.
+provides_platforms:
+  - phone
