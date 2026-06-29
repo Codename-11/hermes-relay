@@ -12,6 +12,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.MainActivity
 import com.hermesandroid.relay.R
@@ -55,7 +56,10 @@ object ProactiveMessageNotifier {
      * @param title Display title; blank falls back to "Hermes".
      * @param text The agent's message body.
      * @param messageId Server-assigned id; used to derive a stable slot so a
-     *   re-delivery replaces rather than stacks. Blank → a fresh slot.
+     *   re-delivery replaces rather than stacks. Blank → a fresh slot. Also
+     *   carried to [ProactiveReplyReceiver] as the reply's `reply_to` anchor.
+     * @param chatId Conversation the message belongs to; carried to the reply
+     *   receiver so the user's answer continues the same thread.
      */
     @SuppressLint("MissingPermission", "NotificationPermission")
     fun notify(
@@ -63,6 +67,7 @@ object ProactiveMessageNotifier {
         title: String?,
         text: String,
         messageId: String?,
+        chatId: String?,
     ) {
         ensureChannel(context)
         if (!hasPostNotificationsPermission(context)) {
@@ -92,6 +97,7 @@ object ProactiveMessageNotifier {
             .setContentText(collapsed)
             .setStyle(NotificationCompat.BigTextStyle().bigText(expanded))
             .setContentIntent(tapPending)
+            .addAction(buildReplyAction(context, notificationId, resolvedTitle, messageId, chatId))
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -99,6 +105,98 @@ object ProactiveMessageNotifier {
         runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
         }.onFailure { Log.w(TAG, "notify failed", it) }
+    }
+
+    /**
+     * Build the inline Reply action (Phase 2c). The [RemoteInput] lets the user
+     * type a reply straight from the shade; the broadcast PendingIntent must be
+     * **mutable** so the system can fill the typed text into it before delivery
+     * to [ProactiveReplyReceiver].
+     */
+    private fun buildReplyAction(
+        context: Context,
+        notificationId: Int,
+        title: String,
+        messageId: String?,
+        chatId: String?,
+    ): NotificationCompat.Action {
+        val remoteInput = RemoteInput.Builder(ProactiveReplyReceiver.KEY_REPLY_TEXT)
+            .setLabel("Reply to Hermes")
+            .build()
+
+        val replyIntent = Intent(context, ProactiveReplyReceiver::class.java).apply {
+            action = ProactiveReplyReceiver.ACTION_REPLY
+            putExtra(ProactiveReplyReceiver.EXTRA_MESSAGE_ID, messageId)
+            putExtra(ProactiveReplyReceiver.EXTRA_CHAT_ID, chatId)
+            putExtra(ProactiveReplyReceiver.EXTRA_TITLE, title)
+            putExtra(ProactiveReplyReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        // FLAG_MUTABLE is required for RemoteInput on API 31+; the constant is
+        // API 31, so guard the reference (pre-31 PendingIntents are mutable by
+        // default, which is what RemoteInput needs there too).
+        val mutableFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_MUTABLE
+        } else {
+            0
+        }
+        val replyPending = PendingIntent.getBroadcast(
+            context,
+            notificationId,
+            replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag,
+        )
+
+        return NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send,
+            "Reply",
+            replyPending,
+        )
+            .addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(true)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+            .build()
+    }
+
+    /**
+     * Re-post a notification in the same [notificationId] slot to confirm a
+     * sent reply (and clear the system's lingering RemoteInput progress
+     * spinner). Called by [ProactiveReplyReceiver] after a reply is handed off.
+     *
+     * @param delivered false only when the relay wasn't reachable (no live
+     *   multiplexer) — the user is told to open the app and retry.
+     */
+    @SuppressLint("MissingPermission", "NotificationPermission")
+    fun confirmReply(
+        context: Context,
+        notificationId: Int,
+        title: String?,
+        replyText: String,
+        delivered: Boolean,
+    ) {
+        ensureChannel(context)
+        if (!hasPostNotificationsPermission(context)) return
+
+        val resolvedTitle = title?.takeIf { it.isNotBlank() } ?: "Hermes"
+        val line = if (delivered) {
+            "You: ${replyText.take(1000)}"
+        } else {
+            "Reply not sent — open the app and try again."
+        }
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(resolvedTitle)
+            .setContentText(line.take(120))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(line))
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            // A confirmation, not a fresh ping — don't re-alert the user.
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+        }.onFailure { Log.w(TAG, "confirmReply failed", it) }
     }
 
     /** Derive a stable notification slot from the message id. */

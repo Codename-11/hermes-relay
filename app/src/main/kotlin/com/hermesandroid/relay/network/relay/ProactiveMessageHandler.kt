@@ -94,6 +94,7 @@ class ProactiveMessageHandler(
             title = msg.title,
             text = msg.text,
             messageId = msg.messageId,
+            chatId = msg.chatId,
         )
     }
 
