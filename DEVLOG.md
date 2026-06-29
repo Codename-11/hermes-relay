@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-29 — Phone platform (Phase 2c: two-way reply — device round-trip + fixes)
+
+**Why.** The Phase 2c inbound reply leg shipped off-device (unit tests + lint), pending a live round-trip. The first on-device test surfaced that a reply never produced an agent answer: the agent→phone push worked and the reply reached the relay (buffered), but nothing drained it — the gateway's `PhoneAdapter` never connected, so its inbound `/phone/replies` poll loop never ran. Two distinct faults, one masking the other.
+
+**Fix 1 — `PhoneAdapter.connect()` signature (`plugin/phone_platform.py`).** The gateway's platform supervisor calls `adapter.connect(is_reconnect=…)` (the `BasePlatformAdapter.connect` contract). `PhoneAdapter.connect(self)` didn't accept the keyword, so every connect raised `TypeError` and the adapter — and its reply loop — never came up. Added `*, is_reconnect: bool = False` to match the base + the ntfy template it was modeled on (behavior otherwise unchanged). Added a `ConnectContractTests` regression guard asserting the signature via `inspect`, since the live adapter binds to the gateway base class that's absent in CI — the exact blind spot that let this ship.
+
+**Fix 2 — operational: a stale duplicate plugin masked every deploy.** Even after Fix 1 the adapter still didn't connect. Root cause: a prior plugin-clone rebuild had left a full backup copy of the old plugin *inside the user-plugins directory* (`hermes-relay.copy-backup-…`). The plugin loader dedups discovered plugins by manifest name; both the live symlink and the backup carry `name: hermes-relay`, and the backup sorted last, so it *won* the dedup — the gateway loaded old code and silently ignored the deployed clone. Removing the backup from the plugins directory let the real plugin load, register the `phone` platform, connect the adapter, and drain the buffered reply. Follow-up filed (TODO): the installer should purge old backup copies out of the plugins directory so this can't recur.
+
+**Also.** The previously-silent `except Exception` around phone-platform registration now logs at `warning` (was `debug`) — a real registration failure (e.g. an upstream `PlatformEntry` signature drift) should be visible, not lost.
+
+**Verification.** `python -m unittest plugin.tests.test_phone_platform plugin.tests.test_proactive_channel` — 49 pass (incl. the new connect-contract guard). Two-way reply round-trip confirmed end-to-end on-device: agent → phone notification → inline reply → drained through `/phone/replies` → `handle_message` → agent answer back in the *same* thread. One observed gap: when the phone has dropped its (connection-scoped) proactive subscription, the agent's answer `503`s and is lost — tracked as **outbound buffering** in TODO.
+
 ## 2026-06-28 — Phone platform (Phase 2c: two-way reply — the inbound leg)
 
 **Why.** Proactive messaging was push-only: the agent could message the phone, but the user couldn't answer. The phone was registered as a Hermes *platform* but only the outbound half (`send()`) was wired; its inbound path was a no-op, so a reply never reached the agent. Phase 2c wires the inbound leg so a reply becomes an inbound platform message the agent processes on the `phone` channel and answers over the existing `send()` — closing the loop into a conversation.

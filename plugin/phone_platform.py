@@ -63,18 +63,6 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-
-def _diag(msg: str) -> None:
-    """TEMP [phone-diag]: file-based trace. The gateway journal filters plugin
-    logs entirely, so connect/loop diagnostics also land in
-    ``~/.hermes/phone-diag.log``. Revert with the rest of the diag scaffolding."""
-    try:
-        with open(os.path.expanduser("~/.hermes/phone-diag.log"), "a", encoding="utf-8") as f:
-            f.write("[phone-diag] " + msg + "\n")
-    except Exception:
-        pass
-
-
 try:
     import httpx
 
@@ -318,19 +306,19 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         drain the relay's small bounded reply buffer. Using it to drop stale
         replies on a cold boot is a possible future refinement.
         """
-        _diag(f"{self.name}.connect() CALLED (is_reconnect={is_reconnect})")
         if not HTTPX_AVAILABLE:
             logger.warning("[%s] httpx not installed — cannot push to phone", self.name)
-            _diag(f"{self.name}.connect() ABORT: httpx unavailable")
             return False
         if not _phone_enabled():
-            _diag(f"{self.name}.connect() ABORT: PHONE_ENABLED falsy")
+            logger.info("[%s] PHONE_ENABLED not set — platform stays offline", self.name)
             return False
         try:
             self._http_client = httpx.AsyncClient(timeout=15.0)
             self._mark_connected()
             self._poll_task = asyncio.create_task(self._run_reply_loop())
-            _diag(f"{self.name}.connect() OK: reply loop spawned, relay={_relay_base_url()}")
+            logger.info(
+                "[%s] Connected (two-way) — relay=%s", self.name, _relay_base_url()
+            )
             return True
         except Exception as e:  # pragma: no cover - defensive
             logger.error("[%s] Failed to connect: %s", self.name, e)
@@ -368,7 +356,6 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         url, headers = _replies_url_and_headers()
         params = {"timeout": str(int(_REPLY_POLL_TIMEOUT))}
         backoff_idx = 0
-        _diag(f"reply loop ENTERED running={self._running} url={url}")
 
         while self._running:
             client = self._http_client
