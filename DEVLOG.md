@@ -86,6 +86,16 @@
 - **Boundary.** The Relay voice path (`RelayVoiceClient`, streaming PCM, realtime-agent) was not touched.
 
 **Verification.** `:app:lint` green (BUILD SUCCESSFUL). `:app:testGooglePlayDebugUnitTest` compiles and the new suites pass — `DashboardApiClientTest` (31/31, incl. 6 new) and `DashboardConfigEditingTest` (8/8); the only failures are three pre-existing DataStore "multiple instances" Windows flakes (`BargeInPreferencesTest`, `ProfileSelectionStoreTest`, `ProfileSessionStoreTest`), all in untouched files. Static read confirmed the Config-tab finding (no editable `tts.*`/`stt.*`). On-device render of the new card and a live save/round-trip against a dashboard are flagged for the maintainer (no dashboard available in this environment). Branch `Codename-11/voice-standard-parity` off `dev`; not pushed.
+## 2026-06-28 — Chat UI refresh: "Blend" bubbles + assistant avatar + selectable font system
+
+**Why.** Move the chat surface toward a polished blend of Telegram bubbles and Discord density, and replace the single hardcoded sans with a proper user-selectable font system (Inter default). Chat-UI + theme lane only — audio/voice/network untouched (a separate worktree owns voice).
+
+**What.**
+- **Font system.** New `AppFont` registry (Inter / Nunito / System) backing a DataStore pref (`ConnectionViewModel.appFont` / `setAppFont`, key `app_font`). `Type.kt` typography is now built per body family via `appTypography(body)`; `HermesRelayTheme` gains `appFontId` and rebuilds the Material `Typography` from the selected face so the whole app re-themes live (no restart), keeping `Monospace` for code/metadata. Inter + Nunito ship as SIL OFL variable TTFs in `app/src/main/res/font` (weight-instanced 400/500/600/700 via `FontVariation`, `@OptIn(ExperimentalTextApi)`); license texts in `licenses/`. A Font picker in `AppearanceSettingsScreen` previews each option in its own face and persists on tap.
+- **Bubbles + avatar.** Assistant turns get a Hermes brand-mark avatar (reusing `splash_icon`) in a reserved left gutter, drawn once per group like the name label; `MessageBubble`'s content column is wrapped in that gutter Row. Compact-phone bubble cap 300→340dp, chat-list inset 16→12dp, and denser bubble padding (h14/v9) for Discord-like rhythm. The grouped flat-edge shape system is preserved.
+- **Code blocks.** Streaming fence rebuilt Discord-style: a contrasting inset surface with a thin header (language label + copy-to-clipboard affordance that flips to a check) over a horizontally-scrollable monospace body. Markdown code/inline-code backgrounds switched to contrasting container steps (`surfaceContainerLowest` / `surfaceContainerHighest`) so code no longer blends into the surfaceVariant assistant bubble.
+
+**Verification.** Host-side Roborazzi (`StoreScreenshotTest`): added `s09_blend_chat` (Hermes dark + Nous-blue light) and `s10_font_picker`. Renders confirm the avatar/grouping/width/density, the code-block + inline-code contrast in both dark and light, and that Inter and Nunito load as visibly distinct faces in the picker. `./gradlew :app:lint` run clean. On-device typeface crispness and feel (avatar size, width, density on a real device) remain a maintainer gate.
 
 ## 2026-06-28 — Dev-loop polish after the live smoke test
 

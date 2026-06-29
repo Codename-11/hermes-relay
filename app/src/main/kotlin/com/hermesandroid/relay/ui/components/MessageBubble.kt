@@ -6,7 +6,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +50,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,6 +58,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
@@ -192,8 +196,24 @@ fun MessageBubble(
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
     CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
-    Column(
+    // Assistant turns get a Hermes avatar in a left gutter, anchoring each group
+    // at its left edge (drawn once per group, like the name label). The gutter
+    // reserves its width on every message in the group so the bubbles stay
+    // aligned under the first. User/system bubbles keep the original column with
+    // no gutter (the outer alignment keeps user bubbles right-aligned).
+    val showAvatarGutter = !isUser && !isSystem
+    Row(
         modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+    ) {
+        if (showAvatarGutter) {
+            Box(modifier = Modifier.padding(top = 2.dp).size(AssistantAvatarSize)) {
+                if (isFirstInGroup) AssistantAvatar()
+            }
+            Spacer(modifier = Modifier.width(AssistantAvatarGap))
+        }
+    Column(
+        modifier = if (showAvatarGutter) Modifier.weight(1f) else Modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
         // Agent name label (above assistant bubbles, only first in group), with
@@ -358,7 +378,7 @@ fun MessageBubble(
                 )
                 .semantics { contentDescription = a11yDescription }
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
                 SelectionContainer {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
@@ -508,8 +528,40 @@ fun MessageBubble(
         }
         } // end Row (bubble + optional leading accent bar)
         } // end if (showBubble)
-    }
+    } // end content Column
+    } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
+}
+
+/** Width of the assistant avatar (and the gutter it reserves). */
+private val AssistantAvatarSize = 28.dp
+
+/** Gap between the avatar gutter and the assistant content column. */
+private val AssistantAvatarGap = 8.dp
+
+/**
+ * The Hermes brand mark in a small tinted circle, shown once per assistant
+ * group to the left of its bubbles. Theme-reactive (surface + hairline follow
+ * the active [LocalBrand] palette); the chevron-compass glyph reuses the shared
+ * brand drawable so the avatar matches the app icon and splash.
+ */
+@Composable
+private fun AssistantAvatar(modifier: Modifier = Modifier) {
+    val brand = LocalBrand.current
+    Box(
+        modifier = modifier
+            .size(AssistantAvatarSize)
+            .clip(CircleShape)
+            .background(brand.navy2)
+            .border(1.dp, brand.line, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.splash_icon),
+            contentDescription = null,
+            modifier = Modifier.size(AssistantAvatarSize * 0.62f),
+        )
+    }
 }
 
 @Composable

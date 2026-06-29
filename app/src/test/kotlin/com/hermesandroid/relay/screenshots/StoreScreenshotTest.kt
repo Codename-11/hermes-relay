@@ -125,6 +125,11 @@ class StoreScreenshotTest {
     @Test fun s01_landing_cyberpunk() = capture("01_landing_cyberpunk", "cyberpunk") { LandingScene() }
 
     @Test fun s02_chat_brand() = capture("02_chat", "hermes-relay") { ChatScene() }
+    // "Blend" chat surface — wider bubbles + assistant avatar + grouped turns +
+    // a code block, in the Inter default. The self-verification frame for the
+    // chat UI refresh. Rendered in two themes to check dark + light contrast.
+    @Test fun s09_blend_chat() = capture("09_blend_chat", "hermes-relay") { BlendChatScene() }
+    @Test fun s09_blend_chat_light() = capture("09_blend_chat_nous-blue", "nous-blue") { BlendChatScene() }
     @Test fun s03_voice() = capture("03_voice", "hermes-relay") { VoiceScene() }
     // Real screen (1:1, auto-updates on layout changes). ConnectionViewModel
     // takes only an Application; Robolectric provides it. Renders every section
@@ -139,6 +144,21 @@ class StoreScreenshotTest {
     @Test fun s06_manage() = capture("06_manage", "hermes-relay") { ManageScene() }
     @Test fun s04_sessions() = capture("04_sessions", "hermes-relay") { SessionsScene() }
     @Test fun s07_connections() = capture("07_connections", "hermes-relay") { ConnectionsScene() }
+    // Real Appearance screen scrolled to the new Font picker — proves the
+    // bundled Inter/Nunito faces load as visibly distinct previews (vs System).
+    @Test fun s10_font_picker() {
+        val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
+                    AppearanceSettingsScreen(connectionViewModel = vm, onBack = {})
+                }
+            }
+        }
+        compose.onNodeWithText("Nunito").performScrollTo()
+        compose.onRoot().captureRoboImage("build/store-shots/10_font_picker.png")
+    }
+
     // Same real Appearance screen, scrolled to the avatar + sphere-skin sections.
     @Test fun s08_appearance() {
         val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
@@ -204,6 +224,31 @@ private fun ChatScene() = StoreCockpit(contextUsage = 0.04f) {
     ) {
         MessageBubble(message = MockChat.userMsg)
         MessageBubble(message = MockChat.assistantMsg)
+    }
+}
+
+// "Blend" chat — a real grouped thread so the refresh is visible: the assistant
+// group shows the avatar once (first message), the second assistant message
+// flat-tops under it with no avatar, a fenced code block exercises the code
+// surface, and the compact 340dp cap + tightened density match production.
+@Composable
+private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
+    val thread = MockChat.blendThread
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        thread.forEachIndexed { i, m ->
+            val first = i == 0 || thread[i - 1].role != m.role
+            val last = i == thread.lastIndex || thread[i + 1].role != m.role
+            MessageBubble(
+                message = m,
+                modifier = Modifier.padding(top = if (first) 6.dp else 1.dp),
+                maxBubbleWidth = 340.dp,
+                isFirstInGroup = first,
+                isLastInGroup = last,
+            )
+        }
     }
 }
 
@@ -384,6 +429,47 @@ private object MockChat {
         badges = listOf("Voice"),
         inputTokens = 137_200,
         outputTokens = 206
+    )
+
+    // A grouped thread for the "Blend" capture: user → two-message assistant
+    // group (avatar once, code block in the first) → user follow-up.
+    val blendThread = listOf(
+        ChatMessage(
+            id = "bu1",
+            role = MessageRole.USER,
+            content = "How do I deploy to prod? Walk me through it.",
+            timestamp = 0L,
+        ),
+        ChatMessage(
+            id = "ba1",
+            role = MessageRole.ASSISTANT,
+            content = """
+                Run the deploy script — it stages the build, applies migrations, then ships. It's idempotent, so re-running after a failure is safe:
+
+                ```bash
+                ./scripts/deploy.sh prod --yes
+                ```
+
+                Use `--dry-run` first if you want to preview the migration plan.
+            """.trimIndent(),
+            timestamp = 0L,
+            agentName = "Hermes",
+            badges = listOf("Gateway"),
+        ),
+        ChatMessage(
+            id = "ba2",
+            role = MessageRole.ASSISTANT,
+            content = "Want me to tail the logs once it's live and ping you if anything errors?",
+            timestamp = 0L,
+            inputTokens = 138_010,
+            outputTokens = 212,
+        ),
+        ChatMessage(
+            id = "bu2",
+            role = MessageRole.USER,
+            content = "Yes please — keep an eye on the error rate.",
+            timestamp = 0L,
+        ),
     )
 }
 
