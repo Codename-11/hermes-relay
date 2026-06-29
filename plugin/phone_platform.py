@@ -289,12 +289,22 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
 
     # -- Connection lifecycle ----------------------------------------------
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         """Open the outbound HTTP client and start the inbound reply loop.
 
         Outbound is loopback POSTs (no socket held). Inbound is a background
         long-poll against the relay's ``/phone/replies`` — the phone's replies
         are buffered by the relay (different process) and drained here.
+
+        The gateway's platform supervisor invokes ``connect(is_reconnect=...)``
+        (the ``BasePlatformAdapter.connect`` contract, forwarded from
+        ``gateway/run.py``), so the keyword MUST be accepted. A bare
+        ``connect(self)`` raises ``TypeError`` at connect time — the adapter
+        never comes up and the inbound reply loop never starts, so the relay
+        buffers replies that nothing drains (the Phase 2c round-trip silently
+        dies here). ``is_reconnect`` does not change behavior today: we always
+        drain the relay's small bounded reply buffer. Using it to drop stale
+        replies on a cold boot is a possible future refinement.
         """
         if not HTTPX_AVAILABLE:
             logger.warning("[%s] httpx not installed — cannot push to phone", self.name)

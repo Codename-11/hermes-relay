@@ -351,5 +351,37 @@ class NormalizeReplyTests(_EnvIsolated):
         self.assertIsNone(pp._normalize_reply(["x"], "home"))
 
 
+# ── Adapter ↔ gateway connect contract (Phase 2c regression) ───────────────
+
+
+class ConnectContractTests(unittest.TestCase):
+    """Guard the gateway's ``connect(is_reconnect=...)`` call contract.
+
+    The gateway supervisor calls ``adapter.connect(is_reconnect=is_reconnect)``
+    (``BasePlatformAdapter.connect`` / ``gateway/run.py``). When
+    ``PhoneAdapter.connect`` was declared ``connect(self)``, that call raised
+    ``TypeError`` at connect time — the adapter never came up and the inbound
+    reply loop never started, so the two-way reply round-trip silently died
+    with the user's reply stuck buffered in the relay. The live ``PhoneAdapter``
+    binds to the gateway base class (absent here), so we assert via ``inspect``
+    rather than instantiating it.
+    """
+
+    def test_connect_accepts_is_reconnect_keyword(self) -> None:
+        import inspect
+
+        sig = inspect.signature(pp.PhoneAdapter.connect)
+        self.assertIn(
+            "is_reconnect",
+            sig.parameters,
+            "PhoneAdapter.connect must accept is_reconnect — the gateway always "
+            "passes it; a bare connect(self) raises TypeError and the inbound "
+            "reply loop never starts.",
+        )
+        param = sig.parameters["is_reconnect"]
+        self.assertEqual(param.kind, inspect.Parameter.KEYWORD_ONLY)
+        self.assertEqual(param.default, False)
+
+
 if __name__ == "__main__":
     unittest.main()
