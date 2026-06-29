@@ -5,6 +5,8 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -55,6 +57,8 @@ class VoiceRecorder(
     private val bufferLock = Any()
     private val stopRequested = AtomicBoolean(false)
     private var audioRecord: AudioRecord? = null
+    private var echoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
     private var currentOutputFile: File? = null
     private var readThread: Thread? = null
     private var readDone: CountDownLatch? = null
@@ -117,6 +121,7 @@ class VoiceRecorder(
             throw e
         }
 
+        attachVoiceEffects(recorder.audioSessionId)
         audioRecord = recorder
         val done = CountDownLatch(1)
         readDone = done
@@ -224,7 +229,44 @@ class VoiceRecorder(
         _amplitude.value = sqrt(floored)
     }
 
+    /**
+     * Engage the platform's hardware echo-cancellation and noise-suppression
+     * on the [AudioRecord] capture session when the device exposes them —
+     * parity with hermes-desktop's `getUserMedia({echoCancellation,
+     * noiseSuppression})`. Both are best-effort: many mid-range and older
+     * devices report [AcousticEchoCanceler.isAvailable] / [NoiseSuppressor.isAvailable]
+     * false, in which case capture proceeds raw (the same behaviour as before
+     * this change). AEC in particular keeps the device's own TTS playback from
+     * bleeding into the next captured utterance during back-to-back voice turns.
+     */
+    private fun attachVoiceEffects(sessionId: Int) {
+        if (AcousticEchoCanceler.isAvailable()) {
+            echoCanceler = try {
+                AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
+            } catch (e: Exception) {
+                Log.w(TAG, "AcousticEchoCanceler unavailable: ${e.message}")
+                null
+            }
+        }
+        if (NoiseSuppressor.isAvailable()) {
+            noiseSuppressor = try {
+                NoiseSuppressor.create(sessionId)?.apply { enabled = true }
+            } catch (e: Exception) {
+                Log.w(TAG, "NoiseSuppressor unavailable: ${e.message}")
+                null
+            }
+        }
+    }
+
     private fun releaseRecorder() {
+        echoCanceler?.let { fx ->
+            try { fx.release() } catch (_: Exception) { }
+        }
+        echoCanceler = null
+        noiseSuppressor?.let { fx ->
+            try { fx.release() } catch (_: Exception) { }
+        }
+        noiseSuppressor = null
         audioRecord?.let { record ->
             try { record.release() } catch (_: Exception) { }
         }

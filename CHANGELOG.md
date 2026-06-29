@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Voice settings: edit your server's voice engine.** Voice settings now has a **Server voice config** section that reads and writes the host's text-to-speech and speech-to-text settings — provider, voice, model, language, and per-provider options — over the dashboard, the same config the official desktop app edits. It includes an **ElevenLabs voice picker** that lists the voices available on your server's ElevenLabs key (and tells you when no key is set). Works on the no-plugin (Standard) path; sign in to Manage to use it.
 - **Desktop CLI: `hermes-relay audit`.** Shows what the remote agent has actually run on this machine through the desktop tools — tool, status, and a short detail per call — read from a local log, no network or auth. Answers "what did the agent just do?" at a glance.
 - **Desktop CLI: `hermes-relay relay`.** Inspect the relay server itself: `relay info` (version, uptime, sessions — on the relay host), `relay security` (runtime auth toggles), and `relay context` (audit the system-prompt context the relay injects into the agent, which works from a remote machine with your session).
 - **Desktop CLI: background daemon.** `hermes-relay daemon start` runs the headless tool router in the background (no console window, survives closing the terminal), with `daemon stop` and `daemon status` to manage it. `daemon status` reports state, uptime, relay, and advertised-tool count; bare `daemon` still runs in the foreground. Logs go to `~/.hermes/daemon.log`.
@@ -18,9 +19,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Clearer, snappier voice capture and playback.** Voice now engages the device's echo-cancellation and noise-suppression while recording (matching the desktop's microphone setup), and requests audio focus before the first reply so the opening words aren't clipped on a cold start. Listening timing also matches the official desktop: auto-stop ~1.25s after you stop speaking (was 3s), give up after 12s with no speech, and cap a turn at 60s.
 - **Desktop CLI: visual + ergonomics refresh.** A single color theme across the CLI, aligned tables for `devices`/`sessions`, status dots for on/off states, and progress spinners for slow operations (the multi-endpoint pairing probe and the gateway connect) so nothing looks hung. Errors now suggest the fix (e.g. re-pair on auth failure).
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
+
+### Removed
+
+- **Two voice controls that did nothing.** The disabled "Auto-TTS" toggle and the "STT language" picker under "Coming soon" in Voice settings are gone: the official desktop doesn't read every typed message aloud, and speech-to-text language is a server-side setting now editable in the new Server voice config section.
 
 ## [1.2.6] - 2026-06-27
 

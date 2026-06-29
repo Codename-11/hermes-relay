@@ -1967,6 +1967,8 @@ fun RelayApp() {
                     } else {
                     val standardVoiceSignInRouteHint by
                         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
+                    val voiceDashboardUrl by
+                        connectionViewModel.effectiveDashboardUrl.collectAsState()
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
@@ -1975,6 +1977,10 @@ fun RelayApp() {
                         standardVoiceAvailability = standardVoiceAvailability,
                         standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
                         relayVoiceReady = relayVoiceReady,
+                        dashboardUrl = voiceDashboardUrl,
+                        dashboardCookieStoreProvider = {
+                            connectionViewModel.activeDashboardCookieStore()
+                        },
                         onOpenManage = {
                             navController.navigate(Screen.Manage.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
