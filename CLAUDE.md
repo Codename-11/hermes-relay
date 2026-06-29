@@ -349,6 +349,7 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 - **Don't put documentation in root** — long-form docs go in `docs/`
 - **Don't forget DEVLOG.md** — update it (record *what happened*)
 - **Don't bury follow-ups** — deferred work / known gaps go in `TODO.md`, never in DEVLOG or one-off code/doc comments
+- **Don't touch production / remote hosts** — automation and orchestrated agents must NEVER SSH into, deploy to, pull/restart/reconfigure, or push code to a live/remote Hermes host. Building, on-device testing, and server deployment are owner-driven (see Server Deployment). Stop at committing on your branch; surface "this needs a deploy/on-device check" rather than doing it.
 
 ## MCP Tooling
 
