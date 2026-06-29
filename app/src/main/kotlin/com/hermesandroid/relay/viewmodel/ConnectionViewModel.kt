@@ -109,6 +109,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 private data class RelayUiInputs(
     val auth: AuthState,
@@ -1791,6 +1793,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         title = msg.title ?: "Hermes",
                         text = msg.text,
                         receivedAt = msg.sentAt ?: System.currentTimeMillis(),
+                        chatId = msg.chatId,
                     ),
                 )
             }
@@ -1823,6 +1826,36 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** Clear the Hermes inbox of agent-initiated messages. */
     fun clearProactiveInbox() {
         viewModelScope.launch { proactiveInbox.clear() }
+    }
+
+    /**
+     * Send a reply to a proactive message back to the agent (Phase 2c). The
+     * relay buffers it and the gateway adapter long-polls it, turning it into
+     * an inbound platform message that continues the originating conversation.
+     *
+     * Best-effort over the live relay WS (dropped if disconnected — the same
+     * semantics as [sendProactiveSubscribe]). Used by the Hermes inbox reply
+     * box; the notification inline-reply path goes through
+     * [com.hermesandroid.relay.notifications.ProactiveReplyReceiver] instead.
+     *
+     * @param chatId the conversation to continue (from the original message).
+     * @param replyTo the answered message's id (anchors the reply).
+     */
+    fun sendProactiveReply(text: String, chatId: String?, replyTo: String?) {
+        val body = text.trim()
+        if (body.isEmpty()) return
+        multiplexer.send(
+            Envelope(
+                channel = "proactive",
+                type = "proactive.reply",
+                payload = buildJsonObject {
+                    put("text", body)
+                    if (!chatId.isNullOrBlank()) put("chat_id", chatId)
+                    if (!replyTo.isNullOrBlank()) put("reply_to", replyTo)
+                    put("ts", System.currentTimeMillis())
+                },
+            ),
+        )
     }
     // === END Proactive ===
 
@@ -2818,6 +2851,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         com.hermesandroid.relay.notifications.HermesNotificationCompanion
             .multiplexer = multiplexer
         // === END PHASE3-notif-listener-followup ===
+
+        // Proactive notification inline-reply (Phase 2c) — the BroadcastReceiver
+        // lives outside the ViewModel scope, so it reads the live multiplexer
+        // from this static slot (same pattern as the notification companion
+        // above). Replies sent while the relay is disconnected drop best-effort.
+        com.hermesandroid.relay.notifications.ProactiveReplyReceiver
+            .multiplexer = multiplexer
 
         // Resolve [relayUiState] from the three raw inputs (authState,
         // relayConnectionState, relayUrl) with a grace-window transition

@@ -70,6 +70,14 @@
         </service>
         <!-- === END PHASE3-notif-listener === -->
 
+        <!-- Inline-reply receiver for proactive-message notifications
+             (Phase 2c — two-way phone messaging). Not exported: it is only
+             ever triggered by the app's own mutable RemoteInput PendingIntent
+             delivered by the system, never by a third party. -->
+        <receiver
+            android:name=".notifications.ProactiveReplyReceiver"
+            android:exported="false" />
+
         <!-- Opt-in "Keep connected in background" — holds the gateway chat
              socket open while backgrounded. In main so BOTH flavors ship it
              (Home-Assistant-class persistent connection). Off by default; only

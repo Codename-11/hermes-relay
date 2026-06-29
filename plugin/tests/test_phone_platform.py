@@ -12,6 +12,8 @@ the gateway-independent surface:
   * ``_env_enablement`` seeding
   * ``_standalone_send`` (the out-of-process cron / send_message path) over a
     fake httpx client — success, no-phone (503), disabled, and error shapes.
+  * inbound reply helpers (Phase 2c): ``_replies_url_and_headers`` and
+    ``_normalize_reply`` (chat_id default, empty-text/non-dict skip, id synth).
 
 Runs under plain ``unittest`` (no pytest, no ``responses``) to skip the
 repo's ``conftest.py``. Run with::
@@ -290,6 +292,63 @@ class StandaloneSendTests(_EnvIsolated):
         pp.httpx = _FakeHttpx(_FakeResponse(200), raises=OSError("conn refused"))
         out = _run(pp._standalone_send(object(), "phone", "hello"))
         self.assertIn("unreachable", out["error"])
+
+
+# ── Inbound reply helpers (Phase 2c) ───────────────────────────────────────
+
+
+class RepliesUrlTests(_EnvIsolated):
+    def test_url_targets_replies_route(self) -> None:
+        url, headers = pp._replies_url_and_headers()
+        self.assertTrue(url.endswith("/phone/replies"))
+        # GET — no Content-Type, and no auth header without a token.
+        self.assertNotIn("Content-Type", headers)
+        self.assertNotIn("Authorization", headers)
+
+    def test_url_honors_relay_base_override(self) -> None:
+        os.environ["PHONE_RELAY_URL"] = "http://relay.local:9000/"
+        url, _ = pp._replies_url_and_headers()
+        self.assertEqual(url, "http://relay.local:9000/phone/replies")
+
+    def test_token_header_only_when_set(self) -> None:
+        os.environ["PHONE_RELAY_TOKEN"] = "secret"
+        _, headers = pp._replies_url_and_headers()
+        self.assertEqual(headers["Authorization"], "Bearer secret")
+
+
+class NormalizeReplyTests(_EnvIsolated):
+    def test_valid_reply(self) -> None:
+        out = pp._normalize_reply(
+            {
+                "text": "on my way",
+                "chat_id": "phone",
+                "reply_to": "m-1",
+                "message_id": "r-1",
+            },
+            "home",
+        )
+        assert out is not None
+        self.assertEqual(out["text"], "on my way")
+        self.assertEqual(out["chat_id"], "phone")
+        self.assertEqual(out["reply_to"], "m-1")
+        self.assertEqual(out["message_id"], "r-1")
+
+    def test_chat_id_defaults_to_home(self) -> None:
+        out = pp._normalize_reply({"text": "hi"}, "home-chan")
+        assert out is not None
+        self.assertEqual(out["chat_id"], "home-chan")
+        self.assertIsNone(out["reply_to"])
+        self.assertTrue(out["message_id"])  # synthesized
+
+    def test_empty_text_skipped(self) -> None:
+        self.assertIsNone(pp._normalize_reply({"text": "   "}, "home"))
+        self.assertIsNone(pp._normalize_reply({}, "home"))
+        self.assertIsNone(pp._normalize_reply({"text": None}, "home"))
+
+    def test_non_dict_skipped(self) -> None:
+        self.assertIsNone(pp._normalize_reply(None, "home"))
+        self.assertIsNone(pp._normalize_reply("nope", "home"))
+        self.assertIsNone(pp._normalize_reply(["x"], "home"))
 
 
 if __name__ == "__main__":

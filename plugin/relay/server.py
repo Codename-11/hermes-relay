@@ -3225,6 +3225,49 @@ async def handle_phone_message(request: web.Request) -> web.Response:
     return web.json_response(result, status=200)
 
 
+# Cap the server-side long-poll hold so a wedged gateway poller can't pin a
+# request open forever; the adapter re-polls. Generous vs. the adapter's own
+# read timeout so a normal empty poll returns from here, not from a client
+# timeout.
+_REPLIES_MAX_LONGPOLL_SECONDS = 30.0
+
+
+async def handle_phone_replies(request: web.Request) -> web.Response:
+    """Long-poll for buffered phone replies (the inbound reply leg).
+
+    The phone platform adapter (``plugin/phone_platform.py``) runs in the
+    gateway process and polls this loopback route. Replies arrive over the
+    phone WSS as ``proactive.reply`` envelopes and are buffered by the
+    :class:`ProactiveChannel`; this drains them. Mirror image of the outbound
+    ``POST /phone/message`` hop — the two processes can't hand a reply over
+    in-process, so it is parked and polled.
+
+    Loopback-only for the same reason as ``/phone/message``: only the
+    co-located gateway adapter should consume the user's replies.
+
+    GET /phone/replies?timeout=<seconds>
+      → 200 {"replies": [{text, chat_id, reply_to, message_id, ts}, ...]}
+            (possibly empty after the long-poll window elapses)
+      → 403 non-loopback caller
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        return web.json_response({"error": "loopback only"}, status=403)
+
+    server: RelayServer = request.app["server"]
+
+    raw_timeout = request.query.get("timeout", "25")
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError):
+        timeout = 25.0
+    # Clamp to a sane window: non-negative, and never longer than the server cap.
+    timeout = max(0.0, min(timeout, _REPLIES_MAX_LONGPOLL_SECONDS))
+
+    replies = await server.proactive.take_replies(timeout)
+    return web.json_response({"replies": replies}, status=200)
+
+
 async def handle_context_injected(request: web.Request) -> web.Response:
     """Return the relay-owned system-prompt context audit shape.
 
@@ -4003,6 +4046,9 @@ def create_app(config: RelayConfig) -> web.Application:
     # Proactive push: agent → phone. Loopback-only (the phone platform
     # adapter POSTs here). Forwards over the phone WSS via ProactiveChannel.
     app.router.add_post("/phone/message", handle_phone_message)
+    # Inbound reply leg (Phase 2c) — the gateway adapter long-polls here to
+    # drain ``proactive.reply`` envelopes buffered by the ProactiveChannel.
+    app.router.add_get("/phone/replies", handle_phone_replies)
 
     # Relay-owned agent context audit.
     app.router.add_get("/context/injected", handle_context_injected)

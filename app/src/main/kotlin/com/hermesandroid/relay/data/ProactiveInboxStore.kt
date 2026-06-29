@@ -27,6 +27,13 @@ data class ProactiveInboxEntry(
     val text: String,
     /** Epoch millis the message was received (server `sent_at` when present). */
     val receivedAt: Long,
+    /**
+     * Conversation the message belongs to (server `chat_id`). Carried so an
+     * inbox reply (Phase 2c) continues the same thread. Nullable + defaulted
+     * so blobs persisted before 2c still decode (kotlinx tolerates the absent
+     * field).
+     */
+    val chatId: String? = null,
 )
 
 private val Context.proactiveInboxStore: DataStore<Preferences> by

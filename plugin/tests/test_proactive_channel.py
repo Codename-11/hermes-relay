@@ -9,6 +9,9 @@ Validated surface:
   * push over a closed/failing socket raises :class:`ProactiveError`.
   * ``proactive.unsubscribe`` / ``detach_ws`` release the subscriber.
   * a phone must not originate ``phone.message`` (ignored).
+  * ``proactive.reply`` (Phase 2c) buffers the user's answer and
+    :meth:`take_replies` drains it (long-poll); empty-text dropped; the
+    buffer is bounded (drops oldest); timeout returns ``[]``.
 
 Runs under plain ``unittest`` (no pytest, no ``responses``) to skip the
 repo's ``conftest.py``. Run with::
@@ -187,6 +190,133 @@ class ProactiveChannelTests(unittest.TestCase):
             ws = _FakeWs()
             await ch.handle(ws, {"type": "proactive.bogus"})
             self.assertEqual(ws.sent, [])
+
+        _run(run())
+
+    # ── Inbound reply (Phase 2c) ──────────────────────────────────────────
+
+    def test_reply_buffers_and_drains(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+            await ch.handle(
+                ws,
+                {
+                    "type": "proactive.reply",
+                    "payload": {
+                        "text": "on my way",
+                        "chat_id": "phone",
+                        "reply_to": "m-1",
+                        "message_id": "r-1",
+                        "ts": 1719600000000,
+                    },
+                },
+            )
+            self.assertEqual(ch.buffered_reply_count(), 1)
+            # A reply never goes back out over the WS — it is buffered.
+            self.assertEqual(ws.sent, [])
+            replies = await ch.take_replies(timeout=0.1)
+            self.assertEqual(len(replies), 1)
+            r = replies[0]
+            self.assertEqual(r["text"], "on my way")
+            self.assertEqual(r["chat_id"], "phone")
+            self.assertEqual(r["reply_to"], "m-1")
+            self.assertEqual(r["message_id"], "r-1")
+            self.assertEqual(r["ts"], 1719600000000)
+            self.assertEqual(ch.reply_count, 1)
+            # Drained — buffer is empty.
+            self.assertEqual(ch.buffered_reply_count(), 0)
+
+        _run(run())
+
+    def test_reply_empty_text_dropped(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.reply", "payload": {"text": "   "}})
+            await ch.handle(ws, {"type": "proactive.reply", "payload": {}})
+            self.assertEqual(ch.buffered_reply_count(), 0)
+
+        _run(run())
+
+    def test_reply_synthesizes_message_id_and_ts(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.reply", "payload": {"text": "hi"}})
+            replies = await ch.take_replies(timeout=0.1)
+            self.assertEqual(len(replies), 1)
+            self.assertTrue(replies[0]["message_id"])  # synthesized
+            self.assertTrue(replies[0]["ts"])  # synthesized
+            self.assertIsNone(replies[0]["chat_id"])
+            self.assertIsNone(replies[0]["reply_to"])
+
+        _run(run())
+
+    def test_take_replies_drains_all_buffered(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+            for i in range(3):
+                await ch.handle(
+                    ws, {"type": "proactive.reply", "payload": {"text": f"m{i}"}}
+                )
+            replies = await ch.take_replies(timeout=0.1)
+            self.assertEqual([r["text"] for r in replies], ["m0", "m1", "m2"])
+
+        _run(run())
+
+    def test_take_replies_timeout_returns_empty(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            replies = await ch.take_replies(timeout=0.05)
+            self.assertEqual(replies, [])
+
+        _run(run())
+
+    def test_take_replies_wakes_on_late_reply(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+
+            async def deliver_soon() -> None:
+                await asyncio.sleep(0.02)
+                await ch.handle(ws, {"type": "proactive.reply", "payload": {"text": "late"}})
+
+            task = asyncio.ensure_future(deliver_soon())
+            replies = await ch.take_replies(timeout=1.0)
+            await task
+            self.assertEqual(len(replies), 1)
+            self.assertEqual(replies[0]["text"], "late")
+
+        _run(run())
+
+    def test_reply_buffer_is_bounded_drops_oldest(self) -> None:
+        async def run() -> None:
+            from plugin.relay.channels import proactive as mod
+
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+            overflow = mod.MAX_BUFFERED_REPLIES + 5
+            for i in range(overflow):
+                await ch.handle(
+                    ws, {"type": "proactive.reply", "payload": {"text": f"m{i}"}}
+                )
+            self.assertEqual(ch.buffered_reply_count(), mod.MAX_BUFFERED_REPLIES)
+            replies = await ch.take_replies(timeout=0.1)
+            # Oldest 5 dropped; newest kept, order preserved.
+            self.assertEqual(replies[0]["text"], "m5")
+            self.assertEqual(replies[-1]["text"], f"m{overflow - 1}")
+
+        _run(run())
+
+    def test_close_clears_reply_buffer(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.reply", "payload": {"text": "hi"}})
+            await ch.close()
+            self.assertEqual(ch.buffered_reply_count(), 0)
 
         _run(run())
 
