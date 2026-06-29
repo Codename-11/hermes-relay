@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-28 — Phone platform: advertise the capability to the agent
+
+**Why.** The `phone` platform worked and was discoverable via `send_message action=list` (the channel directory includes plugin-registered platforms), but it was not *proactively* advertised: `platform_hint` only injects for the **inbound** platform of a turn (`system_prompt.py`), which never fires for a push-only platform, and the `send_message` schema's `target` examples (upstream core, no-fork) don't list `phone`. So the agent wouldn't reach for it on its own.
+
+**What.** Added a relay-owned system-prompt context block via the existing `RELAY_AGENT_CONTEXT_ENABLED` seam (`plugin/enhancements/context_injection.py`, which wraps `AIAgent._build_system_prompt`):
+- New `phone-platform` block telling the agent it can `send_message target=phone` (delivered as a notification + inbox), gated on **`phone_platform_enabled()` (PHONE_ENABLED)** AND a per-block opt-out **`RELAY_CONTEXT_PHONE_PLATFORM`** (default ON) — `plugin/config.py`. The block only appears when the platform is actually enabled, so the prompt never advertises a disabled capability.
+- Auditable/removable like the media-sensitivity block (surfaces in `GET /context/injected`).
+
+**Verification.** `python -m unittest plugin.tests.test_enhancements plugin.tests.test_phone_platform plugin.tests.test_proactive_channel` — 56 tests pass (new: phone-helper defaults, block present/absent by platform gate, per-block suppression, context-layer-off, labeled-fence in prompt, audit payload). Existing context-injection tests unchanged (new block defaults off). On the live box (RELAY_AGENT_CONTEXT_ENABLED + PHONE_ENABLED both on) the block activates on the next gateway plugin reload.
+
 ## 2026-06-28 — Phone platform (Phase 2: inbox surface + session injection)
 
 **Why.** Phase 1 surfaced proactive messages as a transient notification only. Phase 2 adds the other two config-driven surfacings from the brief: a dedicated always-present Hermes inbox, and injection into the active chat session — selected per-message by the `surfacing` hint.

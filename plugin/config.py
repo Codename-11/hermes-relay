@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 RELAY_AGENT_CONTEXT_ENABLED = "RELAY_AGENT_CONTEXT_ENABLED"
 RELAY_CONTEXT_MEDIA_SENSITIVITY = "RELAY_CONTEXT_MEDIA_SENSITIVITY"
+RELAY_CONTEXT_PHONE_PLATFORM = "RELAY_CONTEXT_PHONE_PLATFORM"
+PHONE_ENABLED = "PHONE_ENABLED"
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off", ""}
@@ -101,11 +103,33 @@ def context_media_sensitivity_enabled() -> bool:
     return strict_bool(RELAY_CONTEXT_MEDIA_SENSITIVITY, default=True)
 
 
+def phone_platform_enabled() -> bool:
+    """Whether the proactive ``phone`` platform is enabled (default OFF).
+
+    Mirrors the adapter's ``PHONE_ENABLED`` gate so the relay-owned context
+    block only advertises the capability when the platform is actually on.
+    """
+    return strict_bool(PHONE_ENABLED, default=False)
+
+
+def context_phone_platform_enabled() -> bool:
+    """Per-block gate for the phone-platform capability hint (default ON).
+
+    Only meaningful when [phone_platform_enabled] is also true — lets an
+    operator keep the platform on while suppressing the system-prompt hint.
+    """
+    return strict_bool(RELAY_CONTEXT_PHONE_PLATFORM, default=True)
+
+
 __all__ = [
     "RELAY_AGENT_CONTEXT_ENABLED",
     "RELAY_CONTEXT_MEDIA_SENSITIVITY",
+    "RELAY_CONTEXT_PHONE_PLATFORM",
+    "PHONE_ENABLED",
     "agent_context_enabled",
     "context_media_sensitivity_enabled",
+    "phone_platform_enabled",
+    "context_phone_platform_enabled",
     "raw_config_value",
     "strict_bool",
 ]
