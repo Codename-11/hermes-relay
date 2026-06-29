@@ -17,7 +17,10 @@ from plugin.enhancements import context_injection
 from plugin.enhancements.context_injection import (
     MEDIA_SENSITIVITY_BLOCK_NAME,
     MEDIA_SENSITIVITY_INSTRUCTION,
+    PHONE_PLATFORM_BLOCK_NAME,
+    PHONE_PLATFORM_INSTRUCTION,
     apply_context_injection,
+    get_injected_context_blocks,
     injected_context_payload,
 )
 
@@ -25,6 +28,8 @@ _ENV_KEYS = (
     "HERMES_HOME",
     plugin_config.RELAY_AGENT_CONTEXT_ENABLED,
     plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY,
+    plugin_config.RELAY_CONTEXT_PHONE_PLATFORM,
+    plugin_config.PHONE_ENABLED,
 )
 
 
@@ -36,6 +41,8 @@ class _IsolatedEnvMixin:
         os.environ["HERMES_HOME"] = self._tmpdir.name
         os.environ.pop(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, None)
         os.environ.pop(plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY, None)
+        os.environ.pop(plugin_config.RELAY_CONTEXT_PHONE_PLATFORM, None)
+        os.environ.pop(plugin_config.PHONE_ENABLED, None)
 
     def tearDown(self) -> None:
         for key in _ENV_KEYS:
@@ -267,6 +274,72 @@ class ContextInjectedRouteTests(_IsolatedEnvMixin, unittest.IsolatedAsyncioTestC
         body = json.loads(resp.text)
         self.assertTrue(body["enabled"])
         self.assertEqual(body["blocks"], [])
+
+
+class PhonePlatformContextBlockTests(_IsolatedEnvMixin, unittest.TestCase):
+    def _block_names(self) -> list[str]:
+        return [b["name"] for b in get_injected_context_blocks()]
+
+    def test_phone_helpers_defaults(self) -> None:
+        # Platform off by default; the per-block hint defaults on (only matters
+        # once the platform is enabled).
+        self.assertFalse(plugin_config.phone_platform_enabled())
+        self.assertTrue(plugin_config.context_phone_platform_enabled())
+
+    def test_phone_block_absent_when_platform_disabled(self) -> None:
+        # Context layer is on by default, but PHONE_ENABLED is unset → no hint.
+        self.assertNotIn(PHONE_PLATFORM_BLOCK_NAME, self._block_names())
+
+    def test_phone_block_present_when_platform_enabled(self) -> None:
+        self._set_env(plugin_config.PHONE_ENABLED, "1")
+        self.assertIn(PHONE_PLATFORM_BLOCK_NAME, self._block_names())
+
+    def test_phone_block_suppressed_by_per_block_flag(self) -> None:
+        self._set_env(plugin_config.PHONE_ENABLED, "1")
+        self._set_env(plugin_config.RELAY_CONTEXT_PHONE_PLATFORM, "0")
+        self.assertNotIn(PHONE_PLATFORM_BLOCK_NAME, self._block_names())
+
+    def test_phone_block_absent_when_context_layer_off(self) -> None:
+        self._set_env(plugin_config.PHONE_ENABLED, "1")
+        self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "0")
+        self.assertEqual(get_injected_context_blocks(), [])
+
+    def test_phone_block_appends_labeled_fence(self) -> None:
+        agent_class = self._agent_class()
+        self.assertTrue(apply_context_injection(agent_class))
+        self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "1")
+        self._set_env(plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY, "0")
+        self._set_env(plugin_config.PHONE_ENABLED, "1")
+
+        prompt = agent_class()._build_system_prompt()
+
+        self.assertIn(
+            "<!-- hermes-relay:phone-platform -->\n"
+            f"{PHONE_PLATFORM_INSTRUCTION}\n"
+            "<!-- /hermes-relay:phone-platform -->",
+            prompt,
+        )
+        self.assertEqual(prompt.count("<!-- hermes-relay:phone-platform -->"), 1)
+
+    def test_audit_payload_includes_phone_block(self) -> None:
+        self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "1")
+        self._set_env(plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY, "0")
+        self._set_env(plugin_config.PHONE_ENABLED, "1")
+
+        payload = injected_context_payload()
+
+        self.assertTrue(payload["enabled"])
+        self.assertEqual(
+            payload["blocks"],
+            [{"name": PHONE_PLATFORM_BLOCK_NAME, "text": PHONE_PLATFORM_INSTRUCTION}],
+        )
+
+    def _agent_class(self) -> type:
+        class DummyAgent:
+            def _build_system_prompt(self, system_message: str | None = None) -> str:
+                return "base prompt"
+
+        return DummyAgent
 
 
 if __name__ == "__main__":

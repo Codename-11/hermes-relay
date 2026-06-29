@@ -14,7 +14,12 @@ import sys
 from functools import wraps
 from typing import Any
 
-from plugin.config import agent_context_enabled, context_media_sensitivity_enabled
+from plugin.config import (
+    agent_context_enabled,
+    context_media_sensitivity_enabled,
+    context_phone_platform_enabled,
+    phone_platform_enabled,
+)
 from plugin.enhancements.registry import Enhancement
 
 logger = logging.getLogger(__name__)
@@ -29,6 +34,17 @@ MEDIA_SENSITIVITY_INSTRUCTION = (
     "media without one of those markers."
 )
 
+PHONE_PLATFORM_BLOCK_NAME = "phone-platform"
+PHONE_PLATFORM_INSTRUCTION = (
+    "Proactive phone messaging is available. You can reach the user on their "
+    "paired phone by calling `send_message` with target `phone` (e.g. "
+    "`send_message(target=\"phone\", message=\"...\")`); it is delivered as a "
+    "phone notification and collected in a dedicated in-app inbox. Use it for "
+    "time-sensitive updates, to report that a long-running task has finished, or "
+    "whenever the user asks to be notified on their phone. Keep these messages "
+    "concise and high-signal — the user may not be looking at the screen."
+)
+
 _WRAPPED_ATTR = "_hermes_relay_context_wrapped"
 _ORIGINAL_ATTR = "_hermes_relay_context_original"
 
@@ -39,7 +55,11 @@ def available_context_blocks() -> list[dict[str, str]]:
         {
             "name": MEDIA_SENSITIVITY_BLOCK_NAME,
             "text": MEDIA_SENSITIVITY_INSTRUCTION,
-        }
+        },
+        {
+            "name": PHONE_PLATFORM_BLOCK_NAME,
+            "text": PHONE_PLATFORM_INSTRUCTION,
+        },
     ]
 
 
@@ -54,6 +74,15 @@ def get_injected_context_blocks() -> list[dict[str, str]]:
             {
                 "name": MEDIA_SENSITIVITY_BLOCK_NAME,
                 "text": MEDIA_SENSITIVITY_INSTRUCTION,
+            }
+        )
+    # Only advertise proactive phone messaging when the platform is actually
+    # enabled (PHONE_ENABLED) and the per-block hint isn't suppressed.
+    if phone_platform_enabled() and context_phone_platform_enabled():
+        blocks.append(
+            {
+                "name": PHONE_PLATFORM_BLOCK_NAME,
+                "text": PHONE_PLATFORM_INSTRUCTION,
             }
         )
     return blocks
