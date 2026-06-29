@@ -15,7 +15,12 @@ Flow (outbound — agent → phone):
      phone platform adapter POSTs loopback to the relay's ``/phone/message``
      route → the HTTP handler calls :meth:`push`.
   4. :meth:`push` sends a ``phone.message`` envelope over the latched
-     phone WebSocket. The app raises a notification / inbox entry.
+     phone WebSocket. The app raises a notification / inbox entry. If no phone
+     is subscribed, :meth:`push` instead *buffers* the message (bounded,
+     drop-oldest, stale-pruned) and :meth:`_flush_outbound` delivers it on the
+     next ``proactive.subscribe`` — so an answer to a backgrounded phone is
+     queued, not lost. A queued message can be cancelled (``cancel_outbound``)
+     or inspected (``peek_outbound``) before it flushes.
 
 Flow (inbound — phone → agent, Phase 2c):
   5. The user replies (notification inline-reply or inbox reply box). The app
@@ -77,6 +82,13 @@ logger = logging.getLogger(__name__)
 # is only useful fresh, so overflow drops the OLDEST (deque maxlen semantics).
 MAX_BUFFERED_REPLIES = 100
 
+# Bound the OUTBOUND buffer — agent→phone messages queued while no phone is
+# subscribed (backgrounded / offline). Overflow drops the OLDEST (deque maxlen).
+# A queued message older than the TTL is dropped on flush rather than delivered
+# stale (a day-old "build is green" is noise, not signal).
+MAX_BUFFERED_OUTBOUND = 50
+OUTBOUND_TTL_SECONDS = 24 * 3600
+
 
 class ProactiveError(Exception):
     """Raised when a proactive message cannot be delivered to a phone."""
@@ -119,6 +131,14 @@ class ProactiveChannel:
         self._reply_event: asyncio.Event = asyncio.Event()
         self.reply_count: int = 0
 
+        # Outbound buffer (agent → phone): messages pushed while no phone is
+        # subscribed are parked here and flushed FIFO on the next
+        # ``proactive.subscribe``, so the agent's answer survives a
+        # backgrounded/offline phone instead of being dropped with a 503.
+        # Bounded + drop-oldest; stale entries pruned on flush.
+        self._outbound: deque[dict[str, Any]] = deque(maxlen=MAX_BUFFERED_OUTBOUND)
+        self.queued_count: int = 0
+
     # ── Envelope dispatch (inbound from phone) ───────────────────────────
 
     async def handle(
@@ -155,6 +175,8 @@ class ProactiveChannel:
             )
         except Exception as exc:  # pragma: no cover - best-effort ack
             logger.debug("proactive: failed to ack subscribe: %s", exc)
+        # Deliver anything that queued while no phone was subscribed.
+        await self._flush_outbound(ws)
 
     async def _handle_unsubscribe(self, ws: web.WebSocketResponse) -> None:
         """Release ``ws`` if it is the current subscriber."""
@@ -165,26 +187,9 @@ class ProactiveChannel:
 
     # ── Outbound push (called from the HTTP handler) ─────────────────────
 
-    async def push(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Send a ``phone.message`` envelope to the subscribed phone.
-
-        ``payload`` is the body POSTed by the phone platform adapter
-        (``chat_id``, ``text``, ``title``, ``surfacing``, ``reply_to``,
-        ``metadata``). Returns ``{delivered, message_id}``.
-
-        Raises :class:`ProactiveError` if no phone is subscribed (→ HTTP
-        503) or the socket write fails (→ HTTP 502).
-        """
-        ws = self.phone_ws
-        if ws is None or ws.closed:
-            raise ProactiveError(
-                "No phone subscribed. Open the Hermes app and enable "
-                "'Let Hermes message me'."
-            )
-
-        message_id = str(payload.get("message_id") or uuid.uuid4().hex[:12])
-        sent_at = time.time()
-        out_payload = {
+    def _build_out_payload(self, payload: dict[str, Any], message_id: str) -> dict[str, Any]:
+        """Build the ``phone.message`` payload that is sent / buffered."""
+        return {
             "message_id": message_id,
             "chat_id": payload.get("chat_id"),
             "text": payload.get("text", ""),
@@ -192,8 +197,46 @@ class ProactiveChannel:
             "surfacing": payload.get("surfacing"),
             "reply_to": payload.get("reply_to"),
             "metadata": payload.get("metadata") or {},
-            "sent_at": int(sent_at * 1000),
+            "sent_at": int(time.time() * 1000),
         }
+
+    async def push(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send a ``phone.message`` to the subscribed phone, or queue it.
+
+        ``payload`` is the body POSTed by the phone platform adapter
+        (``chat_id``, ``text``, ``title``, ``surfacing``, ``reply_to``,
+        ``metadata``).
+
+        Returns ``{delivered: True, message_id}`` on a live send. When **no
+        phone is subscribed**, the message is parked in a bounded buffer and
+        ``{delivered: False, queued: True, message_id, buffered}`` is returned
+        — it flushes on the next ``proactive.subscribe`` so the agent's answer
+        survives a backgrounded/offline phone (it used to be dropped with 503).
+        A queued message can be cancelled before it flushes via
+        :meth:`cancel_outbound`.
+
+        Raises :class:`ProactiveError` only when a *live* socket write fails
+        (→ HTTP 502); a missing subscriber is no longer an error.
+        """
+        message_id = str(payload.get("message_id") or uuid.uuid4().hex[:12])
+        out_payload = self._build_out_payload(payload, message_id)
+
+        ws = self.phone_ws
+        if ws is None or ws.closed:
+            self._outbound.append(out_payload)
+            self.queued_count += 1
+            logger.info(
+                "proactive >>> queued (no subscriber) message_id=%s chat=%s (buffered=%d)",
+                message_id,
+                out_payload["chat_id"],
+                len(self._outbound),
+            )
+            return {
+                "delivered": False,
+                "queued": True,
+                "message_id": message_id,
+                "buffered": len(self._outbound),
+            }
 
         try:
             await ws.send_str(_envelope("phone.message", out_payload, message_id))
@@ -201,7 +244,7 @@ class ProactiveChannel:
             logger.error("proactive: failed to push message: %s", exc)
             raise ProactiveError(f"Failed to send message to phone: {exc}") from exc
 
-        self.last_push_at = sent_at
+        self.last_push_at = out_payload["sent_at"] / 1000.0
         self.push_count += 1
         logger.info(
             "proactive >>> message_id=%s chat=%s len=%d",
@@ -210,6 +253,79 @@ class ProactiveChannel:
             len(out_payload["text"]),
         )
         return {"delivered": True, "message_id": message_id}
+
+    async def _flush_outbound(self, ws: web.WebSocketResponse) -> None:
+        """Deliver queued outbound messages to a freshly-subscribed phone.
+
+        Drains the outbound buffer FIFO. Entries older than
+        :data:`OUTBOUND_TTL_SECONDS` are dropped rather than delivered stale.
+        If the socket dies mid-flush, the remaining (incl. the one that failed)
+        are re-buffered for the next subscribe instead of lost.
+        """
+        if not self._outbound:
+            return
+        pending = list(self._outbound)
+        self._outbound.clear()
+        now_ms = int(time.time() * 1000)
+        ttl_ms = OUTBOUND_TTL_SECONDS * 1000
+        flushed = 0
+        for i, out_payload in enumerate(pending):
+            sent_at = out_payload.get("sent_at") or 0
+            if ttl_ms and sent_at and (now_ms - sent_at) > ttl_ms:
+                continue  # stale — drop rather than deliver late
+            try:
+                await ws.send_str(
+                    _envelope("phone.message", out_payload, out_payload.get("message_id"))
+                )
+                flushed += 1
+            except Exception as exc:
+                logger.warning(
+                    "proactive: outbound flush interrupted (%s) — re-buffering %d",
+                    exc,
+                    len(pending) - i,
+                )
+                for leftover in pending[i:]:
+                    self._outbound.append(leftover)
+                break
+        if flushed:
+            self.last_push_at = time.time()
+            self.push_count += flushed
+            logger.info(
+                "proactive: flushed %d queued message(s) to phone on subscribe", flushed
+            )
+
+    def peek_outbound(self) -> list[dict[str, Any]]:
+        """Return a UI-friendly summary of queued outbound messages (FIFO).
+
+        Text is truncated so a status view / `relay` CLI can list what's
+        waiting without dumping full bodies. Read-only — does not drain.
+        """
+        return [
+            {
+                "message_id": m.get("message_id"),
+                "chat_id": m.get("chat_id"),
+                "text": (m.get("text") or "")[:200],
+                "sent_at": m.get("sent_at"),
+            }
+            for m in self._outbound
+        ]
+
+    def cancel_outbound(self, message_id: str | None = None) -> int:
+        """Cancel queued outbound messages before they flush.
+
+        ``message_id=None`` clears the whole queue; otherwise removes just that
+        message. Returns the number cancelled. No effect on already-delivered
+        messages (the buffer only holds the not-yet-delivered).
+        """
+        if message_id is None:
+            n = len(self._outbound)
+            self._outbound.clear()
+            return n
+        before = len(self._outbound)
+        kept = [m for m in self._outbound if m.get("message_id") != message_id]
+        self._outbound.clear()
+        self._outbound.extend(kept)
+        return before - len(self._outbound)
 
     # ── Inbound reply buffer (phone → agent) ─────────────────────────────
 
@@ -276,6 +392,10 @@ class ProactiveChannel:
         """Number of replies currently waiting for the gateway poller."""
         return len(self._replies)
 
+    def buffered_outbound_count(self) -> int:
+        """Number of agent→phone messages queued for the next subscribe."""
+        return len(self._outbound)
+
     # ── Lifecycle ────────────────────────────────────────────────────────
 
     def is_phone_subscribed(self) -> bool:
@@ -292,8 +412,9 @@ class ProactiveChannel:
             )
 
     async def close(self) -> None:
-        """Server shutdown — drop the subscriber reference + reply buffer."""
+        """Server shutdown — drop the subscriber reference + buffers."""
         self.phone_ws = None
         self.subscribed_at = None
         self._replies.clear()
         self._reply_event.clear()
+        self._outbound.clear()

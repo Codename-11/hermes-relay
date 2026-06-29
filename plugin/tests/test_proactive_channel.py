@@ -5,7 +5,9 @@ Validated surface:
     ``proactive.subscribed``.
   * :meth:`ProactiveChannel.push` sends a ``phone.message`` envelope over the
     latched WS and returns ``{delivered, message_id}``.
-  * push with no subscriber raises :class:`ProactiveError`.
+  * push with no subscriber buffers the message; it flushes FIFO on the next
+    ``proactive.subscribe`` (bounded, drop-oldest, stale-pruned) and can be
+    cancelled (``cancel_outbound``) before it flushes.
   * push over a closed/failing socket raises :class:`ProactiveError`.
   * ``proactive.unsubscribe`` / ``detach_ws`` release the subscriber.
   * a phone must not originate ``phone.message`` (ignored).
@@ -139,23 +141,27 @@ class ProactiveChannelTests(unittest.TestCase):
 
         _run(run())
 
-    def test_push_without_subscriber_raises(self) -> None:
+    def test_push_without_subscriber_queues(self) -> None:
         async def run() -> None:
             ch = ProactiveChannel()
-            with self.assertRaises(ProactiveError) as ctx:
-                await ch.push({"text": "hi"})
-            self.assertIn("subscrib", str(ctx.exception).lower())
+            result = await ch.push({"text": "hi", "chat_id": "phone"})
+            self.assertFalse(result["delivered"])
+            self.assertTrue(result["queued"])
+            self.assertEqual(result["buffered"], 1)
+            self.assertTrue(result["message_id"])
+            self.assertEqual(ch.buffered_outbound_count(), 1)
 
         _run(run())
 
-    def test_push_over_closed_ws_raises(self) -> None:
+    def test_push_over_closed_ws_queues(self) -> None:
         async def run() -> None:
             ch = ProactiveChannel()
             ws = _FakeWs()
             await ch.handle(ws, {"type": "proactive.subscribe"})
             ws.closed = True
-            with self.assertRaises(ProactiveError):
-                await ch.push({"text": "hi"})
+            result = await ch.push({"text": "hi"})
+            self.assertTrue(result["queued"])
+            self.assertEqual(ch.buffered_outbound_count(), 1)
 
         _run(run())
 
@@ -168,6 +174,88 @@ class ProactiveChannelTests(unittest.TestCase):
             with self.assertRaises(ProactiveError) as ctx:
                 await ch.push({"text": "hi"})
             self.assertIn("failed to send", str(ctx.exception).lower())
+
+        _run(run())
+
+    # ── Outbound buffering (queue when no phone, flush on subscribe) ──────
+
+    def test_queued_outbound_flushes_on_subscribe(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            # Pushed with no phone subscribed → queued, FIFO.
+            await ch.push({"text": "first", "chat_id": "phone"})
+            await ch.push({"text": "second", "chat_id": "phone"})
+            self.assertEqual(ch.buffered_outbound_count(), 2)
+            # Phone subscribes → ack, then both queued messages delivered.
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.subscribe"})
+            types = [m["type"] for m in ws.sent]
+            self.assertEqual(
+                types, ["proactive.subscribed", "phone.message", "phone.message"]
+            )
+            texts = [m["payload"]["text"] for m in ws.sent if m["type"] == "phone.message"]
+            self.assertEqual(texts, ["first", "second"])
+            self.assertEqual(ch.buffered_outbound_count(), 0)
+
+        _run(run())
+
+    def test_outbound_buffer_bounded_drops_oldest(self) -> None:
+        async def run() -> None:
+            from plugin.relay.channels import proactive as mod
+
+            ch = ProactiveChannel()
+            overflow = mod.MAX_BUFFERED_OUTBOUND + 5
+            for i in range(overflow):
+                await ch.push({"text": f"m{i}", "chat_id": "phone"})
+            self.assertEqual(ch.buffered_outbound_count(), mod.MAX_BUFFERED_OUTBOUND)
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.subscribe"})
+            texts = [m["payload"]["text"] for m in ws.sent if m["type"] == "phone.message"]
+            self.assertEqual(texts[0], "m5")  # oldest 5 dropped
+            self.assertEqual(texts[-1], f"m{overflow - 1}")
+
+        _run(run())
+
+    def test_stale_outbound_dropped_on_flush(self) -> None:
+        async def run() -> None:
+            from plugin.relay.channels import proactive as mod
+
+            ch = ProactiveChannel()
+            await ch.push({"text": "fresh", "chat_id": "phone"})
+            stale = ch._build_out_payload({"text": "stale", "chat_id": "phone"}, "old")
+            stale["sent_at"] -= (mod.OUTBOUND_TTL_SECONDS + 60) * 1000
+            ch._outbound.appendleft(stale)  # oldest
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.subscribe"})
+            texts = [m["payload"]["text"] for m in ws.sent if m["type"] == "phone.message"]
+            self.assertEqual(texts, ["fresh"])  # stale dropped, fresh delivered
+
+        _run(run())
+
+    def test_cancel_outbound_one_and_all(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            r1 = await ch.push({"text": "a", "chat_id": "phone"})
+            await ch.push({"text": "b", "chat_id": "phone"})
+            self.assertEqual(ch.buffered_outbound_count(), 2)
+            # peek summary is read-only.
+            self.assertEqual([p["text"] for p in ch.peek_outbound()], ["a", "b"])
+            self.assertEqual(ch.buffered_outbound_count(), 2)
+            # cancel one by id, then cancel the rest.
+            self.assertEqual(ch.cancel_outbound(r1["message_id"]), 1)
+            self.assertEqual([p["text"] for p in ch.peek_outbound()], ["b"])
+            self.assertEqual(ch.cancel_outbound(), 1)
+            self.assertEqual(ch.buffered_outbound_count(), 0)
+
+        _run(run())
+
+    def test_close_clears_outbound_buffer(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            await ch.push({"text": "hi", "chat_id": "phone"})
+            self.assertEqual(ch.buffered_outbound_count(), 1)
+            await ch.close()
+            self.assertEqual(ch.buffered_outbound_count(), 0)
 
         _run(run())
 

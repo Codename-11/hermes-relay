@@ -3193,11 +3193,12 @@ async def handle_phone_message(request: web.Request) -> web.Response:
     exposed to the LAN.
 
     POST /phone/message  {chat_id, text, title?, surfacing?, reply_to?, metadata?}
-      → 200 {"delivered": true, "message_id": "..."}
+      → 200 {"delivered": true, "message_id": "..."}  (sent to a live phone)
+      → 200 {"delivered": false, "queued": true, "message_id": "...", "buffered": N}
+            (no phone subscribed — queued, flushed on the next subscribe)
       → 400 invalid body / empty text
       → 403 non-loopback caller
       → 502 socket write failed
-      → 503 no phone subscribed
     """
     remote = request.remote or ""
     if remote not in ("127.0.0.1", "::1"):
@@ -3218,11 +3219,36 @@ async def handle_phone_message(request: web.Request) -> web.Response:
     try:
         result = await server.proactive.push(payload)
     except ProactiveError as exc:
-        msg = str(exc)
-        status = 503 if "subscrib" in msg.lower() or "no phone" in msg.lower() else 502
-        return web.json_response({"error": msg}, status=status)
+        # push() now buffers when no phone is subscribed, so the only
+        # ProactiveError path left is a live socket write that failed → 502.
+        return web.json_response({"error": str(exc)}, status=502)
 
     return web.json_response(result, status=200)
+
+
+async def handle_phone_outbound(request: web.Request) -> web.Response:
+    """Inspect or cancel the queued agent→phone outbound messages.
+
+    Loopback-only (same rationale as ``/phone/message``). Lets a status view /
+    `relay` CLI / dashboard show what's waiting for an offline phone and cancel
+    it before it flushes on the next subscribe.
+
+    GET    /phone/outbound                  → {queued, messages:[{message_id, chat_id, text, sent_at}]}
+    DELETE /phone/outbound                  → cancel ALL → {cancelled}
+    DELETE /phone/outbound?message_id=<id>  → cancel one → {cancelled}
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        return web.json_response({"error": "loopback only"}, status=403)
+
+    server: RelayServer = request.app["server"]
+    if request.method == "DELETE":
+        mid = request.query.get("message_id") or None
+        cancelled = server.proactive.cancel_outbound(mid)
+        return web.json_response({"cancelled": cancelled}, status=200)
+
+    messages = server.proactive.peek_outbound()
+    return web.json_response({"queued": len(messages), "messages": messages}, status=200)
 
 
 # Cap the server-side long-poll hold so a wedged gateway poller can't pin a
@@ -4049,6 +4075,9 @@ def create_app(config: RelayConfig) -> web.Application:
     # Inbound reply leg (Phase 2c) — the gateway adapter long-polls here to
     # drain ``proactive.reply`` envelopes buffered by the ProactiveChannel.
     app.router.add_get("/phone/replies", handle_phone_replies)
+    # Inspect / cancel the queued agent→phone outbound buffer (offline phone).
+    app.router.add_get("/phone/outbound", handle_phone_outbound)
+    app.router.add_delete("/phone/outbound", handle_phone_outbound)
 
     # Relay-owned agent context audit.
     app.router.add_get("/context/injected", handle_context_injected)
