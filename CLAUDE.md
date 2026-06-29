@@ -414,7 +414,7 @@ package is only a legacy import shim. Vanilla Hermes chat, Manage, and dashboard
 must not depend on this hook.
 
 **Key conventions:**
-- Phone re-pairs after each relay restart (SessionManager is in-memory; wiped on restart)
+- Phone pairing **survives** relay restart — `SessionManager` persists sessions to `~/.hermes/hermes-relay-sessions.json` (`server.py:88-90`, `persistence_path` from `RelayConfig.from_env`); a trusted-device refresh token recovers a lost/revoked/reset session without a new QR scan. (Only the in-memory *live-connection presence* clears on restart; the phone reconnects automatically.)
 - Use `python -m unittest` not `pytest` — conftest imports `responses` which may not be installed
 - `_env_bootstrap.py` loads `~/.hermes/.env` on every relay start — no stale API keys
 

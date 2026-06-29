@@ -61,7 +61,7 @@ Do NOT use this skill to start or install the relay server itself — that is a 
 
 1. **Hermes-Relay plugin installed into the Hermes venv.** Verify by running `python -m plugin.status --help` — if it errors with `ModuleNotFoundError: No module named 'plugin'`, install it first: `pip install -e <path-to-hermes-relay-repo>`.
 2. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`). Without a live relay, this skill exits with code `1` and a "relay unreachable" error.
-3. **Phone has connected at least once** since the last relay restart. The relay tracks phone state in memory, so a restart clears it — the phone re-pairs automatically on reconnect. Until then, status returns "no phone connected" with exit code `2`.
+3. **Phone has connected at least once** since the last relay restart. The relay tracks live phone-*connection* state in memory, so a restart clears that presence — the phone **reconnects** automatically (its paired session persists across restart, so no re-pair is needed). Until then, status returns "no phone connected" with exit code `2`.
 
 ## Procedure
 

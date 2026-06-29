@@ -61,12 +61,12 @@ class RelayHttpClient(
     /**
      * True when relay media is actually FETCHABLE right now: a non-blank relay
      * URL AND a current paired session token. Synchronous. The token check
-     * matters because the relay's SessionManager is in-memory and wiped on
-     * restart, so a configured relay URL can outlive the pairing — gating on URL
-     * alone made the media-capability badge read "available" while every
+     * matters because a configured relay URL can outlive a usable pairing — the
+     * session can expire, be revoked, or never have been established — so gating
+     * on URL alone made the media-capability badge read "available" while every
      * `/media/by-path` fetch failed for a missing token. Now the badge (and the
-     * SSE media hint) agree with what the fetch can do, and self-correct on
-     * re-pair.
+     * SSE media hint) agree with what the fetch can do, and self-correct once a
+     * valid paired token is present.
      */
     fun mediaUrlConfigured(): Boolean =
         !relayUrlProvider().isNullOrBlank() && !pairedTokenSnapshot().isNullOrBlank()

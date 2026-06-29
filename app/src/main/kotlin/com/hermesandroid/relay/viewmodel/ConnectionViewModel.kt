@@ -437,7 +437,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         pairedTokenSnapshot = {
             // Same synchronous paired-token read the fetch uses, so the media-
             // capability badge agrees with whether /media/by-path can actually
-            // fetch (the token is wiped on relay restart until we re-pair).
+            // fetch (no current paired token → the fetch can't authenticate).
             (authManager.authState.value as? AuthState.Paired)?.token
         },
     )
