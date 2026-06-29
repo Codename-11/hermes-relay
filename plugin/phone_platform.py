@@ -13,19 +13,26 @@ auto-extends for unknown names via ``_missing_``. The registration shape
 mirrors the bundled ntfy adapter (``plugins/platforms/ntfy/adapter.py``),
 the canonical "push platform" template.
 
-Delivery model (push-only):
-    The phone already has a rich *inbound* path (chat). This platform adds
-    the missing *outbound* lane: agent → phone. ``send()`` does NOT open a
-    socket — it POSTs **loopback** to the already-running relay server
-    (``:8767``), exactly like ``plugin/tools/android_tool.py``. The relay's
-    ProactiveChannel forwards the message over the live phone WSS (the same
-    connection that carries bridge commands), and the app surfaces it as a
-    notification / inbox entry / session injection.
+Delivery model (two-way):
+    Outbound (agent → phone): ``send()`` does NOT open a socket — it POSTs
+    **loopback** to the already-running relay server (``:8767``), exactly like
+    ``plugin/tools/android_tool.py``. The relay's ProactiveChannel forwards the
+    message over the live phone WSS (the same connection that carries bridge
+    commands), and the app surfaces it as a notification / inbox entry /
+    session injection.
 
-    Because the inbound path is unused here, ``connect()`` does not open a
-    stream — it just marks the platform ready. "Is a phone actually
-    reachable?" is answered per-send by the relay (HTTP 503 when no phone
-    is subscribed), not at connect time.
+    Inbound (phone → agent, Phase 2c): ``connect()`` starts a background loop
+    that long-polls the relay's loopback ``GET /phone/replies``. The relay and
+    this adapter run in *different processes*, so a reply the phone sends over
+    its WSS (``proactive.reply``) is buffered by the relay and drained here.
+    Each reply is turned into an inbound ``MessageEvent`` and dispatched via
+    ``handle_message`` — exactly how the bundled platform adapters feed inbound
+    messages to the agent. The agent's answer rides the existing ``send()``
+    back to the phone, so the conversation continues in the same thread
+    (keyed by ``chat_id`` / ``reply_to`` carried on the original message).
+
+    "Is a phone actually reachable?" is answered per-send by the relay (HTTP
+    503 when no phone is subscribed), not at connect time.
 
 Off by default:
     Nothing is pushed unless ``PHONE_ENABLED`` is truthy **and** a phone is
@@ -47,6 +54,7 @@ Environment variables (env wins over config.yaml ``extra``):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -71,7 +79,12 @@ except ImportError:  # pragma: no cover - httpx is a Hermes dependency
 # the real adapter binds to the real base class on the live box.
 try:
     from gateway.config import Platform, PlatformConfig  # type: ignore
-    from gateway.platforms.base import BasePlatformAdapter, SendResult  # type: ignore
+    from gateway.platforms.base import (  # type: ignore
+        BasePlatformAdapter,
+        MessageEvent,
+        MessageType,
+        SendResult,
+    )
 
     GATEWAY_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only off the live box
@@ -79,6 +92,8 @@ except Exception:  # pragma: no cover - exercised only off the live box
     Platform = None  # type: ignore[assignment]
     PlatformConfig = Any  # type: ignore[assignment,misc]
     BasePlatformAdapter = object  # type: ignore[assignment,misc]
+    MessageEvent = None  # type: ignore[assignment,misc]
+    MessageType = None  # type: ignore[assignment,misc]
 
     @dataclass
     class SendResult:  # type: ignore[no-redef]
@@ -108,8 +123,18 @@ MAX_MESSAGE_LENGTH = 4096
 # Truthy spellings accepted for boolean env flags.
 _TRUTHY = ("1", "true", "yes", "on")
 
-# Relay route that the ProactiveChannel serves (see plugin/relay/server.py).
-_RELAY_MESSAGE_PATH = "/phone/message"
+# Relay routes that the ProactiveChannel serves (see plugin/relay/server.py).
+_RELAY_MESSAGE_PATH = "/phone/message"  # outbound: agent → phone
+_RELAY_REPLIES_PATH = "/phone/replies"  # inbound long-poll: phone → agent
+
+# Inbound reply long-poll tuning. The adapter asks the relay to hold the poll
+# open for ``_REPLY_POLL_TIMEOUT`` seconds; the HTTP read timeout adds margin
+# so a normal empty poll returns from the server, not a client timeout.
+_REPLY_POLL_TIMEOUT = 25.0
+_REPLY_READ_TIMEOUT = _REPLY_POLL_TIMEOUT + 10.0
+# Backoff (seconds) when the relay is unreachable / erroring, so a down relay
+# doesn't spin the loop. Resets to fast polling once a poll succeeds.
+_REPLY_BACKOFF = (2.0, 5.0, 10.0, 30.0)
 
 
 # ---------------------------------------------------------------------------
@@ -194,17 +219,59 @@ def _build_message_payload(
     }
 
 
+def _replies_url_and_headers() -> tuple[str, Dict[str, str]]:
+    """Return the ``/phone/replies`` long-poll URL and request headers.
+
+    GET has no body, so unlike :func:`_relay_url_and_headers` no
+    ``Content-Type`` is set. ``Authorization`` is attached only when
+    ``PHONE_RELAY_TOKEN`` is configured (loopback is unauthenticated by
+    default).
+    """
+    headers: Dict[str, str] = {}
+    token = os.getenv("PHONE_RELAY_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return f"{_relay_base_url()}{_RELAY_REPLIES_PATH}", headers
+
+
+def _normalize_reply(
+    reply: Any, default_chat_id: str
+) -> Optional[Dict[str, Any]]:
+    """Normalize one raw reply record from ``/phone/replies`` for dispatch.
+
+    The relay already validates/normalizes on the way in, but the adapter is
+    defensive against a malformed or older relay: a non-dict or empty-text
+    record yields ``None`` (skipped). ``chat_id`` falls back to the home
+    channel so a reply with no thread still continues the default
+    conversation; ``message_id`` is synthesized when absent. Pure + gateway-
+    independent so it is unit-testable without the gateway package.
+    """
+    if not isinstance(reply, dict):
+        return None
+    text = reply.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return {
+        "text": text,
+        "chat_id": reply.get("chat_id") or default_chat_id,
+        "reply_to": reply.get("reply_to"),
+        "message_id": str(reply.get("message_id") or uuid.uuid4().hex[:12]),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
 
 
 class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
-    """Push-only platform adapter for the paired Hermes-Relay phone.
+    """Two-way platform adapter for the paired Hermes-Relay phone.
 
     The four abstract methods of :class:`BasePlatformAdapter` are
-    implemented; everything else uses the base defaults. ``send()`` is the
-    only one that does real work — it forwards to the relay over loopback.
+    implemented; everything else uses the base defaults. ``send()`` forwards
+    to the relay over loopback (outbound); ``connect()`` additionally starts
+    a background long-poll loop that drains the user's replies from the relay
+    and dispatches them inbound via ``handle_message`` (Phase 2c).
     """
 
     MAX_MESSAGE_LENGTH = MAX_MESSAGE_LENGTH
@@ -216,14 +283,18 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         # so a live `.env` edit takes effect without a reconnect.
         self._home_channel_name: str = extra.get("home_channel_name") or _home_channel_name()
         self._http_client: Optional["httpx.AsyncClient"] = None
+        # Inbound reply long-poll task (Phase 2c). Spawned in connect(),
+        # cancelled in disconnect().
+        self._poll_task: Optional["asyncio.Task[Any]"] = None
 
     # -- Connection lifecycle ----------------------------------------------
 
     async def connect(self) -> bool:
-        """Mark the push-only platform ready.
+        """Open the outbound HTTP client and start the inbound reply loop.
 
-        No inbound stream is opened — the phone's inbound path is chat, not
-        this platform. We only need an HTTP client for outbound POSTs.
+        Outbound is loopback POSTs (no socket held). Inbound is a background
+        long-poll against the relay's ``/phone/replies`` — the phone's replies
+        are buffered by the relay (different process) and drained here.
         """
         if not HTTPX_AVAILABLE:
             logger.warning("[%s] httpx not installed — cannot push to phone", self.name)
@@ -234,8 +305,9 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         try:
             self._http_client = httpx.AsyncClient(timeout=15.0)
             self._mark_connected()
+            self._poll_task = asyncio.create_task(self._run_reply_loop())
             logger.info(
-                "[%s] Connected (push-only) — relay=%s", self.name, _relay_base_url()
+                "[%s] Connected (two-way) — relay=%s", self.name, _relay_base_url()
             )
             return True
         except Exception as e:  # pragma: no cover - defensive
@@ -243,13 +315,125 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
             return False
 
     async def disconnect(self) -> None:
-        """Tear down the HTTP client."""
+        """Stop the reply loop and tear down the HTTP client."""
         self._running = False
         self._mark_disconnected()
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # pragma: no cover - defensive
+                pass
+            self._poll_task = None
         if self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
         logger.info("[%s] Disconnected", self.name)
+
+    # -- Inbound reply loop (phone → agent) --------------------------------
+
+    async def _run_reply_loop(self) -> None:
+        """Long-poll the relay for phone replies and dispatch them inbound.
+
+        Mirrors the streaming-receive loop pattern of the bundled adapters
+        (e.g. ntfy ``_run_stream``): a ``self._running``-guarded loop with
+        backoff on transient failures. Each drained reply becomes a
+        ``MessageEvent`` handed to ``handle_message`` — the agent then
+        processes it on the ``phone`` platform and answers via ``send()``.
+        """
+        url, headers = _replies_url_and_headers()
+        params = {"timeout": str(int(_REPLY_POLL_TIMEOUT))}
+        backoff_idx = 0
+
+        while self._running:
+            client = self._http_client
+            if client is None:
+                return
+            try:
+                resp = await client.get(
+                    url, headers=headers, params=params, timeout=_REPLY_READ_TIMEOUT
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                if not self._running:
+                    return
+                delay = _REPLY_BACKOFF[min(backoff_idx, len(_REPLY_BACKOFF) - 1)]
+                logger.debug(
+                    "[%s] reply poll failed: %s — retrying in %.0fs",
+                    self.name, e, delay,
+                )
+                try:
+                    await asyncio.sleep(delay)
+                except asyncio.CancelledError:
+                    return
+                backoff_idx += 1
+                continue
+
+            # A successful poll resets backoff; a non-200 is transient — pause
+            # briefly then re-poll rather than hammering.
+            backoff_idx = 0
+            if resp.status_code != 200:
+                logger.debug("[%s] /phone/replies HTTP %d", self.name, resp.status_code)
+                try:
+                    await asyncio.sleep(_REPLY_BACKOFF[0])
+                except asyncio.CancelledError:
+                    return
+                continue
+
+            try:
+                data = resp.json()
+                replies = data.get("replies", []) if isinstance(data, dict) else []
+            except Exception:
+                replies = []
+
+            for reply in replies:
+                if not self._running:
+                    return
+                try:
+                    await self._dispatch_reply(reply)
+                except Exception as e:
+                    logger.warning("[%s] failed to dispatch reply: %s", self.name, e)
+
+    async def _dispatch_reply(self, reply: Dict[str, Any]) -> None:
+        """Turn one relay reply record into an inbound agent message.
+
+        The reply continues the originating conversation: ``chat_id`` keys the
+        session and ``reply_to`` anchors it to the answered message. The phone
+        is the single paired user already authenticated by the relay's pairing
+        layer, so the source is built ``role_authorized=True`` — it bypasses
+        the gateway's per-platform user allowlist without requiring the
+        operator to set ``PHONE_ALLOW_ALL_USERS`` (the relay session token IS
+        the auth check the gateway is asking about).
+        """
+        normalized = _normalize_reply(reply, _home_channel())
+        if normalized is None:
+            return
+        chat_id = normalized["chat_id"]
+        source = self.build_source(
+            chat_id=chat_id,
+            chat_name=self._home_channel_name,
+            chat_type="dm",
+            user_id=chat_id,
+            user_name=self._home_channel_name,
+            message_id=normalized["reply_to"],
+            role_authorized=True,
+        )
+        event = MessageEvent(
+            text=normalized["text"],
+            message_type=MessageType.TEXT,
+            source=source,
+            message_id=normalized["message_id"],
+            reply_to_message_id=normalized["reply_to"],
+            raw_message=reply,
+        )
+        logger.info(
+            "[%s] inbound reply chat=%s reply_to=%s len=%d",
+            self.name, chat_id, normalized["reply_to"], len(normalized["text"]),
+        )
+        await self.handle_message(event)
 
     # -- Outbound messaging -------------------------------------------------
 
