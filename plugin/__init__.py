@@ -78,12 +78,13 @@ def register(ctx):
         from .phone_platform import register_phone_platform
 
         register_phone_platform(ctx)
-    except (AttributeError, ImportError):
+        logger.warning("[phone-diag] register_phone_platform returned OK")
+    except (AttributeError, ImportError) as e:
         # Older hermes-agent (no register_platform) — platform not registered.
         # Tools/CLI above still work.
-        pass
+        logger.warning("[phone-diag] phone platform NOT registered (no register_platform?): %r", e)
     except Exception:
-        logger.debug("Phone platform registration failed; continuing", exc_info=True)
+        logger.warning("[phone-diag] phone platform registration FAILED", exc_info=True)
 
     # Apply relay-owned host enhancements. This is intentionally guarded so
     # older Hermes hosts without the system-prompt seam still load tools/CLI.

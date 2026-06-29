@@ -306,18 +306,19 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         drain the relay's small bounded reply buffer. Using it to drop stale
         replies on a cold boot is a possible future refinement.
         """
+        logger.warning("[phone-diag] %s.connect() CALLED (is_reconnect=%s)", self.name, is_reconnect)
         if not HTTPX_AVAILABLE:
             logger.warning("[%s] httpx not installed — cannot push to phone", self.name)
             return False
         if not _phone_enabled():
-            logger.info("[%s] PHONE_ENABLED not set — platform stays offline", self.name)
+            logger.warning("[phone-diag] %s PHONE_ENABLED falsy at connect — staying offline", self.name)
             return False
         try:
             self._http_client = httpx.AsyncClient(timeout=15.0)
             self._mark_connected()
             self._poll_task = asyncio.create_task(self._run_reply_loop())
-            logger.info(
-                "[%s] Connected (two-way) — relay=%s", self.name, _relay_base_url()
+            logger.warning(
+                "[phone-diag] [%s] Connected (two-way), reply loop spawned — relay=%s", self.name, _relay_base_url()
             )
             return True
         except Exception as e:  # pragma: no cover - defensive
@@ -356,6 +357,7 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
         url, headers = _replies_url_and_headers()
         params = {"timeout": str(int(_REPLY_POLL_TIMEOUT))}
         backoff_idx = 0
+        logger.warning("[phone-diag] reply loop ENTERED; running=%s url=%s", self._running, url)
 
         while self._running:
             client = self._http_client
