@@ -196,24 +196,15 @@ fun MessageBubble(
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
     CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
-    // Assistant turns get a Hermes avatar in a left gutter, anchoring each group
-    // at its left edge (drawn once per group, like the name label). The gutter
-    // reserves its width on every message in the group so the bubbles stay
-    // aligned under the first. User/system bubbles keep the original column with
-    // no gutter (the outer alignment keeps user bubbles right-aligned).
-    val showAvatarGutter = !isUser && !isSystem
+    // Identity (the active profile avatar) is shown once in the top bar, so
+    // message bubbles no longer reserve a per-group avatar gutter — that width
+    // is reclaimed for wider bubbles. Outer alignment keeps user bubbles right.
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
-        if (showAvatarGutter) {
-            Box(modifier = Modifier.padding(top = 2.dp).size(AssistantAvatarSize)) {
-                if (isFirstInGroup) AssistantAvatar()
-            }
-            Spacer(modifier = Modifier.width(AssistantAvatarGap))
-        }
     Column(
-        modifier = if (showAvatarGutter) Modifier.weight(1f) else Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
         // Agent name label (above assistant bubbles, only first in group), with
@@ -531,37 +522,6 @@ fun MessageBubble(
     } // end content Column
     } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
-}
-
-/** Width of the assistant avatar (and the gutter it reserves). */
-private val AssistantAvatarSize = 28.dp
-
-/** Gap between the avatar gutter and the assistant content column. */
-private val AssistantAvatarGap = 8.dp
-
-/**
- * The Hermes brand mark in a small tinted circle, shown once per assistant
- * group to the left of its bubbles. Theme-reactive (surface + hairline follow
- * the active [LocalBrand] palette); the chevron-compass glyph reuses the shared
- * brand drawable so the avatar matches the app icon and splash.
- */
-@Composable
-private fun AssistantAvatar(modifier: Modifier = Modifier) {
-    val brand = LocalBrand.current
-    Box(
-        modifier = modifier
-            .size(AssistantAvatarSize)
-            .clip(CircleShape)
-            .background(brand.navy2)
-            .border(1.dp, brand.line, CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(
-            painter = painterResource(R.drawable.splash_icon),
-            contentDescription = null,
-            modifier = Modifier.size(AssistantAvatarSize * 0.62f),
-        )
-    }
 }
 
 @Composable
