@@ -292,7 +292,7 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 | `desktop/src/lib/auditLog.ts` | Local desktop-tool audit JSONL (`~/.hermes/desktop-audit.jsonl`); router appends per dispatch; backs `audit` command (relay's ring is loopback-only) |
 | `desktop/src/lib/daemonStatus.ts` | Daemon heartbeat file (`~/.hermes/daemon-status.json`) + `isPidAlive` liveness; backs `daemon --status` |
 | `desktop/src/commands/audit.ts` | `hermes-relay audit` — tails the local audit log into a table (WHEN/TOOL/STATUS/DETAIL); `--limit`, `--json` |
-| `desktop/src/commands/relay.ts` | `hermes-relay relay info/security/context` — relay-server management surface; info/security loopback-only, context works remote with bearer |
+| `desktop/src/commands/relay.ts` | `hermes-relay relay info/security/context/queue` — relay-server management surface; info/security/queue loopback-only, context works remote with bearer; `queue` lists/cancels the agent→phone outbound buffer (`--clear` / `--cancel <id>`) |
 | `desktop/src/commands/chat.ts` | REPL + one-shot + piped-stdin; `runOneTurn` returns `{promise, cancel}` for safe SIGINT; auto-wires `DesktopToolRouter` when consented |
 | `desktop/src/commands/shell.ts` | Pipes the `terminal` relay channel to raw-mode stdin/stdout; post-attach `exec hermes` 350ms after tmux settles; `Ctrl+A .` detach / `Ctrl+A k` kill / `Ctrl+A Ctrl+A` literal |
 | `desktop/src/commands/pair.ts` | Either 6-char code + `--remote`, or full v3 QR via `--pair-qr` — probes + picks endpoint, records role; `--grant-tools` (TTY prompt) / `--auto-grant-tools` (silent) stamp `toolsConsented` so `daemon` works without a `shell` round-trip |
