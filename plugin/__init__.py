@@ -74,16 +74,27 @@ def register(ctx):
     # Additive + off-by-default (PHONE_ENABLED gate): guarded so an older
     # hermes-agent without register_platform — or a host where gateway.* is
     # unavailable at import — can't block tool/CLI registration above.
+    def _pd(msg):  # TEMP [phone-diag]: file trace (gateway journal filters plugin logs)
+        try:
+            import os as _os
+
+            with open(_os.path.expanduser("~/.hermes/phone-diag.log"), "a", encoding="utf-8") as _f:
+                _f.write("[phone-diag] init: " + msg + "\n")
+        except Exception:
+            pass
+
     try:
         from .phone_platform import register_phone_platform
 
+        _pd("about to call register_phone_platform")
         register_phone_platform(ctx)
-        logger.warning("[phone-diag] register_phone_platform returned OK")
+        _pd("register_phone_platform returned OK")
     except (AttributeError, ImportError) as e:
         # Older hermes-agent (no register_platform) — platform not registered.
         # Tools/CLI above still work.
-        logger.warning("[phone-diag] phone platform NOT registered (no register_platform?): %r", e)
-    except Exception:
+        _pd(f"NOT registered (no register_platform?): {e!r}")
+    except Exception as e:
+        _pd(f"registration FAILED: {e!r}")
         logger.warning("[phone-diag] phone platform registration FAILED", exc_info=True)
 
     # Apply relay-owned host enhancements. This is intentionally guarded so
