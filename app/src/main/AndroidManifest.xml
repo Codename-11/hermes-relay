@@ -78,8 +78,10 @@
             android:name=".notifications.ProactiveReplyReceiver"
             android:exported="false" />
 
-        <!-- Opt-in "Keep connected in background" — holds the gateway chat
-             socket open while backgrounded. In main so BOTH flavors ship it
+        <!-- Opt-in "Persistent connection" — holds the user's connection to
+             Hermes open while backgrounded so messages and live features stay
+             responsive (relay-paired setups also keep device control +
+             notification mirroring reachable). In main so BOTH flavors ship it
              (Home-Assistant-class persistent connection). Off by default; only
              runs while the user has explicitly enabled the toggle. specialUse
              needs a Play Console foreground-service declaration at submission. -->
@@ -89,7 +91,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps the user's chat connection to their Hermes agent open while the app is backgrounded, only when the user has explicitly enabled 'Keep connected in background'." />
+                android:value="Keeps the user's connection to their Hermes agent open in the background so messages and live features stay responsive, only when the user has explicitly enabled 'Persistent connection'." />
         </service>
 
     </application>

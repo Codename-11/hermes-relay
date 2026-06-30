@@ -172,6 +172,11 @@ class GatewayChatClient(
 
     private val client: OkHttpClient = (okHttpClient ?: OkHttpClient())
         .newBuilder()
+        // The 10s default connectTimeout is LAN-tuned; a remote dashboard
+        // reached over Tailscale (DERP cold start) can take longer to complete
+        // the WS upgrade. A failed connect drops chat to the SSE fallback and a
+        // 5s cooldown, so give the first remote handshake room.
+        .connectTimeout(20, TimeUnit.SECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()

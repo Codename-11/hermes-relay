@@ -4,6 +4,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,10 +18,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
@@ -95,9 +99,14 @@ fun SessionDrawerContent(
      * filter view. The first message the user types opens the conversation.
      */
     onNewThread: ((String) -> Unit)? = null,
+    /** Gateway sources currently hidden from the drawer (default: cron+webhook). */
+    hiddenSources: Set<String> = emptySet(),
+    /** Toggle a source's visibility (persisted). Null hides the source filter. */
+    onToggleSourceHidden: ((String, Boolean) -> Unit)? = null,
 ) {
     var renameDialogSession by remember { mutableStateOf<ChatSession?>(null) }
     var newThreadDialog by remember { mutableStateOf(false) }
+    var sourceFilterOpen by remember { mutableStateOf(false) }
     var deleteDialogSession by remember { mutableStateOf<ChatSession?>(null) }
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
@@ -115,6 +124,13 @@ fun SessionDrawerContent(
     } else {
         filter
     }
+    // External gateway sources present (discord/telegram/cron/…) for the source
+    // filter dropdown. Own chats (tui/api_server) + phone Threads aren't listed.
+    val presentSources = sessions
+        .mapNotNull { it.source?.trim()?.lowercase()?.takeIf { s -> s.isNotBlank() } }
+        .distinct()
+        .filter { sourceBadge(it) != null }
+        .sorted()
     val visibleSessions = sessions
         .asSequence()
         .filter { session ->
@@ -128,6 +144,13 @@ fun SessionDrawerContent(
                         session.sessionId !in archivedSessionIds
                 SessionDrawerFilter.Archive -> session.sessionId in archivedSessionIds
             }
+        }
+        .filter { session ->
+            // Source visibility (default hides cron+webhook) — only on the "All"
+            // view; Threads/Pinned/Archive show their full set.
+            if (activeFilter != SessionDrawerFilter.All) return@filter true
+            val src = session.source?.trim()?.lowercase()
+            src == null || src !in hiddenSources
         }
         .filter { session ->
             val needle = trimmedQuery
@@ -185,6 +208,66 @@ fun SessionDrawerContent(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )
+                // Source filter — show/hide gateway sources (default hides the
+                // noisy cron+webhook). Only when external sources are present.
+                if (onToggleSourceHidden != null && presentSources.isNotEmpty()) {
+                    Box {
+                        IconButton(
+                            onClick = { sourceFilterOpen = true },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.FilterList,
+                                contentDescription = "Filter by source",
+                                tint = if (presentSources.any { it in hiddenSources }) {
+                                    RelayRefresh.Relay
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = sourceFilterOpen,
+                            onDismissRequest = { sourceFilterOpen = false },
+                        ) {
+                            Text(
+                                text = "Show sources",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            )
+                            presentSources.forEach { src ->
+                                val badge = sourceBadge(src)
+                                val shown = src !in hiddenSources
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = badge?.label ?: src,
+                                            color = if (shown) {
+                                                MaterialTheme.colorScheme.onSurface
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        if (shown) {
+                                            Icon(
+                                                Icons.Filled.Check,
+                                                contentDescription = null,
+                                                tint = badge?.color ?: RelayRefresh.Relay,
+                                            )
+                                        } else {
+                                            Spacer(modifier = Modifier.size(24.dp))
+                                        }
+                                    },
+                                    onClick = { onToggleSourceHidden(src, shown) },
+                                )
+                            }
+                        }
+                    }
+                }
                 // Threads affordance — a clean thread-spool that toggles the Threads
                 // filter. Shown only when the Threads capability is active (or a Thread is
                 // already present), so an ordinary no-relay drawer is visually unchanged.
@@ -259,7 +342,7 @@ fun SessionDrawerContent(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 SessionDrawerFilter.entries
@@ -269,10 +352,17 @@ fun SessionDrawerContent(
                             selected = activeFilter == item,
                             onClick = { filter = item },
                             label = {
-                                Text(
-                                    text = item.label,
-                                    style = relayMetadataStyle(),
-                                )
+                                if (item == SessionDrawerFilter.Threads) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Text(text = item.label, style = relayMetadataStyle())
+                                        BetaChip()
+                                    }
+                                } else {
+                                    Text(text = item.label, style = relayMetadataStyle())
+                                }
                             },
                         )
                     }
@@ -549,6 +639,11 @@ private fun SessionItem(
                             maxLines = 1,
                         )
                     }
+                }
+                // Source badge — external gateway origin (Discord / Telegram /
+                // Cron / Webhook / …); null for own chats + the phone Thread.
+                sourceBadge(session.source)?.let { badge ->
+                    SourceChip(badge)
                 }
                 sessionTimestampText(session, locale)?.let { timestamp ->
                     Text(

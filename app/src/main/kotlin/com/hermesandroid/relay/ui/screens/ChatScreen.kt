@@ -1340,6 +1340,7 @@ fun ChatScreen(
             // is already present).
             val threadsCapabilityActive = threadsProactiveEnabled &&
                 threadsAuthState is com.hermesandroid.relay.auth.AuthState.Paired
+            val hiddenSources by connectionViewModel.hiddenSources.collectAsState()
 
             SessionDrawerContent(
                 sessions = sessions,
@@ -1368,6 +1369,10 @@ fun ChatScreen(
                 onNewThread = { name ->
                     chatViewModel.startNewThread(name)
                     scope.launch { drawerState.close() }
+                },
+                hiddenSources = hiddenSources,
+                onToggleSourceHidden = { source, hidden ->
+                    connectionViewModel.setSourceHidden(source, hidden)
                 },
             )
         }

@@ -255,7 +255,17 @@ internal fun SessionPathSummary(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 activeCaps.forEach { cap ->
-                    CapabilityChip(label = cap.label)
+                    if (cap.label == "Threads") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            CapabilityChip(label = cap.label)
+                            BetaChip()
+                        }
+                    } else {
+                        CapabilityChip(label = cap.label)
+                    }
                 }
             }
         }

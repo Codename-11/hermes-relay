@@ -39,8 +39,10 @@ import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.data.proactiveEnabledFlow
 import com.hermesandroid.relay.data.setProactiveEnabled
+import com.hermesandroid.relay.data.DEFAULT_HIDDEN_SOURCES
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.ProactiveInboxRepository
+import com.hermesandroid.relay.data.SessionSourcePrefs
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -1803,6 +1805,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** "Let Hermes message me" — off by default. */
     val proactiveEnabled: StateFlow<Boolean> = application.proactiveEnabledFlow()
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    // Drawer source visibility — which gateway sources are hidden (default:
+    // the noisy automation lanes cron + webhook). Edited from the drawer source
+    // filter + Chat settings; both write the same persisted set.
+    private val sessionSourcePrefs = SessionSourcePrefs(application)
+    val hiddenSources: StateFlow<Set<String>> = sessionSourcePrefs.hiddenSources
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_HIDDEN_SOURCES)
+
+    fun setSourceHidden(source: String, hidden: Boolean) {
+        viewModelScope.launch { sessionSourcePrefs.setHidden(source, hidden) }
+    }
 
     private fun sendProactiveSubscribe() {
         multiplexer.send(Envelope(channel = "proactive", type = "proactive.subscribe"))
