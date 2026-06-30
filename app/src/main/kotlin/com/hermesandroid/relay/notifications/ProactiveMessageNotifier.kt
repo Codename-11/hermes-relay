@@ -32,23 +32,25 @@ import com.hermesandroid.relay.R
  *    into and should see promptly, so the channel is `IMPORTANCE_HIGH`.
  *
  * Tap routes through the existing deep-link path (MainActivity
- * [MainActivity.EXTRA_NAV_ROUTE] → NavRouteRequest) to the Hermes inbox.
+ * [MainActivity.EXTRA_NAV_ROUTE] → NavRouteRequest) to Chat, where the message
+ * lives as a Thread.
  */
 object ProactiveMessageNotifier {
 
     private const val TAG = "ProactiveNotifier"
     private const val CHANNEL_ID = "hermes_proactive"
-    private const val CHANNEL_NAME = "Hermes messages"
+    private const val CHANNEL_NAME = "Threads"
 
     /** Base for derived notification ids — keeps us clear of other slots. */
     private const val ID_BASE = 0x48524D00 // "HRM" + 00
 
     /**
-     * Tap route — the dedicated Hermes inbox (Phase 2a). Must match
-     * `Screen.HermesInbox.route` in RelayApp. Routed via the EXTRA_NAV_ROUTE
-     * deep-link path (MainActivity → NavRouteRequest → RelayApp collector).
+     * Tap route — opens Chat, where the message lives as a Thread. Must match
+     * `Screen.Chat.route()` in RelayApp. Routed via the EXTRA_NAV_ROUTE deep-link
+     * path (MainActivity → NavRouteRequest → RelayApp collector). Opening the
+     * exact Thread by chat_id is a follow-up (see TODO).
      */
-    private const val INBOX_ROUTE = "hermes_inbox"
+    private const val TAP_ROUTE = "chat"
 
     /**
      * Post (or replace) a proactive-message notification.
@@ -78,7 +80,7 @@ object ProactiveMessageNotifier {
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(MainActivity.EXTRA_NAV_ROUTE, INBOX_ROUTE)
+            putExtra(MainActivity.EXTRA_NAV_ROUTE, TAP_ROUTE)
         }
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         // Distinct requestCode per slot so each notification gets its own

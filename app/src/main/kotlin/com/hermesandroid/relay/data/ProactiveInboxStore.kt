@@ -45,12 +45,14 @@ private val INBOX_JSON = stringPreferencesKey("entries_json")
 private const val MAX_ENTRIES = 100
 
 /**
- * DataStore-backed store for the "Hermes" inbox of agent-initiated messages.
- * Entries are kept newest-first, deduped by id (so a re-delivered message
- * doesn't double up), and capped at [MAX_ENTRIES]. Survives app restart.
+ * DataStore-backed durable log of agent-initiated messages. Entries are kept
+ * newest-first, deduped by id (so a re-delivered message doesn't double up), and
+ * capped at [MAX_ENTRIES]. Survives app restart.
  *
- * Phase 3 may grow this (read/unread, per-profile filtering); for Phase 2a it
- * is a flat capped log feeding [com.hermesandroid.relay.ui.screens.HermesInboxScreen].
+ * Demoted (2026-06-29): the agent conversation now lives as a Thread in Chat (the
+ * gateway session is the durable history), so the in-app inbox view is retired.
+ * This store is only fed for messages NOT shown in an open Thread; it currently
+ * has no viewer and is fully retireable — see TODO.
  */
 class ProactiveInboxRepository(private val context: Context) {
 

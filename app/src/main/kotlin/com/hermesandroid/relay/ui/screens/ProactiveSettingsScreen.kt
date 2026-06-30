@@ -44,7 +44,7 @@ import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
 /**
- * "Hermes messages" — the opt-in surface that lets the agent proactively
+ * "Threads" — the opt-in surface that lets the agent proactively
  * message this phone (the `phone` Hermes platform). Off by default.
  *
  * Phase 1d ships just the enablement toggle + notification-permission prompt.
@@ -61,7 +61,7 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 @Composable
 fun ProactiveSettingsScreen(
     connectionViewModel: ConnectionViewModel,
-    onOpenInbox: () -> Unit,
+    onOpenChat: () -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -88,7 +88,7 @@ fun ProactiveSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Hermes messages") },
+                title = { Text("Threads") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -123,7 +123,8 @@ fun ProactiveSettingsScreen(
                         )
                         Text(
                             text = "Your agent can reach out on its own — reminders, " +
-                                "finished jobs, alerts — as a notification.",
+                                "finished jobs, alerts. Its messages appear as Threads " +
+                                "in Chat, where you can reply.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -148,16 +149,16 @@ fun ProactiveSettingsScreen(
                 }
             }
 
-            ProactiveSectionCard(title = "Inbox") {
+            ProactiveSectionCard(title = "Your Threads") {
                 Text(
-                    text = "Messages your agent sends also collect in a dedicated " +
-                        "inbox, so you can catch up even after a notification is " +
-                        "dismissed.",
+                    text = "Each conversation your agent starts shows as a Thread in " +
+                        "Chat — open the session list, filter to Threads, and reply " +
+                        "right there.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(12.dp))
                 FilledTonalButton(
-                    onClick = onOpenInbox,
+                    onClick = onOpenChat,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(
@@ -165,7 +166,7 @@ fun ProactiveSettingsScreen(
                         contentDescription = null,
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("View messages")
+                    Text("Open Chat")
                 }
             }
 

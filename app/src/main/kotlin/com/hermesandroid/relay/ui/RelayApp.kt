@@ -139,7 +139,6 @@ import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
-import com.hermesandroid.relay.ui.screens.HermesInboxScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
 import com.hermesandroid.relay.ui.theme.AppThemes
@@ -265,9 +264,7 @@ sealed class Screen(
         Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
     // === END PHASE3-notif-listener-followup ===
     data object ProactiveSettings :
-        Screen("settings/proactive", "Hermes messages", Icons.Filled.Settings)
-    data object HermesInbox :
-        Screen("hermes_inbox", "Hermes inbox", Icons.Filled.Settings)
+        Screen("settings/proactive", "Threads", Icons.Filled.Settings)
     data object PermissionsSettings : Screen("settings/permissions", "Permissions", Icons.Filled.Settings)
     // === PHASE3-safety-rails: bridge safety route ===
     data object BridgeSafetySettings :
@@ -2025,13 +2022,12 @@ fun RelayApp() {
                 composable(Screen.ProactiveSettings.route) {
                     ProactiveSettingsScreen(
                         connectionViewModel = connectionViewModel,
-                        onOpenInbox = { navController.navigate(Screen.HermesInbox.route) },
-                        onBack = { navController.popBackStack() },
-                    )
-                }
-                composable(Screen.HermesInbox.route) {
-                    HermesInboxScreen(
-                        connectionViewModel = connectionViewModel,
+                        onOpenChat = {
+                            navController.navigate(Screen.Chat.route()) {
+                                popUpTo(Screen.Chat.route()) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        },
                         onBack = { navController.popBackStack() },
                     )
                 }

@@ -433,8 +433,8 @@ fun SettingsScreen(
 
             SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Message,
-                title = "Hermes messages",
-                subtitle = "Let the agent message you on its own (off by default)",
+                title = "Threads",
+                subtitle = "Let the agent start conversations with you (off by default)",
                 onClick = onNavigateToProactiveSettings,
                 isDarkTheme = isDarkTheme,
             )
