@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-30 — Update discovery: app-facing relay route + About version readout
+
+**Why.** The update-discovery work (CLI + dashboard) shipped the same day, but the phone was the missing surface — the app could read the relay's version from `/health` yet had no signal that a newer relay *release* existed. The dashboard's check is dashboard-auth-gated, so the app needs its own route on the relay port.
+
+**What.**
+- **`plugin/relay/server.py`: `GET /relay/update-check`.** App-facing twin of the dashboard route (bearer for the paired phone, loopback for diagnostics — same gate as `/phone/threads`). Reuses `plugin/update_check.check()` in an executor so the blocking GitHub fetch never stalls the event loop; result cached an hour; degrades to `update_available=false` + `error` offline (never a 5xx).
+- **App (`RelayHttpClient.fetchUpdateCheck()` → `ConnectionViewModel.relayUpdateInfo` → `AboutScreen`).** A "Relay" row beside the existing app-Version row shows the connected relay's version and, when it trails the latest release, a soft nudge + a Copy-the-command action (`hermes plugins update hermes-relay` vs `hermes-relay-update`). Refreshed on each `auth.ok`; fail-soft (older relay 404 → no row). The app never talks to GitHub — the relay is the single source of truth.
+
+**Verification.** `:app:assembleSideloadDebug` — **BUILD SUCCESSFUL**; installed + launched on the test device. Relay route verified live on the host (loopback `GET /relay/update-check` → `{"current":"1.2.1","latest":"1.2.1","update_available":false}`). The About "Relay" row reads "On v1.2.1 — up to date"; the nudge stays hidden until a newer `plugin-v*` release exists.
+
 ## 2026-06-30 — Per-profile enablement helper + update discovery
 
 **Why.** Two gaps surfaced while productizing the phone Threads work: (1) Hermes installs a plugin's *code* once but enables it *per profile*, so a multi-agent host hand-edits N `config.yaml` files to expose the relay's tools everywhere — and docs didn't explain the install-once / enable-per-profile / **pair-once** split. (2) Updating works (`hermes plugins update` / `hermes-relay-update`) but nothing *tells* an operator a newer plugin release exists, and the app/plugin/CLI version tracks aren't surfaced together.
