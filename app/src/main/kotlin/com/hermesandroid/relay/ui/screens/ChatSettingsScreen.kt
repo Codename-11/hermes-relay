@@ -12,6 +12,8 @@ import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,6 +69,7 @@ import com.hermesandroid.relay.ui.components.toColor
 import com.hermesandroid.relay.ui.components.ChatTransportTier
 import com.hermesandroid.relay.ui.components.ChatTransportTone
 import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
+import com.hermesandroid.relay.ui.components.sourceBadge
 import com.hermesandroid.relay.ui.components.textColor
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -394,6 +397,46 @@ fun ChatSettingsScreen(
                             checked = closeDrawerOnSend,
                             onCheckedChange = { connectionViewModel.setCloseDrawerOnSend(it) }
                         )
+                    }
+
+                    HorizontalDivider()
+
+                    // Session sources — hide noisy gateway lanes from the drawer.
+                    // Edits the same persisted set the drawer source filter uses;
+                    // lists the common externals so you can hide one even before
+                    // it appears in the list.
+                    val hiddenSources by connectionViewModel.hiddenSources.collectAsState()
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Session sources",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = "Hide a gateway's sessions from the drawer (cron and webhook are hidden by default). Your chats and Threads always show.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        listOf("discord", "telegram", "cron", "webhook", "web").forEach { src ->
+                            val badge = sourceBadge(src)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = badge?.label ?: src.replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = badge?.color ?: MaterialTheme.colorScheme.onSurface,
+                                )
+                                Switch(
+                                    checked = src !in hiddenSources,
+                                    onCheckedChange = { show ->
+                                        connectionViewModel.setSourceHidden(src, !show)
+                                    },
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider()
