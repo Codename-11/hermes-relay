@@ -197,6 +197,23 @@ python -m plugin.relay --no-ssl
 
 For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md).
 
+### Phone Threads (proactive messaging) — Beta
+
+The optional **phone platform** lets the Hermes agent proactively message your paired device — `send_message target=phone`, cron `deliver=phone`, and named Threads in chat. It is off by default; opt in via `~/.hermes/.env` and restart the gateway:
+
+```bash
+PHONE_ENABLED=1
+```
+
+**The home channel is auto-configured — no `/sethome` needed.** Other platforms (Telegram, Discord) make you run `/sethome` to choose *which* of their many chats receives cron results and cross-platform messages. A paired phone is a single device, so its home channel is set automatically when you enable the platform. To give it a friendly display name (used as the notification title and the Thread label), set it in the dashboard under **Relay → Management → Home channel**, or directly in `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PHONE_ENABLED` | _unset_ | Set to `1` to let the agent proactively message the phone |
+| `PHONE_HOME_CHANNEL_NAME` | `Phone` | Display name for the phone home channel / Threads label |
+
+Name changes apply after the next gateway restart. The underlying channel id stays fixed (`phone`) so existing Threads are never orphaned.
+
 ### Compatibility Hook
 
 The legacy `hermes_relay_bootstrap.pth` hook is optional. It fills route gaps for

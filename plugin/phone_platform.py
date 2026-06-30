@@ -610,6 +610,18 @@ def register_phone_platform(ctx) -> None:
     Called from ``plugin/__init__.py:register`` (guarded). Safe to call on
     hosts without ``register_platform`` — the caller swallows AttributeError.
     """
+    # The phone is a single paired device, so its home channel is
+    # unambiguous — there is exactly one logical destination, unlike
+    # Telegram/Discord where the operator must pick *which* chat is "home".
+    # Upstream's first-message onboarding nudge (``gateway/run.py`` — "📬 No
+    # home channel is set for Phone … /sethome") checks the env var directly
+    # (``os.getenv("PHONE_HOME_CHANNEL")``), not our seeded config, so without
+    # this it fires on the first message of every new Thread. Pre-fill the only
+    # sensible value — exactly what ``/sethome`` would persist — while
+    # respecting an explicit (non-blank) operator override.
+    if _phone_enabled() and not os.environ.get("PHONE_HOME_CHANNEL", "").strip():
+        os.environ["PHONE_HOME_CHANNEL"] = DEFAULT_CHAT_ID
+
     ctx.register_platform(
         name="phone",
         label="Phone",

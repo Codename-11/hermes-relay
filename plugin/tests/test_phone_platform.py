@@ -383,5 +383,57 @@ class ConnectContractTests(unittest.TestCase):
         self.assertEqual(param.default, False)
 
 
+# ── Home-channel env default (silences upstream's /sethome nudge) ───────────
+
+
+class _FakeCtx:
+    """Minimal plugin ctx capturing the ``register_platform`` kwargs."""
+
+    def __init__(self) -> None:
+        self.platform_kwargs: Optional[dict] = None
+
+    def register_platform(self, **kwargs: Any) -> None:
+        self.platform_kwargs = kwargs
+
+
+class HomeChannelDefaultTests(_EnvIsolated):
+    """``register_phone_platform`` pre-fills ``PHONE_HOME_CHANNEL`` when enabled.
+
+    Upstream's first-message onboarding nudge (``gateway/run.py`` — "📬 No home
+    channel is set for Phone … /sethome") checks the env var directly, so a
+    single-device platform with no env set nags on every new Thread's first
+    message. Registration seeds the only sensible value while respecting an
+    explicit (non-blank) operator override.
+    """
+
+    def test_enabled_sets_default_home_channel(self) -> None:
+        os.environ["PHONE_ENABLED"] = "1"
+        ctx = _FakeCtx()
+        pp.register_phone_platform(ctx)
+        self.assertEqual(os.environ.get("PHONE_HOME_CHANNEL"), pp.DEFAULT_CHAT_ID)
+        # And the platform actually registered, cron env wired to the same key.
+        self.assertIsNotNone(ctx.platform_kwargs)
+        self.assertEqual(
+            ctx.platform_kwargs["cron_deliver_env_var"], "PHONE_HOME_CHANNEL"
+        )
+
+    def test_explicit_home_channel_respected(self) -> None:
+        os.environ["PHONE_ENABLED"] = "1"
+        os.environ["PHONE_HOME_CHANNEL"] = "myphone"
+        pp.register_phone_platform(_FakeCtx())
+        self.assertEqual(os.environ.get("PHONE_HOME_CHANNEL"), "myphone")
+
+    def test_blank_home_channel_replaced(self) -> None:
+        os.environ["PHONE_ENABLED"] = "1"
+        os.environ["PHONE_HOME_CHANNEL"] = "   "
+        pp.register_phone_platform(_FakeCtx())
+        self.assertEqual(os.environ.get("PHONE_HOME_CHANNEL"), pp.DEFAULT_CHAT_ID)
+
+    def test_disabled_does_not_set_default(self) -> None:
+        # PHONE_ENABLED is popped by _EnvIsolated.setUp — platform opted out.
+        pp.register_phone_platform(_FakeCtx())
+        self.assertNotIn("PHONE_HOME_CHANNEL", os.environ)
+
+
 if __name__ == "__main__":
     unittest.main()

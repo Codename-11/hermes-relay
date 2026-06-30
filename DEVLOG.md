@@ -1,5 +1,16 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-30 — Phone home channel: auto-config + dashboard name (silence upstream /sethome nudge)
+
+**Why.** Sending into a phone Thread surfaced an upstream onboarding notice on every new Thread's first message — "📬 No home channel is set for Phone … /sethome". Upstream's nudge (`gateway/run.py`) checks the `PHONE_HOME_CHANNEL` *env var* directly, not the adapter's seeded config, and a single paired phone has exactly one logical home — so the prompt is friction with no decision behind it (unlike Telegram/Discord, where `/sethome` picks among many chats).
+
+**What.**
+- **Auto-default (`plugin/phone_platform.py`).** `register_phone_platform` now pre-fills `PHONE_HOME_CHANNEL=phone` (the only sensible value — what `/sethome` would persist) when the platform is enabled and the env var is unset/blank, respecting an explicit operator override. Presence of that env var is exactly what the upstream notice checks, so it no longer fires.
+- **Dashboard name field (`plugin/dashboard/*`).** A "Home channel" card on the Relay → Management tab shows the effective home-channel name + (read-only) channel id and saves a display name via the host `PUT /api/env` (`PHONE_HOME_CHANNEL_NAME`), mirroring the existing Agent-context toggle pattern. Backed by a new loopback `GET /api/plugins/hermes-relay/phone/config` that reads the adapter's env resolution. Rebuilt `dist/index.js`.
+- **Docs.** A brief "Phone Threads (proactive messaging) — Beta" subsection in `user-docs/reference/configuration.md`: the opt-in (`PHONE_ENABLED`), the auto-home-channel (no `/sethome`), and how to rename it.
+
+**Verification.** `python -m unittest plugin.tests.test_phone_platform plugin.dashboard.test_plugin_api` — 54 pass (new: 4 home-channel-default cases + 2 `/phone/config` cases). Dashboard bundle rebuilt via `npm run build` (esbuild OK; "Home channel" + "phone/config" present in `dist/index.js`). The auto-default applies on the next gateway restart; the name field also applies on gateway restart (env read at adapter construction). Host confirmation that the notice is gone — pending a gateway restart.
+
 ## 2026-06-30 — Settings/nav refresh + remote reconnect fix
 
 **Why.** A UX/robustness pass across five threads: (1) the background keep-alive read as "chat"-only in its notification + settings copy, underselling what it actually holds open; (2) it lived buried in Chat settings though it's a connection-level control flipped often; (3) the Chat/Manage/Bridge mode strip spent a chrome band on every screen, including the chat home; (4) the non-error connection-status banner popped in/out and hard-reflowed the UI; (5) a remote (Tailscale) connection looped — repeatedly reconnecting before it settled.

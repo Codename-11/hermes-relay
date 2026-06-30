@@ -196,6 +196,32 @@ async def get_agent_context() -> dict[str, Any]:
     }
 
 
+@router.get("/phone/config")
+async def get_phone_config() -> dict[str, Any]:
+    """Phone-platform home-channel config for the Management tab.
+
+    Reads the same env the adapter resolves, so the dashboard surfaces the
+    *effective* home-channel name + id. The name is editable from the tab via
+    the host ``PUT /api/env`` (``PHONE_HOME_CHANNEL_NAME``); the id is shown
+    read-only because changing it would orphan existing phone Threads (the
+    ``chat_id`` keys the gateway session). ``enabled`` reflects the
+    ``PHONE_ENABLED`` gate so the tab can hide the card when the platform is
+    off. No relay round-trip — env is process-local.
+    """
+    from plugin.phone_platform import (
+        _home_channel,
+        _home_channel_name,
+        _phone_enabled,
+    )
+
+    return {
+        "enabled": _phone_enabled(),
+        "home_channel_id": _home_channel(),
+        "home_channel_name": _home_channel_name(),
+        "name_env_key": "PHONE_HOME_CHANNEL_NAME",
+    }
+
+
 @router.get("/push")
 async def get_push() -> dict[str, Any]:
     """Push console stub — no network call until FCM lands."""
