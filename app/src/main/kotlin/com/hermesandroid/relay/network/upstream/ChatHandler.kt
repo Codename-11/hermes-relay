@@ -236,9 +236,10 @@ class ChatHandler {
         reapplyThreadNames()
     }
 
-    /** Replace the whole user-thread-name map (e.g. an initial persisted load). */
+    /** Merge persisted user-thread-names in (e.g. the initial DataStore load) —
+     *  merge, not replace, so a just-created name set this session isn't clobbered
+     *  by a slightly-stale persisted emission. */
     fun setUserThreadNames(names: Map<String, String>) {
-        userThreadNames.clear()
         userThreadNames.putAll(names)
         reapplyThreadNames()
     }

@@ -43,6 +43,7 @@ import com.hermesandroid.relay.data.DEFAULT_HIDDEN_SOURCES
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.ProactiveInboxRepository
 import com.hermesandroid.relay.data.SessionSourcePrefs
+import com.hermesandroid.relay.data.ThreadNameStore
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -1815,6 +1816,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setSourceHidden(source: String, hidden: Boolean) {
         viewModelScope.launch { sessionSourcePrefs.setHidden(source, hidden) }
+    }
+
+    // Persisted user-chosen Thread names (sessionId → name) — applied to the
+    // drawer so a named Thread keeps its name across restarts and beats the
+    // gateway's async auto-title. Wired to ChatViewModel via RelayApp.
+    private val threadNameStore = ThreadNameStore(application)
+    val threadNames: StateFlow<Map<String, String>> = threadNameStore.names
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    fun saveThreadName(sessionId: String, name: String) {
+        viewModelScope.launch { threadNameStore.setName(sessionId, name) }
     }
 
     private fun sendProactiveSubscribe() {

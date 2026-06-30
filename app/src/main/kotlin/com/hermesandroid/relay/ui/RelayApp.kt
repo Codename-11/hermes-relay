@@ -931,6 +931,16 @@ fun RelayApp() {
             connectionViewModel.proactiveMessageHandler.injectIntoThread = { msg ->
                 chatViewModel.injectThreadMessage(msg)
             }
+            // Persist + re-apply user-chosen Thread names so a named Thread keeps
+            // its name across restart/reconnect (overrides the gateway auto-title).
+            chatViewModel.onSaveThreadName = { sessionId, name ->
+                connectionViewModel.saveThreadName(sessionId, name)
+            }
+            launch {
+                connectionViewModel.threadNames.collect { names ->
+                    chatViewModel.applyPersistedThreadNames(names)
+                }
+            }
         }
 
         LaunchedEffect(onboardingCompleted, postOnboardingRoute) {

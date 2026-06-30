@@ -219,6 +219,25 @@ class ChatViewModel : ViewModel() {
      */
     private val threadChatIds = mutableMapOf<String, String>()
 
+    /**
+     * Persist a user-chosen Thread name (sessionId → name) — set by RelayApp to
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.saveThreadName].
+     * Null when no relay/ConnectionViewModel is wired.
+     */
+    var onSaveThreadName: ((String, String) -> Unit)? = null
+
+    /**
+     * Latest persisted Thread names, re-applied to the handler on every load and
+     * on [initialize] so a handler created after the DataStore load still picks
+     * them up (the user's name overrides the gateway auto-title in the drawer).
+     */
+    private var persistedThreadNames: Map<String, String> = emptyMap()
+
+    fun applyPersistedThreadNames(names: Map<String, String>) {
+        persistedThreadNames = names
+        chatHandler?.setUserThreadNames(names)
+    }
+
     // --- Human-readable error events ---
     // One-shot events consumed by ChatScreen via snackbar. Shape mirrors
     // other VMs for consistency; DROP_OLDEST so a burst of errors never
@@ -1479,6 +1498,9 @@ class ChatViewModel : ViewModel() {
     fun initialize(apiClient: HermesApiClient, chatHandler: ChatHandler) {
         this.apiClient = apiClient
         this.chatHandler = chatHandler
+        // A handler created after the persisted Thread names loaded still gets
+        // them, so a named Thread keeps its name across restart / reconnect.
+        chatHandler.setUserThreadNames(persistedThreadNames)
         fetchSkills()
         fetchPersonalities()
         fetchModels()
@@ -2032,6 +2054,7 @@ class ChatViewModel : ViewModel() {
                     // for other surfaces.
                     if (creating.name.isNotBlank()) {
                         chatHandler?.setUserThreadName(match.sessionId, creating.name)
+                        onSaveThreadName?.invoke(match.sessionId, creating.name)
                         if (match.title != creating.name) {
                             renameSession(match.sessionId, creating.name)
                         }
