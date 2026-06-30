@@ -17,7 +17,7 @@ Connections do **not** share sessions, memory, or personalities. Each Hermes ser
 
 ## Switching connection
 
-Tap the connection chip in the top bar (left side, next to the agent name). A bottom sheet shows all your connections with a health indicator for each. Tap one to switch. The chip hides automatically if you only have one connection — nothing to switch between.
+Tap the agent's name or avatar in the chat top bar to open the agent info sheet. Its **Connection** section lists your connections as a radio list — each row shows the connection's label plus its hostname and pairing status. Tap another to switch. The list appears only when you have two or more connections (with a single connection there's nothing to switch between), and it's disabled while a reply is streaming.
 
 On switch, the app:
 
