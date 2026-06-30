@@ -170,8 +170,6 @@ import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
-import com.hermesandroid.relay.ui.components.RelayModeStrip
-import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.LocalThinkingIndicator
 import com.hermesandroid.relay.ui.components.ThinkingIndicatorConfig
@@ -1696,16 +1694,10 @@ fun ChatScreen(
                     onDismiss = { showContextSheet = false },
                 )
             }
-            RelayModeStrip(
-                selected = RelayPrimaryMode.Chat,
-                onModeSelected = { mode ->
-                    when (mode) {
-                        RelayPrimaryMode.Chat -> Unit
-                        RelayPrimaryMode.Manage -> onNavigateToManage()
-                        RelayPrimaryMode.Bridge -> onNavigateToBridge()
-                    }
-                },
-            )
+            // Chat is the home: the Chat/Manage/Bridge mode strip was removed here
+            // (it spent a chrome band on the most-used screen). Manage and Bridge
+            // are reached from Settings (Settings → Hermes management / Bridge);
+            // Terminal + Settings remain quick icons in the top app bar above.
 
             // Error banner with retry
             AnimatedVisibility(visible = error != null) {
