@@ -1332,6 +1332,15 @@ fun ChatScreen(
                     "Connection: ${activeConnection?.label}"
                 else -> "Active connection"
             }
+            val threadsProactiveEnabled by connectionViewModel.proactiveEnabled.collectAsState()
+            val threadsAuthState by connectionViewModel.authState.collectAsState()
+            // Threads capability = "Let Hermes message me" on + relay paired.
+            // Shows the drawer's Threads affordance even before the first Thread
+            // arrives (the drawer also self-shows it when a source=phone session
+            // is already present).
+            val threadsCapabilityActive = threadsProactiveEnabled &&
+                threadsAuthState is com.hermesandroid.relay.auth.AuthState.Paired
+
             SessionDrawerContent(
                 sessions = sessions,
                 currentSessionId = currentSessionId,
@@ -1354,7 +1363,12 @@ fun ChatScreen(
                 },
                 onRenameSession = { sessionId, title ->
                     chatViewModel.renameSession(sessionId, title)
-                }
+                },
+                threadsCapabilityActive = threadsCapabilityActive,
+                onNewThread = { name ->
+                    chatViewModel.startNewThread(name)
+                    scope.launch { drawerState.close() }
+                },
             )
         }
     ) {

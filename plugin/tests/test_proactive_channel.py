@@ -301,8 +301,13 @@ class ProactiveChannelTests(unittest.TestCase):
                 },
             )
             self.assertEqual(ch.buffered_reply_count(), 1)
-            # A reply never goes back out over the WS — it is buffered.
-            self.assertEqual(ws.sent, [])
+            # The reply itself is buffered (never echoed), but the relay sends a
+            # per-reply ack back so the app can settle its optimistic bubble.
+            self.assertEqual(len(ws.sent), 1)
+            ack = ws.sent[0]
+            self.assertEqual(ack["type"], "proactive.reply.ack")
+            self.assertEqual(ack["payload"]["client_msg_id"], "r-1")
+            self.assertEqual(ack["payload"]["status"], "received")
             replies = await ch.take_replies(timeout=0.1)
             self.assertEqual(len(replies), 1)
             r = replies[0]
@@ -324,6 +329,31 @@ class ProactiveChannelTests(unittest.TestCase):
             await ch.handle(ws, {"type": "proactive.reply", "payload": {"text": "   "}})
             await ch.handle(ws, {"type": "proactive.reply", "payload": {}})
             self.assertEqual(ch.buffered_reply_count(), 0)
+            # A dropped reply is NOT acked (nothing for the app to settle).
+            self.assertEqual(ws.sent, [])
+
+        _run(run())
+
+    def test_cancel_verb_drops_queued_outbound(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            # Queue two outbound messages with no subscriber.
+            r1 = await ch.push({"chat_id": "phone", "text": "one"})
+            await ch.push({"chat_id": "phone", "text": "two"})
+            self.assertEqual(ch.buffered_outbound_count(), 2)
+            # The WS twin of DELETE /phone/outbound — drop a specific queued one.
+            ws = _FakeWs()
+            await ch.handle(
+                ws,
+                {
+                    "type": "proactive.cancel",
+                    "payload": {"message_id": r1["message_id"]},
+                },
+            )
+            self.assertEqual(ch.buffered_outbound_count(), 1)
+            # No message_id cancels all that remain.
+            await ch.handle(ws, {"type": "proactive.cancel", "payload": {}})
+            self.assertEqual(ch.buffered_outbound_count(), 0)
 
         _run(run())
 

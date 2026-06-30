@@ -51,6 +51,13 @@ class ProactiveMessageHandler(
     private val toInbox: ((ProactiveMessage) -> Unit)? = null,
     /** Sink for injecting into the active chat session (Phase 2b). */
     var toSession: ((ProactiveMessage) -> Unit)? = null,
+    /**
+     * Sink for the relay's per-reply ack (`proactive.reply.ack`) — lets the
+     * chat layer settle a Thread reply bubble from SENDING → DELIVERED. Wired
+     * after construction (the ChatViewModel isn't available at build time).
+     * `(clientMsgId, status)`.
+     */
+    var onReplyAck: ((String, String) -> Unit)? = null,
 ) {
 
     fun onMessage(envelope: Envelope) {
@@ -65,6 +72,13 @@ class ProactiveMessageHandler(
             }
             // Subscribe ack — informational; nothing to do client-side.
             "proactive.subscribed" -> Log.d(TAG, "proactive subscribe acked")
+            // Per-reply ack — settle the matching Thread reply bubble (the
+            // `client_msg_id` is the id the app stamped on its own reply).
+            "proactive.reply.ack" -> {
+                val clientMsgId = envelope.payload["client_msg_id"]?.jsonPrimitive?.contentOrNull
+                val status = envelope.payload["status"]?.jsonPrimitive?.contentOrNull ?: "received"
+                if (!clientMsgId.isNullOrBlank()) onReplyAck?.invoke(clientMsgId, status)
+            }
             else -> Log.d(TAG, "ignoring proactive type ${envelope.type}")
         }
     }
@@ -108,6 +122,7 @@ class ProactiveMessageHandler(
             title = payload["title"]?.jsonPrimitive?.contentOrNull,
             surfacing = payload["surfacing"]?.jsonPrimitive?.contentOrNull,
             sentAt = payload["sent_at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull(),
+            replyTo = payload["reply_to"]?.jsonPrimitive?.contentOrNull,
         )
     }
 
@@ -127,4 +142,6 @@ data class ProactiveMessage(
     val title: String?,
     val surfacing: String?,
     val sentAt: Long?,
+    /** Id of the message this one answers, if any (server threading hint). */
+    val replyTo: String? = null,
 )

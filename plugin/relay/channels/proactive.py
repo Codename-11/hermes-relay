@@ -52,6 +52,12 @@ Wire envelopes (frozen — do not rename fields):
   * ``proactive.reply``       — app → server: ``{text, chat_id, reply_to,
       message_id, ts}`` (the user's answer to a ``phone.message``;
       ``reply_to`` is the answered message's id, ``chat_id`` the conversation)
+  * ``proactive.reply.ack``   — server → app: ``{client_msg_id, status, ts}``
+      (per-reply ack: confirms the relay buffered the user's reply for the
+      gateway poller, so the app can settle its optimistic "Sending…" bubble)
+  * ``proactive.cancel``      — app → server: ``{message_id}`` (drop a queued
+      outbound ``phone.message`` before it flushes; the WS-reachable twin of
+      ``DELETE /phone/outbound``)
 
 Concurrency model:
   * A single ``ProactiveChannel`` instance lives on :class:`RelayServer`.
@@ -154,7 +160,22 @@ class ProactiveChannel:
         elif msg_type == "proactive.unsubscribe":
             await self._handle_unsubscribe(ws)
         elif msg_type == "proactive.reply":
-            self._handle_reply(envelope.get("payload") or {})
+            reply = self._handle_reply(envelope.get("payload") or {})
+            if reply is not None:
+                # Ack the specific reply back to the phone so the app can settle
+                # its optimistic "Sending…" bubble. Best-effort: the reply is
+                # already buffered for the gateway poller regardless of the ack.
+                await self._send_reply_ack(ws, reply["message_id"])
+        elif msg_type == "proactive.cancel":
+            # Drop a not-yet-delivered outbound message the phone no longer
+            # wants (the WS twin of DELETE /phone/outbound). No-op once flushed.
+            payload = envelope.get("payload") or {}
+            cancelled = self.cancel_outbound(payload.get("message_id"))
+            logger.info(
+                "proactive: cancel (message_id=%s) cancelled=%d",
+                payload.get("message_id"),
+                cancelled,
+            )
         elif msg_type == "phone.message":
             # Server→app only — a phone must never originate this.
             logger.warning("proactive: ignoring unexpected phone.message from phone")
@@ -184,6 +205,33 @@ class ProactiveChannel:
             self.phone_ws = None
             self.subscribed_at = None
             logger.info("proactive: phone unsubscribed")
+
+    async def _send_reply_ack(
+        self,
+        ws: web.WebSocketResponse,
+        client_msg_id: str,
+        status: str = "received",
+    ) -> None:
+        """Ack a received ``proactive.reply`` back to the phone (best-effort).
+
+        ``status="received"`` means the relay buffered the reply for the gateway
+        poller — not that the agent has processed it. The app uses the
+        ``client_msg_id`` (the id the phone minted on the reply) to move the
+        matching optimistic bubble from "Sending…" to a settled state.
+        """
+        try:
+            await ws.send_str(
+                _envelope(
+                    "proactive.reply.ack",
+                    {
+                        "client_msg_id": client_msg_id,
+                        "status": status,
+                        "ts": int(time.time() * 1000),
+                    },
+                )
+            )
+        except Exception as exc:  # pragma: no cover - best-effort ack
+            logger.debug("proactive: failed to ack reply %s: %s", client_msg_id, exc)
 
     # ── Outbound push (called from the HTTP handler) ─────────────────────
 
@@ -329,7 +377,7 @@ class ProactiveChannel:
 
     # ── Inbound reply buffer (phone → agent) ─────────────────────────────
 
-    def _handle_reply(self, payload: dict[str, Any]) -> None:
+    def _handle_reply(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         """Validate + buffer a ``proactive.reply`` from the phone.
 
         ``payload`` is the inner envelope payload (``text``, ``chat_id``,
@@ -337,11 +385,14 @@ class ProactiveChannel:
         — the phone never sends one, but a malformed client shouldn't wake the
         gateway poller for nothing. The buffered shape is normalized so the
         adapter sees a stable record regardless of which app version sent it.
+
+        Returns the normalized reply (including the resolved ``message_id``) so
+        the caller can ack it, or ``None`` when the reply was dropped.
         """
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip():
             logger.debug("proactive: dropping reply with empty text")
-            return
+            return None
         reply = {
             "text": text,
             "chat_id": payload.get("chat_id"),
@@ -350,6 +401,7 @@ class ProactiveChannel:
             "ts": payload.get("ts") or int(time.time() * 1000),
         }
         self.enqueue_reply(reply)
+        return reply
 
     def enqueue_reply(self, reply: dict[str, Any]) -> None:
         """Park a normalized reply for the gateway poller and wake any waiter.

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
@@ -36,6 +37,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -48,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,6 +63,7 @@ import java.util.Locale
 
 private enum class SessionDrawerFilter(val label: String) {
     All("All"),
+    Threads("Threads"),
     Pinned("Pinned"),
     Archive("Archive"),
 }
@@ -77,9 +81,23 @@ fun SessionDrawerContent(
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
-    onRenameSession: (String, String) -> Unit
+    onRenameSession: (String, String) -> Unit,
+    /**
+     * When true, the Threads affordance (header spool + filter chip) shows even with no
+     * Thread sessions present yet — i.e. the relay Threads capability is paired + opted in
+     * (slice 5 wires this from ConnectionViewModel). Until then the affordance is purely
+     * data-driven: it appears whenever at least one `source=phone` session is in the list.
+     */
+    threadsCapabilityActive: Boolean = false,
+    /**
+     * Create a new agent Thread with the given name (Discord-style "+ New
+     * Thread"). Null hides the affordance; when set it shows in the Threads
+     * filter view. The first message the user types opens the conversation.
+     */
+    onNewThread: ((String) -> Unit)? = null,
 ) {
     var renameDialogSession by remember { mutableStateOf<ChatSession?>(null) }
+    var newThreadDialog by remember { mutableStateOf(false) }
     var deleteDialogSession by remember { mutableStateOf<ChatSession?>(null) }
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
@@ -88,11 +106,23 @@ fun SessionDrawerContent(
     val listState = rememberLazyListState()
     var scrollToTopPending by remember { mutableStateOf(false) }
     val trimmedQuery = query.trim()
+    // Threads affordance shows when the capability is active OR there's already at least one
+    // agent Thread (source=phone) in the list. If the filter is on Threads but they've
+    // vanished, fall back to All so the drawer never gets stuck on an empty hidden filter.
+    val showThreads = threadsCapabilityActive || sessions.any { isThreadSource(it.source) }
+    val activeFilter = if (filter == SessionDrawerFilter.Threads && !showThreads) {
+        SessionDrawerFilter.All
+    } else {
+        filter
+    }
     val visibleSessions = sessions
         .asSequence()
         .filter { session ->
-            when (filter) {
+            when (activeFilter) {
                 SessionDrawerFilter.All -> session.sessionId !in archivedSessionIds
+                SessionDrawerFilter.Threads ->
+                    isThreadSource(session.source) &&
+                        session.sessionId !in archivedSessionIds
                 SessionDrawerFilter.Pinned ->
                     session.sessionId in pinnedSessionIds &&
                         session.sessionId !in archivedSessionIds
@@ -155,6 +185,30 @@ fun SessionDrawerContent(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )
+                // Threads affordance — a clean thread-spool that toggles the Threads
+                // filter. Shown only when the Threads capability is active (or a Thread is
+                // already present), so an ordinary no-relay drawer is visually unchanged.
+                if (showThreads) {
+                    IconButton(
+                        onClick = {
+                            filter = if (filter == SessionDrawerFilter.Threads) {
+                                SessionDrawerFilter.All
+                            } else {
+                                SessionDrawerFilter.Threads
+                            }
+                        },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        ThreadSpoolGlyph(
+                            modifier = Modifier.size(20.dp),
+                            tint = if (activeFilter == SessionDrawerFilter.Threads) {
+                                RelayRefresh.Relay
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                }
                 // Manual re-pull: the server titles a session asynchronously after
                 // the first turn (and never pushes a rename), so a refresh is the
                 // way to pick up a title the auto-reconcile window missed.
@@ -208,17 +262,35 @@ fun SessionDrawerContent(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                SessionDrawerFilter.entries.forEach { item ->
-                    FilterChip(
-                        selected = filter == item,
-                        onClick = { filter = item },
-                        label = {
-                            Text(
-                                text = item.label,
-                                style = relayMetadataStyle(),
-                            )
-                        },
+                SessionDrawerFilter.entries
+                    .filter { it != SessionDrawerFilter.Threads || showThreads }
+                    .forEach { item ->
+                        FilterChip(
+                            selected = activeFilter == item,
+                            onClick = { filter = item },
+                            label = {
+                                Text(
+                                    text = item.label,
+                                    style = relayMetadataStyle(),
+                                )
+                            },
+                        )
+                    }
+            }
+            // "+ New Thread" — Discord-style user-created thread, shown when the
+            // Threads filter is active. The first message opens the conversation.
+            if (activeFilter == SessionDrawerFilter.Threads && onNewThread != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { newThreadDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ThreadSpoolGlyph(
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary,
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("New Thread")
                 }
             }
             if (!autoTitlesSupported) {
@@ -313,6 +385,40 @@ fun SessionDrawerContent(
             }
         }
         }
+    }
+
+    // New Thread dialog (Discord-style): name a fresh agent Thread.
+    if (newThreadDialog) {
+        var threadName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { newThreadDialog = false },
+            title = { Text("New Thread") },
+            text = {
+                OutlinedTextField(
+                    value = threadName,
+                    onValueChange = { threadName = it },
+                    label = { Text("Thread name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = threadName.trim()
+                    if (name.isNotBlank()) {
+                        onNewThread?.invoke(name)
+                        newThreadDialog = false
+                    }
+                }) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { newThreadDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
     // Rename dialog
@@ -421,6 +527,29 @@ private fun SessionItem(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Agent Thread tag — the clean spool + "Thread", so a source=phone
+                // conversation reads as its own lane in the unified session list (ADR 12).
+                if (isThreadSource(session.source)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(RelayRefresh.Relay.copy(alpha = 0.16f))
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    ) {
+                        ThreadSpoolGlyph(
+                            modifier = Modifier.size(11.dp),
+                            tint = RelayRefresh.Relay,
+                        )
+                        Text(
+                            text = "Thread",
+                            style = relayMetadataStyle(),
+                            color = RelayRefresh.Relay,
+                            maxLines = 1,
+                        )
+                    }
+                }
                 sessionTimestampText(session, locale)?.let { timestamp ->
                     Text(
                         text = timestamp,

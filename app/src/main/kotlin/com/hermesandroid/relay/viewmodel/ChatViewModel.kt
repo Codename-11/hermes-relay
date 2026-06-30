@@ -13,6 +13,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
+import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
@@ -174,6 +175,24 @@ class ChatViewModel : ViewModel() {
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
+
+    /**
+     * Send a user message into an agent **Thread** (a `source=phone` session)
+     * over the relay proactive channel instead of the normal chat transport —
+     * set by RelayApp to [ConnectionViewModel.sendProactiveReply]. `(text,
+     * chatId, replyTo, messageId)`; `messageId` is the user bubble's id so the
+     * relay's ack can settle it. Null when no relay/ConnectionViewModel is wired.
+     */
+    var onProactiveReply: ((String, String?, String?, String) -> Unit)? = null
+
+    /**
+     * A "+ New Thread" the user just created + named, before its first message
+     * is sent. The first send routes to [PendingThread.chatId] (which makes the
+     * gateway create the `source=phone` session keyed by it); we then poll for +
+     * switch to that real session and apply the chosen name.
+     */
+    private data class PendingThread(val chatId: String, val name: String)
+    private var pendingThread: PendingThread? = null
 
     // --- Human-readable error events ---
     // One-shot events consumed by ChatScreen via snackbar. Shape mirrors
@@ -1349,6 +1368,22 @@ class ChatViewModel : ViewModel() {
         chatHandler?.addProactiveMessage(text)
     }
 
+    /**
+     * Settle a Thread reply bubble when the relay acks it
+     * (`proactive.reply.ack`) — wired by RelayApp to the proactive handler's
+     * `onReplyAck`. [clientMsgId] is the user bubble's id (the app stamped it on
+     * the reply). Any non-"failed" status is treated as DELIVERED (the relay
+     * buffered the reply for the agent).
+     */
+    fun onProactiveReplyAck(clientMsgId: String, status: String) {
+        val resolved = if (status.equals("failed", ignoreCase = true)) {
+            MessageDeliveryStatus.FAILED
+        } else {
+            MessageDeliveryStatus.DELIVERED
+        }
+        chatHandler?.updateDeliveryStatus(clientMsgId, resolved)
+    }
+
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
         val handler = chatHandler ?: return emptyList()
         return handler.messages.value
@@ -1877,6 +1912,72 @@ class ChatViewModel : ViewModel() {
                     }
                 }
             )
+        }
+    }
+
+    /**
+     * Start a user-created agent **Thread** (Discord-style "+ New Thread"): mint
+     * a fresh phone-platform `chat_id`, blank the chat to a draft, and stash it
+     * as [pendingThread]. The first message the user sends opens the conversation
+     * on that `chat_id` (the gateway creates the `source=phone` session keyed by
+     * it), after which [switchToCreatedThread] swaps the draft for the real
+     * session. Gated on relay pairing + "Let Hermes message me" by the caller.
+     */
+    fun startNewThread(name: String) {
+        val handler = chatHandler ?: return
+        activeStream?.cancel()
+        activeStream = null
+        historyLoadGeneration.incrementAndGet()
+        val slug = name.trim().lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(24)
+        val chatId = "t-" + slug.ifBlank { "thread" } + "-" +
+            java.util.UUID.randomUUID().toString().take(6)
+        pendingThread = PendingThread(chatId = chatId, name = name.trim())
+        // Blank draft — the first send routes to the new thread (handled in
+        // sendMessageInternal's pendingThread branch).
+        gatewayClient?.clearSession()
+        handler.setSessionId(null)
+        handler.clearMessages()
+        _contextUsage.value = null
+        _contextWindow.value = null
+        _pendingAsk.value = null
+        onSessionChanged?.invoke(null)
+    }
+
+    /**
+     * Parse the phone-platform `chat_id` from a gateway session id that carries
+     * the canonical `…:dm:<chat_id>` key form; null otherwise so the relay/
+     * adapter falls back to the home channel (keeps the single home thread
+     * working even when the id is an opaque uuid).
+     */
+    private fun threadChatId(sessionId: String): String? =
+        sessionId.takeIf { it.contains(":dm:") }
+            ?.substringAfterLast(":")
+            ?.takeIf { it.isNotBlank() }
+
+    /**
+     * After a "+ New Thread" first send, poll the session list until the gateway
+     * has created the `source=phone` session for [chatId], then switch to it
+     * (loading its history) and apply the user's [name]. Best-effort — if it
+     * doesn't appear within the window the thread still exists and shows in the
+     * drawer's Threads filter on the next refresh.
+     */
+    private fun switchToCreatedThread(chatId: String, name: String) {
+        viewModelScope.launch {
+            for (delayMs in longArrayOf(900L, 1300L, 1800L, 2500L, 3500L)) {
+                delay(delayMs)
+                refreshSessions()
+                delay(400L) // let the refresh job land in the sessions flow
+                val match = chatHandler?.sessions?.value?.firstOrNull {
+                    it.source == "phone" && threadChatId(it.sessionId) == chatId
+                }
+                if (match != null) {
+                    switchSession(match.sessionId)
+                    if (name.isNotBlank() && match.title != name) {
+                        renameSession(match.sessionId, name)
+                    }
+                    return@launch
+                }
+            }
         }
     }
 
@@ -2649,6 +2750,42 @@ class ChatViewModel : ViewModel() {
 
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
+
+        // User-created Thread: the first message of a "+ New Thread" opens a new
+        // source=phone gateway session keyed by the minted chat_id. Route it over
+        // the proactive channel, then poll for + switch to the real session.
+        pendingThread?.let { pending ->
+            pendingThread = null
+            val send = onProactiveReply
+            if (send != null) {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
+                send(text.trim(), pending.chatId, null, messageId)
+                switchToCreatedThread(pending.chatId, pending.name)
+            } else {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
+            }
+            return
+        }
+
+        // Agent Thread (existing source=phone session): the user is replying
+        // inside a proactive conversation, so route the turn over the relay
+        // proactive channel (continues that thread's gateway session) instead of
+        // a normal chat send. The user bubble was already added above — mark it
+        // SENDING and stamp its id as the reply's message_id so the relay's ack
+        // can settle it. The chat_id is parsed from the session id so the reply
+        // reaches the right thread (home thread → "phone"; opaque id → null
+        // fallback = home channel).
+        val activeThread = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
+        if (activeThread?.source == "phone") {
+            val send = onProactiveReply
+            if (send != null) {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
+                send(text.trim(), threadChatId(activeThread.sessionId), null, messageId)
+            } else {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
+            }
+            return
+        }
 
         // Optimistic drawer preview: a chat created via "New Chat" still reads
         // "New Chat"/untitled in the drawer until the server auto-titles it after

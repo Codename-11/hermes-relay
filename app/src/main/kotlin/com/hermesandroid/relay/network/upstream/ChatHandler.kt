@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.HermesCard
+import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
@@ -305,6 +306,18 @@ class ChatHandler {
     fun addUserMessage(message: ChatMessage) {
         _messages.update { list ->
             (list + message).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
+     * Update the [ChatMessage.deliveryStatus] of a sent message by id — used by
+     * the agent-Thread reply path (`source=phone`) to move a bubble through
+     * SENDING → DELIVERED (on the relay's `proactive.reply.ack`) / FAILED.
+     * No-op when the id isn't present (it may have aged out of the window).
+     */
+    fun updateDeliveryStatus(messageId: String, status: MessageDeliveryStatus) {
+        _messages.update { list ->
+            list.map { if (it.id == messageId) it.copy(deliveryStatus = status) else it }
         }
     }
 
@@ -1400,6 +1413,11 @@ class ChatHandler {
                 updatedAt = activityAtMs,
                 startedAt = startedAtMs,
                 lastActivityAt = lastActivityAtMs,
+                // Carry the upstream platform/source so the drawer can tag agent
+                // Threads (source=phone) — this is the one list site fed by the wire
+                // SessionItem; the other ChatSession() call sites are local optimistic
+                // rows (default source). (ADR 12 — Threads surface, slice 1.)
+                source = item.source,
             )
         }.sortedByDescending { it.activityTimestamp }
         // Preserve the active session's optimistic row when the server list

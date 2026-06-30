@@ -1841,7 +1841,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * @param chatId the conversation to continue (from the original message).
      * @param replyTo the answered message's id (anchors the reply).
      */
-    fun sendProactiveReply(text: String, chatId: String?, replyTo: String?) {
+    fun sendProactiveReply(
+        text: String,
+        chatId: String?,
+        replyTo: String?,
+        messageId: String? = null,
+    ) {
         val body = text.trim()
         if (body.isEmpty()) return
         multiplexer.send(
@@ -1852,6 +1857,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     put("text", body)
                     if (!chatId.isNullOrBlank()) put("chat_id", chatId)
                     if (!replyTo.isNullOrBlank()) put("reply_to", replyTo)
+                    // The app-minted id the relay echoes back in
+                    // `proactive.reply.ack`, so a Thread reply bubble can settle
+                    // SENDING → DELIVERED. Omitted by the inbox/notification
+                    // paths (they don't track per-bubble status).
+                    if (!messageId.isNullOrBlank()) put("message_id", messageId)
                     put("ts", System.currentTimeMillis())
                 },
             ),

@@ -63,6 +63,7 @@ import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
+import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
@@ -506,6 +507,23 @@ fun MessageBubble(
                     style = MaterialTheme.typography.labelSmall,
                     color = textColor.copy(alpha = 0.5f)
                 )
+
+                // Delivery status — only on agent-Thread reply bubbles (a user
+                // message routed over the relay proactive channel). Null on every
+                // ordinary chat message, which render nothing here.
+                message.deliveryStatus?.takeIf { isUser }?.let { status ->
+                    val (label, alpha) = when (status) {
+                        MessageDeliveryStatus.SENDING -> "Sending…" to 0.5f
+                        MessageDeliveryStatus.DELIVERED -> "Delivered" to 0.5f
+                        MessageDeliveryStatus.FAILED -> "Not sent" to 0.7f
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = alpha),
+                    )
+                }
 
                 // Token display (assistant messages only)
                 if (!isUser && (message.inputTokens != null || message.outputTokens != null)) {

@@ -919,6 +919,16 @@ fun RelayApp() {
                 }
                 chatViewModel.injectProactiveMessage(text)
             }
+            // Agent Thread reply path: a send from the chat composer while a
+            // source=phone Thread is open routes over the relay proactive
+            // channel (continues the gateway phone session) instead of a normal
+            // chat send; the relay's per-reply ack settles the bubble's status.
+            chatViewModel.onProactiveReply = { text, chatId, replyTo, messageId ->
+                connectionViewModel.sendProactiveReply(text, chatId, replyTo, messageId)
+            }
+            connectionViewModel.proactiveMessageHandler.onReplyAck = { clientMsgId, status ->
+                chatViewModel.onProactiveReplyAck(clientMsgId, status)
+            }
         }
 
         LaunchedEffect(onboardingCompleted, postOnboardingRoute) {
