@@ -49,8 +49,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
@@ -237,6 +239,68 @@ fun AboutScreen(
                         )
                     }
                     // === END PHASE3-flavor-split ===
+
+                    // Connected relay's plugin version + a soft "newer release
+                    // available" nudge — both flavors, since the relay is
+                    // server-side regardless of app track. Source:
+                    // ConnectionViewModel.relayUpdateInfo, refreshed on each
+                    // auth.ok from the relay's /relay/update-check (the app and
+                    // relay version *independently* — this is the relay's own
+                    // track, not an app-vs-relay numeric compare). Null until a
+                    // paired relay answers, so it simply doesn't render offline.
+                    val relayUpdate by connectionViewModel.relayUpdateInfo.collectAsState()
+                    relayUpdate?.let { ru ->
+                        HorizontalDivider()
+                        val clipboard = LocalClipboardManager.current
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Relay",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                val subtitle = when {
+                                    ru.updateAvailable && !ru.latest.isNullOrBlank() ->
+                                        "Update available — v${ru.current} → v${ru.latest}"
+                                    ru.current.isNotBlank() -> "On v${ru.current} — up to date"
+                                    else -> "Connected"
+                                }
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (ru.updateAvailable) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                            if (ru.updateAvailable && !ru.updateCommand.isNullOrBlank()) {
+                                TextButton(onClick = {
+                                    clipboard.setText(AnnotatedString(ru.updateCommand))
+                                    Toast.makeText(
+                                        context,
+                                        "Update command copied",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }) {
+                                    Text("Copy fix")
+                                }
+                            }
+                        }
+                        if (ru.updateAvailable && !ru.updateCommand.isNullOrBlank()) {
+                            Text(
+                                text = "Run on your Hermes host, then restart the gateway:\n${ru.updateCommand}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
 
                     // Sideload-only: in-app update check. googlePlay builds
                     // get updates through the Play Store, so we hide this

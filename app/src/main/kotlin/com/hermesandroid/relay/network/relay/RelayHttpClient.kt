@@ -476,6 +476,86 @@ class RelayHttpClient(
         }
     }
 
+    /** The relay's update-check result from `/relay/update-check`. */
+    @Serializable
+    data class RelayUpdateInfo(
+        val current: String = "",
+        val latest: String? = null,
+        @SerialName("update_available") val updateAvailable: Boolean = false,
+        @SerialName("update_command") val updateCommand: String? = null,
+        val error: String? = null,
+    )
+
+    /**
+     * Ask the relay whether a newer plugin release is available — it compares its
+     * installed version against the latest `plugin-v*` GitHub release (cached an
+     * hour server-side, so the app polling this is cheap). Surfaced as a soft,
+     * dismissible "your relay is behind" nudge plus a version readout.
+     *
+     * Optional + fail-soft: an older relay without the route returns 404 → null,
+     * and the app simply shows no update hint.
+     */
+    suspend fun fetchUpdateCheck(): Result<RelayUpdateInfo?> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        }
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = try {
+            "$httpBase/relay/update-check".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+        }
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+        // Slightly longer than the other reads — a cache-miss on the relay does a
+        // GitHub round-trip in an executor before responding.
+        val client = okHttpClient.newBuilder()
+            .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    return@withContext Result.success(null)
+                }
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) {
+                    return@withContext Result.success(null)
+                }
+                Result.success(
+                    sessionsJson.decodeFromString(RelayUpdateInfo.serializer(), body)
+                )
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "fetchUpdateCheck failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchUpdateCheck parse error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
     // ------------------------------------------------------------------
     // Paired-device management (2026-04-11 security overhaul)
     // ------------------------------------------------------------------

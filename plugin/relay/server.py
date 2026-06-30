@@ -3321,6 +3321,50 @@ async def handle_phone_threads(request: web.Request) -> web.Response:
     return web.json_response({"threads": read_phone_threads()})
 
 
+# Update-check cache — a GitHub round-trip per poll would be wasteful and risk
+# rate-limiting, so the resolved result is cached for an hour. The app polls
+# this far less often than that; ``?refresh=1`` forces a re-fetch.
+_UPDATE_CHECK_CACHE: dict[str, Any] = {"result": None, "at": 0.0}
+_UPDATE_CHECK_TTL: float = 3600.0
+
+
+async def handle_relay_update_check(request: web.Request) -> web.Response:
+    """Report whether a newer hermes-relay plugin release is available.
+
+    The dashboard has its own (loopback) update-check; this is the **app-facing**
+    twin on the relay port so the phone can surface a soft "your relay is behind"
+    nudge. Compares the installed ``plugin.relay.__version__`` against the latest
+    ``plugin-v*`` GitHub release and names the right update command for the host.
+
+    Loopback callers skip bearer auth (diagnostics); the paired phone presents
+    its relay session bearer (same gate as ``/phone/threads``). The blocking
+    GitHub fetch runs in an executor so it never stalls the event loop, and the
+    result is cached for an hour. Failures degrade to
+    ``update_available=false`` with an ``error`` — never a 5xx.
+
+    GET /relay/update-check[?refresh=1]
+      → 200 {current, latest, update_available, update_command, error?}
+      → 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+    if not is_loopback:
+        _server, _session = _require_bearer_session(request)
+
+    force = request.query.get("refresh", "").strip().lower() in ("1", "true", "yes")
+    now = time.monotonic()
+    cached = _UPDATE_CHECK_CACHE["result"]
+    if force or cached is None or (now - _UPDATE_CHECK_CACHE["at"]) > _UPDATE_CHECK_TTL:
+        from .. import update_check
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, update_check.check)
+        _UPDATE_CHECK_CACHE["result"] = result
+        _UPDATE_CHECK_CACHE["at"] = now
+
+    return web.json_response(_UPDATE_CHECK_CACHE["result"])
+
+
 async def handle_context_injected(request: web.Request) -> web.Response:
     """Return the relay-owned system-prompt context audit shape.
 
@@ -4108,6 +4152,7 @@ def create_app(config: RelayConfig) -> web.Application:
     # Map phone Threads → chat_id (the field /api/sessions omits) so the app can
     # route a reply into the right Thread. Bearer for the app; loopback for diag.
     app.router.add_get("/phone/threads", handle_phone_threads)
+    app.router.add_get("/relay/update-check", handle_relay_update_check)
 
     # Relay-owned agent context audit.
     app.router.add_get("/context/injected", handle_context_injected)

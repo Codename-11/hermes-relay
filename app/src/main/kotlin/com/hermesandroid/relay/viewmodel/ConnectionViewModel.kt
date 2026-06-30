@@ -1861,6 +1861,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // Relay plugin update status from /relay/update-check (the relay compares its
+    // installed version to the latest plugin-v* release, cached an hour). Drives
+    // the Settings version readout + a soft, dismissible "relay is behind" nudge.
+    // Fail-soft: stays null on an older relay (no route) or a fetch error.
+    private val _relayUpdateInfo = MutableStateFlow<RelayHttpClient.RelayUpdateInfo?>(null)
+    val relayUpdateInfo: StateFlow<RelayHttpClient.RelayUpdateInfo?> = _relayUpdateInfo.asStateFlow()
+
+    fun refreshRelayUpdateInfo() {
+        viewModelScope.launch {
+            relayHttpClient.fetchUpdateCheck().onSuccess { info ->
+                if (info != null) _relayUpdateInfo.value = info
+            }
+        }
+    }
+
     private fun sendProactiveSubscribe() {
         multiplexer.send(Envelope(channel = "proactive", type = "proactive.subscribe"))
     }
@@ -2812,6 +2827,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // Pull the phone Thread → chat_id map so replies route correctly
                 // (covers Threads the app didn't create + survives restart).
                 refreshPhoneThreadChatIds()
+                // Check whether the relay's plugin is behind the latest release.
+                refreshRelayUpdateInfo()
             }
         }
         // React to the toggle flipping while already connected. drop(1) skips
