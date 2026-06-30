@@ -1829,6 +1829,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch { threadNameStore.setName(sessionId, name) }
     }
 
+    // Phone Thread session_id → chat_id, fetched from the relay's /phone/threads
+    // (the gateway store has chat_id but /api/sessions doesn't). Seeds the chat
+    // composer's reply routing so a Thread the app didn't create — or any Thread
+    // after restart — routes to the right conversation. Fail-soft: empty on an
+    // older relay / fetch error, and the client's learned map still applies.
+    private val _phoneThreadChatIds = MutableStateFlow<Map<String, String>>(emptyMap())
+    val phoneThreadChatIds: StateFlow<Map<String, String>> = _phoneThreadChatIds.asStateFlow()
+
+    fun refreshPhoneThreadChatIds() {
+        viewModelScope.launch {
+            relayHttpClient.fetchPhoneThreads().onSuccess { threads ->
+                val map = threads
+                    .filter { it.sessionId.isNotBlank() && it.chatId.isNotBlank() }
+                    .associate { it.sessionId to it.chatId }
+                if (map.isNotEmpty()) _phoneThreadChatIds.value = map
+            }
+        }
+    }
+
     private fun sendProactiveSubscribe() {
         multiplexer.send(Envelope(channel = "proactive", type = "proactive.subscribe"))
     }
@@ -2777,6 +2796,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             authOkEvents.collect {
                 if (proactiveEnabled.value) sendProactiveSubscribe()
+                // Pull the phone Thread → chat_id map so replies route correctly
+                // (covers Threads the app didn't create + survives restart).
+                refreshPhoneThreadChatIds()
             }
         }
         // React to the toggle flipping while already connected. drop(1) skips

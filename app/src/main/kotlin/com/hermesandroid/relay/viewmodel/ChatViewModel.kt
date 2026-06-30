@@ -238,6 +238,16 @@ class ChatViewModel : ViewModel() {
         chatHandler?.setUserThreadNames(names)
     }
 
+    /**
+     * Seed the reply-routing map from the relay's `/phone/threads` (the
+     * `session_id → chat_id` the API omits). Authoritative over the in-memory
+     * learned map, so any Thread routes its replies to the right conversation —
+     * including one this app didn't create, or any Thread after a restart.
+     */
+    fun seedThreadChatIds(map: Map<String, String>) {
+        threadChatIds.putAll(map)
+    }
+
     // --- Human-readable error events ---
     // One-shot events consumed by ChatScreen via snackbar. Shape mirrors
     // other VMs for consistency; DROP_OLDEST so a burst of errors never

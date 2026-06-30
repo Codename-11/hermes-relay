@@ -957,6 +957,13 @@ fun RelayApp() {
                     chatViewModel.applyPersistedThreadNames(names)
                 }
             }
+            // Seed reply routing from the relay's /phone/threads (the session→
+            // chat_id map the API omits), so any Thread routes replies correctly.
+            launch {
+                connectionViewModel.phoneThreadChatIds.collect { map ->
+                    chatViewModel.seedThreadChatIds(map)
+                }
+            }
         }
 
         LaunchedEffect(onboardingCompleted, postOnboardingRoute) {
