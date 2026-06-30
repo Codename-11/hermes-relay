@@ -127,64 +127,10 @@ fun ChatSettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Quick Controls — the most-reached-for chat controls, pinned to the
-            // very top of Settings. Intentionally extensible: more quick toggles
-            // can join this card later; for now it hosts only Persistent
-            // connection (relocated from the mid-list section below).
-            Text(
-                text = "Quick Controls",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Persistent connection — opt-in, both flavors. Holds the
-                    // app's connection to Hermes open in the background via a
-                    // persistent notification so messages and live features stay
-                    // responsive (relay-paired setups also keep device control +
-                    // notification mirroring reachable). Off by default; uses
-                    // more battery. Same pref/key as the former mid-list toggle.
-                    val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Persistent connection",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = if (gatewayKeepAlive) {
-                                    "Keeping your connection to Hermes open in the background"
-                                } else {
-                                    "Connect on demand only · saves battery"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = gatewayKeepAlive,
-                            onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) }
-                        )
-                    }
-                }
-            }
+            // (Quick Controls — Persistent connection etc. — moved to the
+            // top-level Settings landing, since they're connection-level controls
+            // flipped frequently, not chat-specific. See SettingsScreen's
+            // QuickControlsCard.)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()

@@ -377,6 +377,17 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
+            // ── Quick Controls ─────────────────────────────────────────
+            // The switches flipped most often, pinned to the top-level Settings
+            // landing instead of buried in a sub-screen. Persistent connection is
+            // connection-level (not chat-specific), so it belongs here beside the
+            // agent / profile cards. Extensible — add more frequently-toggled
+            // switches in QuickControlsCard.
+            QuickControlsCard(
+                connectionViewModel = connectionViewModel,
+                isDarkTheme = isDarkTheme,
+            )
+
             // (The "Active Connection quick-look card" that used to live
             // here — showing API / Relay / Session status rows with a
             // clickable shortcut into a separate singular-connection
@@ -777,6 +788,98 @@ private fun ProfileLockCard(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/**
+ * Quick Controls card on the top-level Settings landing — the switches the user
+ * flips most often (Persistent connection, turn-complete alerts), kept out of
+ * the per-feature sub-screens so they're one tap from the Settings root. Wired
+ * straight to the same ConnectionViewModel flows the sub-screens use.
+ */
+@Composable
+private fun QuickControlsCard(
+    connectionViewModel: ConnectionViewModel,
+    isDarkTheme: Boolean,
+) {
+    val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
+    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gradientBorder(
+                shape = RoundedCornerShape(12.dp),
+                isDarkTheme = isDarkTheme,
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Quick Controls",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            // Persistent connection — connection-level keep-alive: holds the app
+            // process up via a notification so the gateway chat socket (and, for
+            // relay-paired setups, device control + notification mirroring) stays
+            // reachable in the background. Off by default; uses more battery.
+            QuickControlToggle(
+                title = "Persistent connection",
+                subtitle = if (gatewayKeepAlive) {
+                    "Keeping your connection to Hermes open in the background"
+                } else {
+                    "Connect on demand only · saves battery"
+                },
+                checked = gatewayKeepAlive,
+                onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) },
+            )
+            HorizontalDivider()
+            QuickControlToggle(
+                title = "Turn-complete alerts",
+                subtitle = if (notifyTurnComplete) {
+                    "Notify when a reply finishes while the app is in the background"
+                } else {
+                    "No alert when a backgrounded reply finishes"
+                },
+                checked = notifyTurnComplete,
+                onCheckedChange = { connectionViewModel.setNotifyTurnComplete(it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickControlToggle(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
