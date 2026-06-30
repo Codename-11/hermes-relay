@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Link
@@ -552,40 +553,67 @@ private fun SessionRow(title: String, active: String, msgs: String) {
 
 @Composable
 private fun ConnectionsScene() = StoreSettings("Connections") {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // Level-1 list: scannable connection cards, the active one badged, each
+    // with the capability timeline. Tapping opens the tabbed detail.
+    ConnCard(label = "Hermes", active = true, status = "Connected · Tailscale") {
+        FeatureRow("API", "Ready", true)
+        FeatureRow("Dashboard", "Signed in", true)
+        FeatureRow("Voice", "Ready", true)
+        FeatureRow("Relay", "Connected", true)
+    }
+    ConnCard(label = "Lab NAS", active = false, status = "Paired 2 days ago") {
+        FeatureRow("API", "Configured", false)
+        FeatureRow("Dashboard", "Unchecked", false)
+        FeatureRow("Voice", "Optional", false)
+        FeatureRow("Relay", "Paired", true)
+    }
+}
+
+@Composable
+private fun ConnCard(
+    label: String,
+    active: Boolean,
+    status: String,
+    rows: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Surface(
+        color = if (active) {
+            RelayRefresh.ElectricMuted.copy(alpha = 0.42f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Hermes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-                com.hermesandroid.relay.ui.components.RelayStatusPill("Active", active = true)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                if (active) com.hermesandroid.relay.ui.components.RelayStatusPill("Active", active = true)
+                Icon(
+                    androidx.compose.material.icons.Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
             }
-            Text("Connected  ·  Active: LAN  ·  LAN + Tailscale", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                Text("Rename", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                Text("Re-pair", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                Text("Revoke", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                Text("Remove", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
+            Text(
+                status,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(vertical = 4.dp), content = rows)
             }
-        }
-    }
-    Text("Features", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-    Text("What this connection can do. Routes only choose how the phone reaches Hermes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(vertical = 4.dp)) {
-            FeatureRow("Vanilla Hermes API", "Ready", true)
-            FeatureRow("Dashboard", "Signed in", true)
-            FeatureRow("Vanilla Hermes voice", "Ready", true)
-            FeatureRow("Relay tools", "Ready", true)
-            FeatureRow("Terminal", "Ready", true)
-            FeatureRow("Secure proxy", "Not advertised", false)
-        }
-    }
-    Text("Route", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Current: LAN", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-            Text("192.168.1.50:8642", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Re-check", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }
