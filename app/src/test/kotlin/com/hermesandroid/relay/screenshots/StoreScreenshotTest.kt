@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,8 +63,6 @@ import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
-import com.hermesandroid.relay.ui.components.RelayModeStrip
-import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
@@ -253,8 +252,8 @@ private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  Real-chrome cockpit — TopAppBar + ContextMeterBar + RelayModeStrip wrap the
-//  content, with ChatInputBar + RelayStatusStrip at the foot. Shared by scenes.
+//  Real-chrome cockpit — TopAppBar + ContextMeterBar wrap the content, with
+//  ChatInputBar + RelayStatusStrip at the foot. Shared by chat-context scenes.
 // ════════════════════════════════════════════════════════════════════════════
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -262,7 +261,6 @@ private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
 private fun StoreCockpit(
     contextUsage: Float? = null,
     showInput: Boolean = true,
-    selectedMode: RelayPrimaryMode = RelayPrimaryMode.Chat,
     content: @Composable () -> Unit
 ) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -296,7 +294,6 @@ private fun StoreCockpit(
             colors = TopAppBarDefaults.topAppBarColors(containerColor = RelayRefresh.Background.copy(alpha = 0.96f))
         )
         ContextMeterBar(usedFraction = contextUsage, usedTokens = 37_000, maxTokens = 1_050_000)
-        RelayModeStrip(selected = selectedMode, onModeSelected = {})
         Box(Modifier.weight(1f).fillMaxWidth()) { content() }
         if (showInput) {
             ChatInputBar(
@@ -379,25 +376,47 @@ private fun VoiceScene() {
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun ManageScene() = StoreCockpit(showInput = false, selectedMode = RelayPrimaryMode.Manage) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        com.hermesandroid.relay.ui.components.RelayHeroPanel(title = "Relay Hub", subtitle = "Dashboard · skills · profiles · models")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            com.hermesandroid.relay.ui.components.RelayMetricCard("123", "skills", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
-            com.hermesandroid.relay.ui.components.RelayMetricCard("ready", "dashboard", Modifier.weight(1f), valueColor = RelayRefresh.Green)
-            com.hermesandroid.relay.ui.components.RelayMetricCard("0.17.0", "server", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
+private fun ManageScene() {
+    // Manage's own chrome (matches DashboardManagementScreen): a back arrow to
+    // Chat + Terminal/Settings/Refresh actions — no hamburger, no context meter,
+    // and no mode strip (removed app-wide; Manage is reached from Settings now).
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        TopAppBar(
+            navigationIcon = {
+                RelayChromeIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back to chat", onClick = {}, modifier = Modifier.padding(start = 4.dp))
+            },
+            title = { Text("Manage", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) },
+            actions = {
+                RelayChromeIconButton(Icons.Filled.Code, "Terminal", onClick = {}, modifier = Modifier.padding(end = 4.dp))
+                RelayChromeIconButton(Icons.Filled.Tune, "Settings", onClick = {}, modifier = Modifier.padding(end = 4.dp))
+                IconButton(onClick = {}) { Icon(Icons.Filled.Refresh, "Refresh", tint = RelayRefresh.Paper) }
+            },
+            windowInsets = WindowInsets(0, 0, 0, 0),
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = RelayRefresh.Background.copy(alpha = 0.96f)),
+        )
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                com.hermesandroid.relay.ui.components.RelayHeroPanel(title = "Relay Hub", subtitle = "Dashboard · skills · profiles · models")
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    com.hermesandroid.relay.ui.components.RelayMetricCard("123", "skills", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
+                    com.hermesandroid.relay.ui.components.RelayMetricCard("ready", "dashboard", Modifier.weight(1f), valueColor = RelayRefresh.Green)
+                    com.hermesandroid.relay.ui.components.RelayMetricCard("0.17.0", "server", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
+                }
+                val ic = androidx.compose.material.icons.Icons.Filled
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Link, "Connections", "Pair, switch, verify routes", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Person, "Profiles", "SOUL, memory, skills, sessions", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.AutoAwesome, "Skills + Tools", "Browse, enable, configure", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Schedule, "Automations", "Cron, background runs, delivery", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Code, "MCP Servers", "Servers, status, tools", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Tune, "Models", "Pick provider + default model", {})
+            }
         }
-        val ic = androidx.compose.material.icons.Icons.Filled
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Link, "Connections", "Pair, switch, verify routes", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Person, "Profiles", "SOUL, memory, skills, sessions", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.AutoAwesome, "Skills + Tools", "Browse, enable, configure", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Schedule, "Automations", "Cron, background runs, delivery", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Code, "MCP Servers", "Servers, status, tools", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Tune, "Models", "Pick provider + default model", {})
+        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.5 / profile: default")
     }
 }
 
