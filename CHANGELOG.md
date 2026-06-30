@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Proactive messages from the agent to your phone.** Your Hermes agent can reach out to the paired phone on its own — via `send_message target=phone` or a cron `deliver=phone`. Messages surface as a system notification, collect in a dedicated Hermes inbox, and can be injected into the active chat to continue the conversation (selected per message). Off by default and gated on pairing: nothing is pushed unless you enable it on the server (`PHONE_ENABLED`) and opt in on the phone ("Let Hermes message me"). Delivered over the existing relay connection through the upstream platform-plugin API (no fork).
 - **Reply to your agent's messages (two-way).** A proactive message is now a conversation, not a one-way ping: reply straight from the notification (inline Reply) or from the Hermes inbox, and your answer goes back to the agent and continues the same thread. The phone behaves like any other Hermes messaging platform — the reply arrives as an inbound message the agent processes and answers. Rides the same paired relay connection; no extra setup beyond the proactive opt-in above. If your phone is offline when the agent answers, the message is queued and delivered when you reconnect — not lost.
 - **Pick your font.** A Font picker in Appearance sets the app-wide typeface — **Inter** (the new default), **Nunito**, or your **system** font — each previewed in its own face and applied instantly across the app, no restart. Code and timestamps stay monospaced. (Bundled faces are SIL OFL.)
+- **Quick Controls in Settings.** A Quick Controls card at the top of Settings groups the switches you flip most often — **Persistent connection** and **Turn-complete alerts** — so they're one tap from the Settings root instead of buried in a sub-screen.
 
 ### Changed
 
@@ -26,10 +27,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Desktop CLI: visual + ergonomics refresh.** A single color theme across the CLI, aligned tables for `devices`/`sessions`, status dots for on/off states, and progress spinners for slow operations (the multi-endpoint pairing probe and the gateway connect) so nothing looks hung. Errors now suggest the fix (e.g. re-pair on auth failure).
 - **Desktop CLI: smoother pairing.** The multi-endpoint probe shows per-endpoint progress and latency; a near-expiry session warns before it fails and prints the exact re-pair command; and a bare `ws://host` (no port) defaults to `:8767`.
 - **Desktop CLI: voice + consent transparency.** `voice` now surfaces enhanced-voice capabilities (Gemini tone tags / persona, xAI speech tags); the desktop-tool consent prompt is clear that it persists per relay and points at `hermes-relay audit`; and computer-use's observe → grant → act flow is documented in `--help`.
+- **Persistent connection (was "keep chat connected").** The background keep-alive and its notification are reframed from a "chat connection" to your overall connection to Hermes — it holds the app's connection open in the background so messages and live features stay responsive, and for relay-paired setups also keeps device control and notification mirroring reachable. The toggle moved out of Chat settings into the new top-level Quick Controls card.
+- **Chat is the home; simpler top-level navigation.** The Chat / Manage / Bridge mode strip is gone — Chat is now full-height, and Manage and Bridge are reached from Settings (Settings → Hermes management / Bridge), each with a back arrow to Chat. Terminal and Settings remain quick icons in the chat top bar.
+- **Connection status slides instead of shoving the screen.** The transient connection-status banner (reconnecting, checking, LAN↔Tailscale handoffs) now slides in and out as a floating overlay, so content no longer jumps or reflows when it appears or disappears. (Refines the take-space banner introduced in 1.2.6.)
 
 ### Removed
 
 - **Two voice controls that did nothing.** The disabled "Auto-TTS" toggle and the "STT language" picker under "Coming soon" in Voice settings are gone: the official desktop doesn't read every typed message aloud, and speech-to-text language is a server-side setting now editable in the new Server voice config section.
+
+### Fixed
+
+- **Reconnect loop on remote (Tailscale) connections.** Connecting from off your home network could make chat loop — repeatedly reconnecting before it finally settled — because a brief route-probe miss flipped the active route back to the (unreachable) home address and rebuilt the chat connection against it. The app now keeps the last working route through a transient miss, tolerates a slow first handshake on remote links, and absorbs VPN-interface churn, so a remote connection settles quickly instead of thrashing.
 
 ## [1.2.6] - 2026-06-27
 
