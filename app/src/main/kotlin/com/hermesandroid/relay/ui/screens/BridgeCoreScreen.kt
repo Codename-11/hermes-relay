@@ -45,9 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayHeroPanel
-import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayNavTile
-import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelaySectionCaption
 import com.hermesandroid.relay.ui.components.RelayStatusPill
@@ -89,6 +87,13 @@ fun BridgeCoreScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Bridge") },
+                navigationIcon = {
+                    RelayChromeIconButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back to chat",
+                        onClick = onNavigateToChat,
+                    )
+                },
                 actions = {
                     RelayChromeIconButton(
                         icon = Icons.Filled.Code,
@@ -119,17 +124,6 @@ fun BridgeCoreScreen(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            RelayModeStrip(
-                selected = RelayPrimaryMode.Bridge,
-                onModeSelected = { mode ->
-                    when (mode) {
-                        RelayPrimaryMode.Chat -> onNavigateToChat()
-                        RelayPrimaryMode.Manage -> onNavigateToManage()
-                        RelayPrimaryMode.Bridge -> Unit
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 0.dp, vertical = 0.dp),
-            )
             if (returnTitle != null && onReturn != null) {
                 RelayReturnStrip(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
