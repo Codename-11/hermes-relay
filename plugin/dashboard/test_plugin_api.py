@@ -361,5 +361,46 @@ class PhoneConfigTests(PluginApiTestCase):
         self.assertEqual(body["home_channel_id"], "phone")
 
 
+class UpdateCheckTests(PluginApiTestCase):
+    """``GET /update-check`` compares installed vs latest GitHub plugin release."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Reset the module cache so every test triggers a (mocked) fetch.
+        plugin_api._UPDATE_CACHE.update(latest=None, fetched_at=0.0, error=None)
+
+    def test_update_available(self) -> None:
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[{"tag_name": "plugin-v99.0.0"}])
+
+        _install_mock_transport(self, handler)
+        body = self.client.get("/update-check").json()
+        self.assertTrue(body["update_available"])
+        self.assertEqual(body["latest"], "99.0.0")
+        self.assertIn("hermes", body["update_command"])
+
+    def test_up_to_date(self) -> None:
+        from plugin import update_check
+
+        cur = update_check.current_version()
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[{"tag_name": f"plugin-v{cur}"}])
+
+        _install_mock_transport(self, handler)
+        body = self.client.get("/update-check").json()
+        self.assertFalse(body["update_available"])
+        self.assertEqual(body["latest"], cur)
+
+    def test_github_error_degrades_softly(self) -> None:
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, text="nope")
+
+        _install_mock_transport(self, handler)
+        body = self.client.get("/update-check").json()
+        self.assertFalse(body["update_available"])
+        self.assertIsNotNone(body["error"])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

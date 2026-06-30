@@ -1,5 +1,67 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-30 — Per-profile enablement helper + update discovery
+
+**Why.** Two gaps surfaced while productizing the phone Threads work: (1) Hermes installs a plugin's *code* once but enables it *per profile*, so a multi-agent host hand-edits N `config.yaml` files to expose the relay's tools everywhere — and docs didn't explain the install-once / enable-per-profile / **pair-once** split. (2) Updating works (`hermes plugins update` / `hermes-relay-update`) but nothing *tells* an operator a newer plugin release exists, and the app/plugin/CLI version tracks aren't surfaced together.
+
+**What.**
+- **`plugin/profiles.py` + `hermes relay profiles list|enable [--all|NAME]`.** Enumerates the default config + every `profiles/<name>/config.yaml`, reports `hermes-relay` enablement, and bulk-adds it to `plugins.enabled` (removing it from `disabled`), backing up each rewritten file to `.bak` and skipping already-enabled configs (comments/order preserved in the common case). Pairing is untouched — one relay, pair once.
+- **`plugin/update_check.py` + `hermes relay update-check` + dashboard "Plugin version" card.** Compares the installed `plugin.relay.__version__` against the latest `plugin-v*` GitHub release, detects the right update command (full-relay shim present → `hermes-relay-update`, else `hermes plugins update hermes-relay`), surfaced in the Management tab via loopback `GET /api/plugins/hermes-relay/update-check` (GitHub fetch cached 1h; degrades to "couldn't check" offline — never a 5xx). Reuses the existing update mechanisms; no new updater.
+- **Docs.** New `configuration.md` subsections: "Profiles & the relay" (the two axes + the `profiles` commands) and "Keeping the relay plugin updated" (update-check + the two update commands).
+
+**Verification.** `python -m unittest plugin.tests.test_profiles plugin.tests.test_update_check plugin.dashboard.test_plugin_api` — 39 pass. Dashboard bundle rebuilt (esbuild). App-side version display + soft "relay outdated" banner deferred (needs an app build + a relay-side update-check route).
+
+## 2026-06-30 — Connections restructure + animated, dismissible status banner
+
+**Why.** Two pain points in the connection manager: (1) the reconnect/handoff status
+read as static — the non-error path used `ConnectionStatusBanner`, which capped at
+two flat text lines, while the richer animated per-step stepper (spinner → green ✓ →
+red ✕) existed only in `ConnectionStatusToast`, shown for Error tone only; and (2)
+the Connections settings screen was overloaded — the active connection's entire deep
+body (Features / Routes / Advanced / Security + a 5-button action row + stacked route
+nudges) was crammed into one card inside the list, so the list wasn't scannable.
+
+**Animated, take-space, dismissible banner (`ui/components/ConnectionHandoffBanner.kt`,
+`ui/RelayApp.kt`).** `ConnectionStatusBanner` now renders the same `ConnectionStepRow`/
+`StepGlyph` animated stepper the toast uses (capped at the last 3 entries, up from 2
+flat lines); per-step state already comes stamped from `buildGlobalConnectionProbeEntries`,
+so "checking → green dot → red ✕" tracks real health. The non-error banner moved out of
+the floating overlay into the persistent take-space stack above the Scaffold (expand/
+shrinkVertically + the surface's `animateContentSize` keep the push-down smooth, not a
+hard snap; the error toast still floats). The banner gained an explicit close (×) control
+and a swipe-up gesture, both wired to the existing `dismissedStatusKey` so a dismissed
+status stays hidden until its content identity changes.
+
+**No misleading "Connection changed" on resume (`viewmodel/ConnectionViewModel.kt`).**
+The `Reconnecting` handoff was renamed from "Connection changed" (which implied a
+different connection) to a neutral "Reconnecting"; change-implying copy is reserved for
+the genuine route-switch branch. A foreground-resume timestamp (from `AppForegroundTracker`)
+now suppresses the transient reconnect banner within `RELAY_RECONNECT_GRACE_MS` — a quick
+same-connection re-handshake after returning to the app shows nothing (and its
+"Connection restored" pair stays silent too); only a reconnect still down past the grace
+window surfaces "Reconnecting".
+
+**Connections list + tabbed detail (`ui/screens/ConnectionsSettingsScreen.kt`,
+`ui/screens/ConnectionDetailScreen.kt`, `ui/components/ActiveConnectionSections.kt`,
+`ui/RelayApp.kt`).** `ConnectionsSettingsScreen` is now a scannable list — each card is
+label + an `Active` badge (active connection) + a one-line status + the capability
+timeline summary (the dot/label/value rows users liked), and tapping drills into a new
+`ConnectionDetailScreen`. The detail is a 4-tab screen (Overview / Routes / Advanced /
+Security) with a `⋮` overflow menu for rename / re-pair / revoke / remove. Overview leads
+with the steps/timeline (`ActiveCardFeaturesSection`); Routes hosts the relocated ADR-24
+route block (extracted verbatim into `ActiveCardRoutesSection`, reusing `EndpointsCard` +
+`RouteEditorDialog`); Advanced/Security reuse the existing section composables. A new
+`Screen.ConnectionDetail` route (`settings/connections/{connectionId}`) is wired in the
+NavHost. Non-active connections show an Overview-only "Switch to this connection" preview.
+Relay sessions are surfaced in the Security tab (`ActiveCardSecurityPosture` already shows
+the active-session count). The `Active` badge is preserved on both the list card and the
+detail's top bar.
+
+**Verification.** `:app:compileSideloadDebugKotlin` BUILD SUCCESSFUL; `:app:lintSideloadDebug`
+run locally. Store screenshot mock (`StoreScreenshotTest.ConnectionsScene`) updated to the
+new list design (Active badge kept). On-device verification (banner animation/dismissal,
+resume copy, the tabbed flow) is owner-driven from Android Studio.
+
 ## 2026-06-30 — Phone home channel: auto-config + dashboard name (silence upstream /sethome nudge)
 
 **Why.** Sending into a phone Thread surfaced an upstream onboarding notice on every new Thread's first message — "📬 No home channel is set for Phone … /sethome". Upstream's nudge (`gateway/run.py`) checks the `PHONE_HOME_CHANNEL` *env var* directly, not the adapter's seeded config, and a single paired phone has exactly one logical home — so the prompt is friction with no decision behind it (unlike Telegram/Discord, where `/sethome` picks among many chats).

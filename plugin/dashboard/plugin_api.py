@@ -222,6 +222,52 @@ async def get_phone_config() -> dict[str, Any]:
     }
 
 
+# Update-check cache — a GitHub round-trip per dashboard poll would be wasteful
+# and risks rate-limiting. Cache the resolved latest tag for an hour; the
+# current/compare/command are recomputed cheaply each call.
+_UPDATE_CACHE: dict[str, Any] = {"latest": None, "fetched_at": 0.0, "error": None}
+_UPDATE_CACHE_TTL: float = 3600.0
+
+
+@router.get("/update-check")
+async def get_update_check(refresh: Optional[bool] = Query(default=False)) -> dict[str, Any]:
+    """Report whether a newer hermes-relay plugin release is available.
+
+    Compares the installed ``plugin.relay.__version__`` against the latest
+    ``plugin-v*`` GitHub release. The GitHub fetch is cached for an hour
+    (``?refresh=true`` forces it) so a polling dashboard doesn't hammer the
+    releases API. Network failures degrade to ``update_available=false`` with
+    an ``error`` string — never a 5xx — so the card can show "couldn't check".
+    """
+    from plugin import update_check
+
+    now = time.time()
+    stale = (now - _UPDATE_CACHE["fetched_at"]) > _UPDATE_CACHE_TTL
+    if refresh or stale or _UPDATE_CACHE["fetched_at"] == 0.0:
+        latest, error = None, None
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.get(
+                    update_check.GITHUB_RELEASES_URL,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "hermes-relay-update-check",
+                    },
+                )
+            if resp.status_code == 200:
+                latest = update_check.pick_latest_plugin_tag(resp.json())
+            else:
+                error = f"GitHub returned {resp.status_code}"
+        except Exception as exc:  # network down, rate-limited, bad JSON
+            error = str(exc)
+        _UPDATE_CACHE.update(latest=latest, error=error, fetched_at=now)
+
+    result = update_check.build_result(update_check.current_version(), _UPDATE_CACHE["latest"])
+    result["error"] = _UPDATE_CACHE["error"]
+    result["checked_at"] = int(_UPDATE_CACHE["fetched_at"])
+    return result
+
+
 @router.get("/push")
 async def get_push() -> dict[str, Any]:
     """Push console stub — no network call until FCM lands."""

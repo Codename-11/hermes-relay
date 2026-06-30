@@ -251,6 +251,44 @@ def register_relay_cli(subparser) -> None:
     insecure.add_argument("--json", action="store_true", help="Print raw JSON")
     insecure.set_defaults(func=relay_insecure_api_key_command)
 
+    # ── profiles ──────────────────────────────────────────────────────────
+    # Plugin *code* installs once (global symlink); plugin *enablement* is
+    # per-profile (each profile's config.yaml plugins.enabled). This group
+    # lists and bulk-enables hermes-relay across profiles so a multi-agent
+    # user doesn't hand-edit N configs. Pairing is unaffected (one relay).
+    profiles = sub.add_parser(
+        "profiles",
+        help="List or manage which profiles enable the hermes-relay plugin",
+    )
+    profiles_sub = profiles.add_subparsers(dest="profiles_cmd")
+    profiles.set_defaults(func=relay_profiles_command)
+
+    prof_list = profiles_sub.add_parser("list", help="Show hermes-relay enablement per profile")
+    prof_list.add_argument("--json", action="store_true", help="Emit JSON")
+    prof_list.set_defaults(func=relay_profiles_command)
+
+    prof_enable = profiles_sub.add_parser(
+        "enable", help="Enable hermes-relay in profile configs (default: all profiles)"
+    )
+    prof_enable.add_argument("names", nargs="*", help="Profile names to enable (default: all)")
+    prof_enable.add_argument(
+        "--all", action="store_true", help="Enable in the default config + every profile"
+    )
+    prof_enable.add_argument(
+        "--dry-run", action="store_true", help="Show what would change without writing"
+    )
+    prof_enable.add_argument("--json", action="store_true", help="Emit JSON")
+    prof_enable.set_defaults(func=relay_profiles_command)
+
+    # ── update-check ──────────────────────────────────────────────────────
+    update = sub.add_parser(
+        "update-check",
+        help="Check whether a newer hermes-relay plugin release is available",
+    )
+    update.add_argument("--json", action="store_true", help="Emit JSON")
+    update.add_argument("--timeout", type=float, default=4.0, help="GitHub fetch timeout (s)")
+    update.set_defaults(func=relay_update_check_command)
+
 
 def relay_command(args):
     """Dispatch `hermes relay` subcommands when the host CLI calls one handler."""
@@ -276,6 +314,91 @@ def relay_compat_command(args) -> None:
     code = compat_command(args)
     if code:
         raise SystemExit(code)
+
+
+def relay_profiles_command(args) -> None:
+    """List or bulk-enable per-profile hermes-relay enablement."""
+    from . import profiles as profmod
+
+    configs = profmod.discover_profile_configs()
+    if not configs:
+        print(f"No Hermes config files found under {profmod.hermes_home()}")
+        return
+
+    cmd = getattr(args, "profiles_cmd", None)
+
+    if cmd == "enable":
+        requested = [n.lower() for n in getattr(args, "names", []) or []]
+        want_all = getattr(args, "all", False) or not requested
+        dry = getattr(args, "dry_run", False)
+        results = []
+        for label, path in configs:
+            keys = {label.lower(), label.strip("()").lower()}
+            if not want_all and keys.isdisjoint(requested):
+                continue
+            before = profmod.relay_state(path)
+            changed = profmod.enable_relay(path, dry_run=dry)
+            results.append(
+                {"profile": label, "path": str(path), "was": before, "changed": changed}
+            )
+
+        if getattr(args, "json", False):
+            print(json.dumps({"action": "enable", "dry_run": dry, "results": results}, indent=2))
+            return
+
+        verb = "Would enable" if dry else "Enabled"
+        any_changed = False
+        for r in results:
+            if r["changed"]:
+                any_changed = True
+                print(f"  {verb} in {r['profile']}  ({r['path']})")
+            else:
+                print(f"  already enabled in {r['profile']}")
+        if not any_changed:
+            print("hermes-relay is already enabled everywhere — nothing to do.")
+        elif not dry:
+            print(
+                "\nRestart the affected gateway(s) to load it:  "
+                "systemctl --user restart hermes-gateway"
+            )
+        return
+
+    # default / "list"
+    states = [(label, str(path), profmod.relay_state(path)) for label, path in configs]
+    if getattr(args, "json", False):
+        print(json.dumps(
+            {"profiles": [{"profile": l, "path": p, "state": s} for l, p, s in states]},
+            indent=2,
+        ))
+        return
+    print("hermes-relay enablement by profile:\n")
+    width = max(len(l) for l, _, _ in states)
+    for label, _path, state in states:
+        mark = {"enabled": "✓", "disabled": "✗", "absent": "·"}.get(state, "?")
+        print(f"  {mark}  {label.ljust(width)}  {state}")
+    if any(s != "enabled" for _, _, s in states):
+        print("\nEnable everywhere with:  hermes relay profiles enable --all")
+
+
+def relay_update_check_command(args) -> None:
+    """Report whether a newer hermes-relay plugin release is available."""
+    from . import update_check
+
+    result = update_check.check(timeout=getattr(args, "timeout", 4.0))
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+        return
+    cur = result.get("current")
+    if result.get("error"):
+        print(f"hermes-relay {cur} — could not check for updates ({result['error']})")
+        return
+    latest = result.get("latest")
+    if result.get("update_available"):
+        print(f"Update available: {cur} → {latest}")
+        print(f"  Run:  {result.get('update_command')}")
+    else:
+        suffix = f" (latest: {latest})" if latest else ""
+        print(f"hermes-relay {cur} is up to date{suffix}.")
 
 
 def relay_start_command(args) -> None:

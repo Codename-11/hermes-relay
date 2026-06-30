@@ -7,6 +7,7 @@ import {
   getOverview,
   getPhoneConfig,
   getSessions,
+  getUpdateCheck,
   putEnvSetting,
   revokeSession,
 } from "../lib/api.js";
@@ -392,11 +393,83 @@ function HomeChannelCard({ config, onSaved }) {
   );
 }
 
+function UpdateCheckCard({ info, onRefresh }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onRefresh]);
+
+  const cmd = info && info.update_command;
+  const copyCmd = useCallback(async () => {
+    if (!cmd) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(cmd);
+      } else {
+        window.prompt("Copy update command", cmd);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (_err) {
+      window.prompt("Copy update command", cmd);
+    }
+  }, [cmd]);
+
+  if (!info) return null;
+  const current = info.current || "—";
+  const available = !!info.update_available;
+  const description = available
+    ? `Update available — you're on ${current}.`
+    : info.error
+    ? `On ${current}. Couldn't reach GitHub to check.`
+    : `On ${current}${info.latest ? ` — latest is ${info.latest}.` : "."}`;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle>Plugin version</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </div>
+        <Button size="sm" variant="outline" onClick={doRefresh} disabled={refreshing}>
+          {refreshing ? "Checking…" : "Check"}
+        </Button>
+      </CardHeader>
+      {available ? (
+        <CardContent className="space-y-2">
+          <Badge variant="secondary" className="w-fit text-xs">
+            {current} → {info.latest}
+          </Badge>
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/30 p-2 font-mono text-xs">
+            <span className="truncate">{cmd}</span>
+            <Button size="sm" variant="ghost" onClick={copyCmd}>
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Run it on your Hermes host, then restart the gateway to load the new plugin.
+          </p>
+        </CardContent>
+      ) : info.error ? (
+        <CardContent className="pt-0 text-xs text-muted-foreground">{info.error}</CardContent>
+      ) : null}
+    </Card>
+  );
+}
+
 export default function RelayManagement({ autoRefresh }) {
   const [overview, setOverview] = useState(null);
   const [sessions, setSessions] = useState(null);
   const [agentContext, setAgentContext] = useState(null);
   const [phoneConfig, setPhoneConfig] = useState(null);
+  const [updateInfo, setUpdateInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [pairOpen, setPairOpen] = useState(false);
@@ -429,6 +502,21 @@ export default function RelayManagement({ autoRefresh }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Update check runs independently of the main load — a GitHub round-trip
+  // shouldn't block (or fail) the management tab. Cached server-side for an
+  // hour; the "Check" button forces a refresh.
+  const loadUpdate = useCallback(async (refresh = false) => {
+    try {
+      setUpdateInfo(await getUpdateCheck({ refresh }));
+    } catch (err) {
+      setUpdateInfo({ error: err && err.message ? err.message : String(err) });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUpdate(false);
+  }, [loadUpdate]);
 
   useEffect(() => {
     if (!autoRefresh) return undefined;
@@ -520,6 +608,8 @@ export default function RelayManagement({ autoRefresh }) {
           hint="pending commands / media tokens"
         />
       </div>
+
+      <UpdateCheckCard info={updateInfo} onRefresh={loadUpdate} />
 
       <AgentContextCard
         data={agentContext}

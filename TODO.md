@@ -6,6 +6,26 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Connections UI / status banner (2026-06-30 restructure follow-ups)
+
+The Connections screen was split into a scannable list + a tabbed detail screen
+(Overview / Routes / Advanced / Security), and the non-error status banner became
+take-space + animated + dismissible (see DEVLOG 2026-06-30). Deferred:
+
+- **Resume suppression covers only the handoff path.** `recordConnectionHandoff`'s
+  reconnect is now withheld during the foreground-resume grace window, but the
+  *health* producer (`buildGlobalConnectionStatus` → "Checking Hermes connection" /
+  "Connecting to Hermes") can still flash a brief banner on resume. Copy is
+  accurate, so left as-is; if it reads as noisy, extend the same just-resumed
+  guard to the health snapshots.
+- **Non-active connection detail is Overview-only.** Routes/Advanced/Security tabs
+  appear only for the active connection (they read the single active-connection VM
+  state); a non-active connection shows a "Switch to this connection" CTA. A future
+  read-only preview of a non-active connection's saved routes could be nice.
+- **Store screenshot regeneration.** The `07_connections` scene mock was updated to
+  the new list design; confirm the regenerated PNG + Play-graphics export at
+  release-prep (only auto-publishes on a `main` release merge).
+
 ## Phone as a Hermes platform (proactive agent → phone)
 
 Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_message target=phone` → loopback `/phone/message` → relay `ProactiveChannel` → phone WSS → system notification, gated off by default (`PHONE_ENABLED` server-side + "Let Hermes message me" app-side + pairing). Remaining:
@@ -273,6 +293,8 @@ Things to look into:
 - **Skill distribution as separate from plugin distribution** — right now skills ride along with the plugin install via `external_dirs`. Should skills be installable independently (e.g. `hermes skill install <git-url>`)? Would that fragment maintenance or improve reuse?
 - **Tool registration discoverability** — `android_*` tools register at gateway import time. There's no canonical "list installed plugin tools" API. Would adding one to upstream make sense, or is `gateway tool list` already enough?
 - **Versioning + compatibility ranges** — `pip install -e` doesn't enforce version pins between hermes-agent and our plugin. A breaking change in upstream's plugin loader could silently break us. Do we need a `hermes_compat: ">=0.8.0,<1.0.0"` field somewhere?
+- **Update discovery (shipped 2026-06-30) + app-side follow-up.** `hermes relay update-check` + a dashboard "Plugin version" card now compare the installed plugin against the latest `plugin-v*` release and surface the right update command (`hermes plugins update hermes-relay` vs `hermes-relay-update`). **Remaining (app-side, needs an app build):** an About/Settings version readout showing the app version + the connected-relay version (already read from `/health` as `RelayHealth.version`), plus a soft, dismissible "relay is older than this app" nudge. That needs a relay-side `GET /relay/update-check` route the app can poll on `:8767` — the dashboard route is dashboard-auth-gated and not reachable from the app. Keep it capability-first: prefer "this feature needs a newer relay" at the point of use over a global version nag.
+- **Per-profile enablement (shipped 2026-06-30).** `hermes relay profiles list|enable [--all|NAME]` + `plugin/profiles.py` resolve the install-once/enable-per-profile papercut; docs now cover the pair-once/one-relay model. Possible follow-up: an `install.sh` / `hermes plugins install` prompt offering "enable for all existing profiles" so new installs don't need the manual `profiles enable --all`.
 - `**hermes-relay-self-setup` SKILL.md as a precedent** — we just shipped a self-installing skill that an LLM can fetch from a raw GitHub URL and execute. Does this pattern generalize? Could it become a recommended way for any third-party Hermes project to ship setup automation?
 - **Bootstrap injection** — `hermes_relay_bootstrap/` monkey-patches `aiohttp.web.Application` to inject endpoints into vanilla upstream. This is intentional but feels like a hack. Upstream PR #8556 (`feat/session-api`) will eventually let us delete it — verified 2026-04-15 that its scope covers the full bootstrap surface (sessions, memory, skills, config, available-models). Track that PR's status periodically.
 - **Gateway slash-command preprocessor — upstream Stage 1 PR.** Sibling follow-up to #8556. Intercepts known gateway commands on `/v1/runs` + `/v1/chat/completions`, dispatches the stateless ones (`/help`, `/commands`) via `gateway_help_lines()`, returns a deterministic "use a channel with session state" notice for the stateful majority. Currently being prepared in `C:/Users/Bailey/Desktop/Open-Projects/hermes-agent-pr-prep/` on branch `feat/api-server-gateway-commands`; awaiting subagent's code + draft PR body before pushing. See `docs/upstream-contributions.md` §5.

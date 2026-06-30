@@ -214,6 +214,39 @@ PHONE_ENABLED=1
 
 Name changes apply after the next gateway restart. The underlying channel id stays fixed (`phone`) so existing Threads are never orphaned.
 
+### Profiles & the relay
+
+If you run multiple Hermes **profiles** (agents), two things are easy to conflate:
+
+- **You pair once.** The relay is a single shared service (`:8767`) with one pairing store. A device pairs with the relay, not with a profile — chat, bridge, terminal, and voice all ride that one relay regardless of which agent you talk to.
+- **The plugin is installed once, enabled per profile.** The plugin *code* lives at a single global path (`~/.hermes/plugins/hermes-relay`). But each profile's `config.yaml` has its own `plugins.enabled` list, so an agent only sees the relay's tools (and can proactively message the phone) if *its* profile enables `hermes-relay`.
+
+So a multi-agent host never re-pairs, but may want the plugin enabled for every agent. Check and fix that in one step:
+
+```bash
+hermes relay profiles list          # show enablement per profile
+hermes relay profiles enable --all  # enable hermes-relay in every profile
+hermes relay profiles enable gary   # …or just one profile
+```
+
+Each edited config is backed up to `<config>.yaml.bak`. Restart the affected gateway afterward (`systemctl --user restart hermes-gateway`) to load the plugin.
+
+### Keeping the relay plugin updated
+
+The app, the relay plugin, and the desktop CLI version **independently** — they do not need to match. To see whether a newer plugin release exists:
+
+```bash
+hermes relay update-check           # compares your version to the latest plugin release
+```
+
+The dashboard's **Relay → Management** tab shows the same as a "Plugin version" card with a **Check** button. When an update is available, apply it with whichever matches your install, then restart the gateway:
+
+```bash
+hermes plugins update hermes-relay   # native plugin install
+hermes-relay-update                  # full-relay installer (install.sh)
+systemctl --user restart hermes-gateway
+```
+
 ### Compatibility Hook
 
 The legacy `hermes_relay_bootstrap.pth` hook is optional. It fills route gaps for
