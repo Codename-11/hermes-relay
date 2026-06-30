@@ -1444,27 +1444,17 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
-        // Connection status as a take-space banner (non-error). Replaces the
-        // floating ConnectionStatusToast for the frequent transient/active/
-        // warning states so content slides down instead of being covered.
-        AnimatedVisibility(
-            visible = showConnectionStatusBanner,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-        ) {
-            ConnectionStatusBanner(
-                status = globalConnectionStatus,
-                includeStatusBarPadding = !showUnattendedBanner && !showDemoBanner,
-                onClick = onConnectionStatusBannerClick,
-            )
-        }
+        // Connection status (non-error) now renders as a floating overlay toast
+        // in the Box below (alongside the error toast), so it slides in/out OVER
+        // the content with the same house spec instead of taking layout space —
+        // no UI reflow / hard height-snap on appear or disappear.
 
         // Transient info/status banner. Sits below the persistent banners and
         // owns the status-bar inset only when no banner is above it (otherwise
         // that banner already padded the top — avoid double padding).
         MessageBannerHost(
             includeStatusBarPadding =
-                !showUnattendedBanner && !showDemoBanner && !showConnectionStatusBanner,
+                !showUnattendedBanner && !showDemoBanner,
         )
 
         // The update banner AND the connection-status indicator now render as
@@ -1505,7 +1495,7 @@ fun RelayApp() {
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
                     if (showUnattendedBanner || showDemoBanner || connectionChipVisible ||
-                        showMessageBanner || showConnectionStatusBanner
+                        showMessageBanner
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
@@ -2460,6 +2450,22 @@ fun RelayApp() {
                     includeStatusBarPadding = false,
                     onClick = onConnectionStatusBannerClick,
                     onDismiss = { dismissedStatusKey = currentStatusKey },
+                )
+            }
+            // Non-error connection status: same floating-overlay slide+fade as the
+            // error toast above (the two are mutually exclusive — only one shows
+            // at a time), so the frequent transient/active/warning states slide
+            // in/out OVER the content with zero layout reflow. (Was a take-space
+            // banner above the Scaffold that hard-snapped the content height.)
+            AnimatedVisibility(
+                visible = showConnectionStatusBanner,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                ConnectionStatusBanner(
+                    status = globalConnectionStatus,
+                    includeStatusBarPadding = false,
+                    onClick = onConnectionStatusBannerClick,
                 )
             }
         }
