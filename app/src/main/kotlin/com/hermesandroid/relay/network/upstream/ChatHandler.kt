@@ -223,6 +223,33 @@ class ChatHandler {
     private val _sessions = MutableStateFlow<List<ChatSession>>(emptyList())
     val sessions: StateFlow<List<ChatSession>> = _sessions.asStateFlow()
 
+    // User-chosen Thread names (sessionId → name), authoritative over the
+    // server's auto-title — applied in [updateSessions] so the gateway's async
+    // auto-titler can't clobber the name. Fed by ChatViewModel. In-memory for
+    // now (survives list refreshes within a session); cross-restart persistence
+    // is a follow-up (see TODO).
+    private val userThreadNames = mutableMapOf<String, String>()
+
+    /** Record a user-chosen name for one Thread session + re-apply it now. */
+    fun setUserThreadName(sessionId: String, name: String) {
+        userThreadNames[sessionId] = name
+        reapplyThreadNames()
+    }
+
+    /** Replace the whole user-thread-name map (e.g. an initial persisted load). */
+    fun setUserThreadNames(names: Map<String, String>) {
+        userThreadNames.clear()
+        userThreadNames.putAll(names)
+        reapplyThreadNames()
+    }
+
+    private fun reapplyThreadNames() {
+        if (userThreadNames.isEmpty()) return
+        _sessions.update { list ->
+            list.map { s -> userThreadNames[s.sessionId]?.let { s.copy(title = it) } ?: s }
+        }
+    }
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
@@ -1426,7 +1453,11 @@ class ChatHandler {
             val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
             val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
             val serverTitle = item.title?.takeIf { it.isNotBlank() }
-            val resolvedTitle = serverTitle
+            // A user-chosen Thread name is authoritative (Discord-style): it
+            // overrides the server's auto-title so the gateway's async auto-titler
+            // can't clobber the name the user set.
+            val resolvedTitle = userThreadNames[item.id]
+                ?: serverTitle
                 ?: existingById[item.id]?.title?.takeIf { it.isNotBlank() }
             ChatSession(
                 sessionId = item.id,

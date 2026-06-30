@@ -2026,10 +2026,17 @@ class ChatViewModel : ViewModel() {
                 if (match != null) {
                     threadChatIds[match.sessionId] = creating.chatId
                     creatingThread = null
-                    switchSession(match.sessionId)
-                    if (creating.name.isNotBlank() && match.title != creating.name) {
-                        renameSession(match.sessionId, creating.name)
+                    // The user's name is authoritative (Discord-style): apply it
+                    // as a local override so the server's async auto-titler can't
+                    // clobber it, and also best-effort rename the server session
+                    // for other surfaces.
+                    if (creating.name.isNotBlank()) {
+                        chatHandler?.setUserThreadName(match.sessionId, creating.name)
+                        if (match.title != creating.name) {
+                            renameSession(match.sessionId, creating.name)
+                        }
                     }
+                    switchSession(match.sessionId)
                     return@launch
                 }
             }
