@@ -59,6 +59,7 @@ from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
+from .session_store import read_phone_threads
 from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
 from .realtime_voice import RealtimeVoiceHandler
@@ -3294,6 +3295,32 @@ async def handle_phone_replies(request: web.Request) -> web.Response:
     return web.json_response({"replies": replies}, status=200)
 
 
+async def handle_phone_threads(request: web.Request) -> web.Response:
+    """Map phone Threads to their ``chat_id`` — the field ``/api/sessions`` omits.
+
+    A phone **Thread** is a ``source=phone`` gateway session keyed by a
+    ``chat_id`` (the platform conversation id). The gateway persists ``chat_id``
+    in its session store but does NOT return it from ``/api/sessions`` (only the
+    opaque timestamp ``id`` + ``source``), so the Android client can't map a
+    session to its Thread to route a reply. This reads the gateway store
+    (read-only) and returns the mapping the client needs — it survives an app
+    restart and covers Threads the client didn't create itself. Redundant once
+    upstream adds ``chat_id`` to ``/api/sessions``.
+
+    Loopback callers skip bearer auth (dashboard/diagnostics); the paired phone
+    app presents its relay session bearer (same gate as ``/context/injected``).
+
+    GET /phone/threads
+      → 200 {"threads": [{session_id, chat_id, title}, ...]}
+      → 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+    if not is_loopback:
+        _server, _session = _require_bearer_session(request)
+    return web.json_response({"threads": read_phone_threads()})
+
+
 async def handle_context_injected(request: web.Request) -> web.Response:
     """Return the relay-owned system-prompt context audit shape.
 
@@ -4078,6 +4105,9 @@ def create_app(config: RelayConfig) -> web.Application:
     # Inspect / cancel the queued agent→phone outbound buffer (offline phone).
     app.router.add_get("/phone/outbound", handle_phone_outbound)
     app.router.add_delete("/phone/outbound", handle_phone_outbound)
+    # Map phone Threads → chat_id (the field /api/sessions omits) so the app can
+    # route a reply into the right Thread. Bearer for the app; loopback for diag.
+    app.router.add_get("/phone/threads", handle_phone_threads)
 
     # Relay-owned agent context audit.
     app.router.add_get("/context/injected", handle_context_injected)
