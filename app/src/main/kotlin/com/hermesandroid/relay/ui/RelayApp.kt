@@ -3,8 +3,10 @@ package com.hermesandroid.relay.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -258,6 +260,23 @@ sealed class Screen(
         }
     }
     data object ConnectionsSettings : Screen("settings/connections", "Connections", Icons.Filled.Settings)
+    // Level-2 detail for a single connection (tabbed: Overview / Routes /
+    // Advanced / Security). Drilled into from the Connections list. The
+    // `connectionId` path segment survives process death via SavedStateHandle;
+    // the route template registers a typed StringType arg and `route(id)`
+    // builds the concrete URI (mirrors Screen.ProfileInspector).
+    data object ConnectionDetail : Screen(
+        "settings/connections/{connectionId}",
+        "Connection",
+        Icons.Filled.Settings,
+    ) {
+        const val ARG_CONNECTION_ID: String = "connectionId"
+        fun route(connectionId: String): String {
+            val encoded = java.net.URLEncoder.encode(connectionId, "UTF-8")
+                .replace("+", "%20")
+            return "settings/connections/$encoded"
+        }
+    }
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
     // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
@@ -1477,17 +1496,32 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
-        // Connection status (non-error) now renders as a floating overlay toast
-        // in the Box below (alongside the error toast), so it slides in/out OVER
-        // the content with the same house spec instead of taking layout space —
-        // no UI reflow / hard height-snap on appear or disappear.
+        // Connection status (non-error: reconnecting / handoff / checking) takes
+        // its own vertical space here so the animated per-step stepper pushes
+        // content down rather than floating over it. expand/shrinkVertically
+        // (plus the banner's internal animateContentSize) makes the push smooth
+        // instead of the old hard height-snap. Error tone still floats as a Toast
+        // overlay in the Box below. Dismissal is wired to dismissedStatusKey so a
+        // closed status stays hidden until its content identity changes.
+        AnimatedVisibility(
+            visible = showConnectionStatusBanner,
+            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(200)) + fadeOut(tween(160)),
+        ) {
+            ConnectionStatusBanner(
+                status = globalConnectionStatus,
+                includeStatusBarPadding = !showUnattendedBanner && !showDemoBanner,
+                onClick = onConnectionStatusBannerClick,
+                onDismiss = { dismissedStatusKey = currentStatusKey },
+            )
+        }
 
         // Transient info/status banner. Sits below the persistent banners and
         // owns the status-bar inset only when no banner is above it (otherwise
         // that banner already padded the top — avoid double padding).
         MessageBannerHost(
             includeStatusBarPadding =
-                !showUnattendedBanner && !showDemoBanner,
+                !showUnattendedBanner && !showDemoBanner && !showConnectionStatusBanner,
         )
 
         // The update banner AND the connection-status indicator now render as
@@ -2160,52 +2194,11 @@ fun RelayApp() {
                         connections = connectionsList,
                         activeConnectionId = activeId,
                         activeRelayUiState = activeRelayUiState,
-                        onReconnectActive = {
-                            connectionViewModel.connectRelay()
-                            UiMessageBus.status("Reconnecting to relay…")
-                        },
-                        // Multi-connection: typed VM helpers (Worker B2)
-                        // handle the full mutations — rename persists via
-                        // ConnectionStore.updateConnection; revoke issues
-                        // the server-side /sessions/{prefix} DELETE and
-                        // clears local auth; remove deletes the backing
-                        // EncryptedSharedPreferences via ConnectionStore.
-                        onRenameConnection = { id, newLabel ->
-                            connectionSwitchScope.launch {
-                                connectionViewModel.renameConnection(id, newLabel)
-                                    .onFailure { err ->
-                                        snackbarHostState.showSnackbar(
-                                            err.message ?: "Rename failed",
-                                        )
-                                    }
-                            }
-                        },
-                        onRepairConnection = { id ->
-                            connectionSwitchScope.launch {
-                                // Wait for the AuthManager swap before the
-                                // scanner can apply a QR payload.
-                                connectionViewModel.switchConnection(id).join()
-                                navController.navigate(Screen.Pair.route(id))
-                            }
-                        },
-                        onRevokeConnection = { id ->
-                            connectionSwitchScope.launch {
-                                val result = connectionViewModel.revokeConnection(id)
-                                if (result.isFailure) {
-                                    // v1 constraint: revokeConnection only
-                                    // works on the active connection.
-                                    // Surface a snackbar so the user
-                                    // understands why nothing happened.
-                                    snackbarHostState.showSnackbar(
-                                        "Only the active connection can be revoked right now",
-                                    )
-                                }
-                            }
-                        },
-                        onRemoveConnection = { id ->
-                            connectionSwitchScope.launch {
-                                connectionViewModel.removeConnection(id)
-                            }
+                        // Tapping a connection card drills into its tabbed
+                        // detail (Overview / Routes / Advanced / Security),
+                        // where rename / re-pair / revoke / remove now live.
+                        onOpenConnection = { id ->
+                            navController.navigate(Screen.ConnectionDetail.route(id))
                         },
                         onAddConnection = {
                             connectionSwitchScope.launch {
@@ -2222,6 +2215,68 @@ fun RelayApp() {
                             }
                         },
                         onBack = { navController.popBackStack() },
+                        // Pass the VM so the list cards can read live status
+                        // for the active connection. Null-safe — if the VM
+                        // isn't wired (tests, previews), cards degrade to the
+                        // flat layout.
+                        connectionViewModel = connectionViewModel,
+                    )
+                }
+                composable(
+                    route = Screen.ConnectionDetail.route,
+                    arguments = listOf(
+                        navArgument(Screen.ConnectionDetail.ARG_CONNECTION_ID) {
+                            type = NavType.StringType
+                        },
+                    ),
+                ) { backStackEntry ->
+                    val detailId = backStackEntry.arguments
+                        ?.getString(Screen.ConnectionDetail.ARG_CONNECTION_ID)
+                        .orEmpty()
+                    com.hermesandroid.relay.ui.screens.ConnectionDetailScreen(
+                        connectionId = detailId,
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onReconnect = {
+                            connectionViewModel.connectRelay()
+                            UiMessageBus.status("Reconnecting to relay…")
+                        },
+                        onRename = { id, newLabel ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.renameConnection(id, newLabel)
+                                    .onFailure { err ->
+                                        snackbarHostState.showSnackbar(
+                                            err.message ?: "Rename failed",
+                                        )
+                                    }
+                            }
+                        },
+                        onRepair = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.switchConnection(id).join()
+                                navController.navigate(Screen.Pair.route(id))
+                            }
+                        },
+                        onRevoke = { id ->
+                            connectionSwitchScope.launch {
+                                val result = connectionViewModel.revokeConnection(id)
+                                if (result.isFailure) {
+                                    snackbarHostState.showSnackbar(
+                                        "Only the active connection can be revoked right now",
+                                    )
+                                }
+                            }
+                        },
+                        onRemove = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.removeConnection(id)
+                            }
+                        },
+                        onSwitchToConnection = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.switchConnection(id)
+                            }
+                        },
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route) {
                                 launchSingleTop = true
@@ -2230,13 +2285,6 @@ fun RelayApp() {
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
                         },
-                        // Pass the VM so the active card can render the
-                        // shared EndpointsCard inline AND the unified
-                        // Advanced section (manual URL / insecure toggle /
-                        // manual pairing code). Null-safe — if the VM
-                        // isn't wired (tests, previews), the active card
-                        // degrades to the flat layout.
-                        connectionViewModel = connectionViewModel,
                     )
                 }
                 composable(
@@ -2485,22 +2533,10 @@ fun RelayApp() {
                     onDismiss = { dismissedStatusKey = currentStatusKey },
                 )
             }
-            // Non-error connection status: same floating-overlay slide+fade as the
-            // error toast above (the two are mutually exclusive — only one shows
-            // at a time), so the frequent transient/active/warning states slide
-            // in/out OVER the content with zero layout reflow. (Was a take-space
-            // banner above the Scaffold that hard-snapped the content height.)
-            AnimatedVisibility(
-                visible = showConnectionStatusBanner,
-                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
-                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
-            ) {
-                ConnectionStatusBanner(
-                    status = globalConnectionStatus,
-                    includeStatusBarPadding = false,
-                    onClick = onConnectionStatusBannerClick,
-                )
-            }
+            // Non-error connection status (reconnecting / handoff / checking) now
+            // renders as a TAKE-SPACE animated banner in the persistent banner
+            // stack above the Scaffold — see ConnectionStatusBanner up there. Only
+            // the error tone stays a floating overlay Toast here.
         }
 
         // (The ConnectionSwitcherSheet modal that used to live here was

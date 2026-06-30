@@ -62,7 +62,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
@@ -1200,6 +1202,275 @@ fun ActiveCardSecurityPosture(
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * Routes section for the tabbed connection detail (ADR 24 multi-endpoint).
+ * Current-route panel, Tailscale nudges, Re-check / Auto controls, the
+ * per-route list ([EndpointsCard]) and the add/edit [RouteEditorDialog].
+ *
+ * Relocated from the old inline active-card Route block so behavior is
+ * unchanged; because it now owns a dedicated tab it drops the old
+ * "Show available routes (N)" expander and always shows the list.
+ */
+@Composable
+fun ActiveCardRoutesSection(
+    connectionViewModel: ConnectionViewModel,
+    connection: Connection,
+    liveState: RelayUiState?,
+) {
+    val context = LocalContext.current
+    val endpoints: List<EndpointCandidate> by connectionViewModel.observeDeviceEndpoints()
+        .collectAsState(initial = emptyList())
+    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+    val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
+    // Plain val (not a delegated property) so the `is Done && .winner` smart
+    // cast below resolves — a `by` delegate would break it.
+    val routeProbeStatus: ConnectionViewModel.RouteProbeStatus =
+        connectionViewModel.routeProbeStatus.collectAsState().value
+    val routeProbeOutcomes by connectionViewModel.routeProbeOutcomes.collectAsState()
+
+    var preferredRole by remember(connection.id) {
+        mutableStateOf(connectionViewModel.getPreferredEndpointRole())
+    }
+    val manualOverrideRole by connectionViewModel.manualRouteOverride.collectAsState()
+    val manualSwitchActive = manualOverrideRole != null &&
+        !manualOverrideRole.equals(preferredRole, ignoreCase = true)
+    var routeEditorOpen by remember(connection.id) { mutableStateOf(false) }
+    var routeEditorOriginal by remember(connection.id) {
+        mutableStateOf<EndpointCandidate?>(null)
+    }
+    val hasTailscaleRoute = endpoints.any { it.role.equals("tailscale", ignoreCase = true) }
+    val tailscalePreferred = preferredRole?.equals("tailscale", ignoreCase = true) == true
+    val routeNeedsAttention = activeEndpoint == null && liveState != RelayUiState.Connected
+    val showTailscaleUnavailableHint =
+        hasTailscaleRoute && !isTailscaleDetected && (tailscalePreferred || routeNeedsAttention)
+    val tailscaleLaunchIntent = remember(context) {
+        context.packageManager.getLaunchIntentForPackage("com.tailscale.ipn")
+    }
+    val isRouteProbing = routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Probing
+    val probeCameUpEmpty = activeEndpoint == null &&
+        routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Done &&
+        routeProbeStatus.winner == null
+    val activeRouteLabel = when {
+        activeEndpoint != null -> activeEndpoint!!.displayLabel()
+        isRouteProbing -> "Checking routes…"
+        probeCameUpEmpty -> "No route reachable"
+        else -> "Resolving"
+    }
+    val activeRouteHost = activeEndpoint?.api?.url
+        ?: "Using saved URL: ${connection.apiServerUrl.ifBlank { connection.relayUrl }}"
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "Choose how this phone reaches Hermes. Features stay separate " +
+                "from the selected route.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Surface(
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Current: $activeRouteLabel",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (probeCameUpEmpty) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                    if (isRouteProbing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                }
+                Text(
+                    text = activeRouteHost,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (probeCameUpEmpty) {
+                    Text(
+                        text = "None of the saved routes answered a health probe. " +
+                            "Expand the routes below for per-route reasons.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+
+        if (showTailscaleUnavailableHint) {
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Tailscale route is not active on this phone",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    Text(
+                        text = "Connect this phone in Tailscale, then re-check routes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (tailscaleLaunchIntent != null) {
+                            TextButton(
+                                onClick = {
+                                    runCatching { context.startActivity(tailscaleLaunchIntent) }
+                                },
+                                contentPadding = PaddingValues(horizontal = 0.dp),
+                            ) {
+                                Text("Open Tailscale")
+                            }
+                        }
+                        TextButton(
+                            onClick = { connectionViewModel.probeNow() },
+                            enabled = !isRouteProbing,
+                            contentPadding = PaddingValues(horizontal = 0.dp),
+                        ) {
+                            Text(if (isRouteProbing) "Checking…" else "Re-check")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isTailscaleDetected && !hasTailscaleRoute) {
+            // Phone is on Tailscale but this connection has nothing to roam to —
+            // the strongest signal the user wants remote access but never set it
+            // up. Offer the route editor directly.
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Phone is on Tailscale — no Tailscale route yet",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    Text(
+                        text = "Add your server's Tailscale URL so Hermes keeps " +
+                            "working when this phone leaves the server's network.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    TextButton(
+                        onClick = {
+                            routeEditorOriginal = null
+                            routeEditorOpen = true
+                        },
+                        contentPadding = PaddingValues(horizontal = 0.dp),
+                    ) {
+                        Text("Add Tailscale route")
+                    }
+                }
+            }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = { connectionViewModel.probeNow() },
+                enabled = !isRouteProbing,
+            ) {
+                Text(if (isRouteProbing) "Checking…" else "Re-check")
+            }
+            if (preferredRole != null || manualSwitchActive) {
+                TextButton(
+                    onClick = {
+                        connectionViewModel.setPreferredEndpointRole(null)
+                        preferredRole = null
+                    },
+                ) {
+                    Text("Auto")
+                }
+            }
+        }
+
+        EndpointsCard(
+            endpoints = endpoints,
+            activeEndpoint = activeEndpoint,
+            isProbing = isRouteProbing,
+            outcomeFor = { candidate ->
+                routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
+            },
+            preferredRole = preferredRole,
+            manualOverrideRole = manualOverrideRole,
+            onUseNow = { candidate -> connectionViewModel.useRouteNow(candidate.role) },
+            onCancelUseNow = { connectionViewModel.useRouteNow(null) },
+            onPreferEndpoint = { candidate ->
+                connectionViewModel.setPreferredEndpointRole(candidate.role)
+                preferredRole = candidate.role
+            },
+            onClearPreferred = {
+                connectionViewModel.setPreferredEndpointRole(null)
+                preferredRole = null
+            },
+            onProbeNow = { connectionViewModel.probeNow() },
+            onViewPin = { candidate -> connectionViewModel.lookupEndpointPin(candidate) },
+            onAddRoute = {
+                routeEditorOriginal = null
+                routeEditorOpen = true
+            },
+            onEditRoute = { candidate ->
+                routeEditorOriginal = candidate
+                routeEditorOpen = true
+            },
+            onRemoveRoute = { candidate -> connectionViewModel.removeExtraRoute(candidate) },
+        )
+
+        if (routeEditorOpen) {
+            RouteEditorDialog(
+                original = routeEditorOriginal,
+                onSave = { role, apiUrl, onResult ->
+                    connectionViewModel.saveExtraRoute(
+                        role = role,
+                        apiUrl = apiUrl,
+                        original = routeEditorOriginal,
+                        onResult = onResult,
+                    )
+                },
+                onDismiss = { routeEditorOpen = false },
+            )
+        }
     }
 }
 

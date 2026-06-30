@@ -31,14 +31,34 @@ The whole thing takes under a second on a healthy connection.
 
 ## Managing connections
 
-Open **Settings → Connections**. Each card shows the connection's label, hostname, pairing status, and last-seen timestamp. From the card you can:
+Open **Settings → Connections** for the connection **list**. Each card shows the
+connection's label, an **Active** badge on the one in use, a one-line status, and
+a compact capability summary (API · Dashboard · Voice · Relay) so you can scan the
+health of every server at a glance. Tap a card to open its **detail** screen.
 
-- **Rename** — tap the label to edit inline. The default is the server's hostname; change it to whatever makes sense ("Home", "Work", "Lab NAS").
+The detail screen is organized into tabs:
+
+- **Overview** — the live capability timeline (what this connection can do) plus
+  quick **Reconnect** / **Re-pair** actions.
+- **Routes** — multi-endpoint route management (LAN / Tailscale / public); pick a
+  route, re-check reachability, or add/edit one.
+- **Advanced** — manual URL / API-key entry, the insecure-connection toggle, and
+  the manual pairing-code fallback. Most people never need this.
+- **Security** — transport posture (TLS / Tailscale / keystore) and **Relay
+  sessions**, where you can review and revoke the phones paired with that server.
+
+The `⋮` menu in the detail's top bar holds the per-connection actions:
+
+- **Rename** — the default is the server's hostname; change it to whatever makes sense ("Home", "Work", "Lab NAS").
 - **Re-pair** — if the session token expires or the server's pairing state was wiped, re-scan the QR code. This reuses the same onboarding flow but keeps the connection's ID and label.
 - **Revoke** — server-side logout. The token is invalidated on the server; the connection stays in the app but is marked unpaired.
 - **Remove** — deletes the connection and its stored auth material. The TOFU cert pin for the server's host survives, so if you re-add the same server later, it's still trusted without a re-verify.
 
-Tap **Add connection** to create a new one. This launches the same connection wizard used during first-time setup. Choose **Vanilla Hermes** for the normal API/dashboard path, or scan a QR when your host already printed one. Relay pairing is optional and can be added later from the connection card.
+A connection that isn't active opens to a preview with a **Switch to this
+connection** action — the deep tabs (Routes / Advanced / Security) manage the
+*active* connection, so switch to it first to manage its routes and relay sessions.
+
+Tap **Add connection** to create a new one. This launches the same connection wizard used during first-time setup. Choose **Vanilla Hermes** for the normal API/dashboard path, or scan a QR when your host already printed one. Relay pairing is optional and can be added later from the connection's detail screen.
 
 ## Live status and diagnostics
 
@@ -47,12 +67,19 @@ Pairing and live reachability are shown separately. A connection can still be
 Relay row shows **Relay unreachable - tap to reconnect** rather than treating
 the saved session as proof of a live server.
 
-Tap the API Server, Relay, or Session rows on the active connection card to open
-detail sheets with a compact **Recent activity** tail. The tail shows sanitized
-API, route, relay, session, and voice events such as health timeouts, selected
-routes, reconnect attempts, and voice relay checks. Raw payloads, query strings,
-and token-like values are hidden. The same consolidated log is available from
-**Settings -> Diagnostics**, where you can clear the in-app buffer.
+Tap the API Server, Relay, or Session rows in the active connection's **Overview**
+tab to open detail sheets with a compact **Recent activity** tail. The tail shows
+sanitized API, route, relay, session, and voice events such as health timeouts,
+selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
+strings, and token-like values are hidden. The same consolidated log is available
+from **Settings -> Diagnostics**, where you can clear the in-app buffer.
+
+While a connection is reconnecting or handing off between routes, a status banner
+slides down from the top with a live, animated step list (each step shows a
+spinner while checking, a green check when it succeeds, or a red ✕ if it fails).
+It can be dismissed with the **×** or a swipe up. A quick reconnect right after you
+return to the app from the background is treated as the same connection — it won't
+flash a misleading "connection changed".
 
 ## Multi-Endpoint Pairing: One QR for Every Network
 

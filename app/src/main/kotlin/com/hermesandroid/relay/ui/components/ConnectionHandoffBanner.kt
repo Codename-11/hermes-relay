@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.HorizontalDivider
@@ -84,6 +85,7 @@ fun ConnectionStatusBanner(
     modifier: Modifier = Modifier,
     includeStatusBarPadding: Boolean = false,
     onClick: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
 ) {
     val current = status ?: return
     val containerColor = when {
@@ -106,6 +108,28 @@ fun ConnectionStatusBanner(
         Modifier
     }
 
+    // Flick-up to dismiss. The take-space banner pushes content, so we don't
+    // finger-track an offset (the host's AnimatedVisibility animates removal);
+    // we just accumulate the drag and fire onDismiss past the threshold. Pairs
+    // with the visible close (×) control for an obvious, easy dismissal.
+    val swipeModifier = if (onDismiss != null) {
+        Modifier.pointerInput(onDismiss) {
+            var dragTotal = 0f
+            detectVerticalDragGestures(
+                onDragStart = { dragTotal = 0f },
+                onVerticalDrag = { change, dy ->
+                    dragTotal += dy
+                    change.consume()
+                },
+                onDragEnd = {
+                    if (dragTotal < -SWIPE_DISMISS_THRESHOLD_PX) onDismiss()
+                },
+            )
+        }
+    } else {
+        Modifier
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -121,6 +145,7 @@ fun ConnectionStatusBanner(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .then(swipeModifier)
                 .animateContentSize(animationSpec = tween(durationMillis = 180)),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -156,7 +181,7 @@ fun ConnectionStatusBanner(
                     }
                     Column(
                         modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -189,28 +214,36 @@ fun ConnectionStatusBanner(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                        }
-                        val outputLines = current.entries
-                            .takeLast(2)
-                            .mapNotNull { entry ->
-                                val label = entry.label.trim().takeIf { it.isNotBlank() }
-                                val detail = entry.detail?.trim()?.takeIf { it.isNotBlank() }
-                                when {
-                                    label != null && detail != null -> "$label: $detail"
-                                    label != null -> label
-                                    detail != null -> detail
-                                    else -> null
-                                }
+                            // Explicit, discoverable dismiss on the first line. Its own
+                            // clickable consumes the tap so the card's onClick (navigate)
+                            // doesn't also fire.
+                            if (onDismiss != null) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Dismiss",
+                                    tint = contentColor.copy(alpha = 0.82f),
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .clickable(onClick = onDismiss)
+                                        .padding(6.dp),
+                                )
                             }
-                            .distinct()
-                        outputLines.forEach { line ->
-                            Text(
-                                text = line,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = contentColor.copy(alpha = 0.72f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(),
+                        }
+                        // Live stepper — one row per trace entry with an animated
+                        // glyph (spinner while Active, green ✓ Done, red ✕ Failed),
+                        // shared verbatim with [ConnectionStatusToast] so the take-space
+                        // banner and the error overlay read as one system. Capped at the
+                        // last 3 entries (was 2 flat text lines).
+                        val steps = current.entries
+                            .filter { it.label.isNotBlank() || !it.detail.isNullOrBlank() }
+                            .takeLast(3)
+                        steps.forEachIndexed { index, entry ->
+                            ConnectionStepRow(
+                                entry = entry,
+                                isLast = index == steps.lastIndex,
+                                snapshot = current,
+                                contentColor = contentColor,
                             )
                         }
                     }

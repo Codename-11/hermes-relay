@@ -33,9 +33,10 @@ import com.hermesandroid.relay.data.Connection
  * Each row is a radio selection — tapping commits immediately and dismisses
  * the sheet so the swap kicks off before the user's finger is off the screen.
  *
- * The "Manage connections…" footer button navigates to
- * [ConnectionsSettingsScreen] for rename / re-pair / revoke / remove —
- * anything beyond plain switching.
+ * The "Manage connections…" footer button navigates to the Connections list
+ * (`ConnectionsSettingsScreen`); each card there drills into a tabbed detail
+ * screen that owns rename / re-pair / revoke / remove, routes, advanced setup,
+ * and relay sessions — anything beyond plain switching.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

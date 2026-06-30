@@ -81,6 +81,7 @@ import com.hermesandroid.relay.network.relay.BridgeCommandHandler
 import com.hermesandroid.relay.network.relay.ProactiveMessageHandler
 import com.hermesandroid.relay.network.relay.models.Envelope
 // === END PHASE3-accessibility ===
+import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.viewmodel.connection.PairingController
 import com.hermesandroid.relay.viewmodel.connection.ProfileController
@@ -506,6 +507,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val connectionHandoffStatus: StateFlow<ConnectionHandoffStatus?> =
         _connectionHandoffStatus.asStateFlow()
     private var connectionHandoffClearJob: Job? = null
+    // Timestamp of the last app foreground resume (cold start counts). A relay
+    // reconnect within RELAY_RECONNECT_GRACE_MS of this is almost always the
+    // same connection re-handshaking after the OS dropped the socket in the
+    // background — we suppress its transient banner so the user isn't shown a
+    // misleading "Reconnecting"/"Connection changed" flash on every app switch.
+    @Volatile
+    private var lastForegroundResumeAtMs: Long = 0L
+    // True while a just-resumed reconnect's banner is being withheld. Lets the
+    // subsequent "Connection restored" pair stay silent too if we never showed
+    // the reconnecting banner. Touched only from the main-thread state collector.
+    private var suppressedTransientReconnect = false
+    private var transientReconnectJob: Job? = null
     private val _serverChatDisplaySettings =
         MutableStateFlow<DashboardChatDisplaySettings?>(null)
 
@@ -2970,6 +2983,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 }
         }
 
+        // Stamp the resume timestamp whenever the process returns to the
+        // foreground (and on the initial start). Read by the reconnect handoff
+        // logic below to decide whether a reconnect is a benign post-resume
+        // re-handshake worth suppressing.
+        viewModelScope.launch {
+            AppForegroundTracker.isForeground.collect { foreground ->
+                if (foreground) lastForegroundResumeAtMs = System.currentTimeMillis()
+            }
+        }
+
         viewModelScope.launch {
             var previousState: ConnectionState? = null
             var previousRole: String? = null
@@ -2987,23 +3010,55 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
                     when {
                         state == ConnectionState.Reconnecting -> {
-                            recordConnectionHandoff(
-                                title = "Connection changed",
-                                route = displayEndpointRole(role ?: priorRole),
-                                detail = "Trying relay route",
-                                active = true,
-                                success = false,
-                            )
+                            // Same connection re-handshaking — never imply a switch
+                            // ("Connection changed" used to mislead here; a genuine
+                            // route switch is handled by its own branch below).
+                            val reconnectHandoff = {
+                                recordConnectionHandoff(
+                                    title = "Reconnecting",
+                                    route = displayEndpointRole(role ?: priorRole),
+                                    detail = "Re-establishing the relay socket",
+                                    active = true,
+                                    success = false,
+                                )
+                            }
+                            val resumeAgeMs = System.currentTimeMillis() - lastForegroundResumeAtMs
+                            val justResumed = resumeAgeMs in 0 until RELAY_RECONNECT_GRACE_MS
+                            transientReconnectJob?.cancel()
+                            if (justResumed) {
+                                // Withhold the banner: on a foreground resume the OS
+                                // commonly drops + re-handshakes the socket. Only
+                                // surface "Reconnecting" if it's still down past the
+                                // grace window (a real outage, not an app switch).
+                                suppressedTransientReconnect = true
+                                transientReconnectJob = launch {
+                                    delay(RELAY_RECONNECT_GRACE_MS)
+                                    if (relayConnectionState.value == ConnectionState.Reconnecting) {
+                                        suppressedTransientReconnect = false
+                                        reconnectHandoff()
+                                    }
+                                }
+                            } else {
+                                suppressedTransientReconnect = false
+                                reconnectHandoff()
+                            }
                         }
                         state == ConnectionState.Connected &&
                             priorState == ConnectionState.Reconnecting -> {
-                            recordConnectionHandoff(
-                                title = "Connection restored",
-                                route = displayEndpointRole(role),
-                                detail = "Relay path ready",
-                                active = false,
-                                success = true,
-                            )
+                            transientReconnectJob?.cancel()
+                            if (suppressedTransientReconnect) {
+                                // We never showed the reconnecting banner (quick
+                                // post-resume recovery) — stay silent on restore too.
+                                suppressedTransientReconnect = false
+                            } else {
+                                recordConnectionHandoff(
+                                    title = "Connection restored",
+                                    route = displayEndpointRole(role),
+                                    detail = "Relay path ready",
+                                    active = false,
+                                    success = true,
+                                )
+                            }
                         }
                         state == ConnectionState.Connected &&
                             priorState != ConnectionState.Connected -> {
