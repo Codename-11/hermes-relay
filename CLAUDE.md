@@ -192,7 +192,7 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 | `AGENTS.md` | Universal agent entry point — points here + the non-negotiables (standard-path, commits, writing hygiene) |
 | `docs/mcp-tooling.md` | MCP server setup — android-tools-mcp + mobile-mcp; `android_*` tool usage patterns |
 | **App — Core** | |
-| `ui/RelayApp.kt` | Main scaffold — bottom nav, Compose navigation |
+| `ui/RelayApp.kt` | Main scaffold (Scaffold + Compose nav); Chat is home — no mode strip, Manage/Bridge reached via Settings; `bottomBar` is a status pill, not a NavigationBar |
 | `viewmodel/ChatViewModel.kt` | Chat orchestration — send, stream, cancel, slash commands |
 | `viewmodel/ConnectionViewModel.kt` | Dual connection model (API + relay); `resolveStreamingEndpoint()`; derived `relayUiState` flow + `markPaired` hook stamp the active Connection |
 | `viewmodel/RelayUiState.kt` | Shared sealed state for the relay row — 5 cases + `asBadgeState()` / `statusText()` extensions; 5s grace window before Stale |

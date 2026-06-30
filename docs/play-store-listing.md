@@ -146,11 +146,11 @@ This app is a client for a Hermes server the user runs themselves, so a fresh in
 
 ### Foreground service permissions
 
-The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for `GatewayKeepAliveService`, backing the opt-in **Keep connected in background** feature (off by default). At submission, complete **App content → Foreground service permissions** for `specialUse`:
+The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for `GatewayKeepAliveService`, backing the opt-in **Persistent connection** feature (off by default). At submission, complete **App content → Foreground service permissions** for `specialUse`:
 
 - **Use case:** maintains a persistent connection to the user's own Hermes agent server so the assistant stays responsive and delivers replies while the app is backgrounded.
 - **Why a foreground service:** it's a real-time, user-initiated streaming connection that must survive Doze / background execution limits; `dataSync` is force-stopped after a 6-hour/day cap on Android 15, so `specialUse` is the only fit for "stay connected."
-- **User control:** off by default; enabled only via *Settings → Chat → Keep connected in background*; shows an ongoing notification with a **Disconnect** action; ends when the app is swiped from recents.
+- **User control:** off by default; enabled only via *Settings → Quick Controls → Persistent connection*; shows an ongoing notification with a **Turn off** action; ends when the app is swiped from recents.
 - Google usually asks for a short screen recording of the toggle + notification.
 
 The Play build does **not** declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` or the Device Control accessibility/bridge services — those are sideload-only.

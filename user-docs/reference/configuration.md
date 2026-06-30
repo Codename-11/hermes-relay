@@ -12,9 +12,9 @@ Hermes-Relay now treats connection auth as three related but separate contexts:
 - **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for API-server SSE fallback paths.
 - **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for vanilla dashboard/API use, but it is required for relay power tools.
 
-The default bottom navigation is **Chat**, **Manage**, and **Settings**. Terminal and Bridge are still available from **Settings → Power tools** and deep links, but unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
+**Chat** is the home screen. **Manage** is reached from **Settings → Hermes management**, and **Terminal** and **Bridge** from **Settings → Power tools** (and deep links); Manage and Bridge each keep a back arrow to Chat. Unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
 
-The **Manage** tab uses the dashboard session, not relay pairing. It covers Skills, Cron jobs, MCP servers, the MCP catalog, Profiles, Models, and Config. Actions that write dashboard state use upstream dashboard endpoints; profile SOUL is view-only here, while SOUL/memory file editing remains a paired power tool.
+**Manage** uses the dashboard session, not relay pairing. It covers Skills, Cron jobs, MCP servers, the MCP catalog, Profiles, Models, and Config. Actions that write dashboard state use upstream dashboard endpoints; profile SOUL is view-only here, while SOUL/memory file editing remains a paired power tool.
 
 **On any card (active or not) — the per-connection action row:**
 - **Reconnect** (only on Stale state)
