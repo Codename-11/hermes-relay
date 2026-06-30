@@ -1,12 +1,33 @@
 package com.hermesandroid.relay.util
 
 import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayErrorClassifierTest {
+    @Test
+    fun connectivityErrorsAreClassifiedForSnackbarSuppression() {
+        // The "can't reach the server" family the themed banner owns.
+        assertTrue(isConnectivityError(ConnectException("Connection refused")))
+        assertTrue(isConnectivityError(UnknownHostException("host")))
+        assertTrue(isConnectivityError(SocketTimeoutException("timeout")))
+        assertTrue(isConnectivityError(IOException("read timeout")))
+    }
+
+    @Test
+    fun nonConnectivityErrorsAreNotSuppressed() {
+        // Actionable / unrelated errors must still surface a snackbar.
+        assertFalse(isConnectivityError(null))
+        assertFalse(isConnectivityError(IOException("401 Unauthorized")))
+        assertFalse(isConnectivityError(IllegalStateException("not ready")))
+        assertFalse(isConnectivityError(RuntimeException("boom")))
+    }
+
     @Test
     fun apiUnauthorizedFromChatPointsAtApiKeyInsteadOfRepairingRelay() {
         val err = classifyError(

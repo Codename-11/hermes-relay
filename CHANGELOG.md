@@ -38,6 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **No more scary "server isn't accepting connections" pop-up on first load.** A bare bottom message could flash on cold start while the app was still establishing its first connection (the background session-list load failing before the server was reachable). That state is now shown only by the themed connection banner at the top — the redundant pop-up is suppressed for cold-start/reconnect bootstrapping, while real failures while you're using the app still surface normally.
 - **Reconnect loop on remote (Tailscale) connections.** Connecting from off your home network could make chat loop — repeatedly reconnecting before it finally settled — because a brief route-probe miss flipped the active route back to the (unreachable) home address and rebuilt the chat connection against it. The app now keeps the last working route through a transient miss, tolerates a slow first handshake on remote links, and absorbs VPN-interface churn, so a remote connection settles quickly instead of thrashing.
 
 ## [1.2.6] - 2026-06-27

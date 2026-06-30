@@ -57,6 +57,7 @@ import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.util.PhoneSnapshot
 import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
+import com.hermesandroid.relay.util.isConnectivityError
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
@@ -260,7 +261,22 @@ class ChatViewModel : ViewModel() {
     val errorEvents: SharedFlow<HumanError> = _errorEvents.asSharedFlow()
 
     private fun emitError(t: Throwable?, context: String?) {
-        _errorEvents.tryEmit(classifyError(t, context = context))
+        val human = classifyError(t, context = context)
+        // Cold-start / reconnect bootstrap (session-list load, session create)
+        // runs without the user asking and on every reconnect. A "can't reach
+        // the server" failure there is non-actionable noise — the themed
+        // connection banner + startup sphere already surface the unreachable
+        // state. Keep the diagnostics record (classifyError above) but suppress
+        // the redundant, scary "server isn't accepting connections" snackbar
+        // that used to flash from the bottom on first load. Actionable failures
+        // (auth rejected, server error) and all interactive contexts
+        // (send_message, …) still surface normally.
+        if ((context == "load_sessions" || context == "create_session") &&
+            isConnectivityError(t)
+        ) {
+            return
+        }
+        _errorEvents.tryEmit(human)
     }
 
     // --- Message queue ---

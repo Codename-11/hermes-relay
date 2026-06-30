@@ -162,6 +162,23 @@ private fun categoryForContext(context: String?): DiagnosticCategory = when (con
  *                "voice_config", "record", "pair", "save_and_test",
  *                "media_fetch", "send_message", or null for generic)
  */
+/**
+ * True if [t] is a "can't reach the server" connectivity failure — connection
+ * refused, host unresolved, or a network timeout. These are exactly the states
+ * the themed connection banner / startup sphere already surface, so callers on
+ * cold-start / background bootstrap paths can use this to suppress a redundant,
+ * scary snackbar (e.g. "The server isn't accepting connections" on first load)
+ * while still recording the error to diagnostics.
+ *
+ * Deliberately excludes SSL/cert errors (actionable — re-pair) and generic
+ * IOExceptions (could be anything but an unreachable server).
+ */
+fun isConnectivityError(t: Throwable?): Boolean = when (t) {
+    is ConnectException, is UnknownHostException, is SocketTimeoutException -> true
+    is IOException -> "timeout" in (t.message?.lowercase() ?: "")
+    else -> false
+}
+
 fun classifyError(t: Throwable?, context: String? = null): HumanError {
     val human = classifyErrorInternal(t, context)
     if (t != null) {
