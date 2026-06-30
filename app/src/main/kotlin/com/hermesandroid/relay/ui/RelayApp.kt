@@ -788,13 +788,29 @@ fun RelayApp() {
     // client to follow the new dashboard route instead of stranding the turn on
     // the dead one.
     val effectiveApiUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    // Debounce a route FLIP before re-acquiring the gateway chat client. The
+    // network-layer hysteresis (ConnectionManager) already keeps _activeEndpoint
+    // stable on a transient endpoint-resolution miss, so effectiveApiUrl should
+    // not flap — this is belt-and-suspenders against any residual sub-second
+    // LAN⇄Tailscale flip, which would otherwise shutdown the warm gateway socket
+    // (when idle) or retarget mid-turn (burning MAX_TURN_REJOINS). The FIRST
+    // acquisition (lastAcquiredApiUrl == null) and non-url key changes
+    // (url unchanged) are NOT delayed, so cold-start connect latency is
+    // unaffected; only a genuine url change waits for a settle window, and if
+    // the url flips back within it the LaunchedEffect cancels + restarts so no
+    // rebuild happens.
+    var lastAcquiredApiUrl by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability, effectiveApiUrl) {
+        if (lastAcquiredApiUrl != null && lastAcquiredApiUrl != effectiveApiUrl) {
+            delay(750L)
+        }
         val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
         chatViewModel.streamingEndpoint = resolved
         chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()
         chatViewModel.updateGatewayClient(
             if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
         )
+        lastAcquiredApiUrl = effectiveApiUrl
     }
 
     // What's New auto-show
