@@ -361,6 +361,29 @@ class ChatHandler {
     }
 
     /**
+     * Render an agent-initiated message inline in the open Thread as an
+     * ASSISTANT bubble (the unified-Threads live path — the agent's reply shows
+     * in the conversation, not just as a notification). [clientOnly] preserves it
+     * across the history reconcile; idempotent on the proactive [messageId] so a
+     * re-delivered push (e.g. an outbound-buffer flush) never double-posts.
+     */
+    fun addAgentThreadMessage(text: String, messageId: String?, agentName: String?) {
+        val id = messageId?.let { "proactive-$it" } ?: "proactive-${java.util.UUID.randomUUID()}"
+        _messages.update { list ->
+            if (messageId != null && list.any { it.id == id }) return@update list
+            val msg = ChatMessage(
+                id = id,
+                role = MessageRole.ASSISTANT,
+                content = text,
+                timestamp = System.currentTimeMillis(),
+                agentName = agentName,
+                clientOnly = true,
+            )
+            (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
      * Append an assistant message that carries ONLY a gateway ask card
      * (clarify / approval / sudo / secret). Local-only — the server never
      * stores the ask as a message, so the bubble is flagged

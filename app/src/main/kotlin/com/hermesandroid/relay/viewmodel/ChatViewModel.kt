@@ -34,6 +34,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
 import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.upstream.SteerResult
@@ -1382,6 +1383,35 @@ class ChatViewModel : ViewModel() {
             MessageDeliveryStatus.DELIVERED
         }
         chatHandler?.updateDeliveryStatus(clientMsgId, resolved)
+    }
+
+    /**
+     * Render an inbound agent message inline in the open Thread when it belongs
+     * there (the unified-Threads live path) — wired to the proactive handler's
+     * `injectIntoThread`. Returns true when shown in-thread, so the handler
+     * suppresses the notification + inbox entry. Matches the open Thread (or a
+     * pending "+ New Thread" draft) by chat_id, falling back to "accept" when
+     * either side has no parseable chat_id (the single home thread).
+     */
+    fun injectThreadMessage(msg: ProactiveMessage): Boolean {
+        val handler = chatHandler ?: return false
+        val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
+        // Pending "+ New Thread" draft: show the agent's first reply in the draft
+        // view; switchToCreatedThread reconciles it from history on switch.
+        pendingThread?.let { pending ->
+            if (msgChatId == null || msgChatId == pending.chatId) {
+                handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+                return true
+            }
+        }
+        val activeId = handler.currentSessionId.value ?: return false
+        val active = handler.sessions.value.firstOrNull { it.sessionId == activeId } ?: return false
+        if (active.source != "phone") return false
+        val openChatId = threadChatId(active.sessionId)
+        val belongs = openChatId == null || msgChatId == null || openChatId == msgChatId
+        if (!belongs) return false
+        handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+        return true
     }
 
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {

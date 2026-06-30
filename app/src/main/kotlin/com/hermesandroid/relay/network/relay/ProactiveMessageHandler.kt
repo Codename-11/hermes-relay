@@ -58,6 +58,14 @@ class ProactiveMessageHandler(
      * `(clientMsgId, status)`.
      */
     var onReplyAck: ((String, String) -> Unit)? = null,
+    /**
+     * Show an inbound message inline in the Chat **Thread** it belongs to, when
+     * that Thread is currently open. Returns true if it was shown there — in
+     * which case the message is NOT also notified or added to the inbox (you're
+     * already looking at the conversation). The unified-Threads counterpart of
+     * [toSession]; wired after construction.
+     */
+    var injectIntoThread: ((ProactiveMessage) -> Boolean)? = null,
 ) {
 
     fun onMessage(envelope: Envelope) {
@@ -83,17 +91,22 @@ class ProactiveMessageHandler(
         }
     }
 
-    /** Route a parsed message: inbox always, plus the surface its hint selects. */
+    /** Route a parsed message: into the open Thread if it belongs there, else
+     *  the durable inbox log + the surface its hint selects. */
     private fun dispatch(msg: ProactiveMessage) {
-        // The inbox is the always-present durable log of agent-initiated
-        // messages — record every one regardless of surfacing.
+        // Unified Threads: if this message belongs to the Thread currently open
+        // in Chat, render it inline there and STOP — no notification, no inbox
+        // entry (you're already looking at the conversation).
+        if (injectIntoThread?.invoke(msg) == true) return
+        // Otherwise the inbox is the durable log of agent-initiated messages and
+        // the surfacing hint selects the additional surface.
         toInbox?.invoke(msg)
         when (msg.surfacing?.lowercase()) {
             "inbox" -> { /* inbox only — already recorded above */ }
             "session" -> {
                 val sink = toSession
-                // Inject into the active session; if no session sink is wired
-                // (or no active chat), fall back to a notification so it isn't
+                // Legacy explicit "inject into active session" path; if no sink
+                // (or no active chat) fall back to a notification so it isn't
                 // silently missed (the inbox copy already exists either way).
                 if (sink != null) sink.invoke(msg) else notify(msg)
             }

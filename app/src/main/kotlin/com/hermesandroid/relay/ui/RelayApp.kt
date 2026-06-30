@@ -929,6 +929,11 @@ fun RelayApp() {
             connectionViewModel.proactiveMessageHandler.onReplyAck = { clientMsgId, status ->
                 chatViewModel.onProactiveReplyAck(clientMsgId, status)
             }
+            // Unified Threads: render an inbound agent message inline in the open
+            // Thread (suppressing the notification/inbox) when it belongs there.
+            connectionViewModel.proactiveMessageHandler.injectIntoThread = { msg ->
+                chatViewModel.injectThreadMessage(msg)
+            }
         }
 
         LaunchedEffect(onboardingCompleted, postOnboardingRoute) {
