@@ -195,6 +195,30 @@ class ChatViewModel : ViewModel() {
     private data class PendingThread(val chatId: String, val name: String)
     private var pendingThread: PendingThread? = null
 
+    /**
+     * A "+ New Thread" whose first message has been sent — we're now polling for
+     * the gateway-created `source=phone` session to switch to it. [knownIds] is
+     * the set of phone-session ids that existed BEFORE the send, so the new one
+     * is found by *difference* (the session `id` is a timestamp and the sessions
+     * API exposes neither `chat_id` nor `session_key`, so we can't match by id).
+     */
+    private data class CreatingThread(
+        val chatId: String,
+        val name: String,
+        val knownIds: Set<String>,
+    )
+    private var creatingThread: CreatingThread? = null
+
+    /**
+     * `sessionId` → phone-platform `chat_id`, learned for threads this app
+     * created ([switchToCreatedThread]) or received a message in
+     * ([injectThreadMessage]). Routes a reply to the right thread, since the
+     * sessions API doesn't return `chat_id`. Unknown → null → the relay/adapter's
+     * home channel ("phone"). In-memory (lost on restart) — the proper fix
+     * exposes `chat_id` on `/api/sessions` upstream (see TODO).
+     */
+    private val threadChatIds = mutableMapOf<String, String>()
+
     // --- Human-readable error events ---
     // One-shot events consumed by ChatScreen via snackbar. Shape mirrors
     // other VMs for consistency; DROP_OLDEST so a burst of errors never
@@ -1396,10 +1420,12 @@ class ChatViewModel : ViewModel() {
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
-        // Pending "+ New Thread" draft: show the agent's first reply in the draft
-        // view; switchToCreatedThread reconciles it from history on switch.
-        pendingThread?.let { pending ->
-            if (msgChatId == null || msgChatId == pending.chatId) {
+        // A freshly-created thread whose real session we're still switching to:
+        // show the agent's first reply in the draft view now (the switch
+        // reconciles it from history). Covers the gap before currentSessionId is
+        // set, so the very first reply doesn't fall through to a notification.
+        creatingThread?.let { creating ->
+            if (msgChatId == null || msgChatId == creating.chatId) {
                 handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
                 return true
             }
@@ -1407,9 +1433,13 @@ class ChatViewModel : ViewModel() {
         val activeId = handler.currentSessionId.value ?: return false
         val active = handler.sessions.value.firstOrNull { it.sessionId == activeId } ?: return false
         if (active.source != "phone") return false
-        val openChatId = threadChatId(active.sessionId)
-        val belongs = openChatId == null || msgChatId == null || openChatId == msgChatId
+        // Match by the learned chat_id when known; otherwise accept (we can't read
+        // a session's chat_id from the API, so default to showing it in the open
+        // phone thread). Learn the mapping from the message for reply routing.
+        val knownChatId = threadChatIds[activeId]
+        val belongs = knownChatId == null || msgChatId == null || knownChatId == msgChatId
         if (!belongs) return false
+        if (msgChatId != null) threadChatIds[activeId] = msgChatId
         handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
         return true
     }
@@ -1974,40 +2004,36 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Parse the phone-platform `chat_id` from a gateway session id that carries
-     * the canonical `…:dm:<chat_id>` key form; null otherwise so the relay/
-     * adapter falls back to the home channel (keeps the single home thread
-     * working even when the id is an opaque uuid).
-     */
-    private fun threadChatId(sessionId: String): String? =
-        sessionId.takeIf { it.contains(":dm:") }
-            ?.substringAfterLast(":")
-            ?.takeIf { it.isNotBlank() }
-
-    /**
      * After a "+ New Thread" first send, poll the session list until the gateway
-     * has created the `source=phone` session for [chatId], then switch to it
-     * (loading its history) and apply the user's [name]. Best-effort — if it
-     * doesn't appear within the window the thread still exists and shows in the
-     * drawer's Threads filter on the next refresh.
+     * has created the new `source=phone` session, then switch to it (loading its
+     * history) and apply the user's chosen name. The new session is found by
+     * *difference* — the `source=phone` session id not present before the send —
+     * because the sessions API exposes neither `chat_id` nor `session_key` (the
+     * id is just a timestamp). Records sessionId → chat_id so later replies in
+     * this thread route correctly. Best-effort: if it doesn't appear within the
+     * window the thread still exists and shows in the drawer's Threads filter.
      */
-    private fun switchToCreatedThread(chatId: String, name: String) {
+    private fun switchToCreatedThread() {
+        val creating = creatingThread ?: return
         viewModelScope.launch {
-            for (delayMs in longArrayOf(900L, 1300L, 1800L, 2500L, 3500L)) {
+            for (delayMs in longArrayOf(900L, 1300L, 1800L, 2500L, 3500L, 4500L)) {
                 delay(delayMs)
                 refreshSessions()
                 delay(400L) // let the refresh job land in the sessions flow
                 val match = chatHandler?.sessions?.value?.firstOrNull {
-                    it.source == "phone" && threadChatId(it.sessionId) == chatId
+                    it.source == "phone" && it.sessionId !in creating.knownIds
                 }
                 if (match != null) {
+                    threadChatIds[match.sessionId] = creating.chatId
+                    creatingThread = null
                     switchSession(match.sessionId)
-                    if (name.isNotBlank() && match.title != name) {
-                        renameSession(match.sessionId, name)
+                    if (creating.name.isNotBlank() && match.title != creating.name) {
+                        renameSession(match.sessionId, creating.name)
                     }
                     return@launch
                 }
             }
+            creatingThread = null // gave up — it still appears in the drawer
         }
     }
 
@@ -2783,14 +2809,20 @@ class ChatViewModel : ViewModel() {
 
         // User-created Thread: the first message of a "+ New Thread" opens a new
         // source=phone gateway session keyed by the minted chat_id. Route it over
-        // the proactive channel, then poll for + switch to the real session.
+        // the proactive channel, snapshot the existing phone-session ids, then
+        // poll for the NEW one (by difference) and switch to it.
         pendingThread?.let { pending ->
             pendingThread = null
             val send = onProactiveReply
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
+                val knownIds = handler.sessions.value
+                    .filter { it.source == "phone" }
+                    .map { it.sessionId }
+                    .toSet()
+                creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
                 send(text.trim(), pending.chatId, null, messageId)
-                switchToCreatedThread(pending.chatId, pending.name)
+                switchToCreatedThread()
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
@@ -2802,15 +2834,14 @@ class ChatViewModel : ViewModel() {
         // proactive channel (continues that thread's gateway session) instead of
         // a normal chat send. The user bubble was already added above — mark it
         // SENDING and stamp its id as the reply's message_id so the relay's ack
-        // can settle it. The chat_id is parsed from the session id so the reply
-        // reaches the right thread (home thread → "phone"; opaque id → null
-        // fallback = home channel).
+        // can settle it. The chat_id comes from the learned map (the API doesn't
+        // expose it); unknown → null → the relay/adapter's home channel ("phone").
         val activeThread = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
         if (activeThread?.source == "phone") {
             val send = onProactiveReply
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
-                send(text.trim(), threadChatId(activeThread.sessionId), null, messageId)
+                send(text.trim(), threadChatIds[activeThread.sessionId], null, messageId)
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
