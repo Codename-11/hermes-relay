@@ -1,5 +1,32 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-01 — Realtime voice: a benign provider cancel-notice no longer kills the turn
+
+**Why.** On-device + correlated relay/event-log tracing of a realtime voice run showed
+the spoken answer was never heard after a promoted/background Hermes run: the summary
+re-injection called `cancel_response()` when no provider response was active, xAI replied
+`Cancellation failed: no active response found`, the relay forwarded it as a fatal
+`voice.error`, and the client closed the whole realtime session (surfacing an error toast
++ Retry) right as the reply was about to be spoken. The relay's own background-run
+keep-alive was working; the session was being deliberately torn down by the client on a
+non-fatal notice.
+
+**What.**
+- `broker.py`: `_deliver_background_result` now passes `cancel_current=not floor_idle` to
+  `_inject_background_summary`, which only calls `cancel_response()` when a response is
+  likely still speaking — avoiding the needless cancel (and its benign error) at source.
+  `_pump_provider_events` classifies benign provider notices (no-active-response /
+  cancellation-failed) via `_is_benign_provider_error()` and logs them as a non-fatal
+  `voice.realtime_agent.provider_notice` instead of a fatal `voice.error`.
+- `RelayVoiceClient.kt`: a `voice.error` matching a transient provider notice is logged
+  and ignored (session stays alive) instead of `completeFailure` + close — defense in
+  depth so no benign error can nuke a live turn.
+
+**Verification.** `python -m unittest` — 61 realtime-broker tests green, including a new
+test asserting a benign provider error is not forwarded as `voice.error` while a genuinely
+fatal one still is. Client change is scoped to the realtime `voice.error` branch. On-box +
+on-device e2e verification is owner-driven.
+
 ## 2026-07-01 — Realtime voice: background runs survive a transient drop
 
 **Why.** In realtime voice mode, asking the agent to run a long/background Hermes task

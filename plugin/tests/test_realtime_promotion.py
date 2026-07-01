@@ -494,6 +494,39 @@ class RealtimePromotionTests(AioHTTPTestCase):
             if ws is not None:
                 await ws.close()
 
+    async def test_benign_provider_error_is_not_forwarded_as_voice_error(self) -> None:
+        # A benign provider notice (cancelling with no active response) must not
+        # reach the client as a fatal voice.error — the client closes the session
+        # on voice.error, which killed a live turn right as the reply arrived. A
+        # genuinely fatal error still surfaces.
+        broker = GatedHermesToolBroker()
+        ws, provider, _ = await self._open(broker=broker)
+        try:
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.ERROR,
+                    payload={
+                        "message": "xAI Realtime error: Cancellation failed: no active response found"
+                    },
+                )
+            )
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.ERROR,
+                    payload={"message": "xAI Realtime error: provider exploded"},
+                )
+            )
+            events = await self._read_until(ws, "voice.error", limit=20)
+            errors = [e for e in events if e["type"] == "voice.error"]
+            # Only the fatal error is delivered; the benign cancel notice was
+            # filtered (and the client never sees a session-killing voice.error).
+            self.assertEqual(len(errors), 1)
+            self.assertIn("provider exploded", errors[0]["message"])
+            self.assertNotIn("no active response", errors[0]["message"])
+        finally:
+            broker.release.set()
+            await ws.close()
+
 
 if __name__ == "__main__":
     unittest.main()

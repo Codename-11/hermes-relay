@@ -1541,12 +1541,28 @@ class RealtimeAgentHandler:
                         reason="provider_error",
                     )
                     continue
-                await self._send_error(
-                    ws,
-                    session,
-                    str(event.payload.get("message") or "provider error"),
-                    provider=session.provider,
-                )
+                error_message = str(event.payload.get("message") or "provider error")
+                if _is_benign_provider_error(error_message):
+                    # A non-fatal provider notice (e.g. cancelling when no
+                    # response is active) must NOT be surfaced as a fatal
+                    # voice.error — the client closes the session on that, which
+                    # killed a live turn right as the reply was arriving.
+                    self._log(
+                        session,
+                        "voice.realtime_agent.provider_notice",
+                        {
+                            "type": "voice.realtime_agent.provider_notice",
+                            "message": error_message,
+                            "provider": session.provider,
+                        },
+                    )
+                else:
+                    await self._send_error(
+                        ws,
+                        session,
+                        error_message,
+                        provider=session.provider,
+                    )
 
     async def _send_provider_audio_delta(
         self,
@@ -2278,8 +2294,14 @@ class RealtimeAgentHandler:
         # speak_when_idle / notify_then_speak: wait for the floor to clear, then
         # have the provider speak a natural summary via the forced-summary path.
         session.floor.note_result_ready()
-        await self._await_floor_idle_for_result(session)
-        await self._inject_background_summary(ws, session, connection, result)
+        floor_idle = await self._await_floor_idle_for_result(session)
+        # Only interrupt the provider when it's likely still speaking (the floor
+        # didn't clear). If the floor is already idle there's no active response
+        # to cancel — cancelling anyway makes xAI emit a benign "no active
+        # response" notice that used to tear the whole voice turn down.
+        await self._inject_background_summary(
+            ws, session, connection, result, cancel_current=not floor_idle
+        )
         session.hermes_run_tier = "foreground"
 
     async def _await_floor_idle_for_result(
@@ -2303,6 +2325,8 @@ class RealtimeAgentHandler:
         session: RealtimeAgentSession,
         connection: RealtimeAgentConnection,
         result: dict[str, Any],
+        *,
+        cancel_current: bool = True,
     ) -> None:
         transcript = session.promoted_transcript or ""
         session.native_forced_summary_active = True
@@ -2311,8 +2335,12 @@ class RealtimeAgentHandler:
         session.native_forced_summary_result = dict(result)
         session.native_forced_summary_buffer.clear()
         session.native_forced_summary_text_parts.clear()
-        with contextlib.suppress(Exception):
-            await connection.cancel_response()
+        # Cancel only when a response is likely in flight (see caller). Cancelling
+        # with nothing active makes xAI reply with a benign "no active response"
+        # error that must not be treated as fatal.
+        if cancel_current:
+            with contextlib.suppress(Exception):
+                await connection.cancel_response()
         try:
             await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
         except Exception as exc:  # noqa: BLE001
@@ -4021,6 +4049,18 @@ def _background_run_max_seconds() -> float:
     if value is not None and value > 0:
         return value / 1000.0
     return _BACKGROUND_RUN_MAX_SECONDS
+
+
+def _is_benign_provider_error(message: str) -> bool:
+    """Provider 'errors' that must NOT tear down a live voice turn.
+
+    Cancelling a response when none is active (the background-summary
+    re-injection path) makes xAI emit 'Cancellation failed: no active response
+    found'. Surfacing that as a fatal voice.error made the client close the
+    session right before the summary was spoken, so the reply was never heard.
+    """
+    lowered = message.lower()
+    return "no active response" in lowered or "cancellation failed" in lowered
 
 
 def _token_hash(token: str) -> str:

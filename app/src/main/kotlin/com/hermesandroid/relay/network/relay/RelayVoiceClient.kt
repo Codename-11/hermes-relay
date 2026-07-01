@@ -107,6 +107,18 @@ class RelayVoiceClient(
         private const val REALTIME_AGENT_WAIT_SLICE_MS = 1_000L
         private const val REALTIME_INPUT_CHUNK_BYTES = 6_400
         private const val SESSION_CALL_TIMEOUT_SECONDS = 15L
+
+        /**
+         * Provider "errors" that must NOT end a live realtime turn. Cancelling a
+         * response when none is active (the background-summary re-injection path)
+         * makes xAI emit "Cancellation failed: no active response found" — a benign
+         * notice that should never close the session or dead-end the user with a
+         * Retry. The relay now filters these too; this is defense in depth.
+         */
+        private fun isTransientRealtimeProviderError(message: String): Boolean {
+            val m = message.lowercase()
+            return m.contains("no active response") || m.contains("cancellation failed")
+        }
     }
 
     private fun sessionClient(): OkHttpClient =
@@ -1491,9 +1503,21 @@ class RelayVoiceClient(
                             }
                             webSocket.close(1000, "done")
                         }
-                    } else if (event.type == "voice.error" || event.type == "voice.session.resume_failed") {
+                    } else if (event.type == "voice.session.resume_failed") {
                         completeFailure(event.message ?: "Realtime agent error")
                         webSocket.close(1011, "provider error")
+                    } else if (event.type == "voice.error") {
+                        val msg = event.message ?: "Realtime agent error"
+                        if (isTransientRealtimeProviderError(msg)) {
+                            // A benign provider notice (e.g. a cancel with no
+                            // active response) must not tear down a live turn —
+                            // the reply is often still on its way. The relay now
+                            // filters these too; this is defense in depth.
+                            Log.i(TAG, "Realtime agent transient provider notice ignored: $msg")
+                        } else {
+                            completeFailure(msg)
+                            webSocket.close(1011, "provider error")
+                        }
                     }
                 }
 
