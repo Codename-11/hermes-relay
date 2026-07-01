@@ -1062,12 +1062,14 @@ fun RelayApp() {
         val bridgeReturnAction: (() -> Unit)? = bridgePrimaryReturnRoute?.let { route ->
             {
                 clearBridgeReturn()
+                // Reliable navigate to the remembered route. saveState +
+                // restoreState no-op'd when the route was Chat (the start
+                // destination), leaving the user stuck on Bridge.
                 navController.navigate(route) {
                     popUpTo(navController.graph.findStartDestination().id) {
-                        saveState = true
+                        inclusive = false
                     }
                     launchSingleTop = true
-                    restoreState = true
                 }
             }
         }
@@ -1812,15 +1814,13 @@ fun RelayApp() {
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
-                        onNavigateToChat = {
-                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        // Standard back: return to wherever Manage was opened
+                        // from (Settings → Hermes management, the agent sheet,
+                        // etc.). The prior forced navigate(Chat) with
+                        // saveState/restoreState was a no-op at runtime —
+                        // navigating to the start destination with restoreState
+                        // restored an equivalent stack and nothing moved.
+                        onBack = { navController.popBackStack() },
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Manage.route,
@@ -1889,14 +1889,12 @@ fun RelayApp() {
                                     navController.navigate(Screen.BridgeSafetySettings.route)
                                 },
                                 onNavigateToChat = {
+                                    // Standard back. The prior navigate(Chat) with
+                                    // saveState/restoreState was a no-op — Chat is
+                                    // the start destination, so restoreState just
+                                    // restored the same stack and nothing moved.
                                     clearBridgeReturn()
-                                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
+                                    navController.popBackStack()
                                 },
                                 onNavigateToManage = {
                                     clearBridgeReturn()
@@ -1925,14 +1923,12 @@ fun RelayApp() {
                                     navController.navigate(Screen.ConnectionsSettings.route)
                                 },
                                 onNavigateToChat = {
+                                    // Standard back. The prior navigate(Chat) with
+                                    // saveState/restoreState was a no-op — Chat is
+                                    // the start destination, so restoreState just
+                                    // restored the same stack and nothing moved.
                                     clearBridgeReturn()
-                                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
+                                    navController.popBackStack()
                                 },
                                 onNavigateToManage = {
                                     clearBridgeReturn()
@@ -2126,13 +2122,9 @@ fun RelayApp() {
                                 navController.navigate(Screen.ConnectionsSettings.route)
                             },
                             onNavigateToChat = {
-                                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
+                                // popBackStack: navigate(Chat) with restoreState
+                                // no-ops (Chat is the start destination).
+                                navController.popBackStack()
                             },
                             onNavigateToManage = {
                                 navController.navigate(Screen.Manage.route) {

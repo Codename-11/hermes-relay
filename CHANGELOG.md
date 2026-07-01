@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Back button on Manage and Bridge now works.** The back arrow on the Manage ("Hermes management") and Bridge screens did nothing — it tried to jump to Chat in a way that silently no-op'd. Back now reliably returns to the screen you opened it from.
 - **Dropped relay connections from a status-report race.** The phone's periodic device-status report could occasionally be sent to the relay *before* the connection had finished authenticating, which made the relay reject the whole connection and forced a reconnect. The app now holds every message until the connection is authenticated, so the handshake always completes first.
 - **Fewer needless connection re-checks when switching apps.** Returning to the app after a quick glance at another app no longer triggers a full connection re-probe (and the brief "checking…" flash) when the connection was already healthy — it only re-checks after a longer absence or if something actually looks off.
 - **No more scary "server isn't accepting connections" pop-up on first load.** A bare bottom message could flash on cold start while the app was still establishing its first connection (the background session-list load failing before the server was reachable). That state is now shown only by the themed connection banner at the top — the redundant pop-up is suppressed for cold-start/reconnect bootstrapping, while real failures while you're using the app still surface normally.

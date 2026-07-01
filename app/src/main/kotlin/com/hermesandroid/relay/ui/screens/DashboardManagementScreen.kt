@@ -285,7 +285,7 @@ private data class PendingDashboardAction(
 fun DashboardManagementScreen(
     connectionViewModel: ConnectionViewModel,
     onNavigateToConnections: () -> Unit,
-    onNavigateToChat: () -> Unit = {},
+    onBack: () -> Unit = {},
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
@@ -1036,8 +1036,8 @@ fun DashboardManagementScreen(
                 navigationIcon = {
                     RelayChromeIconButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to chat",
-                        onClick = onNavigateToChat,
+                        contentDescription = "Back",
+                        onClick = onBack,
                     )
                 },
                 actions = {
