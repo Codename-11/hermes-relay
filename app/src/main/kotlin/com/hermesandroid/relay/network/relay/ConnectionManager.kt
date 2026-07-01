@@ -162,6 +162,15 @@ class ConnectionManager(
     @Volatile
     private var consecutiveSocketFailures = 0
 
+    // The relay requires the FIRST frame on a socket to be `system/auth` and
+    // rejects the whole connection otherwise ("expected system/auth, got
+    // <channel>/<type>"). `authenticated` gates [send] so nothing (notably the
+    // periodic bridge.status reporter) can race the auth handshake on a fresh
+    // or reconnecting socket. False from the start of every connect until the
+    // server confirms `auth.ok`; reset on close/failure/disconnect.
+    @Volatile
+    private var authenticated = false
+
     private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
@@ -728,6 +737,7 @@ class ConnectionManager(
         )
         webSocket?.close(1000, "Client disconnect")
         webSocket = null
+        authenticated = false
         _connectionState.value = ConnectionState.Disconnected
         _isInsecureConnection.value = false
         // ADR 24: clear manual override on explicit disconnect — a "Use
@@ -751,6 +761,17 @@ class ConnectionManager(
     }
 
     fun send(envelope: Envelope) {
+        // Hold every non-auth frame until the server has accepted our
+        // `system/auth` envelope. Otherwise a sender that fires on its own
+        // cadence — e.g. BridgeStatusReporter's 30s/immediate tick — can beat
+        // the auth handshake on a fresh socket, and the relay rejects the
+        // whole connection (forcing a reconnect). Dropping a periodic frame is
+        // harmless: the next tick re-sends once authenticated.
+        val isAuthFrame = envelope.channel == "system" && envelope.type == "auth"
+        if (!authenticated && !isAuthFrame) {
+            Log.d(TAG, "send: holding ${envelope.channel}/${envelope.type} until auth.ok")
+            return
+        }
         val text = json.encodeToString(envelope)
         webSocket?.send(text)
     }
@@ -791,6 +812,9 @@ class ConnectionManager(
         // pin store snapshot — crucial right after applyServerIssuedCodeAndReset
         // wipes a pin for re-pair. buildClient() does a tiny DataStore read
         // via runBlocking, so it runs on the IO dispatcher inside [scope].
+        // Every new socket starts unauthenticated — the send-gate stays closed
+        // (auth frame excepted) until this socket's own auth.ok arrives.
+        authenticated = false
         client = buildClient()
 
         val request = Request.Builder()
@@ -845,6 +869,15 @@ class ConnectionManager(
                 }
                 try {
                     val envelope = json.decodeFromString<Envelope>(text)
+                    // Open the send-gate the instant the server confirms auth,
+                    // BEFORE routing — so anything handleAuthOk triggers
+                    // (e.g. proactive.subscribe) is allowed through.
+                    if (envelope.channel == "system") {
+                        when (envelope.type) {
+                            "auth.ok" -> authenticated = true
+                            "auth.fail" -> authenticated = false
+                        }
+                    }
                     multiplexer.route(envelope)
                 } catch (e: Exception) {
                     Log.w(TAG, "Malformed relay envelope: ${e.message}")
@@ -869,6 +902,7 @@ class ConnectionManager(
                     detail = "code=$code reason=$reason",
                     url = url,
                 )
+                authenticated = false
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
@@ -905,6 +939,7 @@ class ConnectionManager(
                         Log.i(TAG, "relay socket failure $consecutiveSocketFailures/$MARK_UNREACHABLE_AFTER_FAILURES — not yet poisoning route")
                     }
                 }
+                authenticated = false
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }

@@ -409,10 +409,25 @@ fun RelayApp() {
     // the entire StateFlow snapshot was preserved across backgrounding
     // even when the underlying server had died or the network had flipped.
     val lifecycleOwner = LocalLifecycleOwner.current
+    // Timestamp of the last ON_PAUSE, so ON_RESUME can debounce the re-probe by
+    // how long we were actually away (a quick app-switch skips it).
+    val lastPausedAtMs = remember { mutableStateOf(0L) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                connectionViewModel.revalidate()
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> lastPausedAtMs.value = System.currentTimeMillis()
+                Lifecycle.Event.ON_RESUME -> {
+                    // First resume (cold start) forces a probe; otherwise pass
+                    // the away-duration so a brief, healthy switch-away skips
+                    // the cache-clearing re-probe + Probing badge flash.
+                    val awayMs = if (lastPausedAtMs.value == 0L) {
+                        Long.MAX_VALUE
+                    } else {
+                        System.currentTimeMillis() - lastPausedAtMs.value
+                    }
+                    connectionViewModel.revalidateOnResume(awayMs)
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

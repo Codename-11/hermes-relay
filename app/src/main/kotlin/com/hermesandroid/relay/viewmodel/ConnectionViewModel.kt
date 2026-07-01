@@ -182,6 +182,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // reconnect genuinely fails (server down, bad network).
         private const val RELAY_RECONNECT_GRACE_MS = 5_000L
 
+        // A brief switch-away (glance at another app) doesn't need the full
+        // cache-clearing re-probe [revalidateOnResume] normally does — the
+        // sockets keep 30s pings and the connection was healthy moments ago.
+        // Only pay the re-probe (+ Probing badge flash) when we were away long
+        // enough that the connection could have gone stale, or when it isn't
+        // already healthy. Network *changes* are handled independently by the
+        // ConnectivityObserver/network callbacks, not by revalidate(), so
+        // skipping here can't miss a Wi-Fi↔cellular flip.
+        private const val BRIEF_RESUME_REVALIDATE_MS = 15_000L
+
         /**
          * Placeholder label written by [beginAddConnection] before the
          * user has scanned a QR. The pair-success watcher treats a
@@ -3748,6 +3758,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * the existing one finish. Cheap enough that callers don't need to
      * debounce themselves.
      */
+    /**
+     * Resume-path entry to [revalidate], debounced by how long the app was
+     * away. A quick app-switch with an already-healthy API connection skips
+     * the cache-clearing re-probe (and the Probing badge flash) entirely;
+     * a longer absence — or an unhealthy connection — re-probes as usual.
+     *
+     * @param awayMs milliseconds since the Activity was last paused. Callers
+     *   that can't measure it (or want to force a probe) pass [Long.MAX_VALUE].
+     */
+    fun revalidateOnResume(awayMs: Long) {
+        val healthy = _apiServerHealth.value == HealthStatus.Reachable
+        if (awayMs in 0 until BRIEF_RESUME_REVALIDATE_MS && healthy) {
+            return
+        }
+        revalidate()
+    }
+
     fun revalidate() {
         if (isDemoMode.value) return // Demo mode is offline — skip all probes.
         if (revalidationJob?.isActive == true) return
