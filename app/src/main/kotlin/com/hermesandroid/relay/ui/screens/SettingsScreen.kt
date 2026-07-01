@@ -71,7 +71,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hermesandroid.relay.util.BatteryOptimizations
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -838,6 +844,14 @@ private fun QuickControlsCard(
                 checked = gatewayKeepAlive,
                 onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) },
             )
+            // Doze: even with the keep-alive service running, a specialUse FGS
+            // still gets its network deferred in deep sleep unless the app is
+            // battery-optimization exempt. Nudge for the exemption when the
+            // toggle is on and we're not yet exempt (sideload only — Play
+            // restricts the permission).
+            if (gatewayKeepAlive && BuildFlavor.isSideload) {
+                BatteryOptimizationNudge()
+            }
             HorizontalDivider()
             QuickControlToggle(
                 title = "Turn-complete alerts",
@@ -880,6 +894,60 @@ private fun QuickControlToggle(
         }
         Spacer(modifier = Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * Doze allow-list nudge shown under the "Persistent connection" toggle when
+ * it's on but the app isn't battery-optimization exempt (sideload only).
+ * Re-checks on ON_RESUME so it disappears after the user grants the exemption
+ * in the system dialog. See [BatteryOptimizations].
+ */
+@Composable
+private fun BatteryOptimizationNudge() {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var exempt by remember {
+        mutableStateOf(BatteryOptimizations.isIgnoringBatteryOptimizations(context))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                exempt = BatteryOptimizations.isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    if (exempt) return
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "Keep it connected in deep sleep",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                text = "Android can still pause the connection once the screen's " +
+                    "been off a while (Doze). Allow unrestricted battery so " +
+                    "Persistent connection keeps working in the background.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            TextButton(
+                onClick = { BatteryOptimizations.launchRequest(context) },
+                contentPadding = PaddingValues(horizontal = 0.dp),
+            ) {
+                Text("Allow unrestricted battery")
+            }
+        }
     }
 }
 

@@ -269,6 +269,17 @@ class ConnectionManager(
         // banned forever. Waiting at least as long as the server's block
         // duration lets the ban expire naturally.
         private const val RATE_LIMIT_BACKOFF_MS = 300_000L
+
+        // Slow-poll tier. Against a paired-but-genuinely-dead server the
+        // exponential backoff otherwise caps at ~16s and retries forever, which
+        // is steady battery + log noise for no benefit. After this many
+        // consecutive failed attempts (~5 min of continuous failure at the cap)
+        // we drop to a 5-min poll until the server recovers. A network change
+        // re-resolves + reconnects immediately regardless of this delay (see the
+        // onAvailable callback), and reconnectAttempt resets to 0 on a
+        // successful onOpen, so recovery is never gated on the slow interval.
+        private const val SLOW_POLL_AFTER_ATTEMPTS = 20
+        private const val SLOW_POLL_BACKOFF_MS = 300_000L
     }
 
     fun setInsecureMode(enabled: Boolean) {
@@ -981,28 +992,46 @@ class ConnectionManager(
         // normal exponential cadence and we'll re-fill the ban bucket on
         // every attempt, extending the ban indefinitely. Wait out the
         // server's full block window instead.
-        val backoffMs = if (lastUpgradeResponseCode == 429) {
-            Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Relay,
-                severity = DiagnosticSeverity.Warning,
-                title = "Relay reconnect delayed",
-                detail = "Rate limited; retrying in ${RATE_LIMIT_BACKOFF_MS / 1000}s",
-                url = url,
-            )
-            RATE_LIMIT_BACKOFF_MS
-        } else {
-            (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
-                .coerceAtMost(MAX_BACKOFF_MS)
-        }
-        if (lastUpgradeResponseCode != 429) {
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Relay,
-                severity = DiagnosticSeverity.Info,
-                title = "Relay reconnect scheduled",
-                detail = "Retrying in ${backoffMs / 1000}s",
-                url = url,
-            )
+        val backoffMs = when {
+            // Server-issued 429 means we're IP-banned — wait out the full
+            // block window instead of re-filling the ban bucket at our normal
+            // cadence.
+            lastUpgradeResponseCode == 429 -> {
+                Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Relay reconnect delayed",
+                    detail = "Rate limited; retrying in ${RATE_LIMIT_BACKOFF_MS / 1000}s",
+                    url = url,
+                )
+                RATE_LIMIT_BACKOFF_MS
+            }
+            // Sustained failure against a paired-but-dead server: stop hammering
+            // every ~16s forever; drop to a slow poll until it recovers.
+            reconnectAttempt >= SLOW_POLL_AFTER_ATTEMPTS -> {
+                Log.i(TAG, "scheduleReconnect: sustained failure (attempt $reconnectAttempt) — slow-polling every ${SLOW_POLL_BACKOFF_MS / 1000}s")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Relay reconnect slow-polling",
+                    detail = "Server unreachable for a while; retrying every ${SLOW_POLL_BACKOFF_MS / 1000}s until it recovers (a network change reconnects immediately)",
+                    url = url,
+                )
+                SLOW_POLL_BACKOFF_MS
+            }
+            else -> {
+                val ms = (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
+                    .coerceAtMost(MAX_BACKOFF_MS)
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Relay reconnect scheduled",
+                    detail = "Retrying in ${ms / 1000}s",
+                    url = url,
+                )
+                ms
+            }
         }
 
         scope.launch {
