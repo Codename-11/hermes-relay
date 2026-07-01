@@ -117,6 +117,35 @@ gated to pre-first-token. Deferred:
   alpha at ≥0.6 and verify ≥4.5:1 per theme (11sp timestamps were alpha 0.5 over
   `onSurfaceVariant` ≈ 2–2.5:1; the surviving timestamp is now 0.6).
 
+## Realtime voice (ADR 33) follow-ups — 2026-07-01 robustness batch
+
+The deliver-on-reattach / adaptive-promotion / milestone-speech / resume-retry /
+prewarm batch shipped (see DEVLOG 2026-07-01). Deferred:
+
+- **Result injection framing (needs xAI parity check).** The completed background
+  summary is injected as a synthetic *user* message (`send_text` →
+  `conversation.item.create` role=user). Cleaner per current realtime-API practice:
+  inject as a function-call output / out-of-band response so the model can't mistake
+  it for the human speaking. OpenAI realtime supports this; xAI support unverified —
+  requires a live parity test before switching. Keep the user-message path as the
+  fallback.
+- **Pre-existing test failure:** `test_realtime_voice_routes.py::
+  test_reads_hermes_xai_oauth_credential_pool` fails at HEAD too (`token is None`) —
+  looks like an environment/fixture dependency on a local xai oauth pool, not a code
+  regression. Diagnose or gate on the fixture.
+- **Prewarm cost watch.** Voice-mode entry now opens the provider session before the
+  first utterance. If users habitually open+close voice mode without speaking, idle
+  provider sessions cost connect/teardown churn — consider a short "no utterance in
+  N min → close" reaper if it shows up in practice.
+- **E2E verification pending** for the new paths on-device: deferred result spoken on
+  resume after a mid-run drop; proactive notification when the session dies for good;
+  busy answer on a second task; adaptive promotion timing; first-turn latency with
+  prewarm.
+- **Dev-env note:** the local hermes-agent app venv (`AppData/Local/hermes/...`) can
+  prune `aiohttp`/`segno` (uv sync), breaking `python -m unittest plugin.tests.*` with
+  ModuleNotFoundError — restore with
+  `uv pip install --python <venv>/Scripts/python.exe aiohttp segno`.
+
 ## Phone as a Hermes platform (proactive agent → phone)
 
 Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_message target=phone` → loopback `/phone/message` → relay `ProactiveChannel` → phone WSS → system notification, gated off by default (`PHONE_ENABLED` server-side + "Let Hermes message me" app-side + pairing). Remaining:

@@ -118,6 +118,10 @@ class RelayServer:
         # (send_message target=phone). Mirror of bridge, reversed: server→app
         # push with no awaited reply. Latched on proactive.subscribe.
         self.proactive = ProactiveChannel()
+        # Durable fallback for realtime voice: a background run whose result
+        # never reached the phone (voice session died before resume) is pushed
+        # as a proactive phone message — buffered while the phone is offline.
+        self.realtime_agent.proactive_push = self.proactive.push
         # Desktop CLI awareness channel — stashes workspace + active-editor
         # hints per session (ephemeral; no persistence). Wired in alpha.6
         # as the keystone for future prompt-injection plugin hooks.

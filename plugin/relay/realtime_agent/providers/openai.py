@@ -274,9 +274,13 @@ async def _create_aiohttp_websocket(
     headers: dict[str, str],
     timeout: float,
 ) -> OpenAIProviderSocket:
-    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout))
+    # Liveness via WS heartbeat rather than an ambient total-timeout — realtime
+    # sessions legitimately live for many minutes; `timeout` bounds the connect.
+    session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=None, connect=timeout, sock_connect=timeout)
+    )
     try:
-        ws = await session.ws_connect(url, headers=headers)
+        ws = await session.ws_connect(url, headers=headers, heartbeat=20.0)
     except aiohttp.WSServerHandshakeError as exc:
         await session.close()
         if exc.status in {401, 403}:

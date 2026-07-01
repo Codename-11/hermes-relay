@@ -1932,6 +1932,11 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
         )
         self.assertEqual(resp.status, 200)
         body = await resp.json()
+        # Timer-driven spoken progress is opt-in (defaults off); this test
+        # exercises the opt-in path with an effectively-immediate threshold.
+        self._server().realtime_agent.sessions[
+            body["session_id"]
+        ].progress_spoken_after_seconds = 0.001
 
         ws = await self.client.ws_connect(
             body["websocket_path"],

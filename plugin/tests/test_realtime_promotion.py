@@ -130,6 +130,39 @@ class GatedHermesToolBroker:
         }
 
 
+class LongToolHermesBroker(GatedHermesToolBroker):
+    """Emits a known-long tool start (cronjob), then blocks until released."""
+
+    async def stream_task(self, request: HermesTaskRequest):
+        self.requests.append(request)
+        session_id = request.session_id or "created-hermes-session"
+        yield {
+            "type": "hermes.run.started",
+            "session_id": session_id,
+            "run_id": "run-longtool",
+            "profile": request.profile,
+        }
+        yield {
+            "type": "hermes.tool.started",
+            "session_id": session_id,
+            "run_id": "run-longtool",
+            "tool_call_id": "t-1",
+            "tool_name": "cronjob",
+        }
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        yield {
+            "type": "hermes.run.completed",
+            "session_id": session_id,
+            "run_id": "run-longtool",
+            "profile": request.profile,
+        }
+
+
 class FastHermesToolBroker:
     """Completes immediately (Tier A)."""
 
@@ -493,6 +526,134 @@ class RealtimePromotionTests(AioHTTPTestCase):
             broker.release.set()
             if ws is not None:
                 await ws.close()
+
+    async def test_detached_result_deferred_and_injected_on_resume(self) -> None:
+        # A result that completes while the phone is detached must NOT be spoken
+        # into the void (the summary audio would only land in the bounded replay
+        # ring). It is held as pending and injected after a successful resume.
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        await self._emit_tool_call(provider)
+        await self._read_until(ws, "hermes.run.promoted")
+        ready = body["_ready"]
+
+        await ws.close(code=1001, message=b"network changed")
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        for _ in range(50):
+            if session.detached_at is not None:
+                break
+            await asyncio.sleep(0.01)
+        self.assertIsNotNone(session.detached_at)
+
+        summaries_before = len(
+            [t for t in provider.connection.text_inputs if "final spoken answer" in t]
+        )
+        broker.release.set()
+        for _ in range(100):
+            if session.pending_background_result is not None:
+                break
+            await asyncio.sleep(0.02)
+        self.assertIsNotNone(session.pending_background_result)
+        # No summary was injected while detached.
+        summaries_detached = len(
+            [t for t in provider.connection.text_inputs if "final spoken answer" in t]
+        )
+        self.assertEqual(summaries_before, summaries_detached)
+
+        ws2 = await self.client.ws_connect(
+            body["websocket_path"], headers=self._bearer(body["_token"])
+        )
+        try:
+            await ws2.send_json(
+                {
+                    "type": "session.resume",
+                    "resume_token": body["resume_token"],
+                    "last_event_id": ready["event_id"],
+                    "last_audio_event_id": 0,
+                    "last_played_audio_event_id": 0,
+                    "last_input_chunk_id": 0,
+                }
+            )
+            await self._read_until(ws2, "voice.replay.done", limit=60)
+            # The deferred result is injected after resume.
+            for _ in range(100):
+                summaries = [
+                    t
+                    for t in provider.connection.text_inputs
+                    if "final spoken answer" in t
+                ]
+                if len(summaries) > summaries_before:
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(len(summaries), summaries_before + 1)
+            self.assertIsNone(session.pending_background_result)
+        finally:
+            await ws2.close()
+
+    async def test_second_run_task_answers_busy_without_orphaning_first(self) -> None:
+        # max_background_runs=1: a second hermes_run_task must return a speakable
+        # already_running result — NOT overwrite hermes_task (which would cancel
+        # the first run's delivery and orphan it).
+        broker = GatedHermesToolBroker()
+        ws, provider, _ = await self._open(broker=broker)
+        try:
+            await self._emit_tool_call(provider, call_id="call-1")
+            await self._read_until(ws, "hermes.run.promoted")
+            await broker.started.wait()
+
+            await self._emit_tool_call(provider, call_id="call-2")
+            for _ in range(100):
+                busy = [
+                    (cid, result)
+                    for cid, result in provider.connection.tool_results
+                    if cid == "call-2"
+                ]
+                if busy:
+                    break
+                await asyncio.sleep(0.02)
+            self.assertTrue(busy)
+            self.assertEqual(busy[0][1].get("status"), "already_running")
+            # First run untouched: not cancelled, still deliverable.
+            self.assertFalse(broker.cancelled.is_set())
+
+            broker.release.set()
+            done = await self._read_until(ws, "hermes.run.background_completed")
+            self.assertTrue(
+                any(e["type"] == "hermes.run.background_completed" for e in done)
+            )
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_long_tool_start_promotes_before_grace_window(self) -> None:
+        # Adaptive promotion: a known-long tool (cronjob) starting mid-grace
+        # promotes immediately instead of waiting out the full window.
+        broker = LongToolHermesBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        session.promote_after_ms = 8000  # would exceed the 5s event-read timeout
+        try:
+            started = asyncio.get_event_loop().time()
+            await self._emit_tool_call(provider)
+            events = await self._read_until(ws, "hermes.run.promoted")
+            elapsed = asyncio.get_event_loop().time() - started
+            promoted = next(e for e in events if e["type"] == "hermes.run.promoted")
+            self.assertEqual(promoted["tier"], "promoted")
+            # Promoted well before the 8s grace window could have elapsed.
+            self.assertLess(elapsed, 5.0)
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_config_defaults_timer_spoken_progress_off(self) -> None:
+        # Milestone speech: periodic timer-driven spoken filler defaults OFF.
+        token = await self._make_session()
+        resp = await self.client.get(
+            "/voice/realtime-agent/config", headers=self._bearer(token)
+        )
+        self.assertEqual(resp.status, 200)
+        payload = await resp.json()
+        self.assertEqual(payload["promotion"]["progress_spoken_after_ms"], 0)
 
     async def test_benign_provider_error_is_not_forwarded_as_voice_error(self) -> None:
         # A benign provider notice (cancelling with no active response) must not

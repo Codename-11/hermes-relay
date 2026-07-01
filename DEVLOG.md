@@ -1,5 +1,54 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-01 — Realtime voice: ADR 33 robustness batch (deliver-on-reattach, adaptive promotion, milestone speech, resume retry, prewarm)
+
+**Why.** An architecture review of the ADR 33 background-run path against current
+realtime-API practice (the interim-tool-result + later-injection shape now ships
+natively in gpt-realtime; the design itself is sound) surfaced a set of lifecycle and
+UX gaps: a result completing while the phone was detached was spoken into the bounded
+replay ring (a long summary can evict its own head), a second `hermes_run_task`
+overwrote `session.hermes_task` and cancelled the first run's delivery (silent orphan),
+timer-driven spoken progress narrated over the floor every N seconds, promotion always
+waited the full 6s grace even when the first tool was obviously long, a failed client
+resume parked forever on "waiting for route change", and the first voice turn paid the
+session POST + websocket + provider connect.
+
+**What (relay — `broker.py`, `providers/*.py`, `config.py`, `profile_voice.py`, `server.py`).**
+- **Deliver-on-reattach:** `_deliver_background_result` holds the result as
+  `session.pending_background_result` when the phone is detached; resume injects it
+  after replay (`_deliver_pending_background_result`). `_close_native_session` pushes an
+  undelivered result via a new `proactive_push` hook (wired to `ProactiveChannel.push`,
+  which buffers for an offline phone) — including the close-races-completion case where
+  the run finished but delivery was cancelled.
+- **Busy answer:** a second `hermes_run_task` while one is in flight returns a speakable
+  `already_running` result instead of orphaning run #1 (`max_background_runs=1`).
+- **Adaptive promotion:** the Hermes event stream flags known-long tools on start
+  (`RELAY_VOICE_LONG_TOOL_HINTS`, default cron/desktop_/browser/execute_code/terminal/
+  spawn); `_run_brokered_tool` races that signal against the grace window and promotes
+  after a short quick-finish window (1.5s) so fast long-class calls stay Tier A.
+- **Milestone speech:** timer-driven spoken progress is now config-wired per session and
+  **off by default** (`realtime_voice_progress_spoken_after_ms: 0`); promotion handoff,
+  completion, and failure speech unchanged; `hermes.run.progress` events keep flowing
+  for the visual chip.
+- **Robustness plumbing:** done-callbacks log unretrieved failures on `hermes_task` /
+  `background_delivery_task`; provider websockets use an explicit `heartbeat=20.0` +
+  connect-bounded `ClientTimeout(total=None)` instead of an ambient total timeout.
+
+**What (Android).** `RelayVoiceClient`: a failed realtime resume now retries every 10s
+for up to 5 min (matching the relay's extended detached window) alongside the existing
+route-change trigger; new `prewarm` mode opens the persistent session with no first turn
+and the guards disarmed. `VoiceViewModel`: `enterVoiceMode()` prewarms the persistent
+Realtime Agent session (engine + toggle gated, silent on failure); turn-scoped side
+effects are skipped for the warm-up and the first utterance rides `submitRealtimeTurn`.
+
+**Verification.** `python -m unittest` — 65 realtime tests green, including 4 new
+promotion tests (deferred-injection-on-resume, busy second task, long-tool promotes
+before an 8s grace, config default 0); the spoken-status routes test now opts in via
+the per-session knob. One pre-existing failure noted in `test_realtime_voice_routes`
+(xai oauth pool fixture; fails at HEAD too — recorded in TODO). Android
+`assembleSideloadDebug` green. Injection framing (function-call output instead of a
+synthetic user message) deliberately deferred pending an xAI parity check — in TODO.
+
 ## 2026-07-01 — Realtime voice: a benign provider cancel-notice no longer kills the turn
 
 **Why.** On-device + correlated relay/event-log tracing of a realtime voice run showed

@@ -263,9 +263,15 @@ async def _create_aiohttp_websocket(
     headers: dict[str, str],
     timeout: float,
 ) -> XAIProviderSocket:
-    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout))
+    # Liveness is explicit: the WS heartbeat detects a dead peer instead of an
+    # ambient ClientTimeout(total=...) bounding the whole connection — a
+    # realtime session legitimately lives for many minutes across background
+    # runs. `timeout` still bounds the handshake/connect.
+    session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=None, connect=timeout, sock_connect=timeout)
+    )
     try:
-        ws = await session.ws_connect(url, headers=headers)
+        ws = await session.ws_connect(url, headers=headers, heartbeat=20.0)
     except Exception:
         await session.close()
         raise
