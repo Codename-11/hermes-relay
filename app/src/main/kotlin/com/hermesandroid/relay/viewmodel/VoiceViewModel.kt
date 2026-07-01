@@ -1217,6 +1217,40 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(voiceMode = true, state = VoiceState.Idle, outputAudioActive = false, error = null)
         }
+        prewarmRealtimeSession()
+    }
+
+    /**
+     * Open the persistent Realtime Agent session at voice-mode entry, before
+     * the first utterance — pulling the session POST + relay websocket +
+     * provider connect out of first-turn latency. Sends no input and touches
+     * no turn state; the first utterance rides [submitRealtimeTurn] exactly
+     * like a follow-up turn. No-op unless the engine is Realtime Agent with
+     * the persistent-session toggle on, or when a session is already open.
+     * A failed warm-up is silent — the first turn just opens fresh.
+     */
+    private fun prewarmRealtimeSession() {
+        if (voiceEngineMode != VoiceEngineMode.RealtimeAgent) return
+        if (!realtimePersistentSession) return
+        val client = voiceClient ?: return
+        val chatVm = chatViewModel ?: return
+        if (realtimeSessionJob?.isActive == true && realtimeTurnChannel != null) return
+        closeRealtimeSession()
+        realtimeTurnChannel = kotlinx.coroutines.channels.Channel(
+            kotlinx.coroutines.channels.Channel.UNLIMITED,
+        )
+        Log.i(TAG, "Prewarming persistent Realtime Agent session on voice-mode entry")
+        realtimeSessionJob = viewModelScope.launch {
+            runRealtimeAgentTurn(
+                client = client,
+                chatVm = chatVm,
+                userText = "",
+                inputPcm = ByteArray(0),
+                inputSampleRate = 16_000,
+                persistentOpen = true,
+                prewarm = true,
+            )
+        }
     }
 
     private fun cancelRealtimeAgentTurn(reason: String) {
@@ -2262,8 +2296,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         inputPcm: ByteArray,
         inputSampleRate: Int,
         persistentOpen: Boolean = false,
+        /**
+         * Voice-mode-entry warm-up: open the persistent session/socket with no
+         * first turn. All turn-scoped side effects (Thinking state, the chat
+         * assistant placeholder, the turn-active flag) are skipped — the first
+         * real utterance rides [submitRealtimeTurn] like any follow-up turn.
+         */
+        prewarm: Boolean = false,
     ) {
-        providerRealtimeAgentTurnActive.set(true)
+        if (!prewarm) providerRealtimeAgentTurnActive.set(true)
         // New turn requested → allow this response's audio through again.
         realtimeAudioSuppressed = false
         streamObserverJob?.cancel()
@@ -2282,13 +2323,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         firstFrameWatchdogJob?.cancel(); firstFrameWatchdogJob = null
         clearSpokenChunksState()
 
-        _uiState.update {
-            it.copy(
-                state = VoiceState.Thinking,
-                outputAudioActive = false,
-                transcribedText = userText,
-                responseText = "",
-            )
+        if (!prewarm) {
+            _uiState.update {
+                it.copy(
+                    state = VoiceState.Thinking,
+                    outputAudioActive = false,
+                    transcribedText = userText,
+                    responseText = "",
+                )
+            }
         }
 
         // Per-turn event state is hoisted to fields so one session-lived callback
@@ -2304,10 +2347,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         spokenStatusCount = 0
         rtUserText = userText
         rtConversationContext = chatVm.realtimeAgentContextMessages()
-        rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
-            userText = userText,
-            chatSessionId = chatVm.currentSessionId.value,
-        )
+        if (!prewarm) {
+            rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
+                userText = userText,
+                chatSessionId = chatVm.currentSessionId.value,
+            )
+        }
         val conversationContext = rtConversationContext
         val pcmPlayer = realtimePcmPlayer
 
@@ -2398,6 +2443,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 onHandoff = ::recordVoiceHandoff,
                 turnInputs = if (persistentOpen) realtimeTurnChannel else null,
                 onTurnComplete = { summary -> onRealtimeTurnComplete(summary) },
+                prewarm = prewarm,
             ) { event, control ->
                 realtimeAgentControl = control
                 chatVm.applyRealtimeAgentEvent(
@@ -2683,7 +2729,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // A persistent session ending in error must drop so the next turn opens
         // a fresh one rather than submitting into a dead channel.
         closeRealtimeSession()
-        surfaceError(err, context = "voice_config")
+        // A failed warm-up must stay silent: no user action happened, and the
+        // first real utterance will simply open a fresh session.
+        if (!prewarm) {
+            surfaceError(err, context = "voice_config")
+        }
     }
 
     /**
