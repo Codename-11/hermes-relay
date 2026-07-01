@@ -2370,6 +2370,9 @@ class RelayVoiceClient(
                 responseDoneMs = (metrics?.get("response_done_ms") as? JsonPrimitive)?.doubleOrNull,
                 tier = (obj["tier"] as? JsonPrimitive)?.contentOrNull,
                 floor = (obj["floor"] as? JsonPrimitive)?.contentOrNull,
+                activeToolName = (obj["active_tool_name"] as? JsonPrimitive)?.contentOrNull,
+                completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull,
+                elapsedMs = (obj["elapsed_ms"] as? JsonPrimitive)?.longOrNull,
                 raw = raw,
             )
         } catch (e: Exception) {
@@ -2742,6 +2745,10 @@ data class RealtimeVoiceEvent(
     // ADR 33: background-run promotion fields.
     val tier: String? = null,
     val floor: String? = null,
+    // hermes.run.progress extras — drive the live background-run chip.
+    val activeToolName: String? = null,
+    val completedToolCount: Int? = null,
+    val elapsedMs: Long? = null,
     val raw: String,
 ) {
     val isAudioDelta: Boolean

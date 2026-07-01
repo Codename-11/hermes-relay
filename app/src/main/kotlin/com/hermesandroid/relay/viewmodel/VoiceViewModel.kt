@@ -152,7 +152,31 @@ data class BackgroundRunState(
     /** "promoted" (auto-detached long run) or "durable" (explicit mode=background). */
     val tier: String = "promoted",
     val message: String = "Working on it in the background…",
+    /**
+     * Live secondary line from the run's progress/tool events (e.g. "Running
+     * command."). With timer-driven spoken progress off by default, this chip
+     * line is the primary in-between signal for a background run.
+     */
+    val statusLine: String? = null,
+    /** Tools completed so far (from hermes.run.progress). */
+    val completedToolCount: Int = 0,
+    /** Wall-clock at promotion — drives the chip's mm:ss elapsed ticker. */
+    val startedAtMs: Long = System.currentTimeMillis(),
+    val phase: BackgroundRunPhase = BackgroundRunPhase.RUNNING,
 )
+
+/** Connection-aware phase for the background-run chip. */
+enum class BackgroundRunPhase {
+    /** Run in flight; progress events are flowing. */
+    RUNNING,
+
+    /** The voice socket dropped mid-run; the relay keeps the run alive and the
+     *  client is retrying the resume — the task is safe, not lost. */
+    RECONNECTING,
+
+    /** The run finished; the spoken summary is queued behind the floor. */
+    DELIVERING,
+}
 
 data class VoiceHandoffStatus(
     val title: String,
@@ -452,6 +476,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // the open path reset them at each turn boundary.
     private var realtimeSessionJob: Job? = null
     private var realtimeTurnChannel: kotlinx.coroutines.channels.Channel<RealtimeTurnInput>? = null
+
+    /** Watchdog that clears a DELIVERING background-run chip if no summary
+     *  audio ever arrives (visual-only delivery, provider hiccup). */
+    private var deliveringChipClearJob: Job? = null
     private var rtUserText: String = ""
     private var rtAssistantMessageId: String = ""
     private var rtConversationContext: List<RealtimeConversationContextMessage> = emptyList()
@@ -1266,6 +1294,29 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         realtimeAgentControl = null
         realtimeConfirmationControl = null
+    }
+
+    /** Apply [transform] to the background-run chip state, if one is showing. */
+    private fun updateBackgroundRun(transform: (BackgroundRunState) -> BackgroundRunState) {
+        _uiState.update { state ->
+            val run = state.backgroundRun ?: return@update state
+            state.copy(backgroundRun = transform(run))
+        }
+    }
+
+    /**
+     * Cancel the promoted/durable background run from the overlay chip. The
+     * relay confirms with `hermes.run.cancelled`, which clears the chip; the
+     * message flips immediately so the tap feels acknowledged.
+     */
+    fun cancelBackgroundRun() {
+        Log.i(
+            TAG,
+            "Background run cancel requested from chip " +
+                "run=${_uiState.value.backgroundRun?.runId ?: "?"}",
+        )
+        updateBackgroundRun { it.copy(message = "Cancelling…", statusLine = null) }
+        cancelRealtimeAgentTurn("background_run_chip")
     }
 
     fun exitVoiceMode() {
@@ -2508,6 +2559,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             responseText = "Using $tool...",
                         )
                     }
+                    // Live chip: tool starts are the fastest-updating signal for
+                    // a background run (progress events only tick every ~5s).
+                    updateBackgroundRun { run ->
+                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        else run.copy(
+                            statusLine = realtimeToolStatusLine(event.toolName),
+                            phase = BackgroundRunPhase.RUNNING,
+                        )
+                    }
                 }
                 "hermes.tool.delta" -> {
                     realtimeToolProgressLine(event)?.let { line ->
@@ -2539,6 +2599,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             responseText = line,
                         )
                     }
+                    // Live chip: active tool + completed-step count. Progress
+                    // arriving at all also means the socket is healthy, so a
+                    // RECONNECTING chip can flip back to RUNNING here.
+                    updateBackgroundRun { run ->
+                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        else run.copy(
+                            statusLine = event.activeToolName
+                                ?.takeIf { name -> name.isNotBlank() }
+                                ?.let { name -> realtimeToolStatusLine(name) }
+                                ?: run.statusLine,
+                            completedToolCount = event.completedToolCount
+                                ?: run.completedToolCount,
+                            phase = BackgroundRunPhase.RUNNING,
+                        )
+                    }
                 }
                 "hermes.run.promoted" -> {
                     // The run detached to the background; the provider speaks the
@@ -2566,13 +2641,38 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "hermes.run.background_completed" -> {
                     // Background run finished; the spoken summary follows via the
-                    // provider's forced-summary turn. Clear the chip.
+                    // provider's forced-summary turn once the floor is clear (up
+                    // to ~12s later). Show a "delivering" chip for that gap; the
+                    // first summary audio (or the watchdog) clears it.
                     Log.i(
                         TAG,
                         "Realtime background run completed run=${event.runId ?: "?"} " +
                             "ok=${event.success != false}",
                     )
-                    _uiState.update { it.copy(backgroundRun = null) }
+                    if (event.success == false) {
+                        _uiState.update { it.copy(backgroundRun = null) }
+                    } else {
+                        updateBackgroundRun { run ->
+                            run.copy(
+                                phase = BackgroundRunPhase.DELIVERING,
+                                message = "Done — delivering the answer…",
+                                statusLine = null,
+                            )
+                        }
+                        // Watchdog: if no summary audio ever starts (visual-only
+                        // delivery, provider hiccup), don't pin a stale chip.
+                        deliveringChipClearJob?.cancel()
+                        deliveringChipClearJob = viewModelScope.launch {
+                            delay(20_000L)
+                            _uiState.update { state ->
+                                if (state.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
+                                    state.copy(backgroundRun = null)
+                                } else {
+                                    state
+                                }
+                            }
+                        }
+                    }
                 }
                 "hermes.confirmation.requested" -> {
                     val confirmationId = event.confirmationId
@@ -2762,6 +2862,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun submitRealtimeTurn(chatVm: ChatViewModel, inputPcm: ByteArray, inputSampleRate: Int) {
         val channel = realtimeTurnChannel ?: return
+        // A new turn while a background task runs: remind visually that the
+        // earlier task is still going (the agent also says so if the user asks
+        // for another task — the relay answers busy rather than orphaning it).
+        updateBackgroundRun { run ->
+            if (run.phase == BackgroundRunPhase.RUNNING) {
+                run.copy(statusLine = "Still working on the earlier task…")
+            } else {
+                run
+            }
+        }
         // New turn requested → allow this response's audio through again.
         realtimeAudioSuppressed = false
         drainQueuedLocalTts()
@@ -3338,6 +3448,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         audioSeen.set(true)
         audioBytes.addAndGet(audio.size)
         lastRealtimeAudioDeltaAtMs = System.currentTimeMillis()
+        // The spoken summary started — the DELIVERING chip has done its job.
+        if (_uiState.value.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
+            deliveringChipClearJob?.cancel()
+            _uiState.update { it.copy(backgroundRun = null) }
+        }
         val sampleRate = event.sampleRate ?: 24_000
         Log.i(
             TAG,
@@ -4168,6 +4283,25 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun recordVoiceHandoff(event: VoiceHandoffEvent) {
         voiceHandoffReporter?.invoke(event)
+        // Background-run chip: reflect the voice socket's health so a mid-run
+        // drop reads as "reconnecting — task still running", not silence. The
+        // relay keeps the run alive across the retry window; progress events
+        // (or the resumed signal) flip the chip back to RUNNING.
+        _uiState.value.backgroundRun?.let { run ->
+            if (run.phase != BackgroundRunPhase.DELIVERING) {
+                when (event.label) {
+                    "Connection changed", "Waiting for route", "Trying voice route",
+                    "Resume sent", "Route changed",
+                    -> updateBackgroundRun { it.copy(phase = BackgroundRunPhase.RECONNECTING) }
+                    "Voice reconnected" -> updateBackgroundRun {
+                        it.copy(
+                            phase = BackgroundRunPhase.RUNNING,
+                            statusLine = "Back online — still working…",
+                        )
+                    }
+                }
+            }
+        }
         val detail = when {
             !event.previousRoute.isNullOrBlank() && !event.nextRoute.isNullOrBlank() ->
                 "${event.previousRoute} -> ${event.nextRoute}"

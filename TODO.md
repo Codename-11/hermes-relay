@@ -140,7 +140,13 @@ prewarm batch shipped (see DEVLOG 2026-07-01). Deferred:
 - **E2E verification pending** for the new paths on-device: deferred result spoken on
   resume after a mid-run drop; proactive notification when the session dies for good;
   busy answer on a second task; adaptive promotion timing; first-turn latency with
-  prewarm.
+  prewarm; the live background-run chip (progress line/steps/timer, RECONNECTING and
+  DELIVERING phases, ✕-to-cancel).
+- **Ambient background-run visibility OUTSIDE voice mode.** Exiting the voice overlay
+  mid-run leaves no on-screen indication a task is still going (the run survives and
+  the result arrives as a notification via the proactive fallback). Surface a small
+  indicator on the chat screen — natural home is the bottom `RelayStatusStrip`, which
+  the connection-management work owns → **coordinate before implementing**.
 - **Dev-env note:** the local hermes-agent app venv (`AppData/Local/hermes/...`) can
   prune `aiohttp`/`segno` (uv sync), breaking `python -m unittest plugin.tests.*` with
   ModuleNotFoundError — restore with

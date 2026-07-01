@@ -1,5 +1,38 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-01 — Realtime voice: live background-run chip (progress, phases, cancel)
+
+**Why.** With timer-driven spoken progress off by default (see the robustness batch
+below), the voice overlay's background-run chip became the primary in-between signal —
+but it was a static string set at promotion and cleared at completion. The relay's
+`hermes.run.progress` events already carry `active_tool_name` / `completed_tool_count`
+/ `elapsed_ms` (added by the ADR 33 plan precisely for a live chip) and the client
+ignored them; none of the new connection states (resume retrying, result deferred) had
+any visual; and there was no cancel affordance despite the path existing.
+
+**What.**
+- `RelayVoiceClient` parses the progress extras (`active_tool_name`,
+  `completed_tool_count`, `elapsed_ms`) into `RealtimeVoiceEvent`.
+- `VoiceViewModel`: `BackgroundRunState` gains `statusLine` / `completedToolCount` /
+  `startedAtMs` / `phase` (`RUNNING` / `RECONNECTING` / `DELIVERING`). Tool-start and
+  progress events drive the live line (reusing `realtimeToolStatusLine`); handoff
+  labels flip the chip to RECONNECTING during a mid-run socket drop and back on
+  "Voice reconnected"; `background_completed` shows a DELIVERING chip until the first
+  summary audio (20s watchdog for visual-only delivery); a new turn while a run is
+  active sets a "Still working on the earlier task…" line; `cancelBackgroundRun()`
+  sends the existing `response.cancel` and flips the chip to "Cancelling…" (the
+  relay's `hermes.run.cancelled` clears it).
+- `VoiceModeOverlay`: the static chip is now `BackgroundRunChip` — pulsing dot
+  (tertiary while reconnecting), phase-aware title, live detail line
+  (step · N steps · m:ss ticker), and a ✕ that cancels; remembers the last non-null
+  state so the exit fade doesn't snap empty (PermissionDeniedChip pattern).
+  `ChatScreen` wires `onBackgroundRunCancel`.
+
+**Verification.** `assembleSideloadDebug` + `lintSideloadDebug` green. Client-only —
+no relay changes. On-device check rides the pending realtime e2e list in TODO;
+ambient visibility outside voice mode deferred to coordinate with the
+connection-management status-strip work (TODO).
+
 ## 2026-07-01 — Realtime voice: ADR 33 robustness batch (deliver-on-reattach, adaptive promotion, milestone speech, resume retry, prewarm)
 
 **Why.** An architecture review of the ADR 33 background-run path against current
