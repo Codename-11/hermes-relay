@@ -9,16 +9,51 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 ## Connections UI / status banner (2026-06-30 restructure follow-ups)
 
 The Connections screen was split into a scannable list + a tabbed detail screen
-(Overview / Routes / Advanced / Security). The status surface was then re-tiered by
-persistence (`ConnectionStatusSurface` — None/Float/Banner): routine reconnects show
-only a bottom-strip cue, recoveries float, sustained problems take space (see DEVLOG
-2026-06-30). Deferred:
+(Overview / Routes / Advanced / Security). Connection-status presentation went
+through a few iterations (persistence-tiered top strip → no-float → …) and **landed
+on a two-connection model (2026-07-01):**
+- **Chat/agent** (gateway/API) → the chat header **subtitle** swaps model ⇄
+  "Reconnecting…"/"Connecting…"/"Disconnected" (WhatsApp-style; `ChatScreen`).
+- **Relay socket** (bridge/terminal/relay-voice) → the **bottom `RelayStatusStrip`**
+  amber "Reconnecting…" cue only.
+- **No top-of-screen surface** for connection status at all (no strip, banner, or
+  float). Route changes are **ambient only** (the bottom strip's route label updates;
+  no explicit "switched to Tailscale" notification — decided 2026-07-01).
 
-- ~~**Resume suppression covers only the handoff path.**~~ *(Resolved by the
-  surface-tiering pass.)* The *health* producer's in-flight states ("Checking Hermes
-  connection" / "Connecting to Hermes") are `active` → `ConnectionStatusSurface.None`,
-  so they now light only the bottom-strip "Reconnecting…" cue and can no longer flash
-  a take-space banner on resume.
+Deferred:
+
+- **Dead connection-status-surface code to clean up** (kept for now; a future session
+  can remove if we don't revive it). The top-strip model left these unused after the
+  move to subtitle + bottom strip: `ConnectionStatusBanner` (+ its `compact` pose),
+  `ConnectionStatusSurface` + `presentationSurface()` + `ConnectionStatusSurfaceTest`.
+  **Exception — keep `ConnectionStatusToast`**: parked deliberately as a general-
+  purpose toast primitive (the only surface with a live multi-step stepper; decouple
+  from `ConnectionStatusSnapshot` + rename to `StatusToast` on first reuse).
+- **Bottom-strip route-change flash (optional).** Route change is ambient-only for
+  now. If a "switched to Tailscale" confirmation is wanted, surface it briefly in the
+  **bottom strip** (where the route label already lives), not the top — keeps the
+  no-top-chrome principle. The VM still detects + logs the change (`lastConnectedRole`).
+- ~~**Resume suppression covers only the handoff path.**~~ *(Fixed 2026-07-01.)* Added
+  `postResumeQuiet`: a benign background→foreground re-handshake no longer flashes the
+  bottom-strip "Reconnecting…" cue (the health "Connecting" path used to leak it).
+- **Stuck "Reconnecting" cue during a sustained/flapping outage (backoff gaps).**
+  Confirmed in a both-sides trace (DEVLOG 2026-07-01): when a reconnect attempt fails
+  (`Reconnecting→Disconnected`) **no handoff branch matches**, so the active
+  "Reconnecting" handoff persists on its 30s backstop — including during the backoff
+  *gap* where the socket is idle (`Disconnected`, not actually trying) and during the
+  20s connect timeout. The cue then clears on the timer with no resolution ("no toast
+  after"). The post-resume case is fixed (`postResumeQuiet`); this sustained/non-resume
+  case is not. Fix idea: drive the bottom-strip cue off the LIVE
+  `relayConnectionState`/`relayUiState` (show only while actually Connecting/
+  Reconnecting), and clear the active handoff when `relayUiState` goes `Stale`/`Expired`
+  so the live "Relay unreachable" state surfaces instead of a stuck cue. Deferred:
+  hard to repro on a stable network; also risks surfacing the take-space "unreachable"
+  banner more often on a chronically-flappy link (decide the escalation threshold).
+- **Rapid real flaps still churn the cue/subtitle.** On a genuinely flapping network
+  (DEVLOG 2026-07-01 — Samsung adaptive Wi-Fi cycling the radio), each real drop→recover
+  toggles the bottom-strip cue (relay) and, if chat drops too, the header subtitle. Now
+  unobtrusive (no top surface), but a short coalescing/debounce would quiet a
+  chronically-flappy link further. Deferred — the flap is environmental, not an app bug.
 - **Non-active connection detail is Overview-only.** Routes/Advanced/Security tabs
   appear only for the active connection (they read the single active-connection VM
   state); a non-active connection shows a "Switch to this connection" CTA. A future

@@ -86,6 +86,14 @@ fun ConnectionStatusBanner(
     includeStatusBarPadding: Boolean = false,
     onClick: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
+    /**
+     * Slim, single-line pose for a **passive** delta (e.g. a route swap that
+     * never dropped the socket): the per-step stepper and the active progress
+     * bar are skipped so the strip stays ~1 line tall and reads as a quiet,
+     * informational notice above the top bar. See
+     * [com.hermesandroid.relay.viewmodel.ConnectionStatusSurface.Passive].
+     */
+    compact: Boolean = false,
 ) {
     val current = status ?: return
     val containerColor = when {
@@ -133,7 +141,16 @@ fun ConnectionStatusBanner(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f))
+            // Compact (passive strip) sits on the app's own dark background so the
+            // bubble reads as floating on black — no contrasting band to "flash".
+            // The full banner keeps its translucent surface scrim.
+            .background(
+                if (compact) {
+                    MaterialTheme.colorScheme.background
+                } else {
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+                }
+            )
             .then(insetModifier)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
@@ -234,21 +251,24 @@ fun ConnectionStatusBanner(
                         // glyph (spinner while Active, green ✓ Done, red ✕ Failed),
                         // shared verbatim with [ConnectionStatusToast] so the take-space
                         // banner and the error overlay read as one system. Capped at the
-                        // last 3 entries (was 2 flat text lines).
-                        val steps = current.entries
-                            .filter { it.label.isNotBlank() || !it.detail.isNullOrBlank() }
-                            .takeLast(3)
-                        steps.forEachIndexed { index, entry ->
-                            ConnectionStepRow(
-                                entry = entry,
-                                isLast = index == steps.lastIndex,
-                                snapshot = current,
-                                contentColor = contentColor,
-                            )
+                        // last 3 entries (was 2 flat text lines). Skipped in [compact]
+                        // pose (a passive strip is title-only).
+                        if (!compact) {
+                            val steps = current.entries
+                                .filter { it.label.isNotBlank() || !it.detail.isNullOrBlank() }
+                                .takeLast(3)
+                            steps.forEachIndexed { index, entry ->
+                                ConnectionStepRow(
+                                    entry = entry,
+                                    isLast = index == steps.lastIndex,
+                                    snapshot = current,
+                                    contentColor = contentColor,
+                                )
+                            }
                         }
                     }
                 }
-                if (current.active) {
+                if (current.active && !compact) {
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -265,8 +285,18 @@ fun ConnectionStatusBanner(
 private const val SWIPE_DISMISS_THRESHOLD_PX = 80f
 
 /**
- * Floating, in-theme connection status **toast** for connection switches,
- * network handoffs, and disconnects.
+ * Floating, in-theme status **toast** with an animated multi-step stepper
+ * (checking → ✓/✕).
+ *
+ * NOTE: currently **not wired** into the app — connection status now lives in the
+ * chat header subtitle (chat/agent) + the bottom RelayStatusStrip cue (relay
+ * socket), with nothing at the top. This is **intentionally kept as a parked,
+ * general-purpose toast primitive**: it's the only notification surface with a
+ * live multi-step stepper, so it's the natural home for any future "N-step
+ * progress" moment (pairing, long upload, a bridge action sequence). When first
+ * reused, decouple it from [ConnectionStatusSnapshot] and rename to a generic
+ * `StatusToast`. It also anchors [UpdateAvailableBanner]'s visual language + the
+ * shared [ConnectionStepRow]/[StepGlyph] helpers. See TODO.md.
  *
  * Unlike [ConnectionStatusBanner] (edge-to-edge, takes layout space above the
  * Scaffold and so resizes the content), this is meant to be rendered as a

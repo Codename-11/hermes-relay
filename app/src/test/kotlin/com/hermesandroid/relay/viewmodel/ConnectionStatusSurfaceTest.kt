@@ -6,13 +6,13 @@ import org.junit.Test
 /**
  * Guards [presentationSurface] — the pure classifier that tiers a
  * [ConnectionStatusSnapshot] onto a chrome surface by **persistence, not
- * severity**. The whole "routine reconnect no longer shoves the UI down"
- * behavior rides on this mapping, so pin it:
+ * severity**. The whole "routine reconnect no longer shoves the UI down, and
+ * nothing non-critical covers the profile" behavior rides on this mapping:
  *
  * - in-flight (`active`) → [ConnectionStatusSurface.None]  (bottom strip cue)
- * - resolved positive (`success`) → [ConnectionStatusSurface.Float]
- * - sustained Warning/Error → [ConnectionStatusSurface.Banner]
- * - bare non-active Info → [ConnectionStatusSurface.Float]
+ * - sustained Warning/Error → [ConnectionStatusSurface.Banner]  (take-space)
+ * - everything else (connected / reconnected / route swap / info) →
+ *   [ConnectionStatusSurface.Passive]  (slim strip above the top bar, no float)
  *
  * Also checks the real handoff producers map through
  * [asConnectionStatusSnapshot] to the surface each call site intends.
@@ -45,9 +45,11 @@ class ConnectionStatusSurfaceTest {
     }
 
     @Test
-    fun `resolved positive delta floats`() {
+    fun `positive delta gets the slim strip, never a float`() {
+        // connected / reconnected — any success → the slim strip above the top
+        // bar, so it doesn't cover the profile icon / nav.
         assertEquals(
-            ConnectionStatusSurface.Float,
+            ConnectionStatusSurface.Passive,
             snapshot(tone = ConnectionStatusTone.Success, success = true).presentationSurface(),
         )
     }
@@ -65,16 +67,16 @@ class ConnectionStatusSurfaceTest {
     }
 
     @Test
-    fun `bare non-active info floats rather than reshaping`() {
+    fun `bare non-active info gets the slim strip`() {
         assertEquals(
-            ConnectionStatusSurface.Float,
+            ConnectionStatusSurface.Passive,
             snapshot(tone = ConnectionStatusTone.Info).presentationSurface(),
         )
     }
 
     @Test
     fun `handoff producers map to the intended surfaces`() {
-        // "Reconnecting" / "Connection interrupted": active, not success.
+        // "Reconnecting" / "Connection interrupted": active → bottom strip.
         val reconnecting = ConnectionHandoffStatus(
             title = "Reconnecting",
             active = true,
@@ -82,12 +84,13 @@ class ConnectionStatusSurfaceTest {
         ).asConnectionStatusSnapshot()
         assertEquals(ConnectionStatusSurface.None, reconnecting.presentationSurface())
 
-        // "Connection restored" / "Connected" / "route changed": settled + success.
+        // "Connection restored" / "Connected" / "route changed": settled +
+        // success → slim strip (no float over the profile).
         val restored = ConnectionHandoffStatus(
             title = "Connection restored",
             active = false,
             success = true,
         ).asConnectionStatusSnapshot()
-        assertEquals(ConnectionStatusSurface.Float, restored.presentationSurface())
+        assertEquals(ConnectionStatusSurface.Passive, restored.presentationSurface())
     }
 }

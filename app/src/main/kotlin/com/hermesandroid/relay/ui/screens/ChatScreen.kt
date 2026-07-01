@@ -1397,9 +1397,15 @@ fun ChatScreen(
                     val headerApiReachable = apiReachable || isStreaming
                     val isConnecting = isChatConnecting ||
                         (!headerApiReachable && chatMode != ChatMode.DISCONNECTED)
+                    // Once we've been connected this session, a later drop reads as
+                    // "Reconnecting…" (we had it, we're getting it back) rather than
+                    // a first-time "Connecting…". Honest wording for the WhatsApp-
+                    // style subtitle status.
+                    var everConnected by remember { mutableStateOf(false) }
+                    if (headerApiReachable) everConnected = true
                     val statusText = when {
                         headerApiReachable -> if (isStreaming) "Streaming" else "Connected"
-                        isConnecting -> "Connecting..."
+                        isConnecting -> if (everConnected) "Reconnecting…" else "Connecting…"
                         else -> "Disconnected"
                     }
                     val statusColor = when {

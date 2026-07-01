@@ -165,6 +165,12 @@ enum class ChatConnectState {
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
+        // Shared log tag for connection lifecycle + handoff tracing. Pairs with
+        // ConnectionManager's "ConnectionManager" tag so a single
+        // `logcat -s ConnectionVM ConnectionManager` shows the full relay
+        // socket → derived-state → surfaced-banner story.
+        private const val TAG = "ConnectionVM"
+
         // API Server (direct chat)
         private val KEY_API_SERVER_URL = stringPreferencesKey("api_server_url")
         private const val DEFAULT_API_URL = "http://localhost:8642"
@@ -529,6 +535,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // the reconnecting banner. Touched only from the main-thread state collector.
     private var suppressedTransientReconnect = false
     private var transientReconnectJob: Job? = null
+    // True for RELAY_RECONNECT_GRACE_MS right after a foreground resume. The
+    // handoff path suppresses its own "Reconnecting" banner on resume, but the
+    // *health*-derived cue ("Connecting to Hermes", active) leaks the bottom-strip
+    // "Reconnecting…" cue independently — so a benign resume flashed the cue and
+    // then cleared with no "Connected" toast (handoff stayed suppressed). The UI
+    // gates the bottom-strip cue on this so a benign resume is fully silent; if
+    // the socket is still down past the window it un-gates and the cue shows.
+    private val _postResumeQuiet = MutableStateFlow(false)
+    val postResumeQuiet: StateFlow<Boolean> = _postResumeQuiet.asStateFlow()
+    private var postResumeQuietJob: Job? = null
     private val _serverChatDisplaySettings =
         MutableStateFlow<DashboardChatDisplaySettings?>(null)
 
@@ -2089,6 +2105,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val cleanTitle = title.trim().takeIf { it.isNotBlank() } ?: "Connection changed"
         val cleanRoute = route?.trim()?.takeIf { it.isNotBlank() }
         val cleanDetail = detail?.trim()?.takeIf { it.isNotBlank() }?.take(120)
+        // Trace which strip/banner actually surfaced (and why). Best-practice
+        // permanent logging: handoffs are infrequent, and this is the single
+        // line that answers "what made that status appear?" during triage.
+        android.util.Log.i(
+            TAG,
+            "handoff: '$cleanTitle' active=$active success=$success " +
+                "route=${cleanRoute ?: "-"} detail=${cleanDetail ?: "-"}",
+        )
         val entry = ConnectionHandoffTraceEntry(
             label = cleanTitle,
             detail = cleanDetail,
@@ -3016,13 +3040,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // re-handshake worth suppressing.
         viewModelScope.launch {
             AppForegroundTracker.isForeground.collect { foreground ->
-                if (foreground) lastForegroundResumeAtMs = System.currentTimeMillis()
+                if (foreground) {
+                    lastForegroundResumeAtMs = System.currentTimeMillis()
+                    // Open the quiet window: hide the reconnect cue while a benign
+                    // post-resume re-handshake settles. Reopen (un-gate) after the
+                    // grace window so a genuine outage still surfaces.
+                    _postResumeQuiet.value = true
+                    postResumeQuietJob?.cancel()
+                    postResumeQuietJob = launch {
+                        delay(RELAY_RECONNECT_GRACE_MS)
+                        _postResumeQuiet.value = false
+                    }
+                }
             }
         }
 
         viewModelScope.launch {
             var previousState: ConnectionState? = null
             var previousRole: String? = null
+            // Role at the last time we surfaced a "connected" handoff. Lets the
+            // single connect message decide "Connected" vs "Connection changed
+            // X → Y" at the moment the socket is actually up — so a route swap is
+            // ONE message, never "Connection changed" followed by a redundant
+            // "Connected". (previousRole can't do this: the endpoint often
+            // republishes the new role mid-swap, before the reconnect completes.)
+            var lastConnectedRole: String? = null
             combine(
                 relayConnectionState,
                 connectionManager.activeEndpoint,
@@ -3034,6 +3076,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     previousState = state
                     previousRole = role
                     if (priorState == null) return@collect
+
+                    // Every relay socket-state / endpoint-role transition that
+                    // *could* surface a handoff banner. This is the "both sides"
+                    // client trace: pair it with the server's connection log to
+                    // tell a real drop (server saw a close) from a client-only
+                    // role flip (server saw nothing → spurious "route changed").
+                    android.util.Log.i(
+                        TAG,
+                        "relay transition: $priorState→$state " +
+                            "role=${priorRole ?: "-"}→${role ?: "-"}",
+                    )
 
                     when {
                         state == ConnectionState.Reconnecting -> {
@@ -3071,45 +3124,47 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             }
                         }
                         state == ConnectionState.Connected &&
-                            priorState == ConnectionState.Reconnecting -> {
+                            priorState != ConnectionState.Connected -> {
+                            // ONE message for every transition into Connected
+                            // (from Reconnecting / Connecting / Disconnected). If
+                            // the route changed since we were last connected it's
+                            // "Connection changed · LAN → Tailscale" (which itself
+                            // implies connected — no redundant "Connected" after);
+                            // otherwise just "Connected to Hermes". This single
+                            // point replaces the old three positive branches
+                            // ("restored" + "connected" + "route changed") that
+                            // fired in pairs on a flap or a swap.
                             transientReconnectJob?.cancel()
+                            val fromRole = lastConnectedRole
                             if (suppressedTransientReconnect) {
-                                // We never showed the reconnecting banner (quick
-                                // post-resume recovery) — stay silent on restore too.
+                                // Benign post-resume recovery we kept silent — stay
+                                // silent on the restore too.
                                 suppressedTransientReconnect = false
                             } else {
-                                recordConnectionHandoff(
-                                    title = "Connection restored",
-                                    route = displayEndpointRole(role),
-                                    detail = "Relay path ready",
-                                    active = false,
-                                    success = true,
-                                )
+                                val routeSwapped = !fromRole.isNullOrBlank() &&
+                                    !role.isNullOrBlank() &&
+                                    !fromRole.equals(role, ignoreCase = true)
+                                if (routeSwapped) {
+                                    val from = displayEndpointRole(fromRole)
+                                    val to = displayEndpointRole(role)
+                                    recordConnectionHandoff(
+                                        title = "Connection changed",
+                                        route = listOfNotNull(from, to).joinToString(" → "),
+                                        detail = null,
+                                        active = false,
+                                        success = true,
+                                    )
+                                } else {
+                                    recordConnectionHandoff(
+                                        title = "Connected to Hermes",
+                                        route = displayEndpointRole(role),
+                                        detail = "Relay path ready",
+                                        active = false,
+                                        success = true,
+                                    )
+                                }
                             }
-                        }
-                        state == ConnectionState.Connected &&
-                            priorState != ConnectionState.Connected -> {
-                            recordConnectionHandoff(
-                                title = "Connected to Hermes",
-                                route = displayEndpointRole(role),
-                                detail = "Relay path ready",
-                                active = false,
-                                success = true,
-                            )
-                        }
-                        state == ConnectionState.Connected &&
-                            !priorRole.isNullOrBlank() &&
-                            !role.isNullOrBlank() &&
-                            !priorRole.equals(role, ignoreCase = true) -> {
-                            val from = displayEndpointRole(priorRole)
-                            val to = displayEndpointRole(role)
-                            recordConnectionHandoff(
-                                title = "Connection route changed",
-                                route = to,
-                                detail = listOfNotNull(from, to).joinToString(" -> "),
-                                active = false,
-                                success = true,
-                            )
+                            lastConnectedRole = role
                         }
                         state == ConnectionState.Disconnected &&
                             priorState == ConnectionState.Connected -> {

@@ -1,5 +1,56 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-01 — Connection status: two-connection model (subtitle + bottom strip, no top surface)
+
+**Why.** The persistence-tiered top strip (previous entry, shipped in the prior
+`refactor(connections)` commit) still surfaced connection status *above the nav*, and
+on-device it read as obtrusive: a reconnect flashed a status that covered the profile,
+and it fired "at random". Iterating with the owner surfaced the real problem — and it
+wasn't a UI-placement problem.
+
+**Trace (both sides).** Added permanent INFO logging to the client
+(`ConnectionViewModel`: every relay `state→state role→role` transition + every
+`handoff:` record) and read the relay's log server-side (read-only journalctl). They
+correlate to the millisecond:
+
+- Client `onFailure SocketException "Software caused connection abort"` ⇄ relay
+  `Client disconnected 172.16.24.13` at the **same instant** → a real network teardown,
+  not a spurious client event. Reconnect then **timed out after 20s**; a later attempt
+  reconnected then dropped again. The relay itself was healthy throughout (loopback
+  `/phone/replies` polling never missed).
+- Root cause of the flapping: the **Wi-Fi path** between the phone and the LAN relay —
+  raw logcat showed Samsung's `SemWifiIntelligentConnectionManager` cycling the radio.
+
+**The realization.** There are **two independent connections**, and conflating them was
+the design error: **chat/agent** (gateway/API, `apiReachable`) — if this is down you
+genuinely can't talk to the agent; and the **relay socket** (`:8767`, bridge / terminal
+/ relay-voice) — when only this reconnects, chat still works over the gateway. The
+flapping was mostly the *relay* socket, so it never deserved a prominent interruption.
+
+**What.** Landed on a two-connection model with **no top-of-screen surface**:
+- **Chat/agent → the chat header subtitle** (WhatsApp-style; `ChatScreen`). The model
+  line swaps to `Reconnecting…` (was connected) / `Connecting…` (cold) / `Disconnected`,
+  amber/red, and crossfades back to the model on recovery. This slot was already there;
+  added the reconnecting-vs-connecting wording (`everConnected`).
+- **Relay socket → the bottom `RelayStatusStrip`** amber `Reconnecting…` cue only
+  (`ReconnectingCue`), gated by a new **`postResumeQuiet`** window so a benign
+  background→foreground re-handshake is fully silent (the health "Connecting" path used
+  to leak the cue there and clear with no resolution).
+- **Handoff de-dup:** merged the three positive branches ("restored" + "connected" +
+  "route changed") into one, deciding "Connected to Hermes" vs "Connection changed ·
+  LAN → Tailscale" at the actual connect via `lastConnectedRole` — so a flap or a swap
+  can't emit a pair. Route change is ambient-only (the bottom strip's route label).
+- **Removed the top strip entirely** — the `ConnectionStatusSurface`/`presentationSurface`
+  tiering + `ConnectionStatusBanner` top render are now unused (kept for now, tracked in
+  `TODO.md`). `ConnectionStatusToast` is deliberately parked as a general toast primitive.
+- Permanent client-side logging (tag `ConnectionVM`, pairs with `ConnectionManager`) so
+  "why did that status appear?" is a one-line `logcat -s ConnectionVM ConnectionManager`.
+
+**Verification.** `:app:assembleSideloadDebug` + `testSideloadDebugUnitTest`
+(`ConnectionStatusSurfaceTest`) green; iterated on-device across the build cycle. Server
+access was read-only (journalctl) — no restart/deploy. Flap-specific cases hard to
+re-verify once the network stabilized (tracked in `TODO.md`).
+
 ## 2026-06-30 — Connection status: tier the surface by persistence, not severity
 
 **Why.** After the connections restructure, every reconnect/handoff/health blip

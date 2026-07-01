@@ -74,21 +74,20 @@ selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
 strings, and token-like values are hidden. The same consolidated log is available
 from **Settings -> Diagnostics**, where you can clear the in-app buffer.
 
-Connection feedback is tiered by how much it needs your attention, so a routine
-reconnect never rearranges the screen:
+Connection feedback sits where it matters and never covers the nav or shifts the
+screen. There are really two connections, shown in two places:
 
-- **Reconnecting** (in progress) shows only a small amber **Reconnecting…** cue in
-  the status strip along the bottom — your chat content stays exactly where it is.
-- **Recovered or switched route** slides a brief banner down from the top that
-  dismisses itself once the connection settles.
-- **A sustained problem you should act on** (no connection, no internet, server
-  unreachable) takes space with the full status banner and stays until it clears —
-  with a live, animated step list (each step shows a spinner while checking, a green
-  check when it succeeds, or a red ✕ if it fails). Dismiss it with the **×** or a
-  swipe up.
+- **Your agent** (the chat connection) shows in the header **subtitle under the agent
+  name** — the model line swaps to **Reconnecting…** / **Connecting…** /
+  **Disconnected** (amber or red) and fades back to the model once it recovers, the
+  same place messaging apps show "connecting…". This is the one that tells you whether
+  you can send.
+- **The relay link** (bridge, terminal, and relay voice) shows only as a small amber
+  **Reconnecting…** cue in the bottom status strip — it doesn't block chat, so it stays
+  quiet. The strip's route label also shows which route you're on (LAN / Tailscale / …).
 
-A quick reconnect right after you return to the app from the background is treated as
-the same connection — it won't flash a misleading "connection changed".
+A quick reconnect right after you return to the app from the background is silent — it
+won't flash a misleading "connection changed" for the same connection re-handshaking.
 
 ## Multi-Endpoint Pairing: One QR for Every Network
 

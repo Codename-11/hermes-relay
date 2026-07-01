@@ -3,10 +3,8 @@ package com.hermesandroid.relay.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -87,8 +85,6 @@ import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
-import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
-import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
@@ -155,8 +151,6 @@ import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
-import com.hermesandroid.relay.viewmodel.ConnectionStatusSurface
-import com.hermesandroid.relay.viewmodel.presentationSurface
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
@@ -1095,6 +1089,7 @@ fun RelayApp() {
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
         val globalConnectionStatus by connectionViewModel.globalConnectionStatus.collectAsState()
+        val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
         val relayReady by connectionViewModel.relayReady.collectAsState()
@@ -1405,53 +1400,24 @@ fun RelayApp() {
         val updateHandle = rememberUpdateAvailability()
         val availableUpdateStatus by updateHandle.visibleStatus
 
-        // Content-identity key so a swipe-up dismiss sticks for THIS status but
-        // a genuinely new status (different title/tone/phase) re-shows.
-        var dismissedStatusKey by remember { mutableStateOf<String?>(null) }
-        val currentStatusKey = globalConnectionStatus?.let {
-            "${it.title}|${it.tone}|${it.active}|${it.success}|${it.route}"
-        }
-        val showConnectionStatusToast =
-            globalConnectionStatus != null &&
-                currentStatusKey != dismissedStatusKey &&
-                !suppressGlobalChrome &&
-                !showStartupSphere &&
-                !voiceUiState.voiceMode
-        // Tier the connection-status surface by PERSISTENCE, not severity, so a
-        // routine reconnect (the most frequent event) is the least disruptive:
-        //   • None   → in-flight reconnect/checking: nothing up top; the bottom
-        //              RelayStatusStrip shows a "Reconnecting…" cue instead, so
-        //              chat content never shifts for a routine reconnect.
-        //   • Float  → resolved positive delta (reconnected / switched route):
-        //              a slim toast slides OVER the content and self-dismisses.
-        //   • Banner → sustained, actionable problem (no connection / no
-        //              internet / API/relay unreachable): take-space banner that
-        //              honestly holds space until it clears or is dismissed.
-        // Steady state is null (buildGlobalConnectionStatus → else null), so no
-        // surface shows at all when everything is healthy.
-        val connectionStatusSurface =
-            globalConnectionStatus?.takeIf { showConnectionStatusToast }?.presentationSurface()
-        val showConnectionStatusBanner =
-            connectionStatusSurface == ConnectionStatusSurface.Banner
-        val showConnectionStatusOverlay =
-            connectionStatusSurface == ConnectionStatusSurface.Float
+        // Connection status has no top-of-screen surface. The two connections are
+        // surfaced where they matter, never covering or shifting the top:
+        //   • Chat/agent (gateway/API) → the chat header SUBTITLE swaps the model
+        //     line for "Connecting…"/"Disconnected" when the chat path is down
+        //     (WhatsApp-style; see ChatScreen). That's the "can I talk to the
+        //     agent?" signal.
+        //   • Relay socket (bridge/terminal/relay-voice) → the bottom
+        //     RelayStatusStrip's "Reconnecting…" cue only. It never blocks chat,
+        //     so it stays ambient. (`connectionReconnecting` below.)
         // A routine in-progress reconnect surfaces only in the bottom strip.
         // Computed off the raw status (not the dismiss-gated `toast`) because the
         // strip cue isn't dismissible — it just mirrors live connection state.
+        // Gated by postResumeQuiet so a benign background→foreground re-handshake
+        // stays fully silent (the health "Connecting" cue used to flash here for a
+        // few seconds and then clear with no "Connected" toast).
         val connectionReconnecting =
-            globalConnectionStatus?.active == true &&
+            globalConnectionStatus?.active == true && !postResumeQuiet &&
                 !suppressGlobalChrome && !showStartupSphere && !voiceUiState.voiceMode
-        val onConnectionStatusBannerClick: () -> Unit = {
-            val title = globalConnectionStatus?.title.orEmpty()
-            val destination = when {
-                title.contains("No Hermes connection", ignoreCase = true) -> Screen.Pair.route()
-                title.contains("dashboard", ignoreCase = true) -> Screen.Manage.route
-                else -> Screen.ConnectionsSettings.route
-            }
-            navController.navigate(destination) {
-                launchSingleTop = true
-            }
-        }
         // === END v0.4.1 polish ===
 
         // Multi-connection switcher has moved into the AgentInfoSheet's
@@ -1528,34 +1494,17 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
-        // Take-space banner — ONLY sustained, actionable problems (no
-        // connection / no internet / API/relay unreachable) reach here now
-        // (ConnectionStatusSurface.Banner). It holds its own vertical space so
-        // the animated per-step stepper pushes content down; expand/shrink-
-        // Vertically (plus the banner's internal animateContentSize) makes the
-        // push smooth. Routine reconnects no longer land here (they light the
-        // bottom strip); resolved/positive deltas float as a Toast below.
-        // Dismissal is wired to dismissedStatusKey so a closed status stays
-        // hidden until its content identity changes.
-        AnimatedVisibility(
-            visible = showConnectionStatusBanner,
-            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
-            exit = shrinkVertically(tween(200)) + fadeOut(tween(160)),
-        ) {
-            ConnectionStatusBanner(
-                status = globalConnectionStatus,
-                includeStatusBarPadding = !showUnattendedBanner && !showDemoBanner,
-                onClick = onConnectionStatusBannerClick,
-                onDismiss = { dismissedStatusKey = currentStatusKey },
-            )
-        }
+        // Connection status intentionally has NO top-of-screen surface (no
+        // banner, no strip, no float). Chat/agent status rides the chat header
+        // subtitle; the relay socket rides the bottom RelayStatusStrip cue. See
+        // the note at the top of this composable.
 
         // Transient info/status banner. Sits below the persistent banners and
         // owns the status-bar inset only when no banner is above it (otherwise
         // that banner already padded the top — avoid double padding).
         MessageBannerHost(
             includeStatusBarPadding =
-                !showUnattendedBanner && !showDemoBanner && !showConnectionStatusBanner,
+                !showUnattendedBanner && !showDemoBanner,
         )
 
         // The update banner AND the connection-status indicator now render as
@@ -2548,23 +2497,9 @@ fun RelayApp() {
                     )
                 }
             }
-            AnimatedVisibility(
-                visible = showConnectionStatusOverlay,
-                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
-                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
-            ) {
-                ConnectionStatusToast(
-                    status = globalConnectionStatus,
-                    includeStatusBarPadding = false,
-                    onClick = onConnectionStatusBannerClick,
-                    onDismiss = { dismissedStatusKey = currentStatusKey },
-                )
-            }
-            // Floating toast — only RESOLVED, positive deltas reach here now
-            // (ConnectionStatusSurface.Float: reconnected / switched route). It
-            // slides OVER the content and self-dismisses, so a recovery never
-            // shifts layout. In-progress reconnects light the bottom strip;
-            // sustained problems take space as a banner above the Scaffold.
+            // Connection status has no surface here (or anywhere at the top).
+            // Chat/agent status rides the chat header subtitle; the relay socket
+            // rides the bottom RelayStatusStrip cue. Only the update banner floats.
         }
 
         // (The ConnectionSwitcherSheet modal that used to live here was
