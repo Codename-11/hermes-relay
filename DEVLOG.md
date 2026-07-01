@@ -1,5 +1,35 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-01 — Realtime voice: background runs survive a transient drop
+
+**Why.** In realtime voice mode, asking the agent to run a long/background Hermes task
+(ADR 33 promotion) could lose the result on a brief network blip. Correlated client +
+relay logs traced the trigger to a transient Wi-Fi outage (all sockets dropped together,
+recovered ~20s later) — but the relay tore the realtime session down 30s after any
+disconnect (`_RESUME_TTL_SECONDS`), well before a minutes-long durable run finishes,
+cancelling result delivery and orphaning the run. A separate factor: a tool that hung
+server-side left the run waiting indefinitely.
+
+**What (`plugin/relay/realtime_agent/broker.py`).**
+- **Keep a detached session alive while a background run is in flight** — the resume
+  window stretches from 30s to a background cap (default 6 min,
+  `RELAY_VOICE_BACKGROUND_DETACHED_MAX_MS`); a poll loop closes only after the run
+  finishes plus a grace. The existing event/audio replay ring then re-delivers the
+  result when the client resumes, so a transient drop mid-run no longer loses it.
+- **Bound a run** — a hung run is cancelled at a hard cap (default 5 min,
+  `RELAY_VOICE_BACKGROUND_RUN_MAX_MS`) and surfaced as a `background_completed` error
+  instead of pinning the delivery task forever.
+- **Cancel the orphaned run on close** so a hung tool can't keep executing against the
+  gateway after the session is gone; **guard the summary send** so a dead provider
+  socket can't turn result delivery into an unhandled background-task crash.
+
+**Verification.** `python -m unittest` — 60 realtime-broker tests green, including two
+new promotion tests: a detached session with a live run survives past a shrunken base
+TTL and records the result for replay; a hung run times out and is cancelled.
+`py_compile` clean. The complementary app-side realtime-resume retry (the client gave
+up reconnecting after one attempt while the gateway/relay sockets recovered) is tracked
+for the connection-management work. On-box verification is owner-driven.
+
 ## 2026-07-01 — Chat markdown typography + bubble grouping polish
 
 **Why.** Markdown headings in chat rendered at display scale: `MarkdownContent` set

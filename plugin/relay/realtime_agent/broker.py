@@ -112,6 +112,17 @@ _RESUME_TTL_SECONDS = 30.0
 _BACKGROUND_FLOOR_WAIT_SECONDS = 12.0
 _EVENT_RING_LIMIT = 256
 _AUDIO_RING_LIMIT = 96
+# A promoted/durable background run can outlive the 30s resume window. While such
+# a run is still in flight we keep a *detached* session (and its recorded event
+# ring) alive up to this hard cap, so a transient network drop doesn't orphan the
+# run — the client can resume within the window and replay the recorded result.
+# Bounded so an abandoned session can't pin the provider connection open forever.
+_BACKGROUND_DETACHED_MAX_SECONDS = 360.0
+# Hard ceiling on a single background run: a hung tool (e.g. a stuck cron call)
+# is cancelled and surfaced as a timeout instead of waiting forever.
+_BACKGROUND_RUN_MAX_SECONDS = 300.0
+# Poll cadence for the detached-session keep-alive loop.
+_BACKGROUND_DETACHED_POLL_SECONDS = 2.0
 _PROFILE_SOUL_PROMPT_MAX_CHARS = 6000
 _PROFILE_MEMORY_PROMPT_MAX_FILES = 4
 _PROFILE_MEMORY_PROMPT_MAX_CHARS = 6000
@@ -718,6 +729,18 @@ class RealtimeAgentHandler:
                     await self._detach_native_session(session, "websocket_disconnected")
         return ws
 
+    def _background_run_active(self, session: RealtimeAgentSession) -> bool:
+        """True while a promoted/durable Hermes run (or its delivery) is in flight.
+
+        Used to keep a *detached* session alive past the normal 30s resume window
+        so a transient drop mid-run doesn't orphan the run and lose the result.
+        """
+        task = session.hermes_task
+        if task is not None and not task.done():
+            return True
+        delivery = session.background_delivery_task
+        return delivery is not None and not delivery.done()
+
     async def _detach_native_session(
         self,
         session: RealtimeAgentSession,
@@ -727,7 +750,12 @@ class RealtimeAgentHandler:
             return
         now = time.time()
         session.detached_at = now
-        session.resume_deadline = now + session.resume_ttl_seconds
+        # A live background run gets a longer resume window than the default 30s,
+        # so a network blip mid-run can still resume and replay the result.
+        window = session.resume_ttl_seconds
+        if self._background_run_active(session):
+            window = max(window, _background_detached_max_seconds())
+        session.resume_deadline = now + window
         await self._send(
             None,
             session,
@@ -735,7 +763,7 @@ class RealtimeAgentHandler:
                 "type": SERVER_EVT_SESSION_DETACHED,
                 "session_id": session.session_id,
                 "reason": reason,
-                "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
+                "resume_ttl_ms": int(window * 1000),
             },
         )
         self._log(
@@ -757,8 +785,27 @@ class RealtimeAgentHandler:
         self,
         session: RealtimeAgentSession,
     ) -> None:
+        # Poll until the resume window elapses. For a background run we hold the
+        # session open until the run finishes plus a short grace (so a late resume
+        # can still replay the recorded result), bounded by resume_deadline — which
+        # _detach_native_session already stretched to the background cap.
+        grace_after_run = _RESUME_TTL_SECONDS
+        run_done_at: float | None = None
         try:
-            await asyncio.sleep(session.resume_ttl_seconds)
+            while True:
+                if session.closed or session.attached_ws is not None or session.detached_at is None:
+                    return
+                now = time.time()
+                if session.resume_deadline is not None and now >= session.resume_deadline:
+                    break
+                if self._background_run_active(session):
+                    run_done_at = None
+                else:
+                    if run_done_at is None:
+                        run_done_at = now
+                    elif now - run_done_at >= grace_after_run:
+                        break
+                await asyncio.sleep(_BACKGROUND_DETACHED_POLL_SECONDS)
         except asyncio.CancelledError:
             return
         if session.attached_ws is not None or session.detached_at is None or session.closed:
@@ -784,6 +831,12 @@ class RealtimeAgentHandler:
         if delivery_task is not None and not delivery_task.done():
             delivery_task.cancel()
         session.background_delivery_task = None
+        # Cancel any still-running (promoted/durable) Hermes run so a hung tool
+        # can't keep executing against the gateway after the session is gone.
+        hermes_task = session.hermes_task
+        if hermes_task is not None and not hermes_task.done():
+            hermes_task.cancel()
+        session.hermes_task = None
         connection = session.native_connection
         if connection is not None:
             await connection.close()
@@ -2136,7 +2189,34 @@ class RealtimeAgentHandler:
         if task is None:
             return
         try:
-            result = await task
+            # Bound the run: a hung tool (e.g. a stuck cron call) is cancelled and
+            # surfaced as a timeout instead of pinning the delivery task forever.
+            result = await asyncio.wait_for(task, timeout=_background_run_max_seconds())
+        except asyncio.TimeoutError:
+            if not task.done():
+                task.cancel()
+            session.hermes_run_status = "timeout"
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED,
+                    "source": "hermes",
+                    "session_id": session.chat_session_id,
+                    "chat_session_id": session.chat_session_id,
+                    "run_id": session.hermes_run_id,
+                    "ok": False,
+                    "error": "background run timed out",
+                },
+            )
+            await self._send_error(
+                ws,
+                session,
+                "The background task ran too long and was stopped.",
+                provider=session.provider,
+            )
+            session.hermes_run_tier = "foreground"
+            return
         except asyncio.CancelledError:
             session.hermes_run_status = "cancelled"
             await self._send(
@@ -2233,7 +2313,21 @@ class RealtimeAgentHandler:
         session.native_forced_summary_text_parts.clear()
         with contextlib.suppress(Exception):
             await connection.cancel_response()
-        await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+        try:
+            await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+        except Exception as exc:  # noqa: BLE001
+            # The background_completed event + result are already recorded in the
+            # event ring, so a resume will replay them; don't let a dead provider
+            # socket turn result delivery into an unhandled background-task crash.
+            self._log(
+                session,
+                "voice.realtime_agent.summary_send_failed",
+                {
+                    "type": "voice.realtime_agent.summary_send_failed",
+                    "run_id": session.hermes_run_id,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                },
+            )
 
     async def _emit_background_text_only(
         self,
@@ -3911,6 +4005,22 @@ def _configured_resume_ttl_seconds() -> float:
     if value is not None and value > 0:
         return value / 1000.0
     return _RESUME_TTL_SECONDS
+
+
+def _background_detached_max_seconds() -> float:
+    """How long a *detached* session with a live background run is kept alive."""
+    value = _int_value(os.getenv("RELAY_VOICE_BACKGROUND_DETACHED_MAX_MS"))
+    if value is not None and value > 0:
+        return value / 1000.0
+    return _BACKGROUND_DETACHED_MAX_SECONDS
+
+
+def _background_run_max_seconds() -> float:
+    """Hard ceiling on a single background run before it is timed out/cancelled."""
+    value = _int_value(os.getenv("RELAY_VOICE_BACKGROUND_RUN_MAX_MS"))
+    if value is not None and value > 0:
+        return value / 1000.0
+    return _BACKGROUND_RUN_MAX_SECONDS
 
 
 def _token_hash(token: str) -> str:

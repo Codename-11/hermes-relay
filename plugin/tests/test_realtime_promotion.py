@@ -423,6 +423,77 @@ class RealtimePromotionTests(AioHTTPTestCase):
         finally:
             await ws2.close()
 
+    async def test_detached_background_session_survives_base_ttl(self) -> None:
+        # Regression: a durable background run must keep a *detached* session
+        # alive well past the base 30s resume window, so a transient drop mid-run
+        # doesn't orphan the run and lose the result. Here the base TTL is shrunk
+        # to 0.2s; without the background-aware extension the session would be torn
+        # down almost immediately and the result never recorded for replay.
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        session.resume_ttl_seconds = 0.2
+        await self._emit_tool_call(provider)
+        await self._read_until(ws, "hermes.run.promoted")
+        await broker.started.wait()
+
+        # Detach while the run is still gated (in flight).
+        await ws.close(code=1001, message=b"network changed")
+        for _ in range(50):
+            if session.detached_at is not None:
+                break
+            await asyncio.sleep(0.01)
+        self.assertIsNotNone(session.detached_at)
+
+        # Well past the 0.2s base TTL, the session is STILL alive because the run
+        # is active, and the resume window was stretched to the background cap.
+        await asyncio.sleep(0.6)
+        self.assertFalse(session.closed)
+        self.assertIsNotNone(session.detached_at)
+        self.assertGreater(session.resume_deadline, session.detached_at + 60)
+
+        # Release -> completes while detached -> recorded to the ring for replay.
+        broker.release.set()
+        recorded = False
+        for _ in range(100):
+            if any(
+                e.get("type") == "hermes.run.background_completed"
+                for e in session.event_ring
+            ):
+                recorded = True
+                break
+            await asyncio.sleep(0.02)
+        self.assertTrue(recorded)
+        await ws.close()
+
+    async def test_background_run_times_out(self) -> None:
+        # A hung background run (tool never returns) is cancelled and surfaced as a
+        # background_completed error instead of pinning the delivery task forever.
+        os.environ["RELAY_VOICE_BACKGROUND_RUN_MAX_MS"] = "200"
+        broker = GatedHermesToolBroker()  # never released -> hangs
+        ws = None
+        try:
+            ws, provider, body = await self._open(broker=broker)
+            await self._emit_tool_call(provider)
+            await self._read_until(ws, "hermes.run.promoted")
+            done = await self._read_until(ws, "hermes.run.background_completed", limit=60)
+            completed = next(
+                e for e in done if e["type"] == "hermes.run.background_completed"
+            )
+            self.assertFalse(completed["ok"])
+            self.assertEqual(completed.get("error"), "background run timed out")
+            # The hung run was actually cancelled server-side.
+            for _ in range(50):
+                if broker.cancelled.is_set():
+                    break
+                await asyncio.sleep(0.02)
+            self.assertTrue(broker.cancelled.is_set())
+        finally:
+            os.environ.pop("RELAY_VOICE_BACKGROUND_RUN_MAX_MS", None)
+            broker.release.set()
+            if ws is not None:
+                await ws.close()
+
 
 if __name__ == "__main__":
     unittest.main()
