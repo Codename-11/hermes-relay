@@ -47,8 +47,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -312,6 +314,7 @@ fun MessageBubble(
         // wired; with copy as the only action it stays a direct copy so the
         // one-action case doesn't pay a menu tap.
         var showMessageActions by remember { mutableStateOf(false) }
+        val haptic = LocalHapticFeedback.current
         val showEditAction = onEditMessage != null && isUser
         if (onQuoteMessage != null || showEditAction) {
             DropdownMenu(
@@ -361,6 +364,10 @@ fun MessageBubble(
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
+                        // Buzz the instant the long-press registers — opening the
+                        // action menu is the discoverability moment, so it gets the
+                        // same tactile confirm every chat app fires.
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (onQuoteMessage != null || showEditAction) {
                             showMessageActions = true
                         } else {
@@ -457,8 +464,12 @@ fun MessageBubble(
                     }
                 }
 
-                // Streaming indicator
-                if (message.isStreaming) {
+                // Streaming indicator — only while awaiting the first token. Once
+                // text starts flowing, the growing reply is itself the progress
+                // signal, so the pulsing dots stop (Messenger/Telegram drop the
+                // typing bubble the moment content appears) instead of throbbing
+                // under the text for the whole turn.
+                if (message.isStreaming && message.content.isBlank()) {
                     // After a few seconds with no content yet, escalate the bare
                     // dots to a labeled "Still working…" so a slow first token
                     // never reads as a hang on the SSE / sessions paths.
@@ -500,13 +511,18 @@ fun MessageBubble(
                     }
                 }
 
-                // Timestamp
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = timeFormat.format(Date(message.timestamp)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = textColor.copy(alpha = 0.5f)
-                )
+                // Timestamp — only on the LAST bubble of a same-author run so a
+                // burst of fragments doesn't stack three near-touching time labels.
+                // Grouping breaks on a >5min gap (ChatScreen), so every pause still
+                // surfaces its own time. Alpha floored at 0.6 for 11sp contrast.
+                if (isLastInGroup) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = timeFormat.format(Date(message.timestamp)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = 0.6f)
+                    )
+                }
 
                 // Delivery status — only on agent-Thread reply bubbles (a user
                 // message routed over the relay proactive channel). Null on every

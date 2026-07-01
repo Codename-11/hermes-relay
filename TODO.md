@@ -61,6 +61,62 @@ Deferred:
   the new list design; confirm the regenerated PNG + Play-graphics export at
   release-prep (only auto-publishes on a `main` release merge).
 
+## Chat UI/UX polish (2026-07-01 readability pass)
+
+A 5-agent audit compared the chat surface to Discord/Telegram/Messenger/iMessage/
+GitHub-mobile. **Shipped this pass (pending on-device verification):** a chat-tuned
+`markdownTypography()` ramp (headings were falling through to M3 display roles —
+h1=`displayLarge` 57sp in this app's scale — so a `#` was a billboard; now h1≈20sp
+scaling down, list/paragraph unified to 14sp, inline+fenced code 13sp, `textLink`
+accent+underline) in `MarkdownContent.kt`; timestamp gated to `isLastInGroup` (was on
+every bubble) + grouping breaks on a >5min gap (`GROUP_GAP_MS`) so a resumed
+conversation gets its own beat; long-press haptic on the action menu; streaming dots
+gated to pre-first-token. Deferred:
+
+- **Streaming↔final render parity (kill the reflow).** `StreamingMarkdownContent`
+  renders raw markdown source (`## `, `**bold**`, `- item`) as plain 14sp text for the
+  whole turn, then swaps to the full renderer at completion — headings still pop
+  14sp→20sp on finalize (much reduced now that settled headings are small and lists no
+  longer resize, but not zero). Run the real renderer on the settled prefix and keep
+  only the trailing unterminated block raw. Riskier (partial-fence flicker) — needs
+  on-device testing. Highest-effort audit item.
+- **Bubble body 14sp → 15sp/21.** 14sp is the smallest body of the five reference
+  apps. Bump markdown paragraph/text/list + the two plain `Text` sites
+  (`MessageBubble.kt` user/system) together; keep ~1.4 leading so the ~272dp measure
+  stays ~36–38 chars/line. Debatable/broad — left out of the certain heading win.
+- **Tail-corner on last-in-group only (design decision).** The audit flagged the
+  per-bubble bottom tail as "half-implemented," but it's a deliberate aesthetic
+  (every bubble tails). Switching to iMessage-style "tail on the last bubble only"
+  changes the look — get design intent before flipping. `isLastInGroup` is now
+  meaningful (grouping breaks on gaps) so it's ready if wanted.
+- **Wide tables.** GFM tables use the default renderer on ~272dp (columns crush);
+  code fences already horizontal-scroll. Add a custom `table` component in
+  `markdownComponents` with `horizontalScroll` + ~110dp min column + right-edge fade.
+- **Assistant bubble width decoupled from user.** Both cap at 300dp though only the
+  assistant carries markdown/code; let the assistant run wider (~92% of available /
+  340–360dp cap) so fences wrap/scroll later. Keep user ~300dp.
+- **Token counts out of the bubble; delivery → glyph.** Move `TokenDisplay` to a
+  long-press "message info" sheet; collapse `Sending…/Delivered/Not sent` to a single
+  trailing check/clock/! glyph on the last bubble (declutters every message).
+- **SelectionContainer vs long-press conflict.** Long-pressing the words can start
+  text selection instead of opening Copy/Quote. Pick one owner (drop
+  `SelectionContainer`, expose Copy via the menu — chat-app norm — or move actions to a
+  kebab). Needs on-device confirmation of the current conflict first.
+- **Jump-to-bottom FAB unread badge** + drop the no-op tap ripple on bubbles
+  (`combinedClickable onClick={}` still ripples). Telegram pattern.
+- **Sessions-transport `animateItem` flash.** Stream-complete rebuilds the list with
+  new ids → every visible bubble replays its enter animation (gateway transport,
+  stable id, is unaffected). Reuse the streaming bubble's id for the final message.
+- **Viewport re-pin on the `isStreaming` true→false height growth** (gateway
+  transport): `ChatScreen` early-returns on `onlyStreamingFlagChanged`; issue one
+  `withFrameNanos{}` + instant `scrollToItem(last)` when the flag flips and the user
+  isn't scrolled away. Largely neutralized once render parity removes the height delta.
+- **Full 15-role `Typography` + metadata contrast.** Type.kt declares only 7 roles at
+  0 tracking; the rest inherit M3 defaults with 0.1–0.5sp tracking (ChatScreen uses
+  several) — declare all 15 for one coherent scale. Separately, floor muted-metadata
+  alpha at ≥0.6 and verify ≥4.5:1 per theme (11sp timestamps were alpha 0.5 over
+  `onSurfaceVariant` ≈ 2–2.5:1; the surviving timestamp is now 0.6).
+
 ## Phone as a Hermes platform (proactive agent → phone)
 
 Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_message target=phone` → loopback `/phone/message` → relay `ProactiveChannel` → phone WSS → system notification, gated off by default (`PHONE_ENABLED` server-side + "Let Hermes message me" app-side + pairing). Remaining:

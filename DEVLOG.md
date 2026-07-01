@@ -1,5 +1,34 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-01 — Chat markdown typography + bubble grouping polish
+
+**Why.** Markdown headings in chat rendered at display scale: `MarkdownContent` set
+only `paragraph`/`code` in `markdownTypography()`, so `h1..h6` fell through to the
+mikepenz M3 defaults (h1=`displayLarge` — 57sp in this app's scale) and a single `#`
+became a billboard inside a ~272dp bubble. List items also rendered 2sp larger than
+paragraphs (the library `text`/list role defaults to bodyLarge 16sp), and every bubble
+stamped its own timestamp — noisier than any mainstream chat client.
+
+**What.**
+- **`MarkdownContent`** — explicit chat-tuned type ramp: h1 20sp → h6 13sp, all
+  derived from bodyLarge/bodyMedium so the live font-picker still applies, largest
+  heading ~1.4× the 14sp body; `paragraph`/`text`/`bullet`/`ordered`/`list` unified to
+  14sp; inline + fenced code 13sp (tracking reset to 0); italic muted blockquote;
+  `textLink` given a primary accent + underline. Side effect: settled body/list sizes
+  now match the streaming renderer, so the stream-end reflow shrinks to headings only.
+- **`MessageBubble`** — timestamp gated to `isLastInGroup` (was on every bubble),
+  alpha 0.5 → 0.6; long-press action menu fires a haptic on open; streaming dots show
+  only before the first token (previously throbbed under the text for the whole turn).
+- **`ChatScreen`** — same-author grouping now breaks on a >5min gap (`GROUP_GAP_MS`),
+  so a conversation resumed after a pause gets a fresh name label + its own timestamp.
+
+**Verification.** CLI `assembleSideloadDebug` compiled clean; `markdownTypography` /
+`markdownColor` parameter names verified against the installed mikepenz 0.42.0 source
+(the naive `markdownColor(linkText=…)` would not have compiled — 0.42.0 has no such
+param; link color rides `textLink`). Deferred items (streaming/final render parity,
+15sp body, wide-table scroll, tail-on-last-only, etc.) recorded in `TODO.md`. On-device
+review pending.
+
 ## 2026-07-01 — Connection status: two-connection model (subtitle + bottom strip, no top surface)
 
 **Why.** The persistence-tiered top strip (previous entry, shipped in the prior

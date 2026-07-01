@@ -205,6 +205,15 @@ import kotlinx.coroutines.launch
 private const val DEFAULT_CHAR_LIMIT = 4096
 
 /**
+ * A same-author run breaks into a new visual group once the gap to the
+ * neighboring message exceeds this — so a conversation resumed after a pause
+ * reads as a fresh beat (its own agent-name label, its own timestamp, more air)
+ * instead of one unbroken monologue. Matches the iMessage/Discord convention of
+ * resetting grouping after a short idle.
+ */
+private const val GROUP_GAP_MS = 5 * 60_000L
+
+/**
  * Snapshot of the streaming-state fields the auto-scroll effect watches.
  *
  * Captured inside a `snapshotFlow { ... }` so distinctUntilChanged can
@@ -2034,8 +2043,16 @@ fun ChatScreen(
                                 !message.isStreaming
                             ) return@items
 
-                            val isFirstInGroup = index == 0 || messages[index - 1].role != message.role
-                            val isLastInGroup = index == messages.size - 1 || messages[index + 1].role != message.role
+                            // Break a same-author run on a role change OR a >5min
+                            // gap to the neighbor, so a resumed conversation gets a
+                            // fresh agent-name label + its own timestamp instead of
+                            // silently merging into the previous burst.
+                            val isFirstInGroup = index == 0 ||
+                                messages[index - 1].role != message.role ||
+                                message.timestamp - messages[index - 1].timestamp > GROUP_GAP_MS
+                            val isLastInGroup = index == messages.size - 1 ||
+                                messages[index + 1].role != message.role ||
+                                messages[index + 1].timestamp - message.timestamp > GROUP_GAP_MS
 
                             // Date separator
                             if (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp)) {

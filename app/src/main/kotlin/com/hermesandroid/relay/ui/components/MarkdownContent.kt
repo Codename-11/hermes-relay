@@ -29,9 +29,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
@@ -68,12 +74,64 @@ fun MarkdownContent(
             codeBackground = MaterialTheme.colorScheme.surfaceContainerLowest,
             inlineCodeBackground = MaterialTheme.colorScheme.surfaceContainerHighest
         ),
+        // Chat-tuned type ramp. Left unset, the mikepenz M3 defaults map headings
+        // to DISPLAY roles (in this app's scale h1=displayLarge 57sp, h2=displayMedium
+        // ~45sp, h3=displaySmall 36sp) — a single `#` becomes a billboard inside the
+        // ~272dp bubble. Here every level derives from bodyLarge/bodyMedium (so the
+        // live font-picker still applies) and is capped so the largest heading is
+        // ~1.4x the 14sp body, matching Discord / GitHub-mobile in-message headings.
         typography = markdownTypography(
+            h1 = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = textColor,
+            ),
+            h2 = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold, color = textColor,
+            ),
+            h3 = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, color = textColor,
+            ),
+            h4 = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = textColor,
+            ),
+            h5 = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = FontWeight.Bold, color = textColor,
+            ),
+            h6 = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
+                color = textColor.copy(alpha = 0.85f),
+            ),
+            // Prose, list items, and quotes all sit at the 14sp body size so a
+            // paragraph and the bullet list under it share one rhythm — the library
+            // default 'text'/list role is bodyLarge (16sp), 2sp larger than paragraph.
             paragraph = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+            text = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+            bullet = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+            ordered = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+            list = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+            quote = MaterialTheme.typography.bodyMedium.copy(
+                fontStyle = FontStyle.Italic, color = textColor.copy(alpha = 0.78f),
+            ),
+            // Inline + fenced code at 13sp (one step under body, not two): monospace
+            // + the tinted chip already signal "code" without also shrinking it, and
+            // the loose 0.4sp default tracking is reset to 0 for tighter token runs.
             code = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                fontSize = 13.sp, letterSpacing = 0.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+            inlineCode = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 13.sp, letterSpacing = 0.sp,
+                fontFamily = FontFamily.Monospace, color = textColor,
+            ),
+            // Links get an accent color + underline so they read as tappable on the
+            // muted assistant bubble (the default textLink is body-colored).
+            textLink = TextLinkStyles(
+                style = SpanStyle(
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                    textDecoration = TextDecoration.Underline,
+                ),
+            ),
         ),
         components = markdownComponents(
             codeBlock = {
