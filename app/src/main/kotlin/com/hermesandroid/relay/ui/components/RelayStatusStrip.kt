@@ -42,9 +42,8 @@ fun RelayStatusStrip(
     securityGlyph: (@Composable () -> Unit)? = null,
     /**
      * When true, the strip shows an amber "Reconnecting…" cue in place of the
-     * route label. This is where a **routine** in-progress reconnect surfaces —
-     * the top chrome stays empty so chat content never shifts (see
-     * [com.hermesandroid.relay.viewmodel.ConnectionStatusSurface.None]).
+     * route label. This is where a **routine** in-progress relay reconnect
+     * surfaces — the top chrome stays empty so chat content never shifts.
      */
     reconnecting: Boolean = false,
 ) {
@@ -110,11 +109,10 @@ fun RelayStatusStrip(
 
 /**
  * Amber "· Reconnecting…" cue with a softly pulsing dot. This is the *only*
- * connection-status surface for a routine in-progress reconnect — the top
- * banner/toast stay empty so chat content never shifts (see
- * [com.hermesandroid.relay.viewmodel.ConnectionStatusSurface]). Pulse is
- * frame-throttled via [rememberAmbientPhase] to avoid pinning the window at
- * panel refresh.
+ * surface for a routine in-progress relay reconnect — the top of the app stays
+ * empty (chat/agent status rides the chat header subtitle) so nothing shifts.
+ * Pulse is frame-throttled via [rememberAmbientPhase] to avoid pinning the
+ * window at panel refresh.
  */
 @Composable
 private fun ReconnectingCue(modifier: Modifier = Modifier) {

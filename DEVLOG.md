@@ -41,15 +41,17 @@ flapping was mostly the *relay* socket, so it never deserved a prominent interru
   LAN → Tailscale" at the actual connect via `lastConnectedRole` — so a flap or a swap
   can't emit a pair. Route change is ambient-only (the bottom strip's route label).
 - **Removed the top strip entirely** — the `ConnectionStatusSurface`/`presentationSurface`
-  tiering + `ConnectionStatusBanner` top render are now unused (kept for now, tracked in
-  `TODO.md`). `ConnectionStatusToast` is deliberately parked as a general toast primitive.
+  tiering + `ConnectionStatusBanner` top render fell out of use and were **removed**
+  in a follow-up commit (`ConnectionHandoffBanner`/`ConnectionStatusBanner`/
+  `PulsingSyncIcon` + `ConnectionStatusSurface`/`presentationSurface`/its test).
+  `ConnectionStatusToast` is deliberately parked as a general toast primitive.
 - Permanent client-side logging (tag `ConnectionVM`, pairs with `ConnectionManager`) so
   "why did that status appear?" is a one-line `logcat -s ConnectionVM ConnectionManager`.
 
-**Verification.** `:app:assembleSideloadDebug` + `testSideloadDebugUnitTest`
-(`ConnectionStatusSurfaceTest`) green; iterated on-device across the build cycle. Server
-access was read-only (journalctl) — no restart/deploy. Flap-specific cases hard to
-re-verify once the network stabilized (tracked in `TODO.md`).
+**Verification.** `:app:assembleSideloadDebug` + `testSideloadDebugUnitTest` green;
+iterated on-device across the build cycle. Server access was read-only (journalctl) —
+no restart/deploy. Flap-specific cases hard to re-verify once the network stabilized
+(tracked in `TODO.md`).
 
 ## 2026-06-30 — Connection status: tier the surface by persistence, not severity
 

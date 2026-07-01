@@ -22,13 +22,12 @@ on a two-connection model (2026-07-01):**
 
 Deferred:
 
-- **Dead connection-status-surface code to clean up** (kept for now; a future session
-  can remove if we don't revive it). The top-strip model left these unused after the
-  move to subtitle + bottom strip: `ConnectionStatusBanner` (+ its `compact` pose),
-  `ConnectionStatusSurface` + `presentationSurface()` + `ConnectionStatusSurfaceTest`.
-  **Exception — keep `ConnectionStatusToast`**: parked deliberately as a general-
-  purpose toast primitive (the only surface with a live multi-step stepper; decouple
-  from `ConnectionStatusSnapshot` + rename to `StatusToast` on first reuse).
+- ~~**Dead connection-status-surface code.**~~ *(Cleaned up 2026-07-01.)* Removed the
+  now-unused top-strip machinery: `ConnectionHandoffBanner` + `ConnectionStatusBanner`
+  (+ `PulsingSyncIcon`), `ConnectionStatusSurface` + `presentationSurface()` +
+  `ConnectionStatusSurfaceTest`. **`ConnectionStatusToast` retained** as a parked
+  general-purpose toast primitive (the only surface with a live multi-step stepper;
+  decouple from `ConnectionStatusSnapshot` + rename to `StatusToast` on first reuse).
 - **Bottom-strip route-change flash (optional).** Route change is ambient-only for
   now. If a "switched to Tailscale" confirmation is wanted, surface it briefly in the
   **bottom strip** (where the route label already lives), not the top — keeps the
