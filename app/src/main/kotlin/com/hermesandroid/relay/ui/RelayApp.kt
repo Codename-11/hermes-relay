@@ -155,7 +155,8 @@ import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
-import com.hermesandroid.relay.viewmodel.ConnectionStatusTone
+import com.hermesandroid.relay.viewmodel.ConnectionStatusSurface
+import com.hermesandroid.relay.viewmodel.presentationSurface
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
@@ -1416,16 +1417,30 @@ fun RelayApp() {
                 !suppressGlobalChrome &&
                 !showStartupSphere &&
                 !voiceUiState.voiceMode
-        // Split the connection-status surface by severity (user request): the
-        // frequent transient/active/warning states render as a take-space top
-        // BANNER (content slides down, no overlay), while a persistent ERROR
-        // keeps the floating overlay so it still demands attention. Steady
-        // state is null (buildGlobalConnectionStatus → else null), so the
-        // banner only occupies space during a transition/problem.
-        val connectionStatusIsError =
-            globalConnectionStatus?.tone == ConnectionStatusTone.Error
-        val showConnectionStatusBanner = showConnectionStatusToast && !connectionStatusIsError
-        val showConnectionStatusOverlay = showConnectionStatusToast && connectionStatusIsError
+        // Tier the connection-status surface by PERSISTENCE, not severity, so a
+        // routine reconnect (the most frequent event) is the least disruptive:
+        //   • None   → in-flight reconnect/checking: nothing up top; the bottom
+        //              RelayStatusStrip shows a "Reconnecting…" cue instead, so
+        //              chat content never shifts for a routine reconnect.
+        //   • Float  → resolved positive delta (reconnected / switched route):
+        //              a slim toast slides OVER the content and self-dismisses.
+        //   • Banner → sustained, actionable problem (no connection / no
+        //              internet / API/relay unreachable): take-space banner that
+        //              honestly holds space until it clears or is dismissed.
+        // Steady state is null (buildGlobalConnectionStatus → else null), so no
+        // surface shows at all when everything is healthy.
+        val connectionStatusSurface =
+            globalConnectionStatus?.takeIf { showConnectionStatusToast }?.presentationSurface()
+        val showConnectionStatusBanner =
+            connectionStatusSurface == ConnectionStatusSurface.Banner
+        val showConnectionStatusOverlay =
+            connectionStatusSurface == ConnectionStatusSurface.Float
+        // A routine in-progress reconnect surfaces only in the bottom strip.
+        // Computed off the raw status (not the dismiss-gated `toast`) because the
+        // strip cue isn't dismissible — it just mirrors live connection state.
+        val connectionReconnecting =
+            globalConnectionStatus?.active == true &&
+                !suppressGlobalChrome && !showStartupSphere && !voiceUiState.voiceMode
         val onConnectionStatusBannerClick: () -> Unit = {
             val title = globalConnectionStatus?.title.orEmpty()
             val destination = when {
@@ -1513,13 +1528,15 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
-        // Connection status (non-error: reconnecting / handoff / checking) takes
-        // its own vertical space here so the animated per-step stepper pushes
-        // content down rather than floating over it. expand/shrinkVertically
-        // (plus the banner's internal animateContentSize) makes the push smooth
-        // instead of the old hard height-snap. Error tone still floats as a Toast
-        // overlay in the Box below. Dismissal is wired to dismissedStatusKey so a
-        // closed status stays hidden until its content identity changes.
+        // Take-space banner — ONLY sustained, actionable problems (no
+        // connection / no internet / API/relay unreachable) reach here now
+        // (ConnectionStatusSurface.Banner). It holds its own vertical space so
+        // the animated per-step stepper pushes content down; expand/shrink-
+        // Vertically (plus the banner's internal animateContentSize) makes the
+        // push smooth. Routine reconnects no longer land here (they light the
+        // bottom strip); resolved/positive deltas float as a Toast below.
+        // Dismissal is wired to dismissedStatusKey so a closed status stays
+        // hidden until its content identity changes.
         AnimatedVisibility(
             visible = showConnectionStatusBanner,
             enter = expandVertically(tween(220)) + fadeIn(tween(180)),
@@ -1640,6 +1657,9 @@ fun RelayApp() {
                         } else {
                             null
                         },
+                        // Routine in-progress reconnect surfaces here (amber cue)
+                        // instead of a take-space banner or a floating toast.
+                        reconnecting = connectionReconnecting,
                     )
                 }
             }
@@ -2540,10 +2560,11 @@ fun RelayApp() {
                     onDismiss = { dismissedStatusKey = currentStatusKey },
                 )
             }
-            // Non-error connection status (reconnecting / handoff / checking) now
-            // renders as a TAKE-SPACE animated banner in the persistent banner
-            // stack above the Scaffold — see ConnectionStatusBanner up there. Only
-            // the error tone stays a floating overlay Toast here.
+            // Floating toast — only RESOLVED, positive deltas reach here now
+            // (ConnectionStatusSurface.Float: reconnected / switched route). It
+            // slides OVER the content and self-dismisses, so a recovery never
+            // shifts layout. In-progress reconnects light the bottom strip;
+            // sustained problems take space as a banner above the Scaffold.
         }
 
         // (The ConnectionSwitcherSheet modal that used to live here was

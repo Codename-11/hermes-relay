@@ -9,15 +9,16 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 ## Connections UI / status banner (2026-06-30 restructure follow-ups)
 
 The Connections screen was split into a scannable list + a tabbed detail screen
-(Overview / Routes / Advanced / Security), and the non-error status banner became
-take-space + animated + dismissible (see DEVLOG 2026-06-30). Deferred:
+(Overview / Routes / Advanced / Security). The status surface was then re-tiered by
+persistence (`ConnectionStatusSurface` — None/Float/Banner): routine reconnects show
+only a bottom-strip cue, recoveries float, sustained problems take space (see DEVLOG
+2026-06-30). Deferred:
 
-- **Resume suppression covers only the handoff path.** `recordConnectionHandoff`'s
-  reconnect is now withheld during the foreground-resume grace window, but the
-  *health* producer (`buildGlobalConnectionStatus` → "Checking Hermes connection" /
-  "Connecting to Hermes") can still flash a brief banner on resume. Copy is
-  accurate, so left as-is; if it reads as noisy, extend the same just-resumed
-  guard to the health snapshots.
+- ~~**Resume suppression covers only the handoff path.**~~ *(Resolved by the
+  surface-tiering pass.)* The *health* producer's in-flight states ("Checking Hermes
+  connection" / "Connecting to Hermes") are `active` → `ConnectionStatusSurface.None`,
+  so they now light only the bottom-strip "Reconnecting…" cue and can no longer flash
+  a take-space banner on resume.
 - **Non-active connection detail is Overview-only.** Routes/Advanced/Security tabs
   appear only for the active connection (they read the single active-connection VM
   state); a non-active connection shows a "Switch to this connection" CTA. A future

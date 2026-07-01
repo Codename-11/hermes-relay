@@ -74,12 +74,21 @@ selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
 strings, and token-like values are hidden. The same consolidated log is available
 from **Settings -> Diagnostics**, where you can clear the in-app buffer.
 
-While a connection is reconnecting or handing off between routes, a status banner
-slides down from the top with a live, animated step list (each step shows a
-spinner while checking, a green check when it succeeds, or a red ✕ if it fails).
-It can be dismissed with the **×** or a swipe up. A quick reconnect right after you
-return to the app from the background is treated as the same connection — it won't
-flash a misleading "connection changed".
+Connection feedback is tiered by how much it needs your attention, so a routine
+reconnect never rearranges the screen:
+
+- **Reconnecting** (in progress) shows only a small amber **Reconnecting…** cue in
+  the status strip along the bottom — your chat content stays exactly where it is.
+- **Recovered or switched route** slides a brief banner down from the top that
+  dismisses itself once the connection settles.
+- **A sustained problem you should act on** (no connection, no internet, server
+  unreachable) takes space with the full status banner and stays until it clears —
+  with a live, animated step list (each step shows a spinner while checking, a green
+  check when it succeeds, or a red ✕ if it fails). Dismiss it with the **×** or a
+  swipe up.
+
+A quick reconnect right after you return to the app from the background is treated as
+the same connection — it won't flash a misleading "connection changed".
 
 ## Multi-Endpoint Pairing: One QR for Every Network
 

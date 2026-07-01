@@ -1,5 +1,46 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-30 — Connection status: tier the surface by persistence, not severity
+
+**Why.** After the connections restructure, every reconnect/handoff/health blip
+rendered as the take-space `ConnectionStatusBanner` — it shoved the whole app down
+~50px, then snapped it back. Reconnects are the *most frequent* connection event, so
+the most frequent event was also the most disruptive. Worse, the intended "error →
+floating overlay" branch was **dead**: `buildGlobalConnectionStatus` only ever emits
+`Warning`/`Info` and handoffs only emit `Success`/`Info`, so `ConnectionStatusTone.Error`
+is never produced and *everything* routed through the take-space banner. The bottom
+`RelayStatusStrip` already carries steady-state (transport tier + route), so the top
+surface was partly redundant too.
+
+**What.** Re-tiered the connection-status surface by **persistence, not severity**
+(user decision: "lean on the bottom strip, float on failure"):
+- **`viewmodel/RelayUiState.kt`: `ConnectionStatusSurface { None, Float, Banner }` +
+  `ConnectionStatusSnapshot.presentationSurface()`.** `active` (in-flight
+  reconnect/checking) → `None`; `success` (reconnected / route switched) → `Float`;
+  sustained `Warning`/`Error` (no connection / no internet / API/relay unreachable) →
+  `Banner`. This maps 1:1 onto the existing handoff producers: "Reconnecting" /
+  "Connection interrupted" are `active` → strip; "Connection restored" / "Connected" /
+  "route changed" are `success` → float; the health-derived Warnings are sustained →
+  banner.
+- **`ui/components/RelayStatusStrip.kt`: `reconnecting` param + `ReconnectingCue`.** A
+  routine in-progress reconnect now shows *only* an amber, softly-pulsing
+  "Reconnecting…" cue in the always-visible bottom strip (replacing the route label,
+  which is in flux mid-reconnect) — **zero layout shift** for the common case. Pulse
+  is frame-throttled via `rememberAmbientPhase`.
+- **`ui/RelayApp.kt`:** the two existing render sites are re-routed off
+  `presentationSurface()` — take-space `ConnectionStatusBanner` fires only for
+  `Banner`, floating `ConnectionStatusToast` only for `Float`, and `None` lights the
+  strip via `connectionReconnecting` (computed off the raw status, not the
+  dismiss-gated toast, since the cue mirrors live state and isn't dismissible). No
+  component rewrites — both surfaces already existed; only the routing changed.
+
+Net: routine reconnect = a quiet strip cue, no shift; recovery = a brief self-dismissing
+float; a stuck/actionable problem = the honest take-space banner. The post-resume
+`suppressedTransientReconnect` silencing still applies (no handoff recorded → nothing
+anywhere for a benign resume).
+
+**Verification.** `:app:lintSideloadDebug` — _pending_ (running). On-device pass owner-driven.
+
 ## 2026-06-30 — Update discovery: app-facing relay route + About version readout
 
 **Why.** The update-discovery work (CLI + dashboard) shipped the same day, but the phone was the missing surface — the app could read the relay's version from `/health` yet had no signal that a newer relay *release* existed. The dashboard's check is dashboard-auth-gated, so the app needs its own route on the relay port.

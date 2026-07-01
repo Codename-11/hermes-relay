@@ -143,6 +143,41 @@ data class ConnectionStatusSnapshot(
     val updatedAtMs: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Which top-of-app chrome surface a [ConnectionStatusSnapshot] should occupy.
+ *
+ * Tiered by **persistence, not severity**, so the most frequent event — a routine
+ * reconnect — is the *least* disruptive:
+ *
+ * - [None] — an in-progress connect / reconnect / checking pass. Nothing renders
+ *   up top; the always-visible bottom
+ *   [com.hermesandroid.relay.ui.components.RelayStatusStrip] flips to a
+ *   "Reconnecting…" cue instead, so chat content never shifts for a routine
+ *   reconnect (the common case).
+ * - [Float] — a resolved, positive delta (reconnected, or switched route). A slim
+ *   top toast slides in *over* the content and self-dismisses — no layout shift.
+ * - [Banner] — a sustained problem the user should act on (no connection, no
+ *   internet, API/relay unreachable). A take-space banner honestly holds space
+ *   below the status bar until the condition clears or is dismissed.
+ *
+ * This replaces the earlier severity split (all non-error → take-space banner),
+ * which made every reconnect reshape the whole UI. See the Connections-UI
+ * decision in DEVLOG (2026-06-30).
+ */
+enum class ConnectionStatusSurface { None, Float, Banner }
+
+fun ConnectionStatusSnapshot.presentationSurface(): ConnectionStatusSurface = when {
+    // In-flight connect/reconnect/checking → the bottom strip carries it.
+    active -> ConnectionStatusSurface.None
+    // Recovered / route switched → brief, self-dismissing float.
+    success -> ConnectionStatusSurface.Float
+    // Sustained, actionable problem → persistent take-space banner.
+    tone == ConnectionStatusTone.Warning || tone == ConnectionStatusTone.Error ->
+        ConnectionStatusSurface.Banner
+    // Bare non-active info (rare) → float rather than reshape the layout.
+    else -> ConnectionStatusSurface.Float
+}
+
 fun ConnectionHandoffStatus.asConnectionStatusSnapshot(): ConnectionStatusSnapshot =
     ConnectionStatusSnapshot(
         title = title,
