@@ -66,6 +66,37 @@ object ServerAddress {
      * become a valid http(s) URL — text with spaces, control chars, no host —
      * returns a short, user-facing message.
      */
+    /**
+     * Advisory for a server address whose host is loopback / any-interface —
+     * `localhost`, `127.x.x.x`, `::1`, `0.0.0.0`. Such an address works in a
+     * browser *on the server* but can never reach the server from the phone,
+     * a recurring source of "Testing API connection" dead-ends. Accepts the
+     * same scheme-less input [parseUserInput] normalizes. Returns `null` for
+     * blank, unparseable, or non-loopback addresses. NEVER throws.
+     *
+     * Pure helper only — not yet surfaced anywhere; UI wiring is a follow-up.
+     */
+    fun loopbackHostWarning(raw: String): String? {
+        val trimmed = raw.trim().trimEnd('/')
+        if (trimmed.isEmpty()) return null
+        // Bare "::1" never parses without brackets — normalize it directly.
+        val host = parseUserInput(trimmed)?.host?.lowercase()
+            ?: trimmed.removePrefix("[").removeSuffix("]").lowercase().takeIf { it == "::1" }
+            ?: return null
+        val loopback = host == "localhost" || host == "::1" || host == "0.0.0.0" || isLoopbackIpv4(host)
+        return if (loopback) {
+            "On your phone, localhost points at the phone itself — use the server's LAN IP or Tailscale address."
+        } else {
+            null
+        }
+    }
+
+    private fun isLoopbackIpv4(host: String): Boolean {
+        val labels = host.split('.')
+        val parts = labels.mapNotNull { it.toIntOrNull() }
+        return labels.size == 4 && parts.size == 4 && parts[0] == 127
+    }
+
     fun fieldError(raw: String, fieldLabel: String): String? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
