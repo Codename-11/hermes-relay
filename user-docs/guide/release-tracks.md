@@ -76,7 +76,7 @@ Download the file ending in `-sideload-release.apk` from the latest GitHub Relea
 - **Google Play** updates automatically through the Play Store — you'll get new versions in the background like any other Play app.
 - **Sideload** checks GitHub for a newer release on app cold start (at most once every 6 hours) and shows a dismissable banner at the top of the app when you're behind. Tap **Update** → the sideload APK opens in your browser, Android's Downloads notification hands it to the system installer, done. No second app required, no new permissions. You can also trigger a manual check at **Settings → About → Updates**. If you prefer to subscribe to release notifications directly, click *Watch → Custom → Releases* on the [repo](https://github.com/Codename-11/hermes-relay).
 
-In both cases, the server-side plugin is updated independently with `git pull && bash install.sh` on whatever machine runs your Hermes agent — see the [installation guide](/guide/getting-started#install-the-server-plugin) for that flow.
+In both cases, the server-side plugin is updated independently on whatever machine runs your Hermes agent — re-run `hermes plugins install Codename-11/hermes-relay/plugin`, or run the `hermes-relay-update` shim if you used the legacy installer — see the [installation guide](/guide/getting-started#install-the-server-plugin) for that flow.
 
 ## Safety rails
 
