@@ -1,5 +1,29 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-06 — Upstream-impact guardrails: dashboard surface + session cleanup
+
+**Why.** The upstream-impact watch flagged two Relay-adjacent changes: `hermes serve`
+now represents the headless backend path while `hermes dashboard` remains the Manage/UI
+surface, and newer upstream session APIs expose safer server-side cleanup primitives.
+Relay needed concrete compatibility seams so Android and operators do not treat those
+surfaces interchangeably or delete sessions client-side without a server preview.
+
+**What.**
+- `hermes relay doctor` now probes the configured dashboard URL for both
+  `/api/status` and `/v1/capabilities`, classifies whether it is the dashboard/Manage
+  surface or an API-server/headless URL, and prints an actionable `hermes dashboard`
+  fix when it is not the Manage surface. It also probes `/api/sessions/prune` with
+  `HEAD` only so diagnostics can report server-backed cleanup support without ever
+  running a prune.
+- `DashboardApiClient` gained single-session export, soft archive/restore helpers, an
+  optional `archived` list filter, and `previewSessionPrune` / `pruneSessions` wrappers
+  around upstream `/api/sessions/prune`. The destructive apply requires a
+  caller-supplied preview and short-circuits when the preview matched nothing.
+- Session cleanup docs now record the export, archive, and prune contract; dashboard
+  docs call out `hermes dashboard` vs. headless `hermes serve`.
+
+**Verification.** `python -m unittest plugin.tests.test_doctor`; `ANDROID_HOME=$HOME/Android/Sdk ANDROID_SDK_ROOT=$HOME/Android/Sdk ./gradlew :app:testSideloadDebugUnitTest --tests com.hermesandroid.relay.network.upstream.DashboardApiClientTest`.
+
 ## 2026-07-01 — Realtime voice: live background-run chip (progress, phases, cancel)
 
 **Why.** With timer-driven spoken progress off by default (see the robustness batch

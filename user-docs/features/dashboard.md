@@ -24,6 +24,8 @@ Nothing. The dashboard plugin renders in your browser against the Hermes server 
 
 Open the hermes-agent dashboard in your browser (default: `http://localhost:<dashboard_port>`). The **Relay** tab sits between Skills and whatever you have next in your nav order — click it and you land on the four-tab shell.
 
+Use the real dashboard/Manage surface for this URL: start it with `hermes dashboard` and point Android's Dashboard URL at that service (default `:9119`). `hermes serve` is a headless backend/API command; it is useful for programmatic clients, but it does not serve the Manage UI that Android uses for Skills, Models, Keys, Profiles, voice auth, or dashboard plugins. `hermes relay doctor` warns when the Dashboard URL looks like an API-server/headless URL instead of the dashboard surface.
+
 The plugin's header shows the relay version, overall health (green / red dot), and an **Auto-refresh** toggle that persists to `localStorage`. Turn auto-refresh off if you're reading a specific activity row and don't want it to scroll out from under you.
 
 ## Android Manage Surface

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Server-backed session cleanup plumbing.** The dashboard client now supports single-session export, the upstream `/api/sessions/prune` route with a mandatory dry-run preview before destructive apply, plus soft archive/restore helpers and an `archived` session-list filter for the Manage surface.
 - **Voice settings: edit your server's voice engine.** Voice settings now has a **Server voice config** section that reads and writes the host's text-to-speech and speech-to-text settings — provider, voice, model, language, and per-provider options — over the dashboard, the same config the official desktop app edits. It includes an **ElevenLabs voice picker** that lists the voices available on your server's ElevenLabs key (and tells you when no key is set). Works on the no-plugin (Standard) path; sign in to Manage to use it.
 - **Desktop CLI: `hermes-relay audit`.** Shows what the remote agent has actually run on this machine through the desktop tools — tool, status, and a short detail per call — read from a local log, no network or auth. Answers "what did the agent just do?" at a glance.
 - **Desktop CLI: `hermes-relay relay`.** Inspect the relay server itself: `relay info` (version, uptime, sessions — on the relay host), `relay security` (runtime auth toggles), `relay context` (audit the system-prompt context the relay injects into the agent, which works from a remote machine with your session), and `relay queue` (list — or `--clear` / `--cancel <id>` — the messages your agent queued for an offline phone; on the relay host).
@@ -43,6 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Doctor catches dashboard URLs pointed at the wrong Hermes surface.** `hermes relay doctor` now distinguishes the dashboard/Manage surface from an API-server/headless backend URL and tells operators to use `hermes dashboard` when a configured dashboard URL is actually pointing at `hermes serve` / the API server.
 - **Back button on Manage and Bridge now works.** The back arrow on the Manage ("Hermes management") and Bridge screens did nothing — it tried to jump to Chat in a way that silently no-op'd. Back now reliably returns to the screen you opened it from.
 - **Dropped relay connections from a status-report race.** The phone's periodic device-status report could occasionally be sent to the relay *before* the connection had finished authenticating, which made the relay reject the whole connection and forced a reconnect. The app now holds every message until the connection is authenticated, so the handshake always completes first.
 - **Fewer needless connection re-checks when switching apps.** Returning to the app after a quick glance at another app no longer triggers a full connection re-probe (and the brief "checking…" flash) when the connection was already healthy — it only re-checks after a longer absence or if something actually looks off.
