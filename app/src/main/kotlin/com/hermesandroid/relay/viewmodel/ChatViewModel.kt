@@ -24,6 +24,9 @@ import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.HermesCardField
 import com.hermesandroid.relay.data.HermesCardInput
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -113,6 +116,26 @@ class ChatViewModel : ViewModel() {
      */
     private var activeStreamIsGateway = false
     private var intentionallyCancelled = false
+
+    /**
+     * Answer-recovery poller for a sessions-endpoint turn whose SSE transport
+     * died while the server kept running the turn (issue #166) — see
+     * [ChatStreamRecovery] and [startAnswerRecovery]. At most one per turn;
+     * null while idle.
+     */
+    private var streamRecovery: ChatStreamRecovery? = null
+
+    /** Test seam for the recovery poll cadence — production uses the defaults. */
+    internal var recoveryTimingOverride: ChatStreamRecovery.Timing? = null
+
+    private val _recoveringAnswer = MutableStateFlow(false)
+
+    /**
+     * True while [streamRecovery] polls for a dropped turn's answer — drives
+     * the "Reconnecting to your answer…" copy on the streaming placeholder.
+     */
+    val recoveringAnswer: StateFlow<Boolean> = _recoveringAnswer.asStateFlow()
+
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
     private var connectionSwitchJob: Job? = null
@@ -1677,6 +1700,7 @@ class ChatViewModel : ViewModel() {
                 intentionallyCancelled = true
                 activeStream?.cancel()
                 activeStream = null
+                cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
                 activeProfileContextKey = null
@@ -1736,6 +1760,7 @@ class ChatViewModel : ViewModel() {
             stream.cancel()
         }
         activeStream = null
+        cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
@@ -1945,9 +1970,10 @@ class ChatViewModel : ViewModel() {
         val client = apiClient ?: return
         val handler = chatHandler ?: return
 
-        // Cancel any in-flight stream
+        // Cancel any in-flight stream (and any answer-recovery poller)
         activeStream?.cancel()
         activeStream = null
+        cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         // Gateway transport: a new chat is a fresh DRAFT with NO session id.
@@ -2035,6 +2061,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         activeStream?.cancel()
         activeStream = null
+        cancelAnswerRecovery(settleUi = false)
         historyLoadGeneration.incrementAndGet()
         val slug = name.trim().lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(24)
         val chatId = "t-" + slug.ifBlank { "thread" } + "-" +
@@ -2097,10 +2124,12 @@ class ChatViewModel : ViewModel() {
         apiClient ?: return
         val handler = chatHandler ?: return
 
-        // Cancel any in-flight stream
+        // Cancel any in-flight stream (and any answer-recovery poller — the
+        // switched-to session must not receive the old turn's reconcile).
         intentionallyCancelled = true
         activeStream?.cancel()
         activeStream = null
+        cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
@@ -2802,6 +2831,150 @@ class ChatViewModel : ViewModel() {
             responseText = msg.content.trim().ifBlank { "Hermes finished responding." },
             toolCount = toolCount,
             durationSeconds = durationSeconds,
+        )
+    }
+
+    // === Dropped-stream answer recovery (issue #166) ===
+
+    /**
+     * Terminal side effects every successfully finished turn shares — the
+     * normal stream completion ([startStream]'s onCompleteCb) and a recovered
+     * dropped-stream turn ([startAnswerRecovery]) both end here, so recovery
+     * finalizes with exactly the completion semantics.
+     */
+    private fun finalizeTurnSideEffects(handler: ChatHandler, messageId: String) {
+        handler.onStreamComplete(messageId)
+        activeStream = null
+        _steerableTurn.value = false
+        _steerNotice.value = null
+        // Turn over — any blocked ask has been resolved server-side
+        // (answer, timeout, or interrupt). Timed cards self-collapse;
+        // an unanswered approval gets a neutral "Resolved" stamp so its
+        // buttons don't dead-end in "no longer active" notices.
+        clearPendingAsk(approvalStamp = "Resolved")
+
+        // Notify when the turn finished while the app is backgrounded —
+        // never for cancelled streams; errors end via onErrorCb instead.
+        maybeNotifyTurnComplete(handler, messageId)
+
+        // v0.4.1 polish: auto-return to Hermes-Relay if the bridge
+        // moved the foreground app during this run. No-op when the
+        // LLM already called `android_return_to_hermes` itself (in
+        // that case the tracker's internal flag was cleared by the
+        // /return_to_hermes dispatch's respond()). See BridgeRunTracker
+        // KDoc for the full contract.
+        com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
+    }
+
+    /**
+     * Stop any in-flight answer recovery. [settleUi] also finalizes the
+     * leftover streaming placeholder so an aborted recovery can't leave a
+     * bubble pulsing forever — callers that restyle the placeholder
+     * themselves ([cancelStream]'s Stopped-badge path, a normal completion's
+     * own onStreamComplete) pass false.
+     */
+    private fun cancelAnswerRecovery(settleUi: Boolean = true) {
+        val hadRecovery = streamRecovery != null
+        streamRecovery?.cancel()
+        streamRecovery = null
+        _recoveringAnswer.value = false
+        if (hadRecovery && settleUi) {
+            chatHandler?.let { handler ->
+                handler.messages.value.findLast { it.isStreaming }
+                    ?.let { handler.onStreamComplete(it.id) }
+            }
+        }
+    }
+
+    /**
+     * Issue #166: on slow-model / delegating-skill turns the phone's SSE
+     * socket dies (screen-off, Doze, Wi-Fi power-save) long before the server
+     * finishes — but upstream api_server keeps executing the run after the
+     * SSE writer dies and PERSISTS the final answer to the session store. So
+     * a sessions-endpoint transport error must not finalize the turn as an
+     * error: poll the session transcript (native upstream
+     * `/api/sessions/{id}/messages` — standard-path safe) until the answer
+     * lands, reconciling through the normal [ChatHandler.loadMessageHistory]
+     * path, then finish with the same side effects as a normal completion.
+     * On cap expiry or a run that never started, fall back to the existing
+     * error UI.
+     */
+    private fun startAnswerRecovery(
+        handler: ChatHandler,
+        sessionId: String,
+        pendingUserText: String,
+        placeholderMessageId: String,
+        cause: String,
+    ) {
+        cancelAnswerRecovery(settleUi = false)
+        _recoveringAnswer.value = true
+        handler.setTurnStatus("Reconnecting to your answer…")
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Api,
+            severity = DiagnosticSeverity.Warning,
+            title = "Chat stream dropped — recovering the answer in the background",
+            detail = cause,
+        )
+        val recovery = ChatStreamRecovery(
+            scope = viewModelScope,
+            fetchHistory = { loadSessionHistory(sessionId) },
+            timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
+        )
+        streamRecovery = recovery
+        recovery.start(
+            pendingUserText = pendingUserText,
+            onIntermediateHistory = { items ->
+                if (streamRecovery === recovery && handler.currentSessionId.value == sessionId) {
+                    // Progressive recovery: surface already-persisted rows as
+                    // they appear. The reload drops the (never-persisted)
+                    // streaming placeholder, so re-add one — with a stable id —
+                    // to keep the reconnecting indicator alive until the
+                    // answer lands.
+                    handler.loadMessageHistory(items)
+                    handler.addPlaceholderMessage(
+                        ChatMessage(
+                            id = "recovering-$placeholderMessageId",
+                            role = MessageRole.ASSISTANT,
+                            content = "",
+                            timestamp = System.currentTimeMillis(),
+                            isStreaming = true,
+                            agentName = handler.activeAgentName,
+                        )
+                    )
+                }
+            },
+            onRecovered = { items ->
+                if (streamRecovery === recovery) {
+                    streamRecovery = null
+                    _recoveringAnswer.value = false
+                    if (handler.currentSessionId.value == sessionId) {
+                        // Server-authoritative reconcile — replaces the
+                        // placeholder with the recovered answer (the same
+                        // reload path a normal sessions completion uses).
+                        handler.loadMessageHistory(items)
+                    }
+                    finalizeTurnSideEffects(handler, placeholderMessageId)
+                    refreshSessions()
+                    scheduleTitleReconcile(sessionId)
+                    drainQueue()
+                }
+            },
+            onGaveUp = { reason ->
+                if (streamRecovery === recovery) {
+                    streamRecovery = null
+                    _recoveringAnswer.value = false
+                    val message = when (reason) {
+                        ChatStreamRecovery.GiveUpReason.RUN_NOT_FOUND ->
+                            "Connection dropped before the server received this message — please resend."
+                        ChatStreamRecovery.GiveUpReason.TIMED_OUT ->
+                            "Lost the connection mid-reply and the answer never arrived — check the server and try again."
+                    }
+                    AppAnalytics.onStreamError()
+                    handler.onStreamError(message)
+                    emitError(Exception(message), context = "send_message")
+                    _queuedMessages.value = emptyList()
+                }
+            },
         )
     }
 
@@ -3530,6 +3703,12 @@ class ChatViewModel : ViewModel() {
         // fallback when no profile metadata is available.
         handler.activeAgentName = currentAgentDisplayName()
 
+        // A new send always aborts any in-flight dropped-stream answer
+        // recovery — exactly one poller per turn (issue #166). settleUi
+        // finalizes the previous turn's leftover streaming placeholder so it
+        // can't pulse forever next to this turn's fresh one.
+        cancelAnswerRecovery()
+
         // A new turn is starting: clear any leftover cancellation flag so a
         // stale `true` from a PRIOR cancelled turn (the flag is sticky — a
         // clean gateway cancel never fires onError to consume it) can't make
@@ -3543,6 +3722,12 @@ class ChatViewModel : ViewModel() {
         // Track the current message ID — starts with our generated ID,
         // but updates when the server sends message.started with its own ID.
         var currentMessageId = assistantMessageId
+
+        // The SSE endpoint this turn actually dispatched on (null on a gateway
+        // dispatch) — set by dispatchSse below. onErrorCb keys the dropped-
+        // stream answer recovery (issue #166) on "sessions": the other
+        // endpoints keep their existing error behavior.
+        var dispatchedSseEndpoint: String? = null
 
         // Show placeholder "thinking" message immediately — filled when first delta arrives
         handler.addPlaceholderMessage(
@@ -3595,28 +3780,13 @@ class ChatViewModel : ViewModel() {
             handler.onTurnComplete(currentMessageId)
         }
         val onCompleteCb = {
-            handler.onStreamComplete(currentMessageId)
+            // Double-finalize guard: if a straggler completion arrives while
+            // the answer-recovery poller is running, the normal completion
+            // wins — stop the poller before finalizing so the turn can't
+            // finish twice.
+            cancelAnswerRecovery(settleUi = false)
+            finalizeTurnSideEffects(handler, currentMessageId)
             AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
-            activeStream = null
-            _steerableTurn.value = false
-            _steerNotice.value = null
-            // Turn over — any blocked ask has been resolved server-side
-            // (answer, timeout, or interrupt). Timed cards self-collapse;
-            // an unanswered approval gets a neutral "Resolved" stamp so its
-            // buttons don't dead-end in "no longer active" notices.
-            clearPendingAsk(approvalStamp = "Resolved")
-
-            // Notify when the turn finished while the app is backgrounded —
-            // never for cancelled streams; errors end via onErrorCb instead.
-            maybeNotifyTurnComplete(handler, currentMessageId)
-
-            // v0.4.1 polish: auto-return to Hermes-Relay if the bridge
-            // moved the foreground app during this run. No-op when the
-            // LLM already called `android_return_to_hermes` itself (in
-            // that case the tracker's internal flag was cleared by the
-            // /return_to_hermes dispatch's respond()). See BridgeRunTracker
-            // KDoc for the full contract.
-            com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
 
             // Command catalog rides the now-live socket after the first real
             // gateway turn — never a cold /api/ws open at composition.
@@ -3715,6 +3885,7 @@ class ChatViewModel : ViewModel() {
             }
         }
         val onErrorCb = { errorMsg: String ->
+            val errorSessionId = handler.currentSessionId.value
             if (intentionallyCancelled) {
                 intentionallyCancelled = false
                 // Cancellation (user Stop / session switch): suppress the
@@ -3723,6 +3894,33 @@ class ChatViewModel : ViewModel() {
                 // button if a cancel and a transport error race.
                 handler.messages.value.findLast { it.isStreaming }
                     ?.let { handler.onStreamComplete(it.id) }
+                activeStream = null
+                _queuedMessages.value = emptyList()
+                _steerableTurn.value = false
+                _steerNotice.value = null
+                clearPendingAsk(approvalStamp = "deny")
+            } else if (
+                dispatchedSseEndpoint == "sessions" &&
+                errorSessionId != null &&
+                HermesApiClient.isTransportStreamError(errorMsg)
+            ) {
+                // Issue #166: a transport drop on the sessions endpoint does
+                // NOT mean the turn failed — upstream api_server keeps running
+                // it and persists the final answer. Don't finalize as an
+                // error; recover the answer by polling the transcript. The
+                // send queue is deliberately KEPT: a successful recovery
+                // drains it exactly like a normal completion; give-up flushes
+                // it in the error fallback.
+                startAnswerRecovery(
+                    handler = handler,
+                    sessionId = errorSessionId,
+                    pendingUserText = message,
+                    placeholderMessageId = currentMessageId,
+                    cause = errorMsg,
+                )
+                activeStream = null
+                _steerableTurn.value = false
+                _steerNotice.value = null
             } else {
                 AppAnalytics.onStreamError()
                 handler.onStreamError(errorMsg)
@@ -3735,24 +3933,25 @@ class ChatViewModel : ViewModel() {
                 // switch, watchdog timeout) AFTER the server already finished it
                 // — reload history so the completed answer still surfaces
                 // instead of stranding the turn on its partial/errored state.
-                val sid = handler.currentSessionId.value
-                if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
+                if (errorSessionId != null &&
+                    (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")
+                ) {
                     viewModelScope.launch {
                         runCatching {
                             // Profile-aware read — see onCompleteCb: a bare
                             // getMessages 404s for a non-default-profile session
                             // and silently empties the transcript.
-                            val serverMessages = loadSessionHistory(sid)
+                            val serverMessages = loadSessionHistory(errorSessionId)
                             handler.loadMessageHistory(serverMessages)
                         }
                     }
                 }
+                activeStream = null
+                _queuedMessages.value = emptyList()
+                _steerableTurn.value = false
+                _steerNotice.value = null
+                clearPendingAsk(approvalStamp = "deny")
             }
-            activeStream = null
-            _queuedMessages.value = emptyList()
-            _steerableTurn.value = false
-            _steerNotice.value = null
-            clearPendingAsk(approvalStamp = "deny")
         }
 
         // === v0.4.1 voice-intent + v0.7.x card-dispatch session sync ===
@@ -3843,6 +4042,7 @@ class ChatViewModel : ViewModel() {
         // branch's per-turn fallback (gateway unreachable / not the resolved
         // transport). Warns once per dispatch about any attachment it can't carry.
         fun dispatchSse(endpoint: String): ActiveTurnHandle {
+            dispatchedSseEndpoint = endpoint
             warnIfAttachmentsDropped(endpoint)
             return when (endpoint) {
             "runs" -> client.sendRunStream(
@@ -4098,6 +4298,10 @@ class ChatViewModel : ViewModel() {
 
     fun cancelStream() {
         intentionallyCancelled = true
+        // User Stop also aborts a dropped-stream answer recovery. settleUi
+        // false: the Stopped-badge block below finalizes the placeholder
+        // itself (completing it here first would hide it from findLast).
+        cancelAnswerRecovery(settleUi = false)
         activeStream?.cancel()
         activeStream = null
         _queuedMessages.value = emptyList()
@@ -4633,6 +4837,10 @@ class ChatViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         activeStream?.cancel()
+        // viewModelScope teardown already cancels the poller job; this just
+        // drops the reference symmetrically.
+        streamRecovery?.cancel()
+        streamRecovery = null
     }
 
     private fun appendRealtimeThinkingStatus(

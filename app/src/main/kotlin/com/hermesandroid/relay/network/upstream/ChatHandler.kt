@@ -2644,6 +2644,9 @@ class ChatHandler {
 
     fun onStreamError(message: String) {
         _isStreaming.value = false
+        // The turn is over — a stale lifecycle/recovery caption must not
+        // outlive it (onStreamComplete clears the same way).
+        _turnStatus.value = null
         _error.value = message
         // Clear streaming flag on any actively streaming message
         _messages.update { messages ->

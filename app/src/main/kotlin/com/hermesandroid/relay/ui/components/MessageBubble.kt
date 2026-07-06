@@ -121,6 +121,14 @@ fun MessageBubble(
      * conversation). Null hides the entry.
      */
     onEditMessage: ((ChatMessage) -> Unit)? = null,
+    /**
+     * True while the ViewModel is recovering a dropped stream's answer by
+     * polling the session transcript (issue #166) — the streaming
+     * placeholder's slow-turn label reads "Reconnecting to your answer…"
+     * instead of "Still working…" so the wait is honest about what's
+     * happening.
+     */
+    recoveringAnswer: Boolean = false,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -499,10 +507,17 @@ fun MessageBubble(
                                 modifier = Modifier.padding(top = 4.dp),
                             )
                         }
-                        if (showStillWorking && awaitingFirstToken) {
+                        // During dropped-stream answer recovery the label shows
+                        // immediately (the 4s escalation is for a slow first
+                        // token; a recovery is already known to be slow).
+                        if ((showStillWorking || recoveringAnswer) && awaitingFirstToken) {
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Still working…",
+                                text = if (recoveringAnswer) {
+                                    "Reconnecting to your answer…"
+                                } else {
+                                    "Still working…"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = textColor.copy(alpha = 0.6f),
                                 modifier = Modifier.padding(top = 4.dp),

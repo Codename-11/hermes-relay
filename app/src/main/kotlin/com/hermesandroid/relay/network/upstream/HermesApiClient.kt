@@ -178,6 +178,32 @@ class HermesApiClient(
     companion object {
         private const val TAG = "HermesApiClient"
         private val JSON_MEDIA = "application/json".toMediaType()
+
+        /**
+         * Prefix stamped by [streamFailureMessage] on stream failures raised
+         * by the transport layer (the IOException family: socket reset/close,
+         * DNS, TLS, timeouts) as opposed to a server-reported error. The
+         * dropped-stream answer recovery (issue #166) keys on it via
+         * [isTransportStreamError].
+         */
+        const val TRANSPORT_ERROR_PREFIX = "Connection failed"
+
+        /**
+         * True when a stream `onError` message came from a transport-layer
+         * failure (see [TRANSPORT_ERROR_PREFIX]) — the class of error where
+         * the server may still be running (and persisting) the turn.
+         */
+        fun isTransportStreamError(errorMsg: String): Boolean =
+            errorMsg.startsWith(TRANSPORT_ERROR_PREFIX)
+
+        /** Shared human-readable message for an SSE [EventSourceListener.onFailure]. */
+        private fun streamFailureMessage(t: Throwable?, response: Response?): String = when {
+            response != null && !response.isSuccessful ->
+                "API error ${response.code}: ${response.message}"
+            t is IOException -> "$TRANSPORT_ERROR_PREFIX: ${t.message}"
+            t != null -> "Stream error: ${t.message}"
+            else -> "Unknown stream error"
+        }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -762,13 +788,7 @@ class HermesApiClient(
             ) {
                 tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
-                    val msg = when {
-                        response != null && !response.isSuccessful ->
-                            "API error ${response.code}: ${response.message}"
-                        t is IOException -> "Connection failed: ${t.message}"
-                        t != null -> "Stream error: ${t.message}"
-                        else -> "Unknown stream error"
-                    }
+                    val msg = streamFailureMessage(t, response)
                     mainHandler.post { onError(msg) }
                 }
             }
@@ -904,13 +924,7 @@ class HermesApiClient(
             ) {
                 tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
-                    val msg = when {
-                        response != null && !response.isSuccessful ->
-                            "API error ${response.code}: ${response.message}"
-                        t is IOException -> "Connection failed: ${t.message}"
-                        t != null -> "Stream error: ${t.message}"
-                        else -> "Unknown stream error"
-                    }
+                    val msg = streamFailureMessage(t, response)
                     mainHandler.post { onError(msg) }
                 }
             }
@@ -1203,13 +1217,7 @@ class HermesApiClient(
             ) {
                 tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
-                    val msg = when {
-                        response != null && !response.isSuccessful ->
-                            "API error ${response.code}: ${response.message}"
-                        t is IOException -> "Connection failed: ${t.message}"
-                        t != null -> "Stream error: ${t.message}"
-                        else -> "Unknown stream error"
-                    }
+                    val msg = streamFailureMessage(t, response)
                     mainHandler.post { onError(msg) }
                 }
             }
