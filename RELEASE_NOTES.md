@@ -9,14 +9,9 @@ v1.2.6 is recommended for everyone.
 
 ## Download
 
-v1.2.6 ships in two Android build flavors. APK and AAB filenames are version-tagged:
+**Installing on your phone?** Download **`hermes-relay-1.2.6-sideload-release.apk`** and tap it — that's the direct-install build with the full feature set (installs as `com.axiomlabs.hermesrelay.sideload`). Prefer the conservative build (no Device Control surface)? Get it from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
-| Flavor | File | Who it's for |
-|---|---|---|
-| Google Play | `hermes-relay-1.2.6-googlePlay-release.aab` | Upload this Android App Bundle to Play Console. It has no AccessibilityService, screen reading, screenshots, gestures, SMS/calls, contacts/location, overlays, or unattended phone control. |
-| sideload | `hermes-relay-1.2.6-sideload-release.apk` | Direct-install APK for full Device Control. Installs as `com.axiomlabs.hermesrelay.sideload`. |
-| googlePlay APK | `hermes-relay-1.2.6-googlePlay-release.apk` | Parity/testing artifact. |
-| sideload AAB | `hermes-relay-1.2.6-sideload-release.aab` | Parity/testing artifact. |
+The other file, `hermes-relay-1.2.6-googlePlay-release.aab`, is an Android App Bundle for uploading to Play Console — it **cannot** be installed by tapping it on a phone.
 
 Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 

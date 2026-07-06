@@ -403,12 +403,25 @@ the new app version and a higher `appVersionCode`.
 - `RELEASE_NOTES.md` — body of the GitHub Release for this version
   (rewritten each release; the workflow uses this as-is). This is the
   operator-facing summary, not the CHANGELOG mirror. Keep the
-  **Download** section near the top — it should spell out which file
-  to grab by its `-sideload-release.apk` / `-googlePlay-release.aab`
-  suffix (every artifact is version-tagged as
+  **Download** section near the top, in the required format (#144):
+  1. A lead callout naming the **one file most people want** —
+     "Installing on your phone? Download
+     `hermes-relay-<version>-sideload-release.apk` and tap it"
+     (full feature set), with the Play Store link for the
+     conservative build.
+  2. One explicit line that the `.aab` is a Play Console upload
+     bundle and **cannot** be installed by tapping it on a phone.
+  3. The `SHA256SUMS.txt` verify line + sideload-guide link.
+  No download table, no parity/testing artifacts: releases attach
+  exactly **two** app artifacts — the sideload APK and the googlePlay
+  AAB — plus `SHA256SUMS.txt` covering exactly those two (the 2-asset
+  policy in `.github/workflows/release-android.yml`; the parity twins
+  stay reproducible from the tag via CI but are not attached).
+  Every artifact is version-tagged as
   `hermes-relay-<version>-<flavor>-<buildType>` via `archivesName`
-  in `app/build.gradle.kts`) and link to the sideload guide.
-  The v0.3.0 body is a good template.
+  in `app/build.gradle.kts`. Never rename the sideload APK — the
+  in-app update checker matches assets by `.apk` + `sideload` in the
+  name, and user-docs verify steps cite the filename.
 - `app/src/main/assets/whats_new.txt` — in-app "What's New" content
   shown in the settings/about screen. Update with the version number
   and a brief feature summary. Gets stale silently if forgotten
