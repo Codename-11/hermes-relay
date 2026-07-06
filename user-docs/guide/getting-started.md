@@ -46,6 +46,8 @@ operate your phone for you. The [Release tracks](/guide/release-tracks) page has
 the full feature comparison and a decision guide.
 :::
 
+### Sideload APK {#sideload-apk}
+
 ::::details Sideload install — step by step (download, verify, install)
 Grab the signed APK directly from GitHub Releases — works on any Android 8.0+
 device.
@@ -271,7 +273,7 @@ On first launch:
 
 1. Tap through the onboarding pages.
 2. On **Connect**, pick whichever is easiest:
-   - **Vanilla Hermes** → tap **Scan for Hermes on LAN** to auto-find the
+   - **Hermes** → tap **Scan for Hermes on LAN** to auto-find the
      server, then enter your key; or type the API URL
      (`http://192.168.1.100:8642`) and key by hand.
    - **Scan setup QR** → scan a QR containing your URL and key. There's no
@@ -323,11 +325,13 @@ API server is reachable. If the dot is red:
 More: [Troubleshooting](/guide/troubleshooting) · [Chat guide](/guide/chat) ·
 [Connections](/features/connections).
 
-## 4. Optional — add Relay power tools
+## 4. Optional — add Relay power tools {#relay-server-optional}
 
 Skip this unless you want **Terminal**, **Bridge** device control, **Relay
 sessions**, channel grants, or relay-backed device-control features. Chat, voice,
 and Manage all work without it.
+
+### Install the server plugin {#install-the-server-plugin}
 
 ::::details Install the Relay plugin + pair
 On the Hermes host:
@@ -447,7 +451,7 @@ back to API-server SSE when it is not.
 ::: details Manual connection setup (no QR)
 **During onboarding:**
 
-1. On the **Connect** page, tap **Vanilla Hermes**.
+1. On the **Connect** page, tap **Hermes**.
 2. Type your API server URL — e.g. `http://192.168.1.100:8642` — scan for Hermes
    on LAN, or scan a generic QR containing the API URL/key.
 3. Enter the value you set in `API_SERVER_KEY` if the QR didn't include it.

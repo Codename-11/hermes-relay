@@ -311,7 +311,7 @@ docker build -t hermes-relay relay_server/ && docker run -d --network host --nam
 ln -s "$PWD/plugin" ~/.hermes/plugins/hermes-relay
 ```
 
-Then restart hermes and run `hermes pair` to verify. The 18 `android_*` and 9 `desktop_*` tools register regardless of hermes-agent version. See [docs/relay-server.md](docs/relay-server.md) for TLS, systemd, and full setup.
+Then restart hermes and run `hermes pair` to verify. The 35 `android_*` and 25 `desktop_*` tools register regardless of hermes-agent version. See [docs/relay-server.md](docs/relay-server.md) for TLS, systemd, and full setup.
 
 </details>
 

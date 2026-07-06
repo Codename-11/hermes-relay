@@ -244,7 +244,7 @@ The 30-second router ceiling fired. The handler is stuck — usually because `de
 
 ## `certificate pin mismatch` (wss only)
 
-The TLS peer cert SHA256 differs from the one stored at pair time. Either the relay rotated its cert, or someone is MITMing the connection.
+The SHA256 pin of the TLS leaf certificate's public key (SPKI, stored as `sha256/<base64>` — the same format as the Android app's pin store) differs from the one recorded at pair time. Either the relay rotated its cert, or someone is MITMing the connection.
 
 Legitimate rotation: re-pair (which wipes the old pin + stores the new one):
 ```bash

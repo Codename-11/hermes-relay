@@ -20,7 +20,7 @@ Ask your agent — from your phone, from the attached TUI, from anywhere — to 
 
 This mirrors how the Android client hands the agent `android_tap` / `android_screenshot`. Zero hermes-agent core changes — the `desktop_*` tools register via the standard plugin system, same pattern as `android_*`. Run `hermes-relay daemon` and the hand stays available with no window open.
 
-## Demo — native paste into the attached TUI
+## Demo — native paste into the attached TUI {#demo-native-paste-into-the-attached-tui}
 
 The escape hatch earns its keep too. You are inside `hermes-relay` (bare invocation drops you straight into the Hermes Ink TUI over a PTY — no subcommand needed), talking to your remote Hermes the same way you would a local one.
 
@@ -73,7 +73,7 @@ While inside the shell/TUI session (bare `hermes-relay`, the default mode), `Ctr
 - **[Workspace awareness](./subcommands.md#hermes-relay-workspace)** — on connect, the client advertises `cwd`, `git_root`, `git_branch`, `repo_name`, `hostname`, `platform`, `active_shell` to the relay so the agent knows which repo you're in. Client-side capability shipped in alpha.6; server-side prompt-context consumption is on the way (see [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental)).
 - **[Conversation picker](./subcommands.md#hermes-relay-shell)** — on first or fresh attach, choose from recent server-side Hermes conversations with first-prompt previews before the TUI starts.
 - **[TUI session continuity](./subcommands.md#hermes-relay-sessions)** — bare `hermes-relay` resumes the active/default tmux session, replays recent scrollback, and `sessions list/resume/new/kill` gives explicit control when you need it.
-- **[Editor tool + interactive patch approval](./tools.md#desktop_open_in_editor-and-interactive-patches)** — agent calls `desktop_open_in_editor(path, line, col)` to open `$VISUAL` / `$EDITOR` / VSCode / Cursor / Sublime / nvim. Agent-proposed patches render as colored unified diffs with `y`/`n`/`e`/`r` prompts.
+- **[Editor tool + interactive patch approval](./tools.md#desktop-open-in-editor-and-interactive-patches)** — agent calls `desktop_open_in_editor(path, line, col)` to open `$VISUAL` / `$EDITOR` / VSCode / Cursor / Sublime / nvim. Agent-proposed patches render as colored unified diffs with `y`/`n`/`e`/`r` prompts.
 - **[Daemon mode](./subcommands.md#hermes-relay-daemon)** — `hermes-relay daemon start` runs the tool router headless **in the background** (no console window, survives closing the terminal); `daemon status` / `daemon stop` manage it. Bare `hermes-relay daemon` runs in the foreground.
 - **[Activity audit](./subcommands.md#hermes-relay-audit)** — `hermes-relay audit` shows what the agent has actually run on your machine through the desktop tools, from a local log — no network, no auth.
 - **[Relay inspection](./subcommands.md#hermes-relay-relay)** — `hermes-relay relay context` audits the system-prompt context the relay injects into the agent; `relay info` / `relay security` report server state for operators on the relay host.
