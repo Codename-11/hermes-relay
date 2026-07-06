@@ -12,8 +12,8 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from plugin.voice_lab.auth import load_voice_lab_env_file
-from plugin.voice_lab.providers.base import ProviderRunError, ProviderUnavailable
+from ....voice_lab.auth import load_voice_lab_env_file
+from ....voice_lab.providers.base import ProviderRunError, ProviderUnavailable
 
 from ..models import (
     ProviderEvent,

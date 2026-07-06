@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from plugin.voice_lab.auth import load_voice_lab_env_file
+from ..voice_lab.auth import load_voice_lab_env_file
 
 OPTION_FETCH_TIMEOUT_SECONDS = 5.0
 DEFAULT_CACHE_TTL_SECONDS = 600
