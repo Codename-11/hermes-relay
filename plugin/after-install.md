@@ -36,6 +36,13 @@ relay voice, desktop tooling, and remote access:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
+**Official Docker image:** on `nousresearch/hermes-agent` the native
+`hermes plugins install` path above is the only supported one. The image is
+immutable (`/opt/hermes/.venv`, no git clone, no user systemd), so
+`install.sh`'s editable-install/systemd path is not applicable there — the
+installer detects that layout and steers back to the native path. Start the
+relay inside the container with `hermes relay start`.
+
 The optional legacy compatibility hook is managed separately:
 
 ```bash
