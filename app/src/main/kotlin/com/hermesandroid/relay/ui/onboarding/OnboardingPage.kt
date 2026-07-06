@@ -5,6 +5,7 @@ import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -69,66 +72,80 @@ fun OnboardingPage(
         }
     )
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .widthIn(max = 560.dp)
-            .padding(horizontal = 24.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(232.dp)
-                .gradientBorder(shape = heroShape, isDarkTheme = isDarkTheme),
-            shape = heroShape,
-            colors = CardDefaults.cardColors(
-                containerColor = if (transparentHero) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer
-            )
-        ) {
-            val heroModifier = Modifier
-                .fillMaxWidth()
-                .height(232.dp)
-            Box(
-                modifier = if (transparentHero) heroModifier else heroModifier.background(heroBrush),
-                contentAlignment = Alignment.Center
-            ) {
-                heroContent()
-            }
+    // Short viewports (small phones, large font scale, split screen) shrink or
+    // drop the hero so the body text fits; the vertical scroll below is the
+    // safety net when even that isn't enough. The enclosing pager Box centers
+    // short content, so no Arrangement.Center here — it conflicts with
+    // verticalScroll when content overflows.
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val heroHeight = when {
+            maxHeight < 480.dp -> 0.dp
+            maxHeight < 620.dp -> 160.dp
+            else -> 232.dp
         }
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        Card(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .gradientBorder(shape = bodyShape, isDarkTheme = isDarkTheme),
-            shape = bodyShape,
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+                .widthIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+            if (heroHeight > 0.dp) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(heroHeight)
+                        .gradientBorder(shape = heroShape, isDarkTheme = isDarkTheme),
+                    shape = heroShape,
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (transparentHero) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer
+                    )
+                ) {
+                    val heroModifier = Modifier
+                        .fillMaxWidth()
+                        .height(heroHeight)
+                    Box(
+                        modifier = if (transparentHero) heroModifier else heroModifier.background(heroBrush),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        heroContent()
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(shape = bodyShape, isDarkTheme = isDarkTheme),
+                shape = bodyShape,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
             ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Column(
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 22.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.headlineMedium,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
 
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyLarge,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                content()
+                    content()
+                }
             }
         }
     }
