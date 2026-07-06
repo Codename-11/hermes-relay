@@ -15,6 +15,7 @@ import android.os.HandlerThread
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -114,8 +115,27 @@ class ScreenCapture(
          */
         private const val MAX_IMAGES = 2
 
-        /** Capture timeout — if no frame arrives in this window, fail loudly. */
-        private const val CAPTURE_TIMEOUT_MS = 2_500L
+        /**
+         * Capture timeout — if no frame arrives in this window, fail loudly.
+         *
+         * BOOX / e-ink devices can take several seconds before a
+         * VirtualDisplay-backed ImageReader emits its first frame, especially
+         * after a fresh MediaProjection grant or when the display is idle. Keep
+         * the default generous enough for those devices while still bounded so
+         * a dead capture pipeline reports a clear error.
+         */
+        private const val DEFAULT_CAPTURE_TIMEOUT_MS = 10_000L
+
+        /** Optional JVM/system-property override for local QA and OEM tuning. */
+        private const val CAPTURE_TIMEOUT_PROPERTY =
+            "hermes.relay.screen_capture_timeout_ms"
+
+        private const val MIN_CAPTURE_TIMEOUT_MS = 2_500L
+        private const val MAX_CAPTURE_TIMEOUT_MS = 30_000L
+
+        /** One retry covers stale VirtualDisplay/ImageReader pipelines. */
+        private const val MAX_CAPTURE_ATTEMPTS = 2
+        private const val CAPTURE_RETRY_DELAY_MS = 350L
     }
 
     // === PHASE3-bridge-ui-followup: MediaProjection reuse fix ===
@@ -211,7 +231,27 @@ class ScreenCapture(
         // mutex keeps us honest if anything ever parallelizes.
         val pngBytes = try {
             captureMutex.withLock {
-                captureFrame(projection)
+                var lastTimeout: CaptureTimeoutException? = null
+                for (attempt in 1..MAX_CAPTURE_ATTEMPTS) {
+                    try {
+                        return@withLock captureFrame(projection)
+                    } catch (e: CaptureTimeoutException) {
+                        lastTimeout = e
+                        Log.w(
+                            TAG,
+                            "screen capture timed out on attempt " +
+                                "$attempt/$MAX_CAPTURE_ATTEMPTS: ${e.message}"
+                        )
+                        if (attempt < MAX_CAPTURE_ATTEMPTS) {
+                            // A timeout can leave an OEM VirtualDisplay path
+                            // wedged without invalidating the MediaProjection
+                            // grant. Rebuild our pipeline once before giving up.
+                            releaseCache()
+                            delay(CAPTURE_RETRY_DELAY_MS)
+                        }
+                    }
+                }
+                throw lastTimeout ?: IOException("screen capture timed out")
             }
         } catch (e: Exception) {
             Log.w(TAG, "captureFrame failed: ${e.message}")
@@ -286,15 +326,27 @@ class ScreenCapture(
         }
 
         return try {
-            kotlinx.coroutines.withTimeout(CAPTURE_TIMEOUT_MS) { deferred.await() }
+            val timeoutMs = captureTimeoutMs()
+            kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             pendingCaptureRef.compareAndSet(deferred, null)
-            throw IOException("screen capture timed out")
+            throw CaptureTimeoutException(
+                "screen capture timed out after ${captureTimeoutMs()}ms"
+            )
         } catch (t: Throwable) {
             pendingCaptureRef.compareAndSet(deferred, null)
             throw t
         }
     }
+
+    private fun captureTimeoutMs(): Long {
+        val configured = System.getProperty(CAPTURE_TIMEOUT_PROPERTY)
+            ?.toLongOrNull()
+            ?.coerceIn(MIN_CAPTURE_TIMEOUT_MS, MAX_CAPTURE_TIMEOUT_MS)
+        return configured ?: DEFAULT_CAPTURE_TIMEOUT_MS
+    }
+
+    private class CaptureTimeoutException(message: String) : IOException(message)
 
     /**
      * Build (or reuse) the cached VirtualDisplay + ImageReader + HandlerThread
@@ -489,7 +541,7 @@ class ScreenCapture(
             fastClient.newCall(request).execute().use { response ->
                 when (response.code) {
                     200 -> {
-                        val raw = response.body?.string().orEmpty()
+                        val raw = response.body.string()
                         val token = extractToken(raw)
                         if (token.isNullOrBlank()) {
                             Result.failure(

@@ -1,5 +1,16 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-06 — Multi-device Android bridge targeting
+
+**Why.** The relay bridge previously behaved like a single active Android client. When a phone and tablet were both paired, the most recent bridge connection displaced the other, so host-side `android_*` tools could not reliably target a specific device.
+
+**What.**
+- **Bridge registry.** Replaced the single bridge WebSocket slot with a connected-device registry keyed by device ID. Responses are scoped to the command's target socket so a different device cannot satisfy the request ID.
+- **Selectors.** Added aliases and explicit selectors for phone/fold/pixel and tablet/BOOX-style devices, plus `/bridge/devices`, `/bridge/status?device=...`, and `/bridge/select-active` loopback routes.
+- **Tool schemas.** Added an optional `device` selector to bridge-backed `android_*` tool schemas. The tool handler stores the selector in a call-scoped context so nested `android_macro` steps inherit the top-level target unless a step overrides it.
+
+**Verification.** Focused plugin tests pass: `python -m unittest plugin.tests.test_android_tool_device_selector plugin.tests.test_bridge_multidevice plugin.tests.test_bridge_channel plugin.tests.test_bridge_status plugin.tests.test_bridge_activity` → 39 tests OK. Live relay smoke confirmed two Android bridge clients connected simultaneously, explicit selectors for each returned distinct foreground packages, and `/bridge/select-active` switched the default target both ways. Standard Android Settings screens returned non-empty accessibility trees on both devices. Screenshot checks remain permission-gated: devices without a current MediaProjection grant still need the in-app/user-consent flow, while the e-ink timeout path is hardened with a longer configurable wait and one capture-pipeline rebuild retry.
+
 ## 2026-07-01 — Realtime voice: live background-run chip (progress, phases, cancel)
 
 **Why.** With timer-driven spoken progress off by default (see the robustness batch
@@ -503,6 +514,16 @@ resume copy, the tabbed flow) is owner-driven from Android Studio.
 - **Code blocks.** Streaming fence rebuilt Discord-style: a contrasting inset surface with a thin header (language label + copy-to-clipboard affordance that flips to a check) over a horizontally-scrollable monospace body. Markdown code/inline-code backgrounds switched to contrasting container steps (`surfaceContainerLowest` / `surfaceContainerHighest`) so code no longer blends into the surfaceVariant assistant bubble.
 
 **Verification.** Host-side Roborazzi (`StoreScreenshotTest`): added `s09_blend_chat` (Hermes dark + Nous-blue light) and `s10_font_picker`. Renders confirm the avatar/grouping/width/density, the code-block + inline-code contrast in both dark and light, and that Inter and Nunito load as visibly distinct faces in the picker. `./gradlew :app:lint` run clean. On-device typeface crispness and feel (avatar size, width, density on a real device) remain a maintainer gate.
+## 2026-07-06 — Multi-device Android bridge targeting
+
+**Why.** The relay bridge previously behaved like a single active Android client. When a phone and tablet were both paired, the most recent bridge connection displaced the other, so host-side `android_*` tools could not reliably target a specific device.
+
+**What.**
+- **Bridge registry.** Replaced the single bridge WebSocket slot with a connected-device registry keyed by device ID. Responses are scoped to the command's target socket so a different device cannot satisfy the request ID.
+- **Selectors.** Added aliases and explicit selectors for phone/fold/pixel and tablet/BOOX-style devices, plus `/bridge/devices`, `/bridge/status?device=...`, and `/bridge/select-active` loopback routes.
+- **Tool schemas.** Added an optional `device` selector to bridge-backed `android_*` tool schemas. The tool handler stores the selector in a call-scoped context so nested `android_macro` steps inherit the top-level target unless a step overrides it.
+
+**Verification.** Focused plugin tests pass: `python -m unittest plugin.tests.test_android_tool_device_selector plugin.tests.test_bridge_multidevice plugin.tests.test_bridge_channel plugin.tests.test_bridge_status plugin.tests.test_bridge_activity` → 39 tests OK. Live relay smoke confirmed two Android bridge clients connected simultaneously, explicit selectors for each returned distinct foreground packages, and `/bridge/select-active` switched the default target both ways. Standard Android Settings screens returned non-empty accessibility trees on both devices. Screenshot checks remain surface-specific: one device reported MediaProjection not granted, while an e-ink tablet with the grant active timed out waiting for a frame.
 
 ## 2026-06-28 — Dev-loop polish after the live smoke test
 
