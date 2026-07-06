@@ -177,6 +177,14 @@ object DiagnosticsLog {
         return noUserInfo.take(MAX_TEXT_LENGTH)
     }
 
+    /**
+     * Public secret redaction for user-composed report text (e.g. the "what
+     * were you expecting?" answer embedded in a GitHub issue body). Same
+     * redaction + cap as the stored stacktraces — entry fields are already
+     * sanitized at record time; this covers text added after the fact.
+     */
+    fun redactReportText(value: String?): String? = redactTrace(value)
+
     private fun clean(value: String?): String? {
         val trimmed = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
         return redact(trimmed).take(MAX_TEXT_LENGTH)

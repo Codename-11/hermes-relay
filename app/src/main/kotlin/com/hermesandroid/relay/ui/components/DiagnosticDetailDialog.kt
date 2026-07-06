@@ -21,11 +21,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -38,6 +42,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.BuildConfig
 import com.hermesandroid.relay.diagnostics.DiagnosticLogEntry
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.util.DiagnosticIssuePrefill
 import com.hermesandroid.relay.util.IssueReport
 
 /**
@@ -56,6 +61,13 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val plainText = remember(entry) { entry.toPlainText() }
     val severityName = entry.severity.name
+
+    // Info-severity pre-flight: routine log lines only become GitHub issues once
+    // the reporter says what they expected instead (that answer replaces the
+    // boilerplate "What happened" line). Error entries keep the direct flow.
+    val needsExpectation = entry.severity == DiagnosticSeverity.Info
+    var expectationVisible by remember(entry) { mutableStateOf(false) }
+    var expectation by remember(entry) { mutableStateOf("") }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -127,6 +139,20 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                     )
                 }
 
+                if (expectationVisible) {
+                    Spacer(Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = expectation,
+                        onValueChange = { expectation = it },
+                        label = { Text("What were you expecting to happen?") },
+                        supportingText = {
+                            Text("This is a routine log entry — telling us what looked wrong turns it into an answerable report.")
+                        },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
                 Spacer(Modifier.height(18.dp))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
@@ -155,16 +181,24 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                         },
                     ) { Text("Export") }
                     Button(
+                        enabled = !expectationVisible || expectation.isNotBlank(),
                         onClick = {
+                            if (needsExpectation && !expectationVisible) {
+                                expectationVisible = true
+                                return@Button
+                            }
                             // Copy full text first; the GitHub URL only carries the
                             // head of long traces, so the user can paste the rest.
                             IssueReport.copyToClipboard(context, plainText)
                             val opened = IssueReport.openUrl(
                                 context,
                                 IssueReport.buildGithubIssueUrl(
-                                    title = "[Bug]: ${entry.title}",
-                                    bodyMarkdown = entry.toIssueBody(),
-                                    labels = "bug",
+                                    title = DiagnosticIssuePrefill.issueTitle(entry),
+                                    bodyMarkdown = DiagnosticIssuePrefill.issueBody(
+                                        entry,
+                                        expectation = expectation.takeIf { expectationVisible },
+                                    ),
+                                    labels = DiagnosticIssuePrefill.issueLabels(entry),
                                 ),
                             )
                             toast(
@@ -243,56 +277,5 @@ private fun DiagnosticLogEntry.toPlainText(): String = buildString {
         appendLine()
         appendLine("Stacktrace:")
         append(it)
-    }
-}
-
-/**
- * Markdown issue body mirroring the crash-report issue format: environment block
- * + the captured entry. Trace is capped so the prefilled GitHub URL stays within
- * browser limits (full text is on the clipboard).
- */
-private const val MAX_TRACE_FOR_URL = 3000
-
-private fun DiagnosticLogEntry.toIssueBody(): String {
-    val trace = (stacktrace ?: detail).orEmpty().let {
-        if (it.length > MAX_TRACE_FOR_URL) {
-            it.take(MAX_TRACE_FOR_URL) + "\n… (truncated — full diagnostic copied to your clipboard)"
-        } else {
-            it
-        }
-    }
-    val surface = if (BuildConfig.FLAVOR.equals("sideload", ignoreCase = true)) "sideload APK" else "Google Play"
-    return buildString {
-        appendLine(
-            "> ⚠️ Before submitting: remove any secrets, tokens, real hostnames/IPs, " +
-                "or personal data from the detail below.",
-        )
-        appendLine()
-        appendLine("### Affected area")
-        appendLine("Android app")
-        appendLine()
-        appendLine("### What happened?")
-        appendLine("Captured diagnostic from the in-app activity log.")
-        appendLine()
-        appendLine("### Environment")
-        appendLine("- Hermes-Relay version/tag: ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")
-        appendLine("- Install surface: $surface")
-        appendLine("- Connection mode: LAN / Tailscale / public TLS / other")
-        appendLine()
-        appendLine("### Diagnostic")
-        appendLine("- Title: $title")
-        appendLine("- Category: ${category.label}")
-        appendLine("- Severity: ${severity.name}")
-        endpointRole?.let { appendLine("- Route: $it") }
-        url?.let { appendLine("- URL: $it") }
-        elapsedMs?.let { appendLine("- Elapsed: ${it}ms") }
-        if (trace.isNotBlank()) {
-            appendLine()
-            appendLine("```")
-            appendLine(trace)
-            appendLine("```")
-        }
-        appendLine()
-        append("<sub>Captured by the Hermes-Relay in-app diagnostics log</sub>")
     }
 }
