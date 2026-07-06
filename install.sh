@@ -90,8 +90,13 @@
 #   HERMES_RELAY_HOME       Target directory (default: ~/.hermes/hermes-relay)
 #   HERMES_RELAY_BRANCH     Git branch to install (default: main). Superseded
 #                           by --branch when both are provided.
-#   HERMES_VENV_PY          Path to hermes-agent venv python
-#                           (default: ~/.hermes/hermes-agent/venv/bin/python)
+#   HERMES_VENV_PY          Path to hermes-agent venv python. When unset the
+#                           installer auto-detects, in order:
+#                             ~/.hermes/hermes-agent/venv/bin/python  (classic)
+#                             ~/.hermes/hermes-agent/.venv/bin/python (uv-managed)
+#                             /opt/hermes/.venv/bin/python            (official Docker image)
+#                           The Docker layout is immutable — the installer
+#                           refuses it and steers to the native plugin install.
 #   HERMES_HOME             Hermes config home (default: ~/.hermes)
 #   HERMES_RELAY_NO_SYSTEMD Skip step [6/6] even if systemd is available
 #                           (set to any non-empty value)
@@ -173,7 +178,15 @@ BRANCH="${_BRANCH_FLAG:-${HERMES_RELAY_BRANCH:-main}}"
 DASHBOARD_PLUGIN="${_DASHBOARD_PLUGIN_FLAG:-${HERMES_RELAY_DASHBOARD_PLUGIN:-yes}}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 RELAY_HOME="${HERMES_RELAY_HOME:-$HERMES_HOME/hermes-relay}"
-VENV_PY="${HERMES_VENV_PY:-$HERMES_HOME/hermes-agent/venv/bin/python}"
+# Resolved below (after helpers) — empty means "auto-detect".
+VENV_PY="${HERMES_VENV_PY:-}"
+# The official Docker image (nousresearch/hermes-agent) ships hermes-agent
+# pre-installed here. It is an immutable container layout: no git clone at
+# $HERMES_HOME/hermes-agent, no user systemd, and site-packages that vanish
+# on the next `docker pull`. This script's editable-install path cannot work
+# there, so detection of this interpreter triggers a steer to the native
+# `hermes plugins install` path instead of dying mid-run.
+DOCKER_VENV_PY="/opt/hermes/.venv/bin/python"
 PLUGIN_LINK="$HERMES_HOME/plugins/hermes-relay"
 SKILLS_DIR_IN_REPO="$RELAY_HOME/skills"
 HERMES_CONFIG="$HERMES_HOME/config.yaml"
@@ -258,6 +271,24 @@ require() {
     command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"
 }
 
+# ── Venv autodetection ─────────────────────────────────────────────────────
+# hermes-agent installs land in several layouts. HERMES_VENV_PY always wins
+# when set; otherwise probe, in order: classic pip/git venv, uv-managed
+# .venv, official Docker image.
+_VENV_AUTODETECTED=""
+if [ -z "$VENV_PY" ]; then
+    for _cand in \
+        "$HERMES_HOME/hermes-agent/venv/bin/python" \
+        "$HERMES_HOME/hermes-agent/.venv/bin/python" \
+        "$DOCKER_VENV_PY"; do
+        if [ -x "$_cand" ]; then
+            VENV_PY="$_cand"
+            _VENV_AUTODETECTED=1
+            break
+        fi
+    done
+fi
+
 # ── Banner ─────────────────────────────────────────────────────────────────
 banner() {
     printf "\n"
@@ -268,7 +299,7 @@ banner() {
     printf "\n"
     printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Repo:"     "$REPO_URL ${C_DIM}($BRANCH)${C_RESET}"
     printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Target:"   "$RELAY_HOME"
-    printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Venv:"     "$VENV_PY"
+    printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Venv:"     "${VENV_PY:-(not found — see below)}"
     printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Hermes:"   "$HERMES_CONFIG"
 }
 
@@ -277,12 +308,26 @@ banner
 require git
 require python3
 
+# Immutable/container layout — refuse early with a usable next step instead
+# of failing partway through the editable install / systemd setup.
+if [ -n "$_VENV_AUTODETECTED" ] && [ "$VENV_PY" = "$DOCKER_VENV_PY" ]; then
+    printf "\n"
+    warn "Official Hermes Docker image detected ($DOCKER_VENV_PY)."
+    info "This installer's editable install + systemd + shell shims do not"
+    info "apply inside the immutable container image."
+    info "Install the plugin the native way instead:"
+    printf "\n        ${C_BOLD}hermes plugins install Codename-11/hermes-relay/plugin${C_RESET}\n\n"
+    info "then enable it when prompted and restart the container."
+    info "(To force this script anyway, set HERMES_VENV_PY explicitly.)"
+    exit 1
+fi
+
 if [ ! -d "$HERMES_HOME/hermes-agent" ]; then
     die "hermes-agent not found at $HERMES_HOME/hermes-agent — install Hermes first"
 fi
 
-if [ ! -x "$VENV_PY" ]; then
-    die "hermes-agent venv Python not found at $VENV_PY — reinstall hermes-agent or set HERMES_VENV_PY"
+if [ -z "$VENV_PY" ] || [ ! -x "$VENV_PY" ]; then
+    die "hermes-agent venv Python not found (tried $HERMES_HOME/hermes-agent/venv, $HERMES_HOME/hermes-agent/.venv, and /opt/hermes/.venv) — reinstall hermes-agent or set HERMES_VENV_PY"
 fi
 
 # ── 1/6  Clone or update the repo ──────────────────────────────────────────
