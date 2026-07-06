@@ -58,6 +58,21 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun getModelOptions_usesCachedPathUnlessRefreshRequested() = runTest {
+        val body = """{"providers": []}"""
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(body))
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(body))
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        client.getModelOptions().getOrThrow()
+        assertEquals("/api/model/options", server.takeRequest().path)
+
+        client.getModelOptions(refresh = true).getOrThrow()
+        assertEquals("/api/model/options?refresh=1", server.takeRequest().path)
+    }
+
+    @Test
     fun currentSession_onConnectionAbort_returnsFailure_doesNotThrow() = runTest {
         // Reproduces the crash: a stale pooled connection aborting mid-flight
         // ("Software caused connection abort"). currentSession() returns a

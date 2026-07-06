@@ -270,8 +270,15 @@ class DashboardApiClient(
         getJson("/api/audio/elevenlabs/voices").mapCatching { parseElevenLabsVoices(it) }
     }
 
-    /** Full provider/model universe — REST twin of the TUI's `model.options` RPC. */
-    suspend fun getModelOptions(): Result<JsonObject> = getJsonObject("/api/model/options")
+    /**
+     * Full provider/model universe — REST twin of the TUI's `model.options` RPC.
+     *
+     * [refresh] maps to upstream's explicit `GET /api/model/options?refresh=1`
+     * path, which refreshes dynamic/custom-provider catalogs on demand without
+     * probing every provider during normal picker opens.
+     */
+    suspend fun getModelOptions(refresh: Boolean = false): Result<JsonObject> =
+        getJsonObject(if (refresh) "/api/model/options?refresh=1" else "/api/model/options")
 
     /**
      * Assign the main model in `~/.hermes/config.yaml` (new sessions only).

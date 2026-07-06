@@ -17,7 +17,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -26,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -54,6 +57,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ModelPickerSheet(
     options: List<ChatInputPickerOption>,
+    refreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null,
     onSelect: (ChatInputPickerOption) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -98,12 +103,35 @@ fun ModelPickerSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = "Model", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = "${modelOptions.size} models",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Model", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "${modelOptions.size} models",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (onRefresh != null) {
+                    TextButton(
+                        onClick = onRefresh,
+                        enabled = !refreshing,
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text(if (refreshing) "Refreshing" else "Refresh")
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))

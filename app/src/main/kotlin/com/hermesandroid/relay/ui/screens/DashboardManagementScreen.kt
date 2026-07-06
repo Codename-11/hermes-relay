@@ -54,6 +54,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -2494,27 +2495,36 @@ private fun ModelPickerDialog(
     onDismiss: () -> Unit,
 ) {
     var loading by remember { mutableStateOf(true) }
+    var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var providers by remember { mutableStateOf<List<ModelProviderOption>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+
+    fun loadOptions(refresh: Boolean = false) {
+        if (refresh && refreshing) return
+        if (refresh) refreshing = true else loading = true
+        error = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client -> client.getModelOptions(refresh = refresh) }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            result.fold(
+                onSuccess = { root ->
+                    providers = parseModelOptions(root)
+                    if (providers.isEmpty()) {
+                        error = "The dashboard returned no model options."
+                    }
+                },
+                onFailure = { err -> error = err.message ?: "Could not load model options" },
+            )
+            if (refresh) refreshing = false else loading = false
+        }
+    }
 
     LaunchedEffect(target) {
-        loading = true
-        error = null
-        val result = try {
-            withDashboardClient(clientFactory) { client -> client.getModelOptions() }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-        result.fold(
-            onSuccess = { root ->
-                providers = parseModelOptions(root)
-                if (providers.isEmpty()) {
-                    error = "The dashboard returned no model options."
-                }
-            },
-            onFailure = { err -> error = err.message ?: "Could not load model options" },
-        )
-        loading = false
+        loadOptions()
     }
 
     AlertDialog(
@@ -2538,12 +2548,37 @@ private fun ModelPickerDialog(
                     color = MaterialTheme.colorScheme.error,
                 )
                 else -> Column {
-                    Text(
-                        text = "Applies to new sessions. Greyed providers need a key — " +
-                            "add one under Manage → Keys.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Applies to new sessions. Greyed providers need a key — " +
+                                "add one under Manage → Keys.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = { loadOptions(refresh = true) },
+                            enabled = !refreshing && !actionInFlight,
+                        ) {
+                            if (refreshing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            Text(if (refreshing) "Refreshing" else "Refresh")
+                        }
+                    }
                     LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
                         providers.forEach { provider ->
                             item(key = "provider-${provider.id}") {

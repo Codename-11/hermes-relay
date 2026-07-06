@@ -1,5 +1,26 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-06 — Model picker Refresh Models parity
+
+**Why.** The upstream-impact watch flagged Hermes' new explicit model catalog refresh
+contract: dashboard REST accepts `GET /api/model/options?refresh=1`, the TUI gateway
+accepts `model.options {refresh:true}`, and upstream desktop/web surfaces expose a
+Refresh Models action so dynamic/custom provider catalogs can be refreshed on demand.
+Android already used both model-option surfaces, but only the cached/non-refresh path.
+
+**What.**
+- `DashboardApiClient.getModelOptions(refresh)` now adds `?refresh=1` only for an
+  explicit refresh request; normal Manage dialog opens remain cached/cheap.
+- `GatewayChatClient.modelOptions(refresh)` sends `refresh:true` on the JSON-RPC only
+  when the chat model sheet's Refresh button is tapped.
+- `ChatViewModel` exposes `modelOptionsRefreshing` and keeps automatic prewarm/open
+  refreshes on the non-refresh path; explicit failures surface as transient notices.
+- `ModelPickerSheet` and Manage's model dialogs gained a Refresh action with spinner
+  state, matching upstream without forcing provider probes on every picker open.
+
+**Verification.** Focused dashboard/gateway client tests cover REST query and RPC params;
+full `:app:testSideloadDebugUnitTest` / lint still need the pre-PR gate below.
+
 ## 2026-07-01 — Realtime voice: live background-run chip (progress, phases, cancel)
 
 **Why.** With timer-driven spoken progress off by default (see the robustness batch

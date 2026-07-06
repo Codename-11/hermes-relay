@@ -723,7 +723,7 @@ class GatewayChatClient(
      * generic alias. Connects on demand if needed. Switching a model is then a
      * `/model <model> --provider <slug>` slash dispatch.
      */
-    suspend fun modelOptions(): Result<GatewayModelOptions> {
+    suspend fun modelOptions(refresh: Boolean = false): Result<GatewayModelOptions> {
         if (webSocket == null || readySignal?.isCompleted != true) {
             try {
                 connectMutex.withLock { ensureConnected() }
@@ -731,7 +731,10 @@ class GatewayChatClient(
                 return Result.failure(e)
             }
         }
-        val params = buildJsonObject { liveSessionId?.let { put("session_id", it) } }
+        val params = buildJsonObject {
+            liveSessionId?.let { put("session_id", it) }
+            if (refresh) put("refresh", true)
+        }
         return rpc("model.options", params).map { result ->
             val providers = (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
                 val obj = el as? JsonObject ?: return@mapNotNull null

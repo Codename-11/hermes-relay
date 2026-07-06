@@ -36,7 +36,7 @@ What you can do from the phone, per section:
 - **Cron** — pause/resume/run/delete jobs and view recent runs.
 - **MCP** — enable/disable, test, and remove servers; install catalog entries that don't require inline credentials.
 - **Profiles** — create profiles (clone-from-default), activate, edit the role description, set a per-profile model, **edit SOUL.md** in a full-file editor, and delete.
-- **Models** — change the main model from the full provider/model catalog, including the server's expensive-model confirmation step. Providers without keys appear greyed with a pointer to Keys.
+- **Models** — change the main model from the full provider/model catalog, including the server's expensive-model confirmation step. Providers without keys appear greyed with a pointer to Keys. Use **Refresh** in the picker when you've just added provider credentials or changed a dynamic/custom-provider catalog and want the server to re-check available models immediately.
 - **Keys** — view the curated env/key inventory (values redacted), set keys (write-only, masked), reveal one (server rate-limited and audit-logged), or clear them.
 - **Config** — read the config schema.
 

@@ -125,6 +125,26 @@ class GatewayClientHarness(
                         json.parseToJsonElement("""[["/help","Show help"],["/model","Pick model"]]"""),
                     )
                 }
+                "model.options" -> buildJsonObject {
+                    put("model", "gpt-5.5")
+                    put("provider", "openai")
+                    put(
+                        "providers",
+                        json.parseToJsonElement(
+                            """
+                            [
+                              {
+                                "slug": "openai",
+                                "name": "OpenAI",
+                                "models": ["gpt-5.5"],
+                                "is_current": true,
+                                "authenticated": true
+                              }
+                            ]
+                            """.trimIndent(),
+                        ),
+                    )
+                }
                 "config.get" -> when ((params["key"] as? JsonPrimitive)?.contentOrNull) {
                     "reasoning" -> buildJsonObject {
                         put("value", reasoningEffort)
@@ -352,6 +372,19 @@ class GatewayChatClientTest {
         assertEquals(5, r.usages.firstOrNull()?.resolvedInputTokens)
         assertTrue(r.errors.isEmpty())
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `model options refresh flag rides gateway rpc only on explicit refresh`() = runBlocking {
+        val normal = client.modelOptions().getOrThrow()
+        val normalParams = harness.awaitRpc("model.options")
+        assertEquals("gpt-5.5", normal.currentModel)
+        assertFalse((normalParams["refresh"] as? JsonPrimitive)?.booleanOrNull == true)
+
+        val refreshed = client.modelOptions(refresh = true).getOrThrow()
+        val refreshParams = harness.awaitRpcCount("model.options", 2).last()
+        assertEquals("openai", refreshed.currentProvider)
+        assertTrue((refreshParams["refresh"] as? JsonPrimitive)?.booleanOrNull == true)
     }
 
     @Test
