@@ -6,6 +6,69 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Open-issue resolution batch (2026-07-06) — owner GitHub actions + deferrals
+
+Plan: `docs/plans/2026-07-06-open-issue-resolution.md` (13 open issues triaged;
+fix-state claims verified against tags with `git merge-base --is-ancestor`).
+**Automation never posts to GitHub** — every comment/close/label below is an
+owner action, deliberately queued here:
+
+- [ ] **#131** — close: fixed by `3573ba8` (PR #136), shipped android-v1.2.5
+      (reporter was on 1.2.3). Optionally re-check Play vitals for the
+      "Invalid URL host" signature on ≥1.2.5 first.
+- [ ] **#129** — close: fixed by `99b9cf1` (PR #128), shipped android-v1.2.4
+      (owner already promised v1.2.4 in-thread).
+- [ ] **#124** — post the promised follow-up + close: fixed by `802385c`
+      (PR #125), first shipped android-v1.2.3.
+- [ ] **#70** — close both prongs: original keyset force-close fixed `48ddba5`
+      (android-v1.1.0); the in-thread TLS/Tailscale crash is #124's bug, fixed
+      android-v1.2.3. Invite reopening if it recurs on ≥1.2.3.
+- [ ] **#94** — pull Play Console vitals for the versionCode-13 / Z Fold7
+      cluster; hardening shipped `a455e46` (android-v1.2.0). Confirm no
+      recurrence on v1.2.x, then close.
+- [ ] **#155 / #154** — support comments + close as user-config: `localhost`
+      on the phone points at the phone itself (#154 is the downstream probe
+      failure of the same misconfig). Link the new troubleshooting entry once
+      it deploys. Relabel away from `bug`/`area:plugin`.
+- [ ] **#146** — needs-info comment (Tailscale up on the phone? follow-up
+      Error entry? agent bound on the tailnet address?); close as support if
+      no response.
+- [ ] **#166** — relabel `area:plugin` → `area:android`; reply with the root
+      cause (phone drops the SSE socket on long local-model turns; upstream
+      finishes + persists the answer; app now recovers it) and credit the
+      reporter's `supports_async_delivery` instinct. Ask: screen off during
+      the hang? does reopening the session later show the answer?
+- [ ] **#165** — reply: both failure modes confirmed (absolute `plugin.`
+      imports under the native loader; install.sh layout assumptions); fix
+      ships as plugin-v1.3.1. The uv-pip gap they mention was already fixed in
+      plugin-v1.1.0+. Owner must e2e the fix on the official Docker image.
+- [ ] **#145** — confirm-triage reply; on-device check after fix (max font +
+      display size, all 5 slides); close after the next android-v* release.
+- [ ] **#144** — close after the next android-v* release demonstrates the
+      2-asset layout + new Download block; optionally edit the published
+      android-v1.2.6 release body to drop the "Parity/testing artifact" wording.
+- [ ] **#121** — label (`enhancement` + area) and milestone onto the next
+      `cli-v*` release; it's scheduled feature work, not part of this batch.
+
+Deferred from the batch (coordination / decisions):
+
+- **Localhost-advisory UI wiring** (`ConnectionWizard` / `ConnectionDetailScreen`
+  `supportingText`) — the util (`ServerAddress.loopbackHostWarning`) + tests land
+  in WS-C, but the wizard wiring waits on the parallel connections-UI workstream
+  to avoid colliding in those files.
+- **#166 optional hardening** — extend the opt-in keep-alive foreground service
+  to cover an in-flight SSE turn (reduces disconnect incidence; googlePlay-flavor
+  FGS declaration implications). Recovery poller ships without it.
+- **Upstream PR candidates from #166** — intentional detached-run semantics on
+  client disconnect in `_handle_session_chat_stream`; pollable/resumable
+  session-turn status. Decide whether to file against hermes-agent.
+- **"Vanilla Hermes" docs naming** — app dropped the label in v1.2.2; docs still
+  use it as a concept term. Owner decision whether to retire it docs-wide
+  (WS-F only fixes verbatim UI-label quotes).
+- **Docker venv pivot for install.sh** — beyond steer-to-native: optionally
+  create a dedicated relay venv under a writable path so the full installer
+  works in-container.
+
 ## Connections UI / status banner (2026-06-30 restructure follow-ups)
 
 The Connections screen was split into a scannable list + a tabbed detail screen
