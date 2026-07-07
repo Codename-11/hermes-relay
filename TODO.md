@@ -351,6 +351,8 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 
 ## Crash-class follow-ups
 
+- **Bridge screenshots: regrant UX.** Multi-device live smoke found that a device can report `screen_capture_granted=false` because the MediaProjection grant was revoked and needs an in-app/user-consent regrant. The e-ink timeout path has been hardened with a longer configurable wait and one capture-pipeline rebuild retry; remaining polish is to surface the regrant action more prominently in Bridge status.
+
 - **Audit remaining throwing URL-build sites for the "Invalid URL host" class (#131).** The #131 fix guarded the two clients that take a user-entered base URL on the Manage/voice path (`DashboardApiClient`, `StandardHermesVoiceClient`) and validates input at entry, but two lower-risk site groups still call okhttp's throwing `url(String)` / `.toHttpUrl()`:
   - `HermesApiClient` streaming methods (`sendChatStream` / `sendCompletionsStream` / `sendRunStream`) build `authRequest("$baseUrl/…")` *outside* the surrounding `try`. Latent only — the non-streaming methods (incl. `checkHealth`) already `try/catch`, so a bad `apiServerUrl` is caught and marks the connection unreachable before streaming is reached. Consider a non-throwing `authRequestOrNull()` chokepoint → `onError`.
   - Relay clients (`RelayHttpClient`, `RelayProfileInspectorClient`, `RelayVoiceClient`, `ConnectionManager`) use `.toHttpUrl()` on `$httpBase/…`. These ride post-pairing relay URLs (from a signed QR / pairing payload), not free-text fields, so the input-validation layer doesn't cover them — route them through `ServerAddress`/`toHttpUrlOrNull` for defense-in-depth.

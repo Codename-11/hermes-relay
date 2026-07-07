@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android model pickers can refresh the server catalog.** Chat's model sheet and Manage's main/profile model dialogs now expose upstream's explicit **Refresh Models** action, so dynamic/custom provider model lists can be reloaded on demand without making every picker open probe providers.
 - **Server-backed session cleanup plumbing.** The dashboard client now supports single-session export, the upstream `/api/sessions/prune` route with a mandatory dry-run preview before destructive apply, plus soft archive/restore helpers and an `archived` session-list filter for the Manage surface.
 - **Notification triggers MVP.** Settings → Notifications now has explicit opt-in proactive rules for the Notification companion: match by app package plus optional title/text filters, post a safe local "Ask Hermes?" prompt, show the latest trigger activity, and pause everything instantly with a kill switch.
+- **Android bridge: multi-device targeting.** The relay can keep multiple Android bridge clients connected at once, route commands by `device` selector (`phone`, `pixel`, `fold`, `boox`, `note`, `notemax`, `tablet`, or device ID), expose `/bridge/devices` and `/bridge/select-active`, and advertise an optional `device` argument on the `android_*` tool schemas.
 
 ### Fixed
 

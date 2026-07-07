@@ -44,8 +44,10 @@ import mimetypes
 import os
 import time
 import requests
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
+from urllib.parse import urlencode
 
 # === v0.4.1 JIT permission-denied surfacing ================================
 # Local import — keep package-relative so the tool layer can be invoked from
@@ -97,12 +99,47 @@ def _relay_port() -> int:
 def _timeout() -> float:
     return float(os.getenv("ANDROID_BRIDGE_TIMEOUT", "30"))
 
+_CURRENT_DEVICE_SELECTOR: ContextVar[Optional[str]] = ContextVar(
+    "android_device_selector",
+    default=None,
+)
+
+_DEVICE_SELECTOR_DESCRIPTION = (
+    "Optional Android device selector for multi-device relays. Accepts a "
+    "device_id or alias such as phone, pixel, fold, boox, note, notemax, "
+    "or tablet. Omit to use the relay's active/default device."
+)
+
+_DEVICE_SELECTOR_PROPERTY = {
+    "type": "string",
+    "description": _DEVICE_SELECTOR_DESCRIPTION,
+}
+
 def _auth_headers() -> dict:
     """Build auth headers with pairing code if configured."""
     token = _bridge_token()
     if token:
         return {"Authorization": f"Bearer {token}"}
     return {}
+
+
+def _normalize_device_selector(device: Optional[str]) -> Optional[str]:
+    if device is None:
+        return None
+    stripped = str(device).strip()
+    return stripped or None
+
+
+def _selected_device(device: Optional[str] = None) -> Optional[str]:
+    return _normalize_device_selector(device) or _CURRENT_DEVICE_SELECTOR.get()
+
+
+def _path_with_device(path: str, device: Optional[str] = None) -> str:
+    selector = _selected_device(device)
+    if not selector:
+        return path
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}{urlencode({'device': selector})}"
 
 def _check_requirements() -> bool:
     """Returns True if the relay is running and a phone is connected.
@@ -143,17 +180,41 @@ def _check_requirements() -> bool:
     except Exception:
         return False
 
-def _post(path: str, payload: dict) -> dict:
-    r = requests.post(f"{_bridge_url()}{path}", json=payload,
+def _post(path: str, payload: dict, *, device: Optional[str] = None) -> dict:
+    body = dict(payload or {})
+    selector = _selected_device(device)
+    if selector and "device" not in body:
+        body["device"] = selector
+    r = requests.post(f"{_bridge_url()}{path}", json=body,
                       headers=_auth_headers(), timeout=_timeout())
     r.raise_for_status()
     return r.json()
 
-def _get(path: str) -> dict:
-    r = requests.get(f"{_bridge_url()}{path}", headers=_auth_headers(),
-                     timeout=_timeout())
+def _get(path: str, *, device: Optional[str] = None) -> dict:
+    r = requests.get(f"{_bridge_url()}{_path_with_device(path, device)}",
+                     headers=_auth_headers(), timeout=_timeout())
     r.raise_for_status()
     return r.json()
+
+
+def _dispatch_android_tool(func: Callable[..., str], args: Optional[dict] = None) -> str:
+    """Call an android_* function with optional per-call device scoping.
+
+    Public tool schemas can include a ``device`` selector without forcing every
+    function signature to duplicate that parameter. The selector is stored in a
+    ContextVar for this call only; nested android_macro steps inherit it unless
+    a step supplies its own ``device``.
+    """
+    call_args = dict(args or {})
+    selector = _normalize_device_selector(call_args.pop("device", None))
+    token = None
+    if selector:
+        token = _CURRENT_DEVICE_SELECTOR.set(selector)
+    try:
+        return func(**call_args)
+    finally:
+        if token is not None:
+            _CURRENT_DEVICE_SELECTOR.reset(token)
 
 # ── Tool implementations ───────────────────────────────────────────────────────
 
@@ -2402,6 +2463,16 @@ _SCHEMAS = {
     },
 }
 
+_DEVICE_TARGETABLE_TOOLS = {
+    name for name in _SCHEMAS
+    if name != "android_setup"
+}
+
+for _tool_name in _DEVICE_TARGETABLE_TOOLS:
+    _params = _SCHEMAS[_tool_name].setdefault("parameters", {"type": "object"})
+    _properties = _params.setdefault("properties", {})
+    _properties.setdefault("device", _DEVICE_SELECTOR_PROPERTY)
+
 # ── Tool handlers map ──────────────────────────────────────────────────────────
 #
 # Dispatch table mapping tool names to their handler callables. Used by the
@@ -2420,44 +2491,43 @@ _SCHEMAS = {
 # `android_macro` only ever calls `handler(args)` with the positional dict.
 
 _HANDLERS = {
-    "android_ping":         lambda args, **kw: android_ping(),
-    "android_read_screen":  lambda args, **kw: android_read_screen(**args),
-    "android_find_nodes":   lambda args, **kw: android_find_nodes(**args),
-    "android_tap":          lambda args, **kw: android_tap(**args),
-    "android_tap_text":     lambda args, **kw: android_tap_text(**args),
-    "android_long_press":   lambda args, **kw: android_long_press(**args),
-    "android_type":         lambda args, **kw: android_type(**args),
-    "android_swipe":        lambda args, **kw: android_swipe(**args),
-    "android_drag":         lambda args, **kw: android_drag(**args),
-    "android_open_app":     lambda args, **kw: android_open_app(**args),
-    "android_press_key":    lambda args, **kw: android_press_key(**args),
-    "android_screenshot":   lambda args, **kw: android_screenshot(**args),
-    "android_scroll":       lambda args, **kw: android_scroll(**args),
-    "android_wait":         lambda args, **kw: android_wait(**args),
-    "android_get_apps":     lambda args, **kw: android_get_apps(),
-    "android_current_app":  lambda args, **kw: android_current_app(),
-    "android_describe_node":    lambda args, **kw: android_describe_node(**args),
-    "android_setup":            lambda args, **kw: android_setup(**args),
-    "android_macro":            lambda args, **kw: android_macro(**args),
-    "android_clipboard_read":   lambda args, **kw: android_clipboard_read(),
-    "android_clipboard_write":  lambda args, **kw: android_clipboard_write(**args),
-    "android_media":            lambda args, **kw: android_media(**args),
-    "android_screen_hash":      lambda args, **kw: android_screen_hash(),
-    "android_diff_screen":      lambda args, **kw: android_diff_screen(**args),
-    "android_send_intent":      lambda args, **kw: android_send_intent(**args),
-    "android_broadcast":        lambda args, **kw: android_broadcast(**args),
-    "android_events":           lambda args, **kw: android_events(**args),
-    "android_event_stream":     lambda args, **kw: android_event_stream(**args),
+    "android_ping":             lambda args, **kw: _dispatch_android_tool(android_ping, args),
+    "android_read_screen":      lambda args, **kw: _dispatch_android_tool(android_read_screen, args),
+    "android_find_nodes":       lambda args, **kw: _dispatch_android_tool(android_find_nodes, args),
+    "android_tap":              lambda args, **kw: _dispatch_android_tool(android_tap, args),
+    "android_tap_text":         lambda args, **kw: _dispatch_android_tool(android_tap_text, args),
+    "android_long_press":       lambda args, **kw: _dispatch_android_tool(android_long_press, args),
+    "android_type":             lambda args, **kw: _dispatch_android_tool(android_type, args),
+    "android_swipe":            lambda args, **kw: _dispatch_android_tool(android_swipe, args),
+    "android_drag":             lambda args, **kw: _dispatch_android_tool(android_drag, args),
+    "android_open_app":         lambda args, **kw: _dispatch_android_tool(android_open_app, args),
+    "android_press_key":        lambda args, **kw: _dispatch_android_tool(android_press_key, args),
+    "android_screenshot":       lambda args, **kw: _dispatch_android_tool(android_screenshot, args),
+    "android_scroll":           lambda args, **kw: _dispatch_android_tool(android_scroll, args),
+    "android_wait":             lambda args, **kw: _dispatch_android_tool(android_wait, args),
+    "android_get_apps":         lambda args, **kw: _dispatch_android_tool(android_get_apps, args),
+    "android_current_app":      lambda args, **kw: _dispatch_android_tool(android_current_app, args),
+    "android_describe_node":    lambda args, **kw: _dispatch_android_tool(android_describe_node, args),
+    "android_setup":            lambda args, **kw: _dispatch_android_tool(android_setup, args),
+    "android_macro":            lambda args, **kw: _dispatch_android_tool(android_macro, args),
+    "android_clipboard_read":   lambda args, **kw: _dispatch_android_tool(android_clipboard_read, args),
+    "android_clipboard_write":  lambda args, **kw: _dispatch_android_tool(android_clipboard_write, args),
+    "android_media":            lambda args, **kw: _dispatch_android_tool(android_media, args),
+    "android_screen_hash":      lambda args, **kw: _dispatch_android_tool(android_screen_hash, args),
+    "android_diff_screen":      lambda args, **kw: _dispatch_android_tool(android_diff_screen, args),
+    "android_send_intent":      lambda args, **kw: _dispatch_android_tool(android_send_intent, args),
+    "android_broadcast":        lambda args, **kw: _dispatch_android_tool(android_broadcast, args),
+    "android_events":           lambda args, **kw: _dispatch_android_tool(android_events, args),
+    "android_event_stream":     lambda args, **kw: _dispatch_android_tool(android_event_stream, args),
     # Tier C (C1-C4) — sideload-only; phone returns 403 on googlePlay.
-    "android_location":         lambda args, **kw: android_location(),
-    "android_search_contacts":  lambda args, **kw: android_search_contacts(**args),
-    "android_call":             lambda args, **kw: android_call(**args),
-    "android_send_sms":         lambda args, **kw: android_send_sms(**args),
-    "android_return_to_hermes": lambda args, **kw: android_return_to_hermes(),
-    "android_share_media":      lambda args, **kw: android_share_media(**args),
-    "android_send_mms":         lambda args, **kw: android_send_mms(**args),
+    "android_location":         lambda args, **kw: _dispatch_android_tool(android_location, args),
+    "android_search_contacts":  lambda args, **kw: _dispatch_android_tool(android_search_contacts, args),
+    "android_call":             lambda args, **kw: _dispatch_android_tool(android_call, args),
+    "android_send_sms":         lambda args, **kw: _dispatch_android_tool(android_send_sms, args),
+    "android_return_to_hermes": lambda args, **kw: _dispatch_android_tool(android_return_to_hermes, args),
+    "android_share_media":      lambda args, **kw: _dispatch_android_tool(android_share_media, args),
+    "android_send_mms":         lambda args, **kw: _dispatch_android_tool(android_send_mms, args),
 }
-
 # ── Registry registration ──────────────────────────────────────────────────────
 
 try:
