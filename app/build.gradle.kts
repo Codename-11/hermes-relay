@@ -182,7 +182,13 @@ android {
         // [POC] Roborazzi runs without its Gradle plugin (the plugin needs AGP's
         // removed TestedExtension). Force record mode via the test-JVM system
         // property the plugin would otherwise inject, so captureRoboImage writes.
-        unitTests.all { it.systemProperty("roborazzi.test.record", "true") }
+        // Heap: the Roborazzi store renders (1080×2160 native graphics) share a
+        // worker JVM with the Robolectric suites; Gradle's 512m default OOMs
+        // once both are in the same run.
+        unitTests.all {
+            it.systemProperty("roborazzi.test.record", "true")
+            it.maxHeapSize = "2g"
+        }
     }
 }
 
