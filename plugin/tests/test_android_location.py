@@ -123,8 +123,11 @@ class TestAndroidLocationSchema(unittest.TestCase):
         self.assertIn("description", schema)
         self.assertIn("sideload", schema["description"].lower())
         self.assertIn("parameters", schema)
-        # Zero-arg tool.
-        self.assertEqual(schema["parameters"].get("properties", {}), {})
+        # No required args; multi-device relays may optionally target a device.
+        self.assertEqual(
+            set(schema["parameters"].get("properties", {})),
+            {"device"},
+        )
         self.assertEqual(schema["parameters"].get("required", []), [])
 
     def test_handler_dispatches_correctly(self) -> None:

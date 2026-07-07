@@ -31,6 +31,7 @@ Available on both tracks:
 | Relay pairing and status | QR/manual pairing, relay session grants, endpoint health, and diagnostics | Both |
 | Terminal/TUI relay | Remote shell and Hermes TUI access through paired relay sessions | Both |
 | Notification companion | Optional Android Notification Access forwards posted-notification metadata to your relay | Both |
+| [Notification triggers](/features/notification-triggers) | Opt-in local rules post an “Ask Hermes?” prompt when matching notifications arrive, with an activity log and kill switch | Both |
 | Media handoff | Relay-registered media appears in chat and can be shared through Android-native flows | Both |
 
 ## Device Control <span class="track-badge track-badge--sideload">Sideload only</span>

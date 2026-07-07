@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.network.upstream.models.SessionPruneFilters
+import com.hermesandroid.relay.network.upstream.models.SessionPrunePreview
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
@@ -55,6 +57,21 @@ class DashboardApiClientTest {
         assertEquals(listOf("basic", "nous"), status.authProviders)
         assertEquals("basic", status.authProviderDetails.first().name)
         assertEquals("0.16.0", status.version)
+    }
+
+    @Test
+    fun getModelOptions_usesCachedPathUnlessRefreshRequested() = runTest {
+        val body = """{"providers": []}"""
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(body))
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(body))
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        client.getModelOptions().getOrThrow()
+        assertEquals("/api/model/options", server.takeRequest().path)
+
+        client.getModelOptions(refresh = true).getOrThrow()
+        assertEquals("/api/model/options?refresh=1", server.takeRequest().path)
     }
 
     @Test
@@ -701,6 +718,213 @@ class DashboardApiClientTest {
 
         assertEquals("/api/config", server.takeRequest().path)
         assertEquals("/api/config/schema", server.takeRequest().path)
+    }
+
+    @Test
+    fun previewSessionPrune_postsDryRunAndParsesPreview() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {"ok":true,"removed":0,"matched":2,
+                     "oldest_started_at":1000.5,"newest_started_at":2000.5,
+                     "sessions":[
+                       {"id":"sess-old","source":"phone","title":"Old plan","model":"claude-opus-4-8","started_at":1000.5,"message_count":3},
+                       {"id":"sess-new","source":"phone","started_at":2000.5,"message_count":1}
+                     ]}
+                    """.trimIndent(),
+                ),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val preview = client.previewSessionPrune(
+            SessionPruneFilters(olderThanDays = 30.0, source = "phone", profile = "mizu"),
+        ).getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/sessions/prune", request.path)
+        val body = request.body.readUtf8()
+        // The preview MUST be a dry run — this call may never delete.
+        assertTrue(body.contains(""""dry_run":true"""))
+        assertTrue(body.contains(""""older_than_days":30.0"""))
+        assertTrue(body.contains(""""source":"phone""""))
+        assertTrue(body.contains(""""profile":"mizu""""))
+        assertEquals(2, preview.matched)
+        assertEquals(1000.5, preview.oldestStartedAt!!, 0.001)
+        assertEquals(2000.5, preview.newestStartedAt!!, 0.001)
+        assertEquals("sess-old", preview.sessions[0].id)
+        assertEquals(3, preview.sessions[0].messageCount)
+        assertEquals("Old plan", preview.sessions[0].title)
+    }
+
+    @Test
+    fun previewSessionPrune_bareFiltersOmitOptionalFields() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok":true,"removed":0,"matched":0,"sessions":[]}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.previewSessionPrune(SessionPruneFilters()).getOrThrow()
+
+        val body = server.takeRequest().body.readUtf8()
+        // A bare prune sends only dry_run; upstream then applies its own
+        // implicit ended-more-than-90-days-ago cutoff.
+        assertTrue(body.contains(""""dry_run":true"""))
+        assertFalse(body.contains("older_than_days"))
+        assertFalse(body.contains("source"))
+        assertFalse(body.contains("profile"))
+        assertFalse(body.contains("include_archived"))
+    }
+
+    @Test
+    fun pruneSessions_appliesWithDryRunFalseAndParsesRemoved() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok":true,"removed":2}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val filters = SessionPruneFilters(olderThanDays = 30.0, source = "phone")
+        val preview = SessionPrunePreview(matched = 2)
+        val result = client.pruneSessions(filters, confirmedPreview = preview).getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/sessions/prune", request.path)
+        val body = request.body.readUtf8()
+        assertTrue(body.contains(""""dry_run":false"""))
+        assertTrue(body.contains(""""older_than_days":30.0"""))
+        assertEquals(2, result.removed)
+    }
+
+    @Test
+    fun pruneSessions_skipsServerCallWhenPreviewMatchedNothing() = runTest {
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val result = client.pruneSessions(
+            SessionPruneFilters(olderThanDays = 30.0),
+            confirmedPreview = SessionPrunePreview(matched = 0),
+        ).getOrThrow()
+
+        // Nothing matched at preview time → nothing to delete. The client must
+        // not fire the destructive POST at all (sessions that aged in after
+        // the preview are not covered by what the user confirmed).
+        assertEquals(0, server.requestCount)
+        assertEquals(0, result.removed)
+    }
+
+    @Test
+    fun exportSession_getsServerOwnedArchiveJsonScopedToProfile() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"id":"sess-old","messages":[]}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val exported = client.exportSession("sess-old", profile = "mizu").getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/sessions/sess-old/export", request.requestUrl!!.encodedPath)
+        assertEquals("mizu", request.requestUrl!!.queryParameter("profile"))
+        assertEquals("sess-old", exported["id"].toString().trim('"'))
+    }
+
+    @Test
+    fun setSessionArchived_patchesArchivedScopedToProfile() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok":true,"title":"Old plan","archived":true}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.setSessionArchived("sess-old", archived = true, profile = "mizu").getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("PATCH", request.method)
+        // Current upstream reads profile from the PATCH body (SessionRename
+        // model); the query param rides along for builds that scoped by query.
+        assertEquals("/api/sessions/sess-old", request.requestUrl!!.encodedPath)
+        assertEquals("mizu", request.requestUrl!!.queryParameter("profile"))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains(""""archived":true"""))
+        assertTrue(body.contains(""""profile":"mizu""""))
+    }
+
+    @Test
+    fun setSessionArchived_omitsProfileForDefaultSelection() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok":true,"title":"","archived":false}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.setSessionArchived("sess-old", archived = false, profile = null).getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals(null, request.requestUrl!!.queryParameter("profile"))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains(""""archived":false"""))
+        assertFalse(body.contains("profile"))
+    }
+
+    @Test
+    fun renameSession_carriesProfileInBodyAndQuery() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok":true,"title":"New title"}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.renameSession("sess-a", title = "New title", profile = "mizu").getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("PATCH", request.method)
+        assertEquals("/api/sessions/sess-a", request.requestUrl!!.encodedPath)
+        assertEquals("mizu", request.requestUrl!!.queryParameter("profile"))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains(""""title":"New title""""))
+        // Current upstream reads profile from the PATCH body, not the query.
+        assertTrue(body.contains(""""profile":"mizu""""))
+    }
+
+    @Test
+    fun listSessions_passesArchivedFilterThrough() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[],"total":0,"limit":50,"offset":0}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.listSessions(archived = "only").getOrThrow()
+
+        val url = server.takeRequest().requestUrl!!
+        assertEquals("only", url.queryParameter("archived"))
+    }
+
+    @Test
+    fun listSessions_omitsArchivedParamByDefault() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[],"total":0,"limit":50,"offset":0}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.listSessions().getOrThrow()
+
+        // Default stays upstream's default (exclude) with no param, so older
+        // hosts that predate the archived filter see an unchanged request.
+        assertEquals(null, server.takeRequest().requestUrl!!.queryParameter("archived"))
     }
 
     @Test

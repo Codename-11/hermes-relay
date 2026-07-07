@@ -139,6 +139,58 @@ def http_probe(
         }
 
 
+_MANAGE_SURFACE_FIX = (
+    "Manage, dashboard voice, and gateway chat need the dashboard/Manage "
+    "surface. Start it with `hermes dashboard` (default port 9119) and point "
+    "the dashboard URL at it; `hermes serve` is the headless backend command "
+    "and is not the Manage surface."
+)
+
+
+def classify_manage_surface(
+    status_probe: dict[str, Any],
+    capabilities_probe: dict[str, Any],
+) -> dict[str, Any]:
+    """Classify what the configured dashboard URL is actually serving.
+
+    ``status_probe`` is ``GET /api/status`` on the dashboard base (the
+    dashboard/Manage liveness marker); ``capabilities_probe`` is
+    ``GET /v1/capabilities`` on the same base, which only the API server
+    answers. The classification catches the two common misconfigurations:
+    pointing the dashboard slot at the API server, and pointing it at a host
+    where no dashboard is running at all.
+    """
+    if status_probe.get("ok"):
+        return {
+            "kind": "dashboard",
+            "summary": "dashboard URL answers the dashboard/Manage surface",
+            "recommendation": None,
+        }
+    if capabilities_probe.get("ok"):
+        return {
+            "kind": "api-server",
+            "summary": (
+                "dashboard URL answers like the Hermes API server, "
+                "not the dashboard/Manage surface"
+            ),
+            "recommendation": _MANAGE_SURFACE_FIX,
+        }
+    if status_probe.get("status") is None and capabilities_probe.get("status") is None:
+        return {
+            "kind": "unreachable",
+            "summary": "no dashboard/Manage surface reachable at the dashboard URL",
+            "recommendation": _MANAGE_SURFACE_FIX,
+        }
+    return {
+        "kind": "unknown",
+        "summary": (
+            "dashboard URL is reachable but did not answer like the "
+            "dashboard/Manage surface"
+        ),
+        "recommendation": _MANAGE_SURFACE_FIX,
+    }
+
+
 def _site_dirs(site_dirs: Iterable[Path] | None = None) -> list[Path]:
     if site_dirs is not None:
         return [Path(p) for p in site_dirs]
@@ -246,6 +298,22 @@ def collect_doctor_report(
         method="POST",
         timeout=timeout,
     )
+    # Same base as the dashboard URL on purpose: only the API server answers
+    # /v1/capabilities, so a hit here means the dashboard slot points at the
+    # API server instead of the dashboard/Manage surface.
+    dashboard_capabilities = probe(
+        _url(dashboard_base, "/v1/capabilities"),
+        method="GET",
+        timeout=timeout,
+    )
+    # HEAD, never POST: /api/sessions/prune deletes sessions. A POST-only
+    # FastAPI route answers HEAD with 405 when present and 404 when absent.
+    dashboard_sessions_prune = probe(
+        _url(dashboard_base, "/api/sessions/prune"),
+        method="HEAD",
+        timeout=timeout,
+    )
+    manage_surface = classify_manage_surface(dashboard_status, dashboard_capabilities)
     relay_info = probe(
         f"http://127.0.0.1:{int(port)}/relay/info",
         method="GET",
@@ -284,6 +352,23 @@ def collect_doctor_report(
         "dashboard /api/status reachable"
         if dashboard_status.get("ok")
         else "dashboard not reachable from this host",
+    )
+    _check(
+        checks,
+        "dashboard-manage-surface",
+        "ok" if manage_surface["kind"] == "dashboard" else "warn",
+        manage_surface["summary"],
+    )
+    _check(
+        checks,
+        "dashboard-session-prune",
+        "ok" if dashboard_sessions_prune.get("exists") else "warn",
+        "server-backed session cleanup route (/api/sessions/prune) exists"
+        if dashboard_sessions_prune.get("exists")
+        else (
+            "server-backed session cleanup route (/api/sessions/prune) was not "
+            "detected; bulk cleanup degrades to per-session deletes"
+        ),
     )
     _check(
         checks,
@@ -348,6 +433,9 @@ def collect_doctor_report(
                 "status": dashboard_status,
                 "audio_transcribe": dashboard_audio,
                 "ws_ticket": dashboard_ws_ticket,
+                "capabilities": dashboard_capabilities,
+                "sessions_prune": dashboard_sessions_prune,
+                "manage_surface": manage_surface,
             },
         },
         "relay": {
@@ -409,6 +497,12 @@ def render_doctor_text(report: dict[str, Any]) -> str:
     for check in report.get("checks", []):
         status = str(check.get("status", "unknown")).upper()
         lines.append(f"  [{status}] {check.get('id')}: {check.get('summary')}")
+
+    manage_surface = standard.get("dashboard", {}).get("manage_surface", {})
+    recommendation = manage_surface.get("recommendation")
+    if recommendation:
+        lines.append("")
+        lines.append(f"Fix: {recommendation}")
 
     lines.append("")
     lines.append(

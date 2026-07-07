@@ -7,6 +7,9 @@ import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.MessageListResponse
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SessionListResponse
+import com.hermesandroid.relay.network.upstream.models.SessionPruneFilters
+import com.hermesandroid.relay.network.upstream.models.SessionPrunePreview
+import com.hermesandroid.relay.network.upstream.models.SessionPruneResult
 import com.hermesandroid.relay.auth.SecureStoreCache
 import com.hermesandroid.relay.auth.SessionTokenStore
 import com.hermesandroid.relay.auth.buildRawTokenStore
@@ -270,8 +273,15 @@ class DashboardApiClient(
         getJson("/api/audio/elevenlabs/voices").mapCatching { parseElevenLabsVoices(it) }
     }
 
-    /** Full provider/model universe — REST twin of the TUI's `model.options` RPC. */
-    suspend fun getModelOptions(): Result<JsonObject> = getJsonObject("/api/model/options")
+    /**
+     * Full provider/model universe — REST twin of the TUI's `model.options` RPC.
+     *
+     * [refresh] maps to upstream's explicit `GET /api/model/options?refresh=1`
+     * path, which refreshes dynamic/custom-provider catalogs on demand without
+     * probing every provider during normal picker opens.
+     */
+    suspend fun getModelOptions(refresh: Boolean = false): Result<JsonObject> =
+        getJsonObject(if (refresh) "/api/model/options?refresh=1" else "/api/model/options")
 
     /**
      * Assign the main model in `~/.hermes/config.yaml` (new sessions only).
@@ -508,7 +518,11 @@ class DashboardApiClient(
      * ordering where the host honors it. Android still sorts by decoded
      * `last_active` locally because older hosts return started-time order.
      */
-    suspend fun listSessions(profile: String? = null, limit: Int = 200): Result<List<SessionItem>> =
+    suspend fun listSessions(
+        profile: String? = null,
+        limit: Int = 200,
+        archived: String? = null,
+    ): Result<List<SessionItem>> =
         withContext(Dispatchers.IO) {
             val query = buildList {
                 add("limit=${limit.coerceIn(1, 200)}")
@@ -516,6 +530,10 @@ class DashboardApiClient(
                 add("min_messages=1")
                 val name = profile?.trim().orEmpty()
                 if (name.isNotBlank()) add("profile=${pathSegment(name)}")
+                // Upstream `archived` filter: exclude (default) | only | include.
+                // Omitted unless requested so older hosts see an unchanged request.
+                val archivedMode = archived?.trim().orEmpty()
+                if (archivedMode.isNotBlank()) add("archived=${pathSegment(archivedMode)}")
             }.joinToString(prefix = "?", separator = "&")
             getJson("/api/sessions$query").mapCatching { root ->
                 val parsed = json.decodeFromJsonElement(SessionListResponse.serializer(), root)
@@ -556,17 +574,96 @@ class DashboardApiClient(
         deleteJsonObject("/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}")
 
     /**
+     * Export one session as server-owned JSON metadata + messages. This is the
+     * safe "archive a copy before cleanup" primitive for clients that want to
+     * offer download/share before a destructive delete or prune. Profile scoping
+     * matches [deleteSession].
+     */
+    suspend fun exportSession(sessionId: String, profile: String? = null): Result<JsonObject> =
+        getJsonObject("/api/sessions/${pathSegment(sessionId)}/export${profileQuery(profile)}")
+
+    /**
      * Rename a session scoped to a profile via the dashboard
-     * `PATCH /api/sessions/{id}?profile=` surface — the write twin of
-     * [deleteSession]. A non-default profile's sessions live in that profile's
-     * own `state.db`, so the unscoped api_server rename would patch the wrong
-     * DB and the new title would never appear in the profile-scoped list.
+     * `PATCH /api/sessions/{id}` surface — the write twin of [deleteSession].
+     * A non-default profile's sessions live in that profile's own `state.db`,
+     * so the unscoped api_server rename would patch the wrong DB and the new
+     * title would never appear in the profile-scoped list. Current upstream
+     * reads `profile` from the PATCH body (`SessionRename`); the query param
+     * rides along for builds that scoped by query.
      */
     suspend fun renameSession(sessionId: String, title: String, profile: String? = null): Result<JsonObject> =
         patchJsonObject(
             "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
-            buildJsonObject { put("title", title) },
+            buildJsonObject {
+                put("title", title)
+                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
+            },
         )
+
+    /**
+     * Soft-archive or restore a session via the same dashboard
+     * `PATCH /api/sessions/{id}` surface (`{archived: true|false}`). Archived
+     * sessions drop out of the default list and are excluded from a prune
+     * unless [SessionPruneFilters.includeArchived] is set; list them back with
+     * [listSessions] `archived = "only"`. Profile scoping matches
+     * [renameSession]: body for current upstream, query for older builds.
+     */
+    suspend fun setSessionArchived(
+        sessionId: String,
+        archived: Boolean,
+        profile: String? = null,
+    ): Result<JsonObject> =
+        patchJsonObject(
+            "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
+            buildJsonObject {
+                put("archived", archived)
+                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
+            },
+        )
+
+    /**
+     * Dry-run a server-backed bulk session cleanup via the dashboard
+     * `POST /api/sessions/prune` (`dry_run: true`). Returns what WOULD be
+     * deleted — matched count, started-at span, and the candidate rows —
+     * without deleting anything. This is the required first step of the
+     * prune flow: show the preview, then pass it to [pruneSessions].
+     */
+    suspend fun previewSessionPrune(filters: SessionPruneFilters): Result<SessionPrunePreview> =
+        postJsonObject("/api/sessions/prune", filters.toPrunePayload(dryRun = true))
+            .mapCatching { root ->
+                json.decodeFromJsonElement(SessionPrunePreview.serializer(), root)
+            }
+
+    /**
+     * Apply a server-backed bulk session cleanup (`POST /api/sessions/prune`,
+     * `dry_run: false`). Destructive — [confirmedPreview] is required so no
+     * caller can reach this without first running [previewSessionPrune] with
+     * the same [filters] and showing the user its count/span. A preview that
+     * matched nothing short-circuits without touching the server: sessions
+     * that aged into the filter after the preview are not covered by what the
+     * user confirmed.
+     */
+    suspend fun pruneSessions(
+        filters: SessionPruneFilters,
+        confirmedPreview: SessionPrunePreview,
+    ): Result<SessionPruneResult> {
+        if (confirmedPreview.matched <= 0) {
+            return Result.success(SessionPruneResult(ok = true, removed = 0))
+        }
+        return postJsonObject("/api/sessions/prune", filters.toPrunePayload(dryRun = false))
+            .mapCatching { root ->
+                json.decodeFromJsonElement(SessionPruneResult.serializer(), root)
+            }
+    }
+
+    private fun SessionPruneFilters.toPrunePayload(dryRun: Boolean): JsonObject =
+        buildJsonObject {
+            olderThanDays?.let { put("older_than_days", it) }
+            source?.trim()?.takeIf { it.isNotBlank() }?.let { put("source", it) }
+            profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
+            if (includeArchived) put("include_archived", true)
+            put("dry_run", dryRun)
+        }
 
     private fun parseProfiles(root: JsonObject): List<Profile> {
         fun decode(element: JsonElement, nameOverride: String?): Profile? = runCatching {

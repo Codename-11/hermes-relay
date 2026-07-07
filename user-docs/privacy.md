@@ -29,6 +29,7 @@ All data is stored locally on your device in the app's private sandbox:
 | Server URLs, preferences | Android DataStore (app-private) |
 | API key, relay session tokens | AES-256-GCM encryption via Android Keystore |
 | Performance counters | Android DataStore (local only) |
+| Notification trigger rules and activity log | Android DataStore (local only) |
 
 Chat messages are **not cached** on your device. They are loaded from your Hermes server on demand and exist only in memory while the app is running.
 
@@ -54,7 +55,7 @@ Google Play build:
 | Microphone | Voice mode speech-to-text | No |
 | Notification Access | Optional notification companion metadata forwarding to your paired relay | No |
 
-Notification Access is granted and revoked from Android system settings. When enabled, Hermes-Relay forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay. It does not forward notifications to a Hermes-Relay cloud service.
+Notification Access is granted and revoked from Android system settings. When enabled, Hermes-Relay forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay. It does not forward notifications to a Hermes-Relay cloud service. If you separately enable Notification triggers, matching happens locally on the phone; the MVP action writes a local activity-log entry and posts a local “Ask Hermes?” prompt. It does not send a new AI request or reply in another app automatically.
 
 Sideload Device Control builds may request additional permissions for overlay, foreground service, wake lock, screenshots, contacts, location, SMS, and calls. Those permissions are not present in the Google Play build.
 

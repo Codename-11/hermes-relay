@@ -8,6 +8,11 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.hermesandroid.relay.network.relay.ChannelMultiplexer
 import com.hermesandroid.relay.network.relay.models.Envelope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
@@ -42,6 +47,11 @@ import java.util.concurrent.ConcurrentLinkedQueue
  */
 class HermesNotificationCompanion : NotificationListenerService() {
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val triggerStore by lazy {
+        NotificationTriggerStore(applicationContext.notificationTriggerDataStore)
+    }
+
     /**
      * Buffer for entries that arrive before [multiplexer] has been
      * wired up (e.g. notifications during app cold-start). Bounded so
@@ -68,6 +78,7 @@ class HermesNotificationCompanion : NotificationListenerService() {
         if (active === this) {
             active = null
         }
+        serviceScope.cancel()
         super.onDestroy()
     }
 
@@ -75,6 +86,13 @@ class HermesNotificationCompanion : NotificationListenerService() {
         if (sbn == null) return
 
         val entry = sbn.toEntry() ?: return
+        // The trigger MVP posts its own local prompt notifications. Never feed
+        // Hermes-Relay's notifications back into the rule engine, or a broad
+        // rule could prompt on its own prompt. Still forward them to the relay
+        // cache to preserve existing notification-companion semantics.
+        if (entry.packageName != packageName) {
+            evaluateNotificationTriggers(entry)
+        }
         val envelope = entry.toEnvelope()
 
         // Drain any backlog first so order is preserved.
@@ -139,6 +157,31 @@ class HermesNotificationCompanion : NotificationListenerService() {
             postedAt = postTime,
             key = key,
         )
+    }
+
+    private fun evaluateNotificationTriggers(entry: NotificationEntry) {
+        serviceScope.launch {
+            val match = triggerStore.firstMatchingRule(entry) ?: return@launch
+            val result = when (match.rule.action) {
+                NotificationTriggerAction.AskMe -> NotificationTriggerPromptNotifier.notifyAskMe(
+                    context = applicationContext,
+                    rule = match.rule,
+                    entry = entry,
+                )
+            }
+            triggerStore.appendActivity(
+                NotificationTriggerActivityEntry(
+                    ruleId = match.rule.id,
+                    ruleLabel = match.rule.label,
+                    action = match.rule.action,
+                    packageName = entry.packageName,
+                    title = entry.title,
+                    textPreview = entry.text?.take(160) ?: entry.subText?.take(160),
+                    matchedAt = System.currentTimeMillis(),
+                    result = result,
+                )
+            )
+        }
     }
 
     private fun NotificationEntry.toEnvelope(): Envelope {

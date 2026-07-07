@@ -384,6 +384,10 @@ class ChatViewModel : ViewModel() {
     private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
     val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
 
+    /** True only during an explicit user-requested dynamic model catalog refresh. */
+    private val _modelOptionsRefreshing = MutableStateFlow(false)
+    val modelOptionsRefreshing: StateFlow<Boolean> = _modelOptionsRefreshing.asStateFlow()
+
     /** Current gateway model from `model.options`, used when no Android override is active. */
     private val _gatewayCurrentModel = MutableStateFlow("")
     val gatewayCurrentModel: StateFlow<String> = _gatewayCurrentModel.asStateFlow()
@@ -429,28 +433,37 @@ class ChatViewModel : ViewModel() {
     /**
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
+     * [refresh] is the explicit upstream refresh path for dynamic/custom-provider catalogs;
+     * automatic picker opens stay on the cheap cached path.
      */
-    fun refreshModelOptions() {
+    fun refreshModelOptions(refresh: Boolean = false) {
         val gateway = gatewayClient ?: run {
             android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
+            if (refresh) _modelOptionsRefreshing.value = false
             return
         }
+        if (refresh && _modelOptionsRefreshing.value) return
+        if (refresh) _modelOptionsRefreshing.value = true
         viewModelScope.launch {
-            gateway.modelOptions().fold(
+            gateway.modelOptions(refresh = refresh).fold(
                 onSuccess = {
                     _modelProviders.value = it.providers
                     _gatewayCurrentModel.value = it.currentModel
                     _gatewayCurrentProvider.value = it.currentProvider
                     android.util.Log.i(
                         "ChatViewModel",
-                        "model.options: ${it.providers.size} providers, " +
+                        "model.options${if (refresh) " refresh" else ""}: ${it.providers.size} providers, " +
                             "${it.providers.sumOf { p -> p.models.size }} models, current=${it.currentModel}",
                     )
                 },
                 onFailure = {
                     android.util.Log.w("ChatViewModel", "model.options failed: ${it.message}")
+                    if (refresh) {
+                        _transientNotice.tryEmit("Couldn't refresh models: ${it.message ?: "unknown error"}")
+                    }
                 },
             )
+            if (refresh) _modelOptionsRefreshing.value = false
         }
     }
 

@@ -86,6 +86,64 @@ agents); VitePress build clean with a full-site anchor sweep; release workflow Y
 parses; combined lint + unit gate re-run on merged `dev`. On-device checks
 (Doze/screen-off recovery, max-font onboarding) are owner-driven and queued in TODO.
 
+## 2026-07-06 — Model picker Refresh Models parity
+
+**Why.** The upstream-impact watch flagged Hermes' new explicit model catalog refresh
+contract: dashboard REST accepts `GET /api/model/options?refresh=1`, the TUI gateway
+accepts `model.options {refresh:true}`, and upstream desktop/web surfaces expose a
+Refresh Models action so dynamic/custom provider catalogs can be refreshed on demand.
+Android already used both model-option surfaces, but only the cached/non-refresh path.
+
+**What.**
+- `DashboardApiClient.getModelOptions(refresh)` now adds `?refresh=1` only for an
+  explicit refresh request; normal Manage dialog opens remain cached/cheap.
+- `GatewayChatClient.modelOptions(refresh)` sends `refresh:true` on the JSON-RPC only
+  when the chat model sheet's Refresh button is tapped.
+- `ChatViewModel` exposes `modelOptionsRefreshing` and keeps automatic prewarm/open
+  refreshes on the non-refresh path; explicit failures surface as transient notices.
+- `ModelPickerSheet` and Manage's model dialogs gained a Refresh action with spinner
+  state, matching upstream without forcing provider probes on every picker open.
+
+**Verification.** Focused dashboard/gateway client tests cover REST query and RPC params;
+full `:app:testSideloadDebugUnitTest` / lint still need the pre-PR gate below.
+
+## 2026-07-06 — Upstream-impact guardrails: dashboard surface + session cleanup
+
+**Why.** The upstream-impact watch flagged two Relay-adjacent changes: `hermes serve`
+now represents the headless backend path while `hermes dashboard` remains the Manage/UI
+surface, and newer upstream session APIs expose safer server-side cleanup primitives.
+Relay needed concrete compatibility seams so Android and operators do not treat those
+surfaces interchangeably or delete sessions client-side without a server preview.
+
+**What.**
+- `hermes relay doctor` now probes the configured dashboard URL for both
+  `/api/status` and `/v1/capabilities`, classifies whether it is the dashboard/Manage
+  surface or an API-server/headless URL, and prints an actionable `hermes dashboard`
+  fix when it is not the Manage surface. It also probes `/api/sessions/prune` with
+  `HEAD` only so diagnostics can report server-backed cleanup support without ever
+  running a prune.
+- `DashboardApiClient` gained single-session export, soft archive/restore helpers, an
+  optional `archived` list filter, and `previewSessionPrune` / `pruneSessions` wrappers
+  around upstream `/api/sessions/prune`. The destructive apply requires a
+  caller-supplied preview and short-circuits when the preview matched nothing.
+- Session cleanup docs now record the export, archive, and prune contract; dashboard
+  docs call out `hermes dashboard` vs. headless `hermes serve`.
+
+**Verification.** `python -m unittest plugin.tests.test_doctor`; `ANDROID_HOME=$HOME/Android/Sdk ANDROID_SDK_ROOT=$HOME/Android/Sdk ./gradlew :app:testSideloadDebugUnitTest --tests com.hermesandroid.relay.network.upstream.DashboardApiClientTest`.
+
+## 2026-07-06 — Multi-device Android bridge targeting
+
+**Why.** The relay bridge previously behaved like a single active Android client. When a phone and tablet were both paired, the most recent bridge connection displaced the other, so host-side `android_*` tools could not reliably target a specific device.
+
+**What.**
+- **Bridge registry.** Replaced the single bridge WebSocket slot with a connected-device registry keyed by device ID. Responses are scoped to the command's target socket so a different device cannot satisfy the request ID.
+- **Selectors.** Added aliases and explicit selectors for phone/fold/pixel and tablet/BOOX-style devices, plus `/bridge/devices`, `/bridge/status?device=...`, and `/bridge/select-active` loopback routes.
+- **Tool schemas.** Added an optional `device` selector to bridge-backed `android_*` tool schemas. The tool handler stores the selector in a call-scoped context so nested `android_macro` steps inherit the top-level target unless a step overrides it.
+
+**Verification.** Focused plugin tests pass: `python -m unittest plugin.tests.test_android_tool_device_selector plugin.tests.test_bridge_multidevice plugin.tests.test_bridge_channel plugin.tests.test_bridge_status plugin.tests.test_bridge_activity` → 39 tests OK. Live relay smoke confirmed two Android bridge clients connected simultaneously, explicit selectors for each returned distinct foreground packages, and `/bridge/select-active` switched the default target both ways. Standard Android Settings screens returned non-empty accessibility trees on both devices. Screenshot checks remain permission-gated: devices without a current MediaProjection grant still need the in-app/user-consent flow, while the e-ink timeout path is hardened with a longer configurable wait and one capture-pipeline rebuild retry.
+
+## 2026-07-01 — Realtime voice: live background-run chip (progress, phases, cancel)
+
 **Why.** With timer-driven spoken progress off by default (see the robustness batch
 below), the voice overlay's background-run chip became the primary in-between signal —
 but it was a static string set at promotion and cleared at completion. The relay's
@@ -587,6 +645,16 @@ resume copy, the tabbed flow) is owner-driven from Android Studio.
 - **Code blocks.** Streaming fence rebuilt Discord-style: a contrasting inset surface with a thin header (language label + copy-to-clipboard affordance that flips to a check) over a horizontally-scrollable monospace body. Markdown code/inline-code backgrounds switched to contrasting container steps (`surfaceContainerLowest` / `surfaceContainerHighest`) so code no longer blends into the surfaceVariant assistant bubble.
 
 **Verification.** Host-side Roborazzi (`StoreScreenshotTest`): added `s09_blend_chat` (Hermes dark + Nous-blue light) and `s10_font_picker`. Renders confirm the avatar/grouping/width/density, the code-block + inline-code contrast in both dark and light, and that Inter and Nunito load as visibly distinct faces in the picker. `./gradlew :app:lint` run clean. On-device typeface crispness and feel (avatar size, width, density on a real device) remain a maintainer gate.
+## 2026-07-06 — Multi-device Android bridge targeting
+
+**Why.** The relay bridge previously behaved like a single active Android client. When a phone and tablet were both paired, the most recent bridge connection displaced the other, so host-side `android_*` tools could not reliably target a specific device.
+
+**What.**
+- **Bridge registry.** Replaced the single bridge WebSocket slot with a connected-device registry keyed by device ID. Responses are scoped to the command's target socket so a different device cannot satisfy the request ID.
+- **Selectors.** Added aliases and explicit selectors for phone/fold/pixel and tablet/BOOX-style devices, plus `/bridge/devices`, `/bridge/status?device=...`, and `/bridge/select-active` loopback routes.
+- **Tool schemas.** Added an optional `device` selector to bridge-backed `android_*` tool schemas. The tool handler stores the selector in a call-scoped context so nested `android_macro` steps inherit the top-level target unless a step overrides it.
+
+**Verification.** Focused plugin tests pass: `python -m unittest plugin.tests.test_android_tool_device_selector plugin.tests.test_bridge_multidevice plugin.tests.test_bridge_channel plugin.tests.test_bridge_status plugin.tests.test_bridge_activity` → 39 tests OK. Live relay smoke confirmed two Android bridge clients connected simultaneously, explicit selectors for each returned distinct foreground packages, and `/bridge/select-active` switched the default target both ways. Standard Android Settings screens returned non-empty accessibility trees on both devices. Screenshot checks remain surface-specific: one device reported MediaProjection not granted, while an e-ink tablet with the grant active timed out waiting for a frame.
 
 ## 2026-06-28 — Dev-loop polish after the live smoke test
 
@@ -702,6 +770,18 @@ Cut Android **1.2.4** (appVersionName 1.2.4 / appVersionCode 18) — "Stability 
 **Fix.** Pushed the guard into the leaf. New `network/NetworkShutdown.kt#shutdownOffMainThread(name, block)` runs the executor-shutdown + `evictAll()` on a short-lived daemon thread when called from the main thread, and inline otherwise (preserving the blocking `awaitTermination` semantics for callers already on IO). Wrapped all three `shutdown()` bodies with it, so every call site is safe regardless of dispatcher. Simplified `ConnectionViewModel.onCleared()` — its now-redundant manual `Thread` wrappers were removed and `connectionManager.shutdown()` is no longer an unguarded main-thread `evictAll()`.
 
 **Verification.** New Robolectric `NetworkShutdownTest` (2 cases) asserts the teardown runs off the main thread when invoked from the main looper, and inline when invoked off it. `./gradlew :app:testSideloadDebugUnitTest --tests NetworkShutdownTest` green (compiles the full module + both cases pass). On-device confirmation over a real Tailscale/TLS connection pending a Studio build.
+
+## 2026-06-23 — Notification trigger MVP (AXI-26)
+
+**Why.** The notification companion could cache forwarded notifications for manual `android_notifications_recent` reads, but it did not make the app proactive. This pass adds the first safe event-trigger path: when an explicitly enabled local rule matches a posted notification, the phone prompts the user to ask Hermes instead of silently invoking an agent or replying in another app.
+
+- **Rule schema + storage.** Added `NotificationTriggers.kt` with a minimal DataStore-backed schema in app-private `notification_triggers`: master opt-in, kill switch, JSON rule list, and JSON activity log (latest 25). MVP rule fields are `id`, `label`, `enabled`, `app_package`, optional `title_contains` / `text_contains`, `action=ask_me`, and reserved `require_confirmation`.
+- **Safe trigger path.** `HermesNotificationCompanion` now evaluates posted `NotificationEntry` values against enabled rules on a service IO scope, skips self-trigger recursion for local Hermes-Relay prompts, and keeps the existing relay notification forwarding behavior. A match records an activity entry and posts a local Android “Ask Hermes about this?” notification that opens Chat; it does not send a Hermes prompt or touch another app automatically.
+- **Settings UI.** `NotificationCompanionSettingsScreen` now includes explicit trigger opt-in, kill switch, single-rule editor (requiring at least one filter), visible activity log with clear action, and confirmation-policy copy.
+- **Docs.** Added `user-docs/features/notification-triggers.md`, linked it from Features, and documented DataStore keys/schema in Configuration plus privacy behavior in the Privacy Policy. Changelog `[Unreleased]` records the user-facing addition.
+- **Tests.** Added `NotificationTriggerStoreTest` for disabled default, rule matching, kill switch, empty-filter refusal, and activity-log cap/order.
+
+**Verification.** `ANDROID_HOME=/home/bailey/Android/Sdk ./gradlew :app:testSideloadDebugUnitTest --tests com.hermesandroid.relay.notifications.NotificationTriggerStoreTest --no-daemon` → BUILD SUCCESSFUL. `ANDROID_HOME=/home/bailey/Android/Sdk ./gradlew :app:assembleSideloadDebug --no-daemon` → BUILD SUCCESSFUL. `git diff --check` → clean. `:app:lintSideloadDebug` was attempted twice in the foreground and once in a background Gradle process; each exceeded the 5-minute tool ceiling / stalled in lint analysis before producing a report, so lint remains unverified in this run.
 
 ## 2026-06-22 — Released android-v1.2.2
 

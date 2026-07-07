@@ -500,6 +500,7 @@ fun ChatScreen(
     val serverModelName by chatViewModel.serverModelName.collectAsState()
     val availableModels by chatViewModel.availableModels.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
+    val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
@@ -2710,6 +2711,8 @@ fun ChatScreen(
             if (showModelSheet) {
                 ModelPickerSheet(
                     options = modelPickerOptions,
+                    refreshing = modelOptionsRefreshing,
+                    onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
                     onSelect = { option ->
                         showModelSheet = false
                         chatViewModel.selectModel(option.value, option.provider)

@@ -6,10 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android model pickers can refresh the server catalog.** Chat's model sheet and Manage's main/profile model dialogs now expose upstream's explicit **Refresh Models** action, so dynamic/custom provider model lists can be reloaded on demand without making every picker open probe providers.
+- **Server-backed session cleanup plumbing.** The dashboard client now supports single-session export, the upstream `/api/sessions/prune` route with a mandatory dry-run preview before destructive apply, plus soft archive/restore helpers and an `archived` session-list filter for the Manage surface.
+- **Notification triggers MVP.** Settings → Notifications now has explicit opt-in proactive rules for the Notification companion: match by app package plus optional title/text filters, post a safe local "Ask Hermes?" prompt, show the latest trigger activity, and pause everything instantly with a kill switch.
+- **Android bridge: multi-device targeting.** The relay can keep multiple Android bridge clients connected at once, route commands by `device` selector (`phone`, `pixel`, `fold`, `boox`, `note`, `notemax`, `tablet`, or device ID), expose `/bridge/devices` and `/bridge/select-active`, and advertise an optional `device` argument on the `android_*` tool schemas.
+
 ### Fixed
 
 - **Relay plugin works under the native `hermes plugins install` path.** The plugin's runtime imports assumed the repo's editable layout, so upstream's native installer (which loads plugins under its own package namespace) broke `hermes relay start` and `hermes pair` with `ModuleNotFoundError: No module named 'plugin'`. All runtime imports are now package-relative, the dashboard module boots correctly when the upstream web server loads it standalone, and `hermes relay doctor` now exercises the real import chain so this class of breakage can't pass doctor again. (#165)
 - **Installer handles modern venv layouts.** `install.sh` now autodetects the classic venv, uv-managed `.venv`, and containerized layouts — and everything it generates (the systemd unit and all four command shims) points at the interpreter it actually detected instead of a hardcoded classic path. On immutable container images it steers to the native install path with a clear message instead of dying mid-run. (#165)
+- **Doctor catches dashboard URLs pointed at the wrong Hermes surface.** `hermes relay doctor` now distinguishes the dashboard/Manage surface from an API-server/headless backend URL and tells operators to use `hermes dashboard` when a configured dashboard URL is actually pointing at `hermes serve` / the API server.
 
 ## [1.3.0] - 2026-07-06
 
