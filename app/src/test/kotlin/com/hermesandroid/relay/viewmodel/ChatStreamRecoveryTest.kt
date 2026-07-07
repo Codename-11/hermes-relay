@@ -67,6 +67,7 @@ class ChatStreamRecoveryTest {
         val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
         recovery.start(
             pendingUserText = pending,
+            priorUserMessageCount = 0,
             onIntermediateHistory = { intermediate += it },
             onRecovered = { recovered = it },
             onGaveUp = { gaveUp = it },
@@ -90,7 +91,7 @@ class ChatStreamRecoveryTest {
     fun pollCadenceBacksOffExponentiallyToTheCap() = runTest {
         val script = ScriptedHistory(listOf({ emptyList() }))
         val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
-        recovery.start(pending, {}, {}, {})
+        recovery.start(pending, 0, {}, {}, {})
 
         // 5s, +10s, +20s, +30s, +30s… (cap) — cumulative fetch times.
         advanceTimeBy(5_000 + 10_000 + 20_000 + 30_000 + 30_000 + 1)
@@ -106,7 +107,7 @@ class ChatStreamRecoveryTest {
         val script = ScriptedHistory(listOf({ emptyList() }))
         var gaveUp: ChatStreamRecovery.GiveUpReason? = null
         val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
-        recovery.start(pending, {}, {}, { gaveUp = it })
+        recovery.start(pending, 0, {}, {}, { gaveUp = it })
 
         advanceTimeBy(31L * 60_000)
         assertEquals(ChatStreamRecovery.GiveUpReason.TIMED_OUT, gaveUp)
@@ -114,9 +115,12 @@ class ChatStreamRecoveryTest {
     }
 
     @Test
-    fun reachableTranscriptWithoutPendingUserMessageFailsFast() = runTest {
-        // Server reachable, but the turn's POST never landed: transcript only
-        // holds the PREVIOUS exchange — waiting cannot produce an answer.
+    fun reachableTranscriptWithoutThePendingSendFailsFast() = runTest {
+        // Server reachable, but the turn's POST never landed: the transcript
+        // still holds only the PREVIOUS exchange (one user row the client
+        // already knew about). No new user row → no anchor → waiting cannot
+        // produce an answer, so give up quickly (after confirming, not on the
+        // very first read) rather than polling to the 30-minute cap.
         val script = ScriptedHistory(
             listOf(
                 {
@@ -130,13 +134,74 @@ class ChatStreamRecoveryTest {
         var gaveUp: ChatStreamRecovery.GiveUpReason? = null
         var recovered = false
         val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
-        recovery.start(pending, {}, { recovered = true }, { gaveUp = it })
+        recovery.start(pending, 1, {}, { recovered = true }, { gaveUp = it })
 
-        advanceTimeBy(5_001)
+        advanceTimeBy(5_001) // poll 1 — not established, not yet confirmed
+        assertNull("must confirm across a couple polls before giving up", gaveUp)
+        advanceTimeBy(10_000) // poll 2 — still not established → fail fast
         assertEquals(ChatStreamRecovery.GiveUpReason.RUN_NOT_FOUND, gaveUp)
         assertFalse("stale prior answer must never count as the recovery", recovered)
-        assertEquals(1, script.fetchCount)
+        assertEquals(2, script.fetchCount)
         assertFalse(recovery.isActive)
+    }
+
+    @Test
+    fun staleIdenticalEarlierUserMessageIsNotAdoptedWhenSendNeverLanded() = runTest {
+        // History the client already knew: "continue" → A, "tell me more" → B.
+        // The new send is ALSO "continue" but its POST never reached the
+        // server, so the transcript is unchanged. A bare `indexOfLast` text
+        // match would anchor on the STALE first "continue" and adopt B (static
+        // → instantly "stable"). The positional invariant (this send would be
+        // the 3rd user row, but only 2 exist) must refuse to adopt and fail.
+        val stale = listOf(
+            user("u1", "continue"),
+            assistant("a1", "answer A"),
+            user("u2", "tell me more"),
+            assistant("a2", "answer B"),
+        )
+        val script = ScriptedHistory(listOf({ stale }))
+        var recovered: List<MessageItem>? = null
+        var gaveUp: ChatStreamRecovery.GiveUpReason? = null
+        val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
+        recovery.start(
+            pendingUserText = "continue",
+            priorUserMessageCount = 2, // u1 + u2 were known before this send
+            onIntermediateHistory = {},
+            onRecovered = { recovered = it },
+            onGaveUp = { gaveUp = it },
+        )
+
+        advanceTimeBy(5_000 + 10_000 + 1) // two polls of the static transcript
+        assertNull("must NOT adopt a different turn's answer", recovered)
+        assertEquals(ChatStreamRecovery.GiveUpReason.RUN_NOT_FOUND, gaveUp)
+        assertFalse(recovery.isActive)
+    }
+
+    @Test
+    fun repeatedShortPromptAnchorsTheNewTurnNotTheStaleOne() = runTest {
+        // "continue" → A is already in history; the new "continue" DID land, so
+        // the server appended a second identical user row + its own answer C.
+        // The positional anchor must pick the SECOND "continue" and adopt C —
+        // never the stale A that an `indexOfLast`-only heuristic risks.
+        val landed = listOf(
+            user("u1", "continue"),
+            assistant("a1", "answer A"),
+            user("u2", "continue"),
+            assistant("a2", "answer C"),
+        )
+        val script = ScriptedHistory(listOf({ landed }))
+        var recovered: List<MessageItem>? = null
+        val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
+        recovery.start(
+            pendingUserText = "continue",
+            priorUserMessageCount = 1, // only the first "continue" was known
+            onIntermediateHistory = {},
+            onRecovered = { recovered = it },
+            onGaveUp = {},
+        )
+
+        advanceTimeBy(5_000 + 10_000 + 1) // stable across two polls
+        assertEquals("answer C", recovered?.last()?.contentText)
     }
 
     @Test
@@ -150,7 +215,7 @@ class ChatStreamRecoveryTest {
         )
         var recovered: List<MessageItem>? = null
         val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
-        recovery.start(pending, {}, { recovered = it }, {})
+        recovery.start(pending, 0, {}, { recovered = it }, {})
 
         advanceTimeBy(5_000 + 10_000 + 20_000 + 1)
         assertEquals("late answer", recovered?.last()?.contentText)
@@ -180,7 +245,7 @@ class ChatStreamRecoveryTest {
         )
         var recovered: List<MessageItem>? = null
         val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
-        recovery.start(pending, {}, { recovered = it }, {})
+        recovery.start(pending, 0, {}, { recovered = it }, {})
 
         advanceTimeBy(15_001) // polls 1+2 — signature changed between them
         assertNull(recovered)
@@ -194,7 +259,7 @@ class ChatStreamRecoveryTest {
         var recovered = false
         var gaveUp = false
         val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
-        recovery.start(pending, {}, { recovered = true }, { gaveUp = true })
+        recovery.start(pending, 0, {}, { recovered = true }, { gaveUp = true })
 
         advanceTimeBy(5_001)
         assertEquals(1, script.fetchCount)

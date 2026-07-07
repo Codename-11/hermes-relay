@@ -217,6 +217,29 @@ class ChatViewModelStreamRecoveryTest {
     }
 
     @Test
+    fun sessionSwitchDuringRecovery_leavesChatNotStreamingWithNoStuckStatus() {
+        messagesBodyFor = { USER_ONLY_BODY } // answer never arrives
+
+        vm.sendMessage(PROMPT)
+        awaitCondition("recovery started") { vm.recoveringAnswer.value }
+        awaitCondition("at least one poll issued") { messagesRequests.get() >= 1 }
+
+        // Switch away while recovery is polling — there is NO live stream, so
+        // aborting the poller must itself settle the streaming/turn-status
+        // state instead of wedging the chat "streaming forever". (s2 has no
+        // scripted /messages route → the history load 404s to empty, which is
+        // fine: this asserts the abort settles, not that s2 loads anything.)
+        vm.switchSession("s2")
+        idle()
+
+        assertFalse("recovery poller must be aborted", vm.recoveringAnswer.value)
+        assertFalse("chat must not be stuck streaming", handler.isStreaming.value)
+        assertNull("no stuck 'Reconnecting…' turn status", handler.turnStatus.value)
+        assertNull("a silent abandon is not an error", handler.error.value)
+        assertPollingStopped()
+    }
+
+    @Test
     fun newSendDuringRecovery_abortsThePoller() {
         messagesBodyFor = { USER_ONLY_BODY } // first turn's answer never arrives
         secondStreamSucceeds = true

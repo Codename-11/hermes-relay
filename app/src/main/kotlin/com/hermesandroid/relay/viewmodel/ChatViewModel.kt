@@ -2867,21 +2867,39 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Stop any in-flight answer recovery. [settleUi] also finalizes the
-     * leftover streaming placeholder so an aborted recovery can't leave a
-     * bubble pulsing forever — callers that restyle the placeholder
-     * themselves ([cancelStream]'s Stopped-badge path, a normal completion's
-     * own onStreamComplete) pass false.
+     * Stop any in-flight answer recovery — and ALWAYS settle the handler's
+     * streaming/turn-status state when a poller was actually running.
+     *
+     * When recovery is live there is NO live [activeStream] (it was nulled
+     * when the poller started), so nothing else fires onStreamComplete /
+     * onStreamError to clear the "Reconnecting to your answer…" caption and
+     * the global streaming flag. If abort left them set the chat would wedge
+     * in streaming mode (dead Stop button, frozen caption) until process
+     * death (issue #166).
+     *
+     * [settleUi] chooses HOW to settle:
+     *  - `true` (a new send about to add its own placeholder) finalizes the
+     *    leftover streaming placeholder into a completed bubble.
+     *  - `false` (abandon paths — session/profile switch, new chat/thread,
+     *    connection switch, user Stop, straggler-completion guard) drops the
+     *    global streaming/turn-status flags SILENTLY: no error badge, and no
+     *    placeholder finalize that could fight a subsequent loadMessageHistory
+     *    or hide the message from cancelStream's Stopped-badge findLast. Those
+     *    callers clear or reload the transcript themselves.
      */
     private fun cancelAnswerRecovery(settleUi: Boolean = true) {
         val hadRecovery = streamRecovery != null
         streamRecovery?.cancel()
         streamRecovery = null
         _recoveringAnswer.value = false
-        if (hadRecovery && settleUi) {
-            chatHandler?.let { handler ->
-                handler.messages.value.findLast { it.isStreaming }
-                    ?.let { handler.onStreamComplete(it.id) }
+        if (!hadRecovery) return
+        chatHandler?.let { handler ->
+            if (settleUi) {
+                val streaming = handler.messages.value.findLast { it.isStreaming }
+                if (streaming != null) handler.onStreamComplete(streaming.id)
+                else handler.clearStreamingStatus()
+            } else {
+                handler.clearStreamingStatus()
             }
         }
     }
@@ -2915,6 +2933,16 @@ class ChatViewModel : ViewModel() {
             title = "Chat stream dropped — recovering the answer in the background",
             detail = cause,
         )
+        // Positional invariant for the anchor (issue #166): how many user-role
+        // rows the client knew about BEFORE this send. handler.messages already
+        // holds the in-flight pair (the just-added pending user message + the
+        // streaming assistant placeholder), so subtract the one pending user
+        // row. The pending send, once persisted, must land as the
+        // (priorUserCount+1)-th user row — this stops a short repeated prompt
+        // ("yes"/"continue") from anchoring on a stale identical earlier row.
+        val priorUserCount = (
+            handler.messages.value.count { it.role == MessageRole.USER } - 1
+        ).coerceAtLeast(0)
         val recovery = ChatStreamRecovery(
             scope = viewModelScope,
             fetchHistory = { loadSessionHistory(sessionId) },
@@ -2923,6 +2951,7 @@ class ChatViewModel : ViewModel() {
         streamRecovery = recovery
         recovery.start(
             pendingUserText = pendingUserText,
+            priorUserMessageCount = priorUserCount,
             onIntermediateHistory = { items ->
                 if (streamRecovery === recovery && handler.currentSessionId.value == sessionId) {
                     // Progressive recovery: surface already-persisted rows as
@@ -2973,6 +3002,10 @@ class ChatViewModel : ViewModel() {
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
                     _queuedMessages.value = emptyList()
+                    // Parity with the sibling stream-error branch: the turn is
+                    // over server-side, so force-deny any still-blocked approval
+                    // card instead of leaving its buttons dead-ended.
+                    clearPendingAsk(approvalStamp = "deny")
                 }
             },
         )
