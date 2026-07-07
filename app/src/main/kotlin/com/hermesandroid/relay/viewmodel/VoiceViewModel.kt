@@ -1344,7 +1344,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
         try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
-        cancelRealtimeAgentTurn("exit voice mode")
+        // Exit = detach, chip ✕ = cancel. A promoted/durable run stays alive
+        // server-side; the relay delivers its result on the next voice session
+        // or as a proactive notification. Cancelling here both killed the task
+        // and let the relay's run-cancelled confirm overwrite an already-
+        // delivered answer with "Cancelled." in the chat transcript.
+        val detachedRun = _uiState.value.backgroundRun
+        if (detachedRun != null) {
+            Log.i(
+                TAG,
+                "Exiting voice mode with background run=${detachedRun.runId ?: "?"} " +
+                    "active — detaching, not cancelling",
+            )
+        } else {
+            cancelRealtimeAgentTurn("exit voice mode")
+        }
         closeRealtimeSession()
         // B4: tear down the barge-in listener + timers before we kill the
         // player so AEC doesn't try to track a released audio session.
@@ -1678,7 +1692,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             TAG,
             "Interrupting speech pipeline",
         )
-        cancelRealtimeAgentTurn("interrupt")
+        // Stop = "stop talking", not "kill my task": with a background run
+        // active, silence the audio pipeline below but leave the run alive —
+        // the chip's ✕ is the explicit cancel affordance.
+        if (_uiState.value.backgroundRun != null) {
+            Log.i(TAG, "Interrupt with background run active — stopping audio only")
+        } else {
+            cancelRealtimeAgentTurn("interrupt")
+        }
         // Drop realtime audio deltas still in flight on the open socket so a
         // stopped turn's tail can't re-create the player and resume playback.
         realtimeAudioSuppressed = true
@@ -2420,12 +2441,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 title = line.trimEnd('.'),
                 detail = "Realtime Agent",
             )
-            _uiState.update {
-                it.copy(
-                    state = VoiceState.Thinking,
-                    outputAudioActive = false,
-                    responseText = line,
-                )
+            // A promoted/durable background run owns the chip; the global
+            // voice state must stay conversational (Idle/Listening) so the
+            // mic keeps working — flipping Thinking on every status event is
+            // what wedged the floor during background runs. Optional spoken
+            // narration below is unaffected.
+            if (_uiState.value.backgroundRun == null) {
+                _uiState.update {
+                    it.copy(
+                        state = VoiceState.Thinking,
+                        outputAudioActive = false,
+                        responseText = line,
+                    )
+                }
             }
             if (speak && (!audioSeen.get() || speakEvenAfterProviderAudio)) {
                 // W3: per-turn throttle independent of the per-key dedupe above.
@@ -2553,11 +2581,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         speakEvenAfterProviderAudio = true,
                     )
                     val tool = event.toolName?.replace('_', ' ') ?: "tool"
-                    _uiState.update {
-                        it.copy(
-                            state = VoiceState.Thinking,
-                            responseText = "Using $tool...",
-                        )
+                    if (_uiState.value.backgroundRun == null) {
+                        _uiState.update {
+                            it.copy(
+                                state = VoiceState.Thinking,
+                                responseText = "Using $tool...",
+                            )
+                        }
                     }
                     // Live chip: tool starts are the fastest-updating signal for
                     // a background run (progress events only tick every ~5s).
@@ -2571,8 +2601,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "hermes.tool.delta" -> {
                     realtimeToolProgressLine(event)?.let { line ->
-                        _uiState.update {
-                            it.copy(state = VoiceState.Thinking, responseText = line)
+                        if (_uiState.value.backgroundRun == null) {
+                            _uiState.update {
+                                it.copy(state = VoiceState.Thinking, responseText = line)
+                            }
                         }
                     }
                 }
@@ -2592,12 +2624,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             speakEvenAfterProviderAudio = true,
                         )
                     }
-                    _uiState.update {
-                        it.copy(
-                            state = VoiceState.Thinking,
-                            outputAudioActive = false,
-                            responseText = line,
-                        )
+                    if (_uiState.value.backgroundRun == null) {
+                        _uiState.update {
+                            it.copy(
+                                state = VoiceState.Thinking,
+                                outputAudioActive = false,
+                                responseText = line,
+                            )
+                        }
                     }
                     // Live chip: active tool + completed-step count. Progress
                     // arriving at all also means the socket is healthy, so a

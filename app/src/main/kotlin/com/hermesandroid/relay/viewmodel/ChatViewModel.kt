@@ -3530,7 +3530,21 @@ class ChatViewModel : ViewModel() {
                 activeStream = null
             }
             "hermes.run.cancelled" -> {
-                handler.replaceMessageContent(assistantMessageId, "Cancelled.")
+                // Don't clobber a delivered answer: the cancel confirm can
+                // arrive after the summary already streamed into this bubble
+                // (chip-cancel racing completion, or a stale confirm). Only a
+                // bubble with no real content becomes "Cancelled."; anything
+                // else keeps its text and gets the Stopped badge instead.
+                val existingContent = handler.messages.value
+                    .firstOrNull { it.id == assistantMessageId }
+                    ?.content
+                    ?.trim()
+                    .orEmpty()
+                if (existingContent.isBlank()) {
+                    handler.replaceMessageContent(assistantMessageId, "Cancelled.")
+                } else {
+                    handler.markStopped(assistantMessageId)
+                }
                 handler.onStreamComplete(assistantMessageId)
                 realtimeAgentUserMessages.remove(assistantMessageId)
                 realtimeAgentInputTranscripts.remove(assistantMessageId)
