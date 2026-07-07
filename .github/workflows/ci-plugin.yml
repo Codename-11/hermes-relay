@@ -12,10 +12,7 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - "plugin/__init__.py"
-      - "plugin/android_tool.py"
-      - "plugin/cli.py"
-      - "plugin/pair.py"
+      - "plugin/*.py"
       - "plugin/plugin.yaml"
       - "plugin/relay/**"
       - "plugin/tools/**"
@@ -31,10 +28,7 @@ on:
   pull_request:
     branches: [main, dev]
     paths:
-      - "plugin/__init__.py"
-      - "plugin/android_tool.py"
-      - "plugin/cli.py"
-      - "plugin/pair.py"
+      - "plugin/*.py"
       - "plugin/plugin.yaml"
       - "plugin/relay/**"
       - "plugin/tools/**"
