@@ -220,6 +220,22 @@ class ChatHandler {
     private val _isStreaming = MutableStateFlow(false)
     val isStreaming: StateFlow<Boolean> = _isStreaming.asStateFlow()
 
+    /**
+     * Silently drop the global streaming flag + turn-status caption without
+     * touching the message list, error, or per-message `isStreaming` flags.
+     * For abandoning an in-flight answer recovery (issue #166) on a path that
+     * clears or reloads the transcript itself: there is no placeholder to
+     * finalize and nothing went wrong, so [onStreamComplete] (which reconciles
+     * a specific message) and [onStreamError] (which raises an error banner)
+     * are both the wrong tool. Leaves per-message streaming flags intact so a
+     * caller that still needs to find the placeholder afterwards (e.g.
+     * cancelStream's Stopped-badge pass) can.
+     */
+    fun clearStreamingStatus() {
+        _isStreaming.value = false
+        _turnStatus.value = null
+    }
+
     private val _sessions = MutableStateFlow<List<ChatSession>>(emptyList())
     val sessions: StateFlow<List<ChatSession>> = _sessions.asStateFlow()
 
@@ -2644,6 +2660,9 @@ class ChatHandler {
 
     fun onStreamError(message: String) {
         _isStreaming.value = false
+        // The turn is over — a stale lifecycle/recovery caption must not
+        // outlive it (onStreamComplete clears the same way).
+        _turnStatus.value = null
         _error.value = message
         // Clear streaming flag on any actively streaming message
         _messages.update { messages ->

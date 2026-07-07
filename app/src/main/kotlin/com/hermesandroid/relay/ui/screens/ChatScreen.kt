@@ -462,6 +462,7 @@ fun ChatScreen(
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     val turnStatus by chatViewModel.turnStatus.collectAsState()
+    val recoveringAnswer by chatViewModel.recoveringAnswer.collectAsState()
     val voiceStats by voiceViewModel.voiceStats.collectAsState()
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
@@ -2068,6 +2069,7 @@ fun ChatScreen(
                                 showThinking = showThinking,
                                 isFirstInGroup = isFirstInGroup,
                                 isLastInGroup = isLastInGroup,
+                                recoveringAnswer = recoveringAnswer,
                                 onAttachmentRetry = { msgId, idx ->
                                     chatViewModel.manualFetchAttachment(msgId, idx)
                                 },
