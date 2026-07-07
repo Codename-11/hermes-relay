@@ -148,6 +148,7 @@ jobs:
             --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
             --tests com.hermesandroid.relay.util.ServerAddressTest \
             --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
             --console=plain
 
       # Upload reports only for failures. Successful PR report uploads add
