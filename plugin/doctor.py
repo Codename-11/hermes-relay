@@ -86,6 +86,13 @@ def _default_relay_port() -> int:
         return DEFAULT_RELAY_PORT
 
 
+def _default_plugins_dir() -> Path:
+    """The Hermes user-plugins directory (`~/.hermes/plugins` or `$HERMES_HOME/plugins`)."""
+    home = os.environ.get("HERMES_HOME")
+    base = Path(home) if home else Path.home() / ".hermes"
+    return base / "plugins"
+
+
 def _route_exists_status(status: int | None) -> bool:
     """Treat auth and method errors as evidence that a route exists."""
     if status is None:
@@ -244,6 +251,36 @@ def _plugin_manager_layout(plugin_dir: Path) -> dict[str, Any]:
     }
 
 
+def _duplicate_plugin_dirs(plugins_dir: Path, plugin_name: str) -> list[str]:
+    """Names of extra plugin directories that declare the same ``plugin_name``.
+
+    The gateway plugin loader dedups discovered plugins by manifest ``name``.
+    When more than one directory under the plugins dir declares the same name
+    (e.g. a leftover backup copy from an older installer, or a second native
+    install), the loader can pick the stale copy and load old code — silently
+    ignoring every later deploy. Distinct real targets sharing a name are the
+    hazard; two links to the *same* target are harmless (deduped by real path).
+    """
+    if not plugins_dir.is_dir():
+        return []
+    try:
+        entries = sorted(plugins_dir.iterdir())
+    except OSError:
+        return []
+    by_target: dict[str, str] = {}
+    for entry in entries:
+        if _read_simple_manifest(entry / "plugin.yaml").get("name") != plugin_name:
+            continue
+        try:
+            target = str(entry.resolve())
+        except OSError:
+            target = str(entry)
+        by_target.setdefault(target, entry.name)
+    if len(by_target) <= 1:
+        return []
+    return sorted(by_target.values())
+
+
 def _relay_import_chain() -> dict[str, Any]:
     """Import the relay server module chain under the CURRENT package layout.
 
@@ -279,6 +316,7 @@ def collect_doctor_report(
     timeout: float = 2.0,
     probe: Probe = http_probe,
     site_dirs: Iterable[Path] | None = None,
+    plugins_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Collect a stable, JSON-serializable diagnostic report."""
     manifest = _read_simple_manifest(PLUGIN_DIR / "plugin.yaml")
@@ -321,6 +359,9 @@ def collect_doctor_report(
     )
 
     layout = _plugin_manager_layout(PLUGIN_DIR)
+    plugins_root = plugins_dir if plugins_dir is not None else _default_plugins_dir()
+    plugin_name = manifest.get("name", PLUGIN_NAME)
+    duplicate_dirs = _duplicate_plugin_dirs(plugins_root, plugin_name)
     bootstrap = _bootstrap_status(site_dirs)
     relay_import = _relay_import_chain()
     checks: list[dict[str, str]] = []
@@ -336,6 +377,19 @@ def collect_doctor_report(
         "dashboard-plugin",
         "ok" if layout["has_dashboard_manifest"] else "warn",
         "dashboard manifest is present under the plugin root",
+    )
+    _check(
+        checks,
+        "plugin-name-unique",
+        "warn" if duplicate_dirs else "ok",
+        (
+            f"multiple plugin directories under {plugins_root} declare name "
+            f"'{plugin_name}' ({', '.join(duplicate_dirs)}) — the loader dedups by "
+            "name, so a stale copy can win and the gateway loads old code. Remove "
+            "the extras and keep only the hermes-relay entry."
+        )
+        if duplicate_dirs
+        else "no duplicate plugin directories share this plugin name",
     )
     _check(
         checks,
@@ -424,6 +478,8 @@ def collect_doctor_report(
             "name": manifest.get("name", PLUGIN_NAME),
             "version": manifest.get("version", ""),
             "layout": layout,
+            "plugins_dir": str(plugins_root),
+            "duplicate_dirs": duplicate_dirs,
         },
         "standard": {
             "api_url": api_base,

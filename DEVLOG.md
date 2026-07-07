@@ -1,5 +1,35 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-07 — Doctor + installer guard against stale duplicate plugin copies
+
+**Why.** The 2026-06-29 phone-platform round-trip failure was ultimately a
+loader-dedup problem: the gateway plugin loader selects a discovered plugin by
+manifest `name`, so a second directory under `~/.hermes/plugins/` declaring
+`name: hermes-relay` (a backup copy left by an older installer, or a stray extra
+install) could win the dedup and make the gateway load stale code — silently
+ignoring every later deploy. Current `install.sh` already `rm -rf`s the old link
+instead of backing it up inside the plugins dir, but nothing detected a duplicate
+that arrived by any other route.
+
+**What.**
+- `plugin/doctor.py`: new `_duplicate_plugin_dirs()` scans the plugins dir
+  (`$HERMES_HOME/plugins` or `~/.hermes/plugins`, injectable for tests) for
+  directories whose `plugin.yaml` declares the same `name`, deduped by resolved
+  real target (two links to the same target are harmless). A new
+  `plugin-name-unique` check warns and names the offenders; `duplicate_dirs` +
+  `plugins_dir` are added to the report's `plugin` block.
+- `install.sh`: after registering the canonical symlink, sweeps the plugins dir
+  and removes any *other* entry whose `plugin.yaml` declares `name: hermes-relay`,
+  so a stale duplicate can't linger.
+
+**Verification.** `python -m unittest plugin.tests.test_doctor` → 14/14 (4 new:
+duplicate detection, single-install OK, doctor warn + report field, doctor OK
+without duplicates). `bash -n install.sh` clean; the sweep's grep-match validated
+in isolation (removes only the extra `name: hermes-relay` dir, skips the
+canonical, differently-named, and manifest-less entries). Live-host verify
+(doctor reports the check; a reinstall leaves one `hermes-relay` entry) queued in
+TODO.
+
 ## 2026-07-06 — Release: android-v1.3.0 + plugin-v1.3.0; voice floor fixes; #165 lands for v1.3.1
 
 **Voice floor fixes (post-e2e).** On-device testing of the realtime batch surfaced
