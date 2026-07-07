@@ -1,6 +1,58 @@
 # Hermes-Relay — Dev Log
 
-## 2026-07-01 — Realtime voice: live background-run chip (progress, phases, cancel)
+## 2026-07-06 — Open-issue resolution batch (triage of all 13 open issues + 5 fix branches)
+
+**Why.** The tracker had accumulated 13 open issues spanning real bugs, already-shipped
+fixes nobody closed, auto-filed diagnostics noise, and docs drift. A multi-agent triage
+pass verified every claim against code and release tags (`git merge-base --is-ancestor`,
+never issue comments), then implementation ran on isolated worktree branches with an
+independent code-review pass per branch. Plan: `docs/plans/2026-07-06-open-issue-resolution.md`.
+
+**Triage outcomes.** #131/#129/#124/#70/#94 were already fixed in released tags
+(v1.2.5 / v1.2.4 / v1.2.3 / v1.1.0+v1.2.3 / v1.2.0 respectively) — closure comments are
+queued as owner actions in TODO. #121 is scheduled feature work for the next `cli-v*`
+release. The rest became fix branches.
+
+**What landed on `dev` (merged `--no-ff`):**
+- `fix/chat-stream-recovery` (#166) — sessions-SSE turns that die on a transport error
+  now enter a recovery poller (5s→30s backoff, 30-min cap) that reconciles the
+  server-persisted answer instead of stranding "Still working…". Root cause verified
+  against upstream `api_server.py`: the run survives the disconnect and persists; only
+  the client gave up. Review pass caught and fixed two real defects before merge:
+  a wedged streaming state when switching sessions mid-recovery, and a stale-anchor
+  adoption when a repeated short message ("continue") never reached the server —
+  the anchor is now positional (user-row count invariant), not text-only.
+- `fix/diagnostics-report-noise` (#155/#154/#146) — severity-gated Report flow
+  (`[Diagnostic]`/`question` prefills for non-error entries, expectation pre-flight for
+  Info, real route role in the body), `ServerAddress.loopbackHostWarning()` util
+  (UI wiring deferred to the connections-UI workstream), troubleshooting docs rebuilt
+  around the app's real diagnostic titles.
+- `fix/onboarding-scroll` (#145) — slides scroll under short viewports/large font,
+  hero compacts under 620dp, compact-height Roborazzi render test added.
+- `fix/release-assets` (#144) — android releases attach only sideload APK +
+  googlePlay AAB + SHA256SUMS (checksums narrowed to match); release-notes template
+  leads with the install file; RELEASE.md codifies the format. In-app update checker
+  asset matching verified unaffected.
+- `docs/freshness-pass` — "Vanilla Hermes" button label corrected to the app's
+  actual "Hermes" (stale since v1.2.2), 7 dead anchors fixed across the built site
+  (0 remain), README tool counts corrected (35 android, 25 desktop),
+  security.md plain-`ws://` gating described accurately.
+
+**Parked, not merged:** `fix/plugin-native-imports` (#165) — package-relative imports
+so the plugin works under the native `hermes plugins install` loader
+(`hermes_plugins.<slug>`), dashboard `plugin_api` standalone-load bootstrap, doctor
+import-chain check, installer venv autodetection (classic/uv/Docker) with generated
+unit/shims templated to the detected interpreter, and an AST-guard + native-layout
+smoke test (wired into plugin CI). Holds until the pending plugin release tag is cut,
+then ships as the next plugin patch release so the in-flight voice e2e validation
+stays meaningful.
+
+**Verification.** Per-branch: plugin suite 1051 tests (1 pre-existing environmental
+failure, verified at base); android unit tests + lint green per branch (12 pre-existing
+Windows-local DataStore temp-file failures verified at base by three independent
+agents); VitePress build clean with a full-site anchor sweep; release workflow YAML
+parses; combined lint + unit gate re-run on merged `dev`. On-device checks
+(Doze/screen-off recovery, max-font onboarding) are owner-driven and queued in TODO.
 
 **Why.** With timer-driven spoken progress off by default (see the robustness batch
 below), the voice overlay's background-run chip became the primary in-between signal —

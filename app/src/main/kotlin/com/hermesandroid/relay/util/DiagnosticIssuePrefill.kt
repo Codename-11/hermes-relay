@@ -14,9 +14,9 @@ import com.hermesandroid.relay.diagnostics.DiagnosticsLog
  * Only [DiagnosticSeverity.Error] entries are bug reports. Routine Info/Warning
  * log lines ("Testing API connection", probe results, …) were landing on the
  * tracker as `[Bug]:` issues with an empty boilerplate body, so non-Error
- * entries prefill as `[Diagnostic]:` questions instead, and the caller is
- * expected to collect the reporter's expectation first (see
- * [com.hermesandroid.relay.ui.components.DiagnosticDetailDialog]).
+ * entries prefill as `[Diagnostic]:` questions instead; for Info entries the
+ * caller additionally collects the reporter's expectation before offering the
+ * link (see [com.hermesandroid.relay.ui.components.DiagnosticDetailDialog]).
  */
 object DiagnosticIssuePrefill {
 

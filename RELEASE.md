@@ -664,9 +664,10 @@ On every push of a tag matching `android-v*`, `.github/workflows/release-android
    regression slice with explicit timeouts.
 3. Decodes `HERMES_KEYSTORE_BASE64` into `$RUNNER_TEMP/release.keystore`
    and exports `HERMES_KEYSTORE_PATH` (skipped if the secret is unset).
-4. Builds both Android release artifacts:
-   `./gradlew bundleRelease assembleRelease`.
-5. Generates `SHA256SUMS.txt` covering both.
+4. Builds all four flavored release artifacts
+   (`./gradlew bundleRelease assembleRelease`); only the sideload APK and
+   googlePlay AAB are attached (see §Release assets).
+5. Generates `SHA256SUMS.txt` covering the two attached files.
 6. Creates a GitHub Release named `Hermes-Relay-Android v<version>` with `RELEASE_NOTES.md` as
    the body. Attaches the APK, AAB, and `SHA256SUMS.txt`. Tags any version
    containing a dash (e.g. `android-v0.2.0-beta.1`) as a prerelease automatically.

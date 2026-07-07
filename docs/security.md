@@ -36,7 +36,7 @@ The relay can run without TLS (`hermes relay start --no-ssl`), in which case con
 - Commands, screen content, and screenshots travel unencrypted
 - Anyone on the network path between phone and server can intercept traffic
 
-The clients do not accept this silently: each pairing candidate carries a `transport_hint`, and the Android app shows an explicit plain-`ws://` consent dialog before using an unencrypted leg. TLS connections get trust-on-first-use SPKI certificate pinning on both the Android app and the desktop CLI.
+The clients do not accept this silently: each pairing candidate carries a `transport_hint`, and the Android app keeps plain `ws://` disabled until the operator turns on "Allow plain (unencrypted) connections" and acknowledges the one-time warning dialog. TLS connections get trust-on-first-use SPKI certificate pinning on both the Android app and the desktop CLI.
 - **Mitigation**: Use plaintext only on a trusted network, or front the relay with Tailscale (`hermes-relay-tailscale enable`) or a TLS reverse proxy (nginx/caddy)
 
 Hermes API bearer tokens on `/voice/*` are stricter than the legacy WebSocket path: non-loopback API-bearer requests are rejected unless the request is HTTPS, comes through a trusted HTTPS reverse-proxy signal, or the operator has explicitly enabled the insecure dev escape hatch with `hermes relay insecure-api-key on` or the startup env var.
@@ -65,7 +65,7 @@ The Bridge screen keeps an on-device activity log of executed device-control com
 
 Hermes-Relay does **not** ship its own application-layer crypto. The operator owns both endpoints, and the trust model assumes TLS is terminated somewhere on the path that the operator already controls — Tailscale (managed TLS + tailnet ACL identity), a reverse proxy with Let's Encrypt, a WireGuard / other VPN, or a Cloudflare Tunnel. See [`docs/remote-access.md`](remote-access.md) for the decision matrix and setup recipes per mode.
 
-Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-class case: a single QR carries `lan` / `tailscale` / `public` candidates in strict-priority order and the phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog — explicit operator consent is still required for any unencrypted leg. The TOFU cert pin is keyed by `host:port`, so two endpoints pointing at the same hostname share a pin (correct — same cert, same pin) while distinct hostnames each get their own.
+Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-class case: a single QR carries `lan` / `tailscale` / `public` candidates in strict-priority order and the phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` gating — an unencrypted leg is used only after the operator has enabled and acknowledged plain connections. The TOFU cert pin is keyed by `host:port`, so two endpoints pointing at the same hostname share a pin (correct — same cert, same pin) while distinct hostnames each get their own.
 
 ## Recommendations for Production Use
 

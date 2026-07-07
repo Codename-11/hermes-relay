@@ -60,13 +60,6 @@ object ServerAddress {
     fun isValidUserInput(raw: String?): Boolean = parseUserInput(raw) != null
 
     /**
-     * Inline error for a server-URL / host text field, or `null` when the value
-     * is acceptable. Blank returns `null` so callers can gate required-ness
-     * separately (the dashboard-URL field is optional). A value that can't
-     * become a valid http(s) URL — text with spaces, control chars, no host —
-     * returns a short, user-facing message.
-     */
-    /**
      * Advisory for a server address whose host is loopback / any-interface —
      * `localhost`, `127.x.x.x`, `::1`, `0.0.0.0`. Such an address works in a
      * browser *on the server* but can never reach the server from the phone,
@@ -97,6 +90,13 @@ object ServerAddress {
         return labels.size == 4 && parts.size == 4 && parts[0] == 127
     }
 
+    /**
+     * Inline error for a server-URL / host text field, or `null` when the value
+     * is acceptable. Blank returns `null` so callers can gate required-ness
+     * separately (the dashboard-URL field is optional). A value that can't
+     * become a valid http(s) URL — text with spaces, control chars, no host —
+     * returns a short, user-facing message.
+     */
     fun fieldError(raw: String, fieldLabel: String): String? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null

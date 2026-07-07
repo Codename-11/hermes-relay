@@ -69,6 +69,37 @@ Deferred from the batch (coordination / decisions):
   create a dedicated relay venv under a writable path so the full installer
   works in-container.
 
+Implementation-batch follow-ups (from the per-branch reviews):
+
+- **#166 recovery: empty-session fail-fast.** `HermesApiClient.getMessages()`
+  maps fetch failures to `emptyList()`, so the recovery poller can't distinguish
+  "server unreachable" from "session genuinely empty" — a `Result`-returning
+  history read would let the never-landed-send fail-fast also cover a dropped
+  FIRST message of a fresh session (today that case polls to the cap).
+- **#166 recovery cap.** Recovery gives up after 30 minutes; longer turns still
+  land in session history but only surface after a manual reload. Consider a
+  "keep waiting" affordance if real turns exceed the cap.
+- **CI android slice.** `ServerAddressTest` + `IssueReportAndDiagnosticsTest`
+  added to the focused `--tests` slice; the Robolectric/MockWebServer recovery
+  tests and the compact-onboarding Roborazzi test stay local-only (same
+  precedent as `StoreScreenshotTest`) until the broad-suite hang (#32) is fixed.
+- **Skills docs still cite editable-only fixes.** `skills/devops/hermes-relay-pair/SKILL.md`
+  and `skills/android/SKILL.md` document `python -m plugin.pair` + `pip install -e`
+  as the ModuleNotFoundError fix — add the native-layout equivalent when the
+  #165 branch ships.
+- **Dashboard API tests not CI-visible.** `plugin/dashboard/test_plugin_api.py`
+  isn't discovered by `unittest discover -s plugin/tests` and needs
+  fastapi/httpx — wire into a CI runner or move under plugin/tests with skips.
+- **Desktop tool-count drift.** `user-docs/desktop/index.md` counts client-side
+  handlers (clipboard/screenshot/open_in_editor) that have no server-side
+  `desktop_*` registration in `plugin/tools/desktop_tool.py` — reconcile the
+  advertised set; also `user-docs/desktop/pairing.md` wrongly says Android uses
+  `~/.hermes/remote-sessions.json` (it's Keystore/EncryptedSharedPrefs; the file
+  is shared with the Ink TUI). CLAUDE.md Key Files also still says 18/24 tools.
+- **Info-report button label.** The diagnostics Report button reads "Report"
+  even when the first tap only reveals the expectation field — a "Continue"
+  label would make the two-step flow clearer.
+
 ## Connections UI / status banner (2026-06-30 restructure follow-ups)
 
 The Connections screen was split into a scannable list + a tabbed detail screen

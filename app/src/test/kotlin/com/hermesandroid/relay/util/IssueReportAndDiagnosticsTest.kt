@@ -171,7 +171,7 @@ class IssueReportAndDiagnosticsTest {
         assertTrue(lan.contains("- Connection mode: lan"))
 
         val tailscale = DiagnosticIssuePrefill.issueBody(
-            sampleEntry(DiagnosticSeverity.Info, url = "http://100.79.214.107:8642"),
+            sampleEntry(DiagnosticSeverity.Info, url = "http://100.75.1.2:8642"),
         )
         assertTrue(tailscale.contains("- Connection mode: tailscale"))
     }
