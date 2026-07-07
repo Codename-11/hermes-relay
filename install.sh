@@ -446,6 +446,25 @@ for stale in "$HERMES_HOME/plugins/hermes-android" "$HERMES_HOME/hermes-agent/pl
     fi
 done
 
+# Remove any OTHER plugin dir that also declares `name: hermes-relay`. The
+# gateway loader dedups discovered plugins by manifest name, so a stale
+# duplicate (a backup copy from an older installer, or a leftover native
+# install) can win the dedup and make the gateway load stale code — silently
+# ignoring every later deploy. Keep only the canonical symlink created above.
+plugins_dir="$(dirname "$PLUGIN_LINK")"
+canonical_name="$(basename "$PLUGIN_LINK")"
+if [ -d "$plugins_dir" ]; then
+    for entry in "$plugins_dir"/*; do
+        [ -e "$entry" ] || continue
+        [ "$(basename "$entry")" = "$canonical_name" ] && continue
+        if [ -f "$entry/plugin.yaml" ] \
+            && grep -Eq '^[[:space:]]*name:[[:space:]]*["'\'']?hermes-relay["'\'']?[[:space:]]*$' "$entry/plugin.yaml"; then
+            rm -rf "$entry"
+            ok "Removed duplicate hermes-relay plugin dir: $entry"
+        fi
+    done
+fi
+
 # Dashboard plugin toggle. The hermes-agent dashboard auto-discovers plugins
 # via `dashboard/manifest.json`. We flip visibility by renaming the manifest
 # file — no separate config lives anywhere else, and the same state is

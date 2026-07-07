@@ -206,6 +206,91 @@ class DoctorTests(unittest.TestCase):
         )
         self.assertEqual(check["status"], "warn")
 
+    def test_duplicate_plugin_dirs_flags_multiple_same_name(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            plugins = Path(raw)
+            for name in ("hermes-relay", "hermes-relay.copy-backup-1"):
+                (plugins / name).mkdir()
+                (plugins / name / "plugin.yaml").write_text(
+                    "name: hermes-relay\n", encoding="utf-8"
+                )
+            # An unrelated plugin sharing the dir must not be flagged.
+            (plugins / "other").mkdir()
+            (plugins / "other" / "plugin.yaml").write_text(
+                "name: other\n", encoding="utf-8"
+            )
+
+            dups = doctor._duplicate_plugin_dirs(plugins, "hermes-relay")
+
+        self.assertEqual(dups, ["hermes-relay", "hermes-relay.copy-backup-1"])
+
+    def test_duplicate_plugin_dirs_ok_for_single_install(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            plugins = Path(raw)
+            (plugins / "hermes-relay").mkdir()
+            (plugins / "hermes-relay" / "plugin.yaml").write_text(
+                "name: hermes-relay\n", encoding="utf-8"
+            )
+
+            self.assertEqual(doctor._duplicate_plugin_dirs(plugins, "hermes-relay"), [])
+            # A missing plugins dir yields no duplicates and never raises.
+            self.assertEqual(
+                doctor._duplicate_plugin_dirs(plugins / "gone", "hermes-relay"), []
+            )
+
+    def test_doctor_warns_on_duplicate_plugin_dirs(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            plugins = Path(raw)
+            for name in ("hermes-relay", "hermes-relay.bak"):
+                (plugins / name).mkdir()
+                (plugins / name / "plugin.yaml").write_text(
+                    "name: hermes-relay\n", encoding="utf-8"
+                )
+
+            with mock.patch("importlib.util.find_spec", return_value=None):
+                report = doctor.collect_doctor_report(
+                    api_url="http://api.example:8642",
+                    dashboard_url="http://dash.example:9119",
+                    relay_port=9999,
+                    probe=_fake_probe,
+                    site_dirs=[],
+                    plugins_dir=plugins,
+                )
+
+        check = next(c for c in report["checks"] if c["id"] == "plugin-name-unique")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("hermes-relay.bak", check["summary"])
+        self.assertEqual(
+            report["plugin"]["duplicate_dirs"], ["hermes-relay", "hermes-relay.bak"]
+        )
+
+    def test_doctor_plugin_name_unique_ok_without_duplicates(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            plugins = Path(raw)
+            (plugins / "hermes-relay").mkdir()
+            (plugins / "hermes-relay" / "plugin.yaml").write_text(
+                "name: hermes-relay\n", encoding="utf-8"
+            )
+
+            with mock.patch("importlib.util.find_spec", return_value=None):
+                report = doctor.collect_doctor_report(
+                    probe=_fake_probe,
+                    site_dirs=[],
+                    plugins_dir=plugins,
+                )
+
+        check = next(c for c in report["checks"] if c["id"] == "plugin-name-unique")
+        self.assertEqual(check["status"], "ok")
+        self.assertEqual(report["plugin"]["duplicate_dirs"], [])
+
     def test_relay_cli_registers_doctor_command(self) -> None:
         parser = argparse.ArgumentParser()
         cli.register_relay_cli(parser)
