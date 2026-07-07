@@ -167,7 +167,7 @@ object PetImporter {
         val queue = ArrayDeque<File>()
         queue.add(root)
         while (queue.isNotEmpty()) {
-            val dir = queue.removeFirst()
+            val dir = queue.removeAt(0)
             val manifest = File(dir, "pet.json")
             if (manifest.isFile) return manifest
             dir.listFiles()?.forEach { if (it.isDirectory) queue.add(it) }

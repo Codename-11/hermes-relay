@@ -296,6 +296,9 @@ dependencies {
 
     // Security
     implementation(libs.security.crypto)
+    // Force a Tink newer than security-crypto's transitive one — older Tink's
+    // HybridConfig removeFirst()/removeLast() trips the Android-15 crash lint.
+    implementation(libs.tink.android)
 
     // DataStore
     implementation(libs.datastore.preferences)

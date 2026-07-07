@@ -169,7 +169,7 @@ object EventStore {
             )
 
             if (buffer.size >= MAX_ENTRIES) {
-                buffer.removeFirst()
+                buffer.removeAt(0)
             }
             buffer.addLast(entry)
         }

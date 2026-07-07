@@ -4470,7 +4470,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun trackTtsFile(file: File) {
         ttsFileHistory.addLast(file)
         while (ttsFileHistory.size > TTS_CACHE_CAP) {
-            val old = ttsFileHistory.removeFirst()
+            val old = ttsFileHistory.removeAt(0)
             try { old.delete() } catch (_: Exception) { /* ignore */ }
         }
     }

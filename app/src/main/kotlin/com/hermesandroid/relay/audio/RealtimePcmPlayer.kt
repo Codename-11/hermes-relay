@@ -225,7 +225,7 @@ class RealtimePcmPlayer(context: Context? = null) {
         // is the chunk's end frame. The cursor reaches this amplitude once
         // playbackHeadPosition passes the previous end frame.
         playbackAmpQueue.addLast(FrameAmp(endFrame = totalFramesWritten, rms = rms))
-        while (playbackAmpQueue.size > MAX_AMP_QUEUE) playbackAmpQueue.removeFirst()
+        while (playbackAmpQueue.size > MAX_AMP_QUEUE) playbackAmpQueue.removeAt(0)
     }
 
     /**
@@ -240,7 +240,7 @@ class RealtimePcmPlayer(context: Context? = null) {
         val head = readHeadFrames(track).toLong()
         // Drop fully-played chunks so the head of the queue is the one playing now.
         while (playbackAmpQueue.size > 1 && playbackAmpQueue.first().endFrame <= head) {
-            playbackAmpQueue.removeFirst()
+            playbackAmpQueue.removeAt(0)
         }
         amplitudeAtHead(playbackAmpQueue, head)
     }
