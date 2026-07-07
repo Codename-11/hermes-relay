@@ -1,5 +1,28 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-07 — Relay socket: guard a malformed URL (relay half of #131)
+
+**Why.** A Play crash on 1.2.6 (Galaxy S25 Ultra / Android 16):
+`IllegalArgumentException` from `okhttp3.HttpUrl$Builder.parse` via
+`ConnectionManager.doConnectInternal` → `Request.Builder.url()`. This is the
+relay-socket half of the #131 "Invalid URL host" class the TODO flagged: the #131
+fix guarded the Manage/voice HTTP clients, but the relay socket still built its
+request with OkHttp's throwing `url()` on a post-pairing URL. Because
+`doConnectInternal` runs on a background coroutine (`scope.launch` on
+Dispatchers.IO), an uncaught throw crashes the app.
+
+**What.** Extracted the URL→Request build into a pure `buildRelayRequestOrNull()`
+(try/catch → null on `IllegalArgumentException`). `doConnectInternal` treats null
+as a connection failure — records an "Invalid relay URL" diagnostic, sets
+Disconnected, closes the socket being replaced, and schedules a (backed-off)
+reconnect — the same graceful path `onFailure` uses. No happy-path change.
+
+**Verification.** `ConnectionManagerUrlGuardTest` (valid ws/wss build a request;
+empty-host / space-in-host return null). The remaining relay HTTP clients
+(`RelayHttpClient`, `RelayProfileInspectorClient`, `RelayVoiceClient`) still use
+throwing URL builds on post-pairing URLs — tracked in TODO for a defense-in-depth
+sweep.
+
 ## 2026-07-07 — CI plugin-path coverage + Android-14 crash-safety
 
 **CI path gap.** `ci-plugin.yml` triggered on only four named top-level plugin

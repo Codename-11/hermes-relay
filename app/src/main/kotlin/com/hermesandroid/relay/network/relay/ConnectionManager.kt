@@ -42,6 +42,20 @@ enum class ConnectionState {
     Reconnecting
 }
 
+/**
+ * Build an OkHttp request for a relay socket URL, or `null` if the URL is
+ * malformed. OkHttp's [Request.Builder.url] throws [IllegalArgumentException]
+ * on an invalid host; the relay connect runs on a background coroutine, so an
+ * uncaught throw crashes the app (the #131 "Invalid URL host" class). Callers
+ * treat `null` as a connection failure instead of letting it propagate.
+ */
+internal fun buildRelayRequestOrNull(url: String): Request? =
+    try {
+        Request.Builder().url(url).build()
+    } catch (e: IllegalArgumentException) {
+        null
+    }
+
 class ConnectionManager(
     private val multiplexer: ChannelMultiplexer,
     /**
@@ -828,9 +842,30 @@ class ConnectionManager(
         authenticated = false
         client = buildClient()
 
-        val request = Request.Builder()
-            .url(url)
-            .build()
+        val request = buildRelayRequestOrNull(url)
+        if (request == null) {
+            // A malformed relay URL (an invalid/empty host from a corrupt or
+            // hand-edited pairing payload) can't be built into a request. This
+            // runs on a background coroutine, so letting OkHttp's url() throw
+            // would crash the app — the #131 "Invalid URL host" class, relay-
+            // socket half. Route it through the same path onFailure uses.
+            Log.e(TAG, "doConnect: malformed relay URL '$url' — not connecting")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Error,
+                title = "Invalid relay URL",
+                detail = "The relay address could not be parsed; re-pair to refresh it.",
+                url = url,
+            )
+            authenticated = false
+            _connectionState.value = ConnectionState.Disconnected
+            previousSocketToClose?.let { stale ->
+                runCatching { stale.close(1000, replaceReason) }
+                stale.cancel()
+            }
+            scheduleReconnect()
+            return
+        }
 
         Log.i(TAG, "doConnect: opening WSS to $url")
         val newSocket = client.newWebSocket(request, object : WebSocketListener() {
