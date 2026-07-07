@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-06
+
 ### Added
 
 - **Voice settings: edit your server's voice engine.** Voice settings now has a **Server voice config** section that reads and writes the host's text-to-speech and speech-to-text settings — provider, voice, model, language, and per-provider options — over the dashboard, the same config the official desktop app edits. It includes an **ElevenLabs voice picker** that lists the voices available on your server's ElevenLabs key (and tells you when no key is set). Works on the no-plugin (Standard) path; sign in to Manage to use it.
@@ -45,6 +47,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Realtime voice: you can keep talking while a background task runs.** Progress updates from a background task were flipping the voice UI back into "Thinking" with a Stop button on every tick, so the mic never came back until the task finished. Progress now feeds only the task chip; the conversation stays open the whole time.
+- **Realtime voice: leaving voice mode no longer cancels a running task.** Exiting (or tapping Stop to interrupt speech) used to kill an in-flight background task and could overwrite its already-delivered answer with "Cancelled." in the chat. Exit now detaches — the task keeps running and the result arrives on your next session or as a notification — and a delivered answer always keeps its text (a Stopped badge marks a genuine cancel). The chip's ✕ remains the one deliberate way to cancel.
 - **Long answers are no longer lost when the connection drops mid-turn.** On slow local models (or skills that delegate long background work), the phone could drop the stream mid-turn — the server finishes and saves the answer, but the chat sat on "Still working…" forever. The app now detects the dropped stream and quietly re-checks the conversation until the finished answer arrives, then completes the turn normally (with the usual done-notification if you've backgrounded the app). Switching chats or sending something new cancels the wait. (#166)
 - **Onboarding slides fit every screen.** Intro slide text could run past the bottom of the screen with no way to scroll on short displays or large font sizes. Slides now scroll when needed and compact their artwork on short viewports, so no setup guidance is unreachable. (#145)
 - **Docs: fixed stale setup labels and broken links.** The setup guide referenced a "Vanilla Hermes" button the app hasn't shown since v1.2.2 (it's labeled "Hermes"), several deep links into the getting-started page were dead, and the README under-counted the available phone tools. (docs site)

@@ -1,238 +1,282 @@
 {
-  "versions": [
+ "versions": [
+  {
+   "version": "1.3.0",
+   "title": "Voice that multitasks & sturdier chats",
+   "date": "2026-07-06",
+   "sections": [
     {
-      "version": "1.2.6",
-      "title": "Tidier chats & calmer status",
-      "date": "2026-06-27",
-      "sections": [
-        {
-          "header": "Tidier chats",
-          "bullets": [
-            "Chats no longer get stuck showing \"Untitled\" — your first message stands in as the title until the chat is named, titles refresh once a turn settles, and a new refresh button in the session drawer pulls the latest on demand. Renaming a chat now sticks when you're on a non-default agent profile."
-          ]
-        },
-        {
-          "header": "Calmer status",
-          "bullets": [
-            "Connection status — reconnecting, checking, network handoffs — now shows as a thin banner at the top that gently slides the screen down, instead of a card floating over your chat; the floating alert is kept for persistent errors. Quick confirmations (copied, profiles updated, profile/personality switches) land in the same calm banner instead of a pop-up at the bottom."
-          ]
-        }
-      ]
+     "header": "Voice, hands-free",
+     "bullets": [
+      "Ask for something big and keep talking — long tasks hand off to the background with a live chip showing the current step, steps done, and a running timer, with a tap-to-cancel. The answer is spoken when it's ready, even after a brief disconnect — and if the voice session is gone, it arrives as a notification (the full answer is always in the chat).",
+      "Leaving voice mode (or tapping stop to interrupt speech) no longer cancels a running background task — the chip's ✕ is the one deliberate kill switch, and a delivered answer keeps its text instead of flipping to \"Cancelled.\"",
+      "Quieter and quicker: the agent speaks at milestones instead of narrating every step, clearly long tasks hand off to the background right away, and the first turn starts faster — the session warms up when you open voice mode."
+     ]
     },
     {
-      "version": "1.2.5",
-      "title": "Stability + Try the demo",
-      "date": "2026-06-27",
-      "sections": [
-        {
-          "header": "Stability",
-          "bullets": [
-            "Fixed a crash that could close the app when a non-URL value — a UI label, or a line copied from the docs — was entered in the API server or Dashboard URL field. The setup fields now reject anything that isn't a valid host or http(s) URL with an inline error, and the dashboard and voice request paths treat a bad address as unreachable instead of crashing."
-          ]
-        },
-        {
-          "header": "Try the demo",
-          "bullets": [
-            "A new \"Try the demo\" option on the setup screen — and on the empty chat screen if you skip setup — opens an offline preview of the real chat experience: a sample conversation with Markdown, a tool-progress card, and a rich card, with no server, account, or network. A banner shows it's a demo, with a one-tap Connect to set up for real."
-          ]
-        }
-      ]
+     "header": "Chats that keep their answers",
+     "bullets": [
+      "An answer is no longer lost when the connection drops mid-reply on a long turn (slow local models, delegating skills) — the app quietly re-checks the conversation and completes the turn when the server finishes, with the usual done-notification if you've switched away.",
+      "Markdown reads like chat: headings are proportionate instead of billboard-sized, lists and paragraphs share one size, links are clearly styled, and timestamps show once per message group."
+     ]
     },
     {
-      "version": "1.2.4",
-      "title": "Stability + connection security",
-      "date": "2026-06-25",
-      "sections": [
-        {
-          "header": "Stability",
-          "bullets": [
-            "Fixed a crash that could close the app when the dashboard connection check hit a transient network failure — a pooled connection aborting or timing out over Tailscale. The check now reports the failure cleanly and the connection probe degrades gracefully instead of force-closing."
-          ]
-        },
-        {
-          "header": "See if you're secure",
-          "bullets": [
-            "The chat status chip, connection card, and route picker now show at a glance whether your connection is encrypted — Encrypted · TLS, Encrypted · Tailscale (both secure), Mixed routes, or Not encrypted — and tapping it opens a per-transport breakdown (chat, API, relay tools). A Tailscale or WireGuard route is now correctly shown as encrypted rather than implied insecure."
-          ]
-        }
-      ]
+     "header": "Your agent can reach out",
+     "bullets": [
+      "Proactive messages: your Hermes agent can message your phone first (off by default, opt-in on both server and phone), and you can reply straight from the notification or the new Hermes inbox — the conversation continues like any other chat."
+     ]
     },
     {
-      "version": "1.2.3",
-      "title": "Connection crash fix",
-      "date": "2026-06-23",
-      "sections": [
-        {
-          "header": "Stability",
-          "bullets": [
-            "Fixed a crash that could close the app right after connecting over an encrypted link (Tailscale or HTTPS) — a live secure connection was being torn down on the main thread as it came up. Securing your connection no longer force-closes the app; plain-LAN connections were never affected."
-          ]
-        }
-      ]
+     "header": "Make it yours",
+     "bullets": [
+      "Pick your app font — Inter (new default), Nunito, or your system font — applied instantly, everywhere.",
+      "The in-bubble working indicator can be a small animated dot-matrix (Wave, Pulse, Bounce, Sparkle) with a color of your choice.",
+      "Quick Controls at the top of Settings puts Persistent connection and Turn-complete alerts one tap away."
+     ]
     },
     {
-      "version": "1.2.2",
-      "title": "Multi-profile polish",
-      "date": "2026-06-22",
-      "sections": [
-        {
-          "header": "Profiles that behave",
-          "bullets": [
-            "Deleting a session while a non-default agent profile is active now sticks — it no longer reappears after the list refreshes.",
-            "On a cold start with a non-default profile selected, the session drawer opens on that profile's chats directly instead of briefly showing the default profile's."
-          ]
-        },
-        {
-          "header": "Clearer diagnostics",
-          "bullets": [
-            "Diagnostics is now a full screen led by a top-to-bottom list of subsystem health checks — network, API server, chat transport, pairing, relay, and voice — each with a pass / warning / fail state and the reason when something's wrong; tap a failing check for full detail. The recent-activity log stays below."
-          ]
-        },
-        {
-          "header": "Small touches",
-          "bullets": [
-            "The default connection is now simply \"Hermes\" (and the optional power features are labelled \"Relay\"), across setup, the switcher, voice, and permissions.",
-            "Distraction-free chat mode gives its text a taller, scrollable area."
-          ]
-        }
-      ]
-    },
-    {
-      "version": "1.2.1",
-      "title": "Polish & control",
-      "date": "2026-06-21",
-      "sections": [
-        {
-          "header": "Yours to control",
-          "bullets": [
-            "Lock the app to a single agent profile (Settings → Profile lock) and hide the rest from the pickers."
-          ]
-        },
-        {
-          "header": "Find your way back",
-          "bullets": [
-            "A new \"What's New\" entry in Settings shows current and past release notes any time — not just after an update."
-          ]
-        },
-        {
-          "header": "When something breaks",
-          "bullets": [
-            "Diagnostics show clean error titles — tap any entry for a detail view with Copy, Share, and a one-tap GitHub issue.",
-            "A tasteful in-app banner tells you when a newer version is live (Play or sideload) — dismissable, and it never nags."
-          ]
-        },
-        {
-          "header": "Voice fixes",
-          "bullets": [
-            "Stop now halts realtime speech instantly, hold-to-talk is steadier, the voice overlay is easier to read, and a chosen voice applies in Auto mode.",
-            "Realtime turns that reach back to Hermes no longer drop with a session error."
-          ]
-        }
-      ]
-    },
-    {
-      "version": "1.2.0",
-      "title": "Make it yours",
-      "date": "2026-06-20",
-      "sections": [
-        {
-          "header": "Personalize",
-          "bullets": [
-            "Eight app themes in Settings → Appearance — the Hermes Relay brand plus ports of the Nous Hermes looks (Teal, Nous Blue, Midnight, Ember, Mono, Cyberpunk, Rosé), with light/dark.",
-            "Swap the agent orb for an animated pet that reacts to what the agent is doing — add, preview, and tune pets right in the app, or generate one from sprite art with the AI authoring kit.",
-            "Reskin the sphere, and give each agent profile its own icon."
-          ]
-        },
-        {
-          "header": "See what's happening",
-          "bullets": [
-            "The chat status strip names the actual streaming path (Gateway, Sessions, Completions, Runs), with a basic→best tier ladder in Chat Settings.",
-            "Tap the context meter for a \"What the agent sees\" sheet — the exact extra context prepended to your next turn.",
-            "Voice and Realtime turns are badged in the scrollback."
-          ]
-        },
-        {
-          "header": "Privacy",
-          "bullets": [
-            "When paired to the relay, the agent can mark private media and the phone blurs it per your setting — sensitivity stays model-emitted."
-          ]
-        },
-        {
-          "header": "Faster & more reliable",
-          "bullets": [
-            "Cold start is about 3× faster, and model/personality/approvals load honestly instead of showing a maybe-wrong value.",
-            "In-app crash reporting offers a one-tap, pre-filled bug report.",
-            "QR pairing no longer force-closes on unusual cameras (foldables); fixed crashes opening server images and PDFs; in-chat model picks now apply."
-          ]
-        },
-        {
-          "header": "Voice & terminal",
-          "bullets": [
-            "Enhanced voice control for Gemini and xAI providers.",
-            "Leaner terminal with TUI-correct input and an isolated, tuned tmux."
-          ]
-        }
-      ]
-    },
-    {
-      "version": "1.1.0",
-      "title": "Release plumbing & polish",
-      "date": "2026-06-16",
-      "sections": [
-        {
-          "header": "New",
-          "bullets": [
-            "Automated Play Console upload when a release tag ships (a human still starts the rollout).",
-            "/relay slash commands — status, devices, and pair from any platform — plus a relay-status badge in the dashboard header.",
-            "The relay plugin prompts for its optional voice-provider keys on install, and a tools-only native install path."
-          ]
-        },
-        {
-          "header": "Improved",
-          "bullets": [
-            "Settings overhaul: status pills are now exception-only, Power tools shows a single Plugin active/required/offline badge, and Connections moved to the top.",
-            "Release names and notes are now split per surface (Android, plugin, CLI)."
-          ]
-        },
-        {
-          "header": "Fixed",
-          "bullets": [
-            "No more force-close on connect when the stored credential keyset was corrupt — it now heals in place.",
-            "The installer works on uv-managed Hermes hosts, and the dashboard relay panel buttons are readable again."
-          ]
-        }
-      ]
-    },
-    {
-      "version": "1.0.0",
-      "title": "Stable launch",
-      "date": "2026-06-14",
-      "sections": [
-        {
-          "header": "Gateway chat with live thinking",
-          "bullets": [
-            "Chat can ride the upstream dashboard gateway — the only vanilla-upstream path that streams reasoning live, so the Thinking block and sphere light up during generation. \"Auto\" prefers it and falls back to the SSE endpoints per turn.",
-            "Desktop parity: native image/PDF/file attachments, mid-turn steering, edit & resend, approval/clarify/sudo/secret cards, live subagent lanes, a context-window meter, server slash commands, and turn-complete notifications.",
-            "Warm-start and an opt-in Keep connected in background toggle so long-backgrounded conversations resume instantly."
-          ]
-        },
-        {
-          "header": "Agents, Manage & media",
-          "bullets": [
-            "Switch agent profiles per conversation — model, SOUL, personality, and skills — with the selection bound to the session, never changing the server default for other clients.",
-            "Manage parity with the desktop dashboard: change models, manage provider keys, edit profiles and SOUL.md, and browse/install skills.",
-            "Open and save chat images and attachments — full-screen viewer with pinch-zoom, plus an Open/Share/Save menu."
-          ]
-        },
-        {
-          "header": "Standard path is first-class",
-          "bullets": [
-            "Chat, Manage, and voice all work against an unmodified upstream Hermes agent; the relay plugin is now purely additive.",
-            "Seamless connection UX — LAN↔Tailscale handoffs and reconnects no longer reload the chat, and status shows as in-theme slide-down toasts.",
-            "Persistent Realtime Agent voice that keeps one session across turns, with long runs promoted to tracked background tasks."
-          ]
-        }
-      ]
+     "header": "Setup & housekeeping",
+     "bullets": [
+      "Onboarding slides now scroll on small screens and large font sizes, so no setup guidance is cut off.",
+      "Reporting a diagnostic files the right kind of issue: informational entries ask what you expected and file as a question, and every report carries your actual connection mode.",
+      "Connections is a scannable list with a tabbed detail screen (Overview, Routes, Advanced, Security), and voice settings can now read and edit your server's voice engine (provider, voice, model) over the dashboard."
+     ]
     }
-  ]
+   ]
+  },
+  {
+   "version": "1.2.6",
+   "title": "Tidier chats & calmer status",
+   "date": "2026-06-27",
+   "sections": [
+    {
+     "header": "Tidier chats",
+     "bullets": [
+      "Chats no longer get stuck showing \"Untitled\" — your first message stands in as the title until the chat is named, titles refresh once a turn settles, and a new refresh button in the session drawer pulls the latest on demand. Renaming a chat now sticks when you're on a non-default agent profile."
+     ]
+    },
+    {
+     "header": "Calmer status",
+     "bullets": [
+      "Connection status — reconnecting, checking, network handoffs — now shows as a thin banner at the top that gently slides the screen down, instead of a card floating over your chat; the floating alert is kept for persistent errors. Quick confirmations (copied, profiles updated, profile/personality switches) land in the same calm banner instead of a pop-up at the bottom."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.2.5",
+   "title": "Stability + Try the demo",
+   "date": "2026-06-27",
+   "sections": [
+    {
+     "header": "Stability",
+     "bullets": [
+      "Fixed a crash that could close the app when a non-URL value — a UI label, or a line copied from the docs — was entered in the API server or Dashboard URL field. The setup fields now reject anything that isn't a valid host or http(s) URL with an inline error, and the dashboard and voice request paths treat a bad address as unreachable instead of crashing."
+     ]
+    },
+    {
+     "header": "Try the demo",
+     "bullets": [
+      "A new \"Try the demo\" option on the setup screen — and on the empty chat screen if you skip setup — opens an offline preview of the real chat experience: a sample conversation with Markdown, a tool-progress card, and a rich card, with no server, account, or network. A banner shows it's a demo, with a one-tap Connect to set up for real."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.2.4",
+   "title": "Stability + connection security",
+   "date": "2026-06-25",
+   "sections": [
+    {
+     "header": "Stability",
+     "bullets": [
+      "Fixed a crash that could close the app when the dashboard connection check hit a transient network failure — a pooled connection aborting or timing out over Tailscale. The check now reports the failure cleanly and the connection probe degrades gracefully instead of force-closing."
+     ]
+    },
+    {
+     "header": "See if you're secure",
+     "bullets": [
+      "The chat status chip, connection card, and route picker now show at a glance whether your connection is encrypted — Encrypted · TLS, Encrypted · Tailscale (both secure), Mixed routes, or Not encrypted — and tapping it opens a per-transport breakdown (chat, API, relay tools). A Tailscale or WireGuard route is now correctly shown as encrypted rather than implied insecure."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.2.3",
+   "title": "Connection crash fix",
+   "date": "2026-06-23",
+   "sections": [
+    {
+     "header": "Stability",
+     "bullets": [
+      "Fixed a crash that could close the app right after connecting over an encrypted link (Tailscale or HTTPS) — a live secure connection was being torn down on the main thread as it came up. Securing your connection no longer force-closes the app; plain-LAN connections were never affected."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.2.2",
+   "title": "Multi-profile polish",
+   "date": "2026-06-22",
+   "sections": [
+    {
+     "header": "Profiles that behave",
+     "bullets": [
+      "Deleting a session while a non-default agent profile is active now sticks — it no longer reappears after the list refreshes.",
+      "On a cold start with a non-default profile selected, the session drawer opens on that profile's chats directly instead of briefly showing the default profile's."
+     ]
+    },
+    {
+     "header": "Clearer diagnostics",
+     "bullets": [
+      "Diagnostics is now a full screen led by a top-to-bottom list of subsystem health checks — network, API server, chat transport, pairing, relay, and voice — each with a pass / warning / fail state and the reason when something's wrong; tap a failing check for full detail. The recent-activity log stays below."
+     ]
+    },
+    {
+     "header": "Small touches",
+     "bullets": [
+      "The default connection is now simply \"Hermes\" (and the optional power features are labelled \"Relay\"), across setup, the switcher, voice, and permissions.",
+      "Distraction-free chat mode gives its text a taller, scrollable area."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.2.1",
+   "title": "Polish & control",
+   "date": "2026-06-21",
+   "sections": [
+    {
+     "header": "Yours to control",
+     "bullets": [
+      "Lock the app to a single agent profile (Settings → Profile lock) and hide the rest from the pickers."
+     ]
+    },
+    {
+     "header": "Find your way back",
+     "bullets": [
+      "A new \"What's New\" entry in Settings shows current and past release notes any time — not just after an update."
+     ]
+    },
+    {
+     "header": "When something breaks",
+     "bullets": [
+      "Diagnostics show clean error titles — tap any entry for a detail view with Copy, Share, and a one-tap GitHub issue.",
+      "A tasteful in-app banner tells you when a newer version is live (Play or sideload) — dismissable, and it never nags."
+     ]
+    },
+    {
+     "header": "Voice fixes",
+     "bullets": [
+      "Stop now halts realtime speech instantly, hold-to-talk is steadier, the voice overlay is easier to read, and a chosen voice applies in Auto mode.",
+      "Realtime turns that reach back to Hermes no longer drop with a session error."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.2.0",
+   "title": "Make it yours",
+   "date": "2026-06-20",
+   "sections": [
+    {
+     "header": "Personalize",
+     "bullets": [
+      "Eight app themes in Settings → Appearance — the Hermes Relay brand plus ports of the Nous Hermes looks (Teal, Nous Blue, Midnight, Ember, Mono, Cyberpunk, Rosé), with light/dark.",
+      "Swap the agent orb for an animated pet that reacts to what the agent is doing — add, preview, and tune pets right in the app, or generate one from sprite art with the AI authoring kit.",
+      "Reskin the sphere, and give each agent profile its own icon."
+     ]
+    },
+    {
+     "header": "See what's happening",
+     "bullets": [
+      "The chat status strip names the actual streaming path (Gateway, Sessions, Completions, Runs), with a basic→best tier ladder in Chat Settings.",
+      "Tap the context meter for a \"What the agent sees\" sheet — the exact extra context prepended to your next turn.",
+      "Voice and Realtime turns are badged in the scrollback."
+     ]
+    },
+    {
+     "header": "Privacy",
+     "bullets": [
+      "When paired to the relay, the agent can mark private media and the phone blurs it per your setting — sensitivity stays model-emitted."
+     ]
+    },
+    {
+     "header": "Faster & more reliable",
+     "bullets": [
+      "Cold start is about 3× faster, and model/personality/approvals load honestly instead of showing a maybe-wrong value.",
+      "In-app crash reporting offers a one-tap, pre-filled bug report.",
+      "QR pairing no longer force-closes on unusual cameras (foldables); fixed crashes opening server images and PDFs; in-chat model picks now apply."
+     ]
+    },
+    {
+     "header": "Voice & terminal",
+     "bullets": [
+      "Enhanced voice control for Gemini and xAI providers.",
+      "Leaner terminal with TUI-correct input and an isolated, tuned tmux."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.1.0",
+   "title": "Release plumbing & polish",
+   "date": "2026-06-16",
+   "sections": [
+    {
+     "header": "New",
+     "bullets": [
+      "Automated Play Console upload when a release tag ships (a human still starts the rollout).",
+      "/relay slash commands — status, devices, and pair from any platform — plus a relay-status badge in the dashboard header.",
+      "The relay plugin prompts for its optional voice-provider keys on install, and a tools-only native install path."
+     ]
+    },
+    {
+     "header": "Improved",
+     "bullets": [
+      "Settings overhaul: status pills are now exception-only, Power tools shows a single Plugin active/required/offline badge, and Connections moved to the top.",
+      "Release names and notes are now split per surface (Android, plugin, CLI)."
+     ]
+    },
+    {
+     "header": "Fixed",
+     "bullets": [
+      "No more force-close on connect when the stored credential keyset was corrupt — it now heals in place.",
+      "The installer works on uv-managed Hermes hosts, and the dashboard relay panel buttons are readable again."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.0.0",
+   "title": "Stable launch",
+   "date": "2026-06-14",
+   "sections": [
+    {
+     "header": "Gateway chat with live thinking",
+     "bullets": [
+      "Chat can ride the upstream dashboard gateway — the only vanilla-upstream path that streams reasoning live, so the Thinking block and sphere light up during generation. \"Auto\" prefers it and falls back to the SSE endpoints per turn.",
+      "Desktop parity: native image/PDF/file attachments, mid-turn steering, edit & resend, approval/clarify/sudo/secret cards, live subagent lanes, a context-window meter, server slash commands, and turn-complete notifications.",
+      "Warm-start and an opt-in Keep connected in background toggle so long-backgrounded conversations resume instantly."
+     ]
+    },
+    {
+     "header": "Agents, Manage & media",
+     "bullets": [
+      "Switch agent profiles per conversation — model, SOUL, personality, and skills — with the selection bound to the session, never changing the server default for other clients.",
+      "Manage parity with the desktop dashboard: change models, manage provider keys, edit profiles and SOUL.md, and browse/install skills.",
+      "Open and save chat images and attachments — full-screen viewer with pinch-zoom, plus an Open/Share/Save menu."
+     ]
+    },
+    {
+     "header": "Standard path is first-class",
+     "bullets": [
+      "Chat, Manage, and voice all work against an unmodified upstream Hermes agent; the relay plugin is now purely additive.",
+      "Seamless connection UX — LAN↔Tailscale handoffs and reconnects no longer reload the chat, and status shows as in-theme slide-down toasts.",
+      "Persistent Realtime Agent voice that keeps one session across turns, with long runs promoted to tracked background tasks."
+     ]
+    }
+   ]
+  }
+ ]
 }

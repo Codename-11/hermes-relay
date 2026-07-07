@@ -1,13 +1,18 @@
-v1.2.6 - Tidier chats & calmer status
+v1.3.0 - Voice that multitasks & chats that keep their answers
+
+Voice
+* Ask for something big and keep talking - long tasks hand off to
+  the background with a live chip (current step, timer, tap to
+  cancel), and the answer is spoken when it's ready, even after a
+  dropped connection. Leaving voice mode no longer cancels a
+  running task.
 
 Chats
-* Chats no longer get stuck on "Untitled" — your first message stands
-  in as the title until the chat is named, titles refresh once a turn
-  settles, and a new refresh button in the session drawer pulls the
-  latest. Renaming a chat now sticks on non-default agent profiles.
+* An answer is no longer lost if the connection drops mid-reply -
+  the app quietly recovers it when the server finishes.
+* Your agent can message you first (opt-in), and you can reply
+  right from the notification.
 
-Calmer status
-* Connection status (reconnecting, checking, network handoffs) now
-  shows as a thin banner at the top that gently slides the screen
-  down, instead of a card floating over your chat — the floating alert
-  is kept for persistent errors. Quick confirmations land there too.
+Plus
+* Pick your app font, onboarding fits small screens, smarter
+  issue reporting, and a cleaner Connections screen.

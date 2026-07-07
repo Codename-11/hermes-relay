@@ -1,17 +1,17 @@
-# Hermes-Relay-Android v1.2.6
+# Hermes-Relay-Android v1.3.0
 
-**Release Date:** June 27, 2026
-**Since v1.2.5:** A fix for chats stuck showing "Untitled", and a calmer way to surface connection status. Chats now keep your first message as a stand-in title until the server names them (and titles reconcile after a turn / via a new refresh button in the session drawer), renaming sticks on non-default agent profiles, and the connection-status card no longer floats over your chat — transient states slide the screen down as a thin top banner, with the floating alert reserved for persistent errors.
+**Release Date:** July 6, 2026
+**Since v1.2.6:** Realtime voice grows up — long tasks hand off to the background with a live progress chip while you keep talking, results survive disconnects (and arrive as a notification if you've left), and leaving voice mode no longer cancels a running task. Chats stop losing answers when the connection drops mid-reply, your agent can message you first (opt-in) with replies straight from the notification, and a stack of polish landed: app font picker, proportionate markdown, scrollable onboarding, smarter diagnostics reporting, and a cleaner Connections screen.
 
-v1.2.6 is recommended for everyone.
+v1.3.0 is recommended for everyone. Realtime-voice background tasks pair best with relay plugin v1.3.0 on the server; the no-plugin (vanilla Hermes) path is unaffected.
 
 ---
 
 ## Download
 
-**Installing on your phone?** Download **`hermes-relay-1.2.6-sideload-release.apk`** and tap it — that's the direct-install build with the full feature set (installs as `com.axiomlabs.hermesrelay.sideload`). Prefer the conservative build (no Device Control surface)? Get it from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+**Installing on your phone?** Download **`hermes-relay-1.3.0-sideload-release.apk`** and tap it — that's the direct-install build with the full feature set (installs as `com.axiomlabs.hermesrelay.sideload`). Prefer the conservative build (no Device Control surface)? Get it from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
-The other file, `hermes-relay-1.2.6-googlePlay-release.aab`, is an Android App Bundle for uploading to Play Console — it **cannot** be installed by tapping it on a phone.
+The other file, `hermes-relay-1.3.0-googlePlay-release.aab`, is an Android App Bundle for uploading to Play Console — it **cannot** be installed by tapping it on a phone.
 
 Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 
@@ -19,15 +19,25 @@ Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload 
 
 ## Highlights
 
-### Fixed
-- **Chats stuck showing "Untitled".** The session drawer treated the server's session list as fully authoritative for the title, so a re-list that arrived before (or without) the server auto-naming a chat overwrote the optimistic first-message preview with a blank title. The drawer now keeps a known local title when the server returns a blank one, re-pulls shortly after a turn settles, and offers a manual refresh button — so chats stop reading "Untitled". The api_server SSE path never auto-titles, which is why the preview is now the durable fallback there. (#133)
-- **Rename on a non-default agent profile.** A non-default profile's chats live in that profile's own store, but rename went through the shared path — so the new title never landed. Renaming is now profile-scoped (the write twin of the earlier session-delete and list fixes).
+### Voice, hands-free
+- **Background tasks with a live chip.** Ask for something big and keep talking — the task hands off to the background with a chip showing the current step, steps done, and a running timer, plus a ✕ to cancel. The answer is spoken when it's ready, even after a brief disconnect; if the voice session is gone for good, it arrives as a notification (the full answer is always in the chat).
+- **Exit detaches, ✕ cancels.** Leaving voice mode or tapping stop no longer kills a running task or overwrites its delivered answer with "Cancelled." — the chip's ✕ is the one deliberate kill switch.
+- **Quieter and quicker.** Milestone speech instead of step-by-step narration, immediate handoff for clearly long tools, and a faster first turn (the session warms up when you open voice mode).
 
-### Changed
-- **Calmer connection status.** Transient/active/warning connection status — reconnecting, checking, LAN↔Tailscale handoffs — now renders as a thin banner at the top that takes its own space (content slides down) instead of a card floating over the chat. A persistent **error** keeps the floating alert so it still demands attention. Frequent confirmations (copied, profiles updated, profile/personality switches) moved to the same top banner instead of a bottom pop-up.
+### Chats
+- **Answers survive dropped connections.** On long turns (slow local models, delegating skills) the app now recovers the finished answer from the server instead of hanging on "Still working…". (#166)
+- **Proactive messages, two-way.** Your agent can message your phone first (off by default, opt-in on server and phone) and you can reply from the notification or the Hermes inbox.
+- **Markdown that reads like chat.** Proportionate headings, unified text sizes, styled links, per-group timestamps.
+
+### Polish
+- **Pick your font** (Inter, Nunito, or system) and an animated thinking indicator; Quick Controls at the top of Settings.
+- **Onboarding fits every screen** — slides scroll on short viewports and large font sizes. (#145)
+- **Smarter diagnostics reporting** — informational entries file as questions with your actual connection mode, not as empty bug reports.
+- **Connections redesign** — scannable list + tabbed detail (Overview / Routes / Advanced / Security); server voice-engine settings editable from the app.
 
 ---
 
 ## Upgrade notes
-- This is an app-side release on **both** flavors — no Device Control or server changes needed.
-- `appVersionCode` is **20**.
+- App-side release on **both** flavors. Realtime-voice background-task features need relay plugin **v1.3.0** on the server; everything else works on unmodified upstream Hermes.
+- `appVersionCode` is **21**.
+- Releases now attach **two** files (sideload APK + Play bundle) instead of four — the parity/testing artifacts are gone from the release page. (#144)
