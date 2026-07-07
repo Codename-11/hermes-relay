@@ -6,6 +6,43 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Voice background-run v2 (2026-07-06 roadmap — post plugin-v1.3.0)
+
+The v1 shape shipped in plugin-v1.3.0 (single durable run, free floor during
+background work, busy answer, deliver-on-reattach, exit-detaches / chip-✕-
+cancels). Ranked next increments, in value-per-complexity order:
+
+1. **Fast lane** — while one durable run is detached, allow a second
+   `hermes_run_task` *inline only*: run it on a separate ephemeral session
+   (context injected the same way turns pass `realtimeAgentContextMessages`),
+   normal grace window; if it would promote, fall through to the busy/queue
+   answer. Fixes the real gap: today ANY second Hermes-backed request is
+   refused during a background run, even a 2-second lookup.
+2. **Task queue** — upgrade the busy answer from refusal to offer ("want me
+   to queue it?"): small FIFO in the broker session, start-next-on-completion
+   with a spoken handoff, chip shows "+1 queued". Pairs with (1).
+3. **Chip tap-through to the transcript** — the run executes on a real
+   gateway session, so full tool calls/outputs already live in that session's
+   history; make the chip (or the finished turn) open it. Cheapest "see tool
+   output" step.
+4. **Live tool-output sheet** — chip expands to a run timeline (tool name,
+   status, capped ~500-char output snippet). Relay adds a truncated output
+   field to `hermes.tool.*` events; client renders a lane (reuse the
+   `SubagentLane` pattern).
+5. **Injection framing (recorded earlier, still open)** — on providers with
+   native async function calling, leave the tool call pending and deliver the
+   real `function_call_output` late instead of interim-ack + synthetic
+   instruction text. Needs a live xAI parity check first.
+6. **Pending-result FIFO** — `pending_background_result` is a single slot
+   (correct for one run); generalize to an ordered list the day (1)/(2) land
+   so two results delivered during a detach don't race.
+7. **Full N-way concurrent background runs — deliberately deferred.** Needs
+   session-per-run topology (a gateway session serializes turns), which
+   fragments conversation context, multiplies delivery/floor/failure modes,
+   and needs run-id-targeted cancel + a multi-run chip. Only worth it when
+   two *long* tasks genuinely need parallel wall-clock; revisit if the queue
+   feels slow in practice.
+
 ## Open-issue resolution batch (2026-07-06) — owner GitHub actions + deferrals
 
 Plan: `docs/plans/2026-07-06-open-issue-resolution.md` (13 open issues triaged;
