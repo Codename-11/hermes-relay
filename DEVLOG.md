@@ -1,13 +1,5 @@
 # Hermes-Relay — Dev Log
 
-## 2026-07-07 — Release-video pipeline import and v1.3.0 render fixes
-
-**What changed.** Added the release-video pipeline under `video-pipelines/hermes-relay-release/` so the template/audio fixes live in the repository instead of an external scratch copy. The imported pipeline includes the Hyperframes template, generator/check/approval/post helper scripts, public-safe docs, local-output ignores, and the staged v1.3.0 technical-bass bed.
-
-**Fixes included.** The media-stack phone scene now anchors absolute phone/file-chip elements to the 456px media column (`position:relative`), preview/viewer labels are tokenized instead of hardcoded stubs, render-time stub detection rejects `viewer opens` / `in-app preview`, release-note copy trims at word boundaries, and the audio resolver prefers explicit or tag-specific fresh beds before Lyria generation. Legacy default audio only runs behind `--allow-default-audio`.
-
-**Verification.** `python -m py_compile video-pipelines/hermes-relay-release/scripts/*.py`; generated `android-v1.3.0` with the staged v1.3.0 bed and `--no-render`; Hyperframes `npm run check` on the generated package passed with 0 errors / 1 dense-track warning / 0 layout issues; fake `android-v9.9.9 --no-generate-audio` failed with `No fresh audio bed found`, confirming the stale-bed guard.
-
 ## 2026-07-06 — Release: android-v1.3.0 + plugin-v1.3.0; voice floor fixes; #165 lands for v1.3.1
 
 **Voice floor fixes (post-e2e).** On-device testing of the realtime batch surfaced
