@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-07
+
 ### Added
 
 - **Android model pickers can refresh the server catalog.** Chat's model sheet and Manage's main/profile model dialogs now expose upstream's explicit **Refresh Models** action, so dynamic/custom provider model lists can be reloaded on demand without making every picker open probe providers.

@@ -1,6 +1,6 @@
 name: hermes-relay
 manifest_version: 1
-version: 1.3.0
+version: 1.4.0
 description: "Hermes-Relay plugin for QR pairing, relay sessions, dashboard management, remote desktop/phone tooling, and optional legacy compatibility diagnostics. Standard chat, Manage, and dashboard voice remain vanilla upstream Hermes surfaces."
 author: Axiom Labs
 # All three are OPTIONAL — only needed if you use the relay's extra /

@@ -1,5 +1,30 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-07 — CI plugin-path coverage + Android-14 crash-safety
+
+**CI path gap.** `ci-plugin.yml` triggered on only four named top-level plugin
+modules, so changes to `doctor.py`, `compat.py`, `config.py`, `profiles.py`, and
+five others never ran plugin CI (the doctor fix in the prior entry only got covered
+because it also touched `plugin/tests/**`). Both `push` and `pull_request` triggers
+now use a `plugin/*.py` glob covering every current and future top-level module.
+
+**Android-14 crash-safety (SDK-35 build).** The Play pre-launch check flags Kotlin
+`removeFirst()`/`removeLast()`, which resolve to Java-21 `List` methods absent below
+Android 15 and crash older devices. Replaced all five app-code calls (all on
+`kotlin.collections.ArrayDeque`, whose `removeFirst()` is a member — not the flagged
+`MutableList` extension — so already safe, but converted per Google's guidance) with
+`removeAt(0)`; every site is size-guarded, so behavior is identical. The one
+genuinely-flagged occurrence lives in the Tink dependency (`HybridConfig.<clinit>`),
+which can't be edited line-by-line, so `com.google.crypto.tink:tink-android` is
+pinned to 1.16.0 ahead of the version `security-crypto` pulls transitively. Our
+`EncryptedSharedPreferences` use is AEAD-only (never loads `HybridConfig`), so the
+real-world crash risk was near-zero; the pin clears the static Play warning.
+
+**Verification.** `CI — Android` (build + unit + lint) and `CI — Plugin` both green
+on `dev` after the direct push. The Tink pin's runtime effect on
+`EncryptedSharedPreferences` can't be CI-checked (a mismatch is a runtime
+`NoSuchMethodError`, not a build error) — on-device auth smoke-test queued in TODO.
+
 ## 2026-07-07 — Doctor + installer guard against stale duplicate plugin copies
 
 **Why.** The 2026-06-29 phone-platform round-trip failure was ultimately a
