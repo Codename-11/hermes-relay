@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-from plugin.relay.qr_sign import load_or_create_secret, sign_payload
+from .relay.qr_sign import load_or_create_secret, sign_payload
 
 
 def _get_hermes_home() -> Path:
@@ -360,7 +360,7 @@ def _tailscale_status() -> Optional[dict[str, Any]]:
     hostname we surface it as a ``role: tailscale`` candidate.
     """
     try:
-        from plugin.relay import tailscale  # type: ignore
+        from .relay import tailscale  # type: ignore
     except ImportError:
         return None
     try:
@@ -691,7 +691,7 @@ def build_endpoint_candidates(
         # port, or the JSON parse hits an unexpected shape.
         if not effective_public_url:
             try:
-                from plugin.relay import tailscale as _ts_helper  # type: ignore
+                from .relay import tailscale as _ts_helper  # type: ignore
 
                 detected = _ts_helper.funnel_url(port=relay_port)
             except Exception:  # noqa: BLE001 — any failure = no funnel

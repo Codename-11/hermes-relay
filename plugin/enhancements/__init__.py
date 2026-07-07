@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from plugin.enhancements.context_injection import CONTEXT_INJECTION_ENHANCEMENT
-from plugin.enhancements.registry import Enhancement, EnhancementPhase, apply_enhancements, filter_enhancements
+from .context_injection import CONTEXT_INJECTION_ENHANCEMENT
+from .registry import Enhancement, EnhancementPhase, apply_enhancements, filter_enhancements
 
 _ENHANCEMENTS: list[Enhancement] = [
     CONTEXT_INJECTION_ENHANCEMENT,

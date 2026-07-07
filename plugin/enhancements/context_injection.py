@@ -14,13 +14,13 @@ import sys
 from functools import wraps
 from typing import Any
 
-from plugin.config import (
+from ..config import (
     agent_context_enabled,
     context_media_sensitivity_enabled,
     context_phone_platform_enabled,
     phone_platform_enabled,
 )
-from plugin.enhancements.registry import Enhancement
+from .registry import Enhancement
 
 logger = logging.getLogger(__name__)
 

@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from plugin.voice_lab.expressions import VoiceExpression
-from plugin.voice_lab.metrics import MetricsRecorder
-from plugin.voice_lab.providers.base import VoiceRequest, VoiceResponse
-from plugin.voice_lab.registry import default_registry
+from ....voice_lab.expressions import VoiceExpression
+from ....voice_lab.metrics import MetricsRecorder
+from ....voice_lab.providers.base import VoiceRequest, VoiceResponse
+from ....voice_lab.registry import default_registry
 
 from ..models import (
     ProviderEvent,

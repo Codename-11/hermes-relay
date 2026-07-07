@@ -59,7 +59,11 @@ try:
         from_bridge_response,
     )
 except ImportError:  # pragma: no cover - direct-script fallback
-    from plugin.tools.resolve_result import (  # type: ignore[no-redef]
+    # sys.path[0] is this file's directory when run as a plain script, so the
+    # sibling module resolves top-level. Never an absolute `plugin.` import:
+    # under the native hermes-agent plugin loader the package is
+    # `hermes_plugins.hermes_relay` and no top-level `plugin` exists (#165).
+    from resolve_result import (  # type: ignore[no-redef]
         Found,
         NotFound,
         PermissionDenied,
@@ -480,7 +484,7 @@ def android_screenshot(sensitive: bool = False) -> str:
         # same host (it's loopback-only). Any failure falls back to the
         # bare path form — the phone shows a placeholder in that case.
         try:
-            from plugin.relay.client import register_media
+            from ..relay.client import register_media
             token = register_media(
                 tmp.name,
                 "image/jpeg",
@@ -986,7 +990,7 @@ def _register_attachment_path(
     resolved_type = _guess_content_type(str(source), content_type)
     resolved_name = file_name or source.name
 
-    from plugin.relay.client import register_media
+    from ..relay.client import register_media
 
     token = register_media(
         str(source),

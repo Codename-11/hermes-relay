@@ -24,15 +24,57 @@ Error translation
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
+import sys
 import time
+import types
 from pathlib import Path as FsPath
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Path, Query
+
+# ── Plugin-package bootstrap ──────────────────────────────────────────────
+# hermes-agent's web server loads this file standalone via
+# ``importlib.util.spec_from_file_location`` (no parent package), so relative
+# imports cannot work here. The plugin package's import name also varies by
+# install method: classic editable install = ``plugin``, native
+# ``hermes plugins install`` = ``hermes_plugins.hermes_relay`` (issue #165).
+# ``_plugin_module()`` resolves sibling plugin modules in every context:
+#
+# 1. Loaded as a submodule of the plugin package (tests, native loader) —
+#    import through the REAL parent package so there is a single module
+#    instance (test monkeypatching of e.g. ``plugin.relay.tailscale`` must
+#    stay effective).
+# 2. Loaded standalone by the dashboard web server — synthesize the parent
+#    package: a bare ``ModuleType`` whose ``__path__`` points at the plugin
+#    directory, registered in ``sys.modules`` under a stable alias. The
+#    import system then resolves submodules against that path WITHOUT ever
+#    exec'ing ``plugin/__init__.py`` (whose tool registration side effects
+#    must not run inside the web server).
+
+_PLUGIN_PKG_ALIAS = "_hermes_relay_plugin_pkg"
+
+
+def _plugin_module(name: str) -> types.ModuleType:
+    """Import ``<plugin package>.<name>`` in whatever layout we're running."""
+    if __package__ and "." in __package__:
+        # Assumes our parent package IS the plugin package — true for both real
+        # layouts: ``plugin.dashboard`` → ``plugin`` and
+        # ``hermes_plugins.hermes_relay.dashboard`` → ``hermes_plugins.hermes_relay``.
+        parent = __package__.rsplit(".", 1)[0]  # strip trailing ".dashboard"
+        return importlib.import_module(f"{parent}.{name}")
+    pkg = sys.modules.get(_PLUGIN_PKG_ALIAS)
+    if pkg is None:
+        plugin_dir = FsPath(__file__).resolve().parent.parent
+        pkg = types.ModuleType(_PLUGIN_PKG_ALIAS)
+        pkg.__path__ = [str(plugin_dir)]  # type: ignore[attr-defined]
+        pkg.__package__ = _PLUGIN_PKG_ALIAS
+        sys.modules[_PLUGIN_PKG_ALIAS] = pkg
+    return importlib.import_module(f"{_PLUGIN_PKG_ALIAS}.{name}")
 
 # Read once at import time — hermes-agent restarts pick up env changes.
 RELAY_PORT: int = int(os.environ.get("HERMES_RELAY_PORT", "8767"))
@@ -182,15 +224,12 @@ async def get_media(include_expired: Optional[bool] = Query(default=None)) -> An
 @router.get("/agent-context")
 async def get_agent_context() -> dict[str, Any]:
     """Return current Agent context flags and the relay audit payload."""
-    from plugin.config import (
-        agent_context_enabled,
-        context_media_sensitivity_enabled,
-    )
+    config = _plugin_module("config")
 
     return {
         "settings": {
-            "RELAY_AGENT_CONTEXT_ENABLED": agent_context_enabled(),
-            "RELAY_CONTEXT_MEDIA_SENSITIVITY": context_media_sensitivity_enabled(),
+            "RELAY_AGENT_CONTEXT_ENABLED": config.agent_context_enabled(),
+            "RELAY_CONTEXT_MEDIA_SENSITIVITY": config.context_media_sensitivity_enabled(),
         },
         "injected": await _proxy_get("/context/injected"),
     }
@@ -208,16 +247,12 @@ async def get_phone_config() -> dict[str, Any]:
     ``PHONE_ENABLED`` gate so the tab can hide the card when the platform is
     off. No relay round-trip — env is process-local.
     """
-    from plugin.phone_platform import (
-        _home_channel,
-        _home_channel_name,
-        _phone_enabled,
-    )
+    phone_platform = _plugin_module("phone_platform")
 
     return {
-        "enabled": _phone_enabled(),
-        "home_channel_id": _home_channel(),
-        "home_channel_name": _home_channel_name(),
+        "enabled": phone_platform._phone_enabled(),
+        "home_channel_id": phone_platform._home_channel(),
+        "home_channel_name": phone_platform._home_channel_name(),
         "name_env_key": "PHONE_HOME_CHANNEL_NAME",
     }
 
@@ -239,7 +274,7 @@ async def get_update_check(refresh: Optional[bool] = Query(default=False)) -> di
     releases API. Network failures degrade to ``update_available=false`` with
     an ``error`` string — never a 5xx — so the card can show "couldn't check".
     """
-    from plugin import update_check
+    update_check = _plugin_module("update_check")
 
     now = time.time()
     stale = (now - _UPDATE_CACHE["fetched_at"]) > _UPDATE_CACHE_TTL
@@ -368,7 +403,9 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
         # on sys.path (smoke tests, docs render, etc.) still loads the
         # module. Any failure here becomes a 500 via HTTPException below.
         try:
-            from plugin.pair import build_endpoint_candidates, read_relay_config
+            pair = _plugin_module("pair")
+            build_endpoint_candidates = pair.build_endpoint_candidates
+            read_relay_config = pair.read_relay_config
         except ImportError as exc:
             raise HTTPException(
                 status_code=500,
@@ -389,9 +426,7 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
         # API defaults come from the same config chain ``pair.py`` uses so
         # the dashboard-minted QR matches what ``hermes-pair --mode auto``
         # would emit from the CLI.
-        from plugin.pair import read_server_config  # local import: see above
-
-        api_cfg = read_server_config()
+        api_cfg = pair.read_server_config()
         relay_cfg = read_relay_config()
         api_host = str(body.get("host") or api_cfg.get("host") or "127.0.0.1")
         api_port = int(body.get("port") or api_cfg.get("port") or 8642)
@@ -444,7 +479,7 @@ def _tailscale_status_dict() -> dict[str, Any]:
     render a "not installed" state without a second round-trip.
     """
     try:
-        from plugin.relay import tailscale
+        tailscale = _plugin_module("relay.tailscale")
     except ImportError:
         return {"available": False, "reason": "helper not importable"}
     try:
@@ -458,7 +493,7 @@ def _tailscale_status_dict() -> dict[str, Any]:
 
 def _canonical_upstream_present() -> bool:
     try:
-        from plugin.relay import tailscale
+        tailscale = _plugin_module("relay.tailscale")
     except ImportError:
         return False
     try:
@@ -496,7 +531,7 @@ async def tailscale_enable(
 ) -> dict[str, Any]:
     """Call ``tailscale.enable(port)`` and return its verbatim result."""
     try:
-        from plugin.relay import tailscale
+        tailscale = _plugin_module("relay.tailscale")
     except ImportError as exc:
         raise HTTPException(
             status_code=500,
@@ -519,7 +554,7 @@ async def tailscale_disable(
 ) -> dict[str, Any]:
     """Call ``tailscale.disable(port)`` and return its verbatim result."""
     try:
-        from plugin.relay import tailscale
+        tailscale = _plugin_module("relay.tailscale")
     except ImportError as exc:
         raise HTTPException(
             status_code=500,

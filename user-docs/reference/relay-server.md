@@ -63,6 +63,17 @@ That path manages plugin code, CLI command registration, dashboard metadata, and
 agent tools. It does not install the systemd user service or shell shims. Use the
 legacy `install.sh` only when you want those host-level artifacts.
 
+### Official Docker image
+
+On the official `nousresearch/hermes-agent` Docker image, the native install
+path above is the **only** supported one. The image is immutable: hermes-agent
+lives in `/opt/hermes/.venv` with no git clone, no user systemd, and
+site-packages that reset on the next `docker pull` — so `install.sh`'s
+editable-install/systemd path is not applicable there (the installer detects
+this layout and points you back to `hermes plugins install`). Run the relay
+inside the container with `hermes relay start` (or your own process
+supervisor) after installing and enabling the plugin.
+
 The optional compatibility startup hook is managed by the plugin:
 
 ```bash

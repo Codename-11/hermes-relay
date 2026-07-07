@@ -9,6 +9,7 @@ the legacy bootstrap monkeypatch is still installed.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import site
@@ -191,6 +192,29 @@ def _plugin_manager_layout(plugin_dir: Path) -> dict[str, Any]:
     }
 
 
+def _relay_import_chain() -> dict[str, Any]:
+    """Import the relay server module chain under the CURRENT package layout.
+
+    ``hermes relay start`` runs ``create_app`` from ``<plugin pkg>.relay.server``,
+    which transitively pulls the voice/realtime/voice_lab modules. Actually
+    importing that chain here catches the failure class from issue #165 —
+    absolute ``plugin.*`` imports crashing when the native plugin loader
+    imports the tree as ``hermes_plugins.hermes_relay`` (no top-level
+    ``plugin`` package exists) — which a filesystem-layout check can never see.
+    """
+    package = __package__ or "plugin"
+    module_name = f"{package}.relay.server"
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:  # any import-time failure is a real start failure
+        return {
+            "ok": False,
+            "module": module_name,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {"ok": True, "module": module_name, "error": None}
+
+
 def _check(checks: list[dict[str, str]], check_id: str, status: str, summary: str) -> None:
     checks.append({"id": check_id, "status": status, "summary": summary})
 
@@ -230,6 +254,7 @@ def collect_doctor_report(
 
     layout = _plugin_manager_layout(PLUGIN_DIR)
     bootstrap = _bootstrap_status(site_dirs)
+    relay_import = _relay_import_chain()
     checks: list[dict[str, str]] = []
 
     _check(
@@ -278,6 +303,21 @@ def collect_doctor_report(
     )
     _check(
         checks,
+        "relay-import-chain",
+        "ok" if relay_import["ok"] else "error",
+        f"relay server module chain imports cleanly ({relay_import['module']})"
+        if relay_import["ok"]
+        else (
+            f"importing {relay_import['module']} failed "
+            f"({relay_import['error']}) — `hermes relay start` will crash. "
+            "If the error names a missing 'plugin' module, this plugin build "
+            "predates native-layout support; update it "
+            "(hermes plugins install Codename-11/hermes-relay/plugin) or "
+            "reinstall with install.sh."
+        ),
+    )
+    _check(
+        checks,
         "relay-loopback",
         "ok" if relay_info.get("ok") else "warn",
         "relay loopback /relay/info reachable"
@@ -313,6 +353,7 @@ def collect_doctor_report(
         "relay": {
             "port": int(port),
             "info": relay_info,
+            "import_chain": relay_import,
         },
         "bootstrap": bootstrap,
         "lifecycle": {

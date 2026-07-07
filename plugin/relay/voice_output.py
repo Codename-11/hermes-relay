@@ -24,14 +24,14 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-from plugin.voice_lab.expressions import VoiceExpression
-from plugin.voice_lab.metrics import MetricsRecorder
-from plugin.voice_lab.providers.base import (
+from ..voice_lab.expressions import VoiceExpression
+from ..voice_lab.metrics import MetricsRecorder
+from ..voice_lab.providers.base import (
     ProviderRunError,
     ProviderUnavailable,
     VoiceRequest,
 )
-from plugin.voice_lab.registry import default_registry
+from ..voice_lab.registry import default_registry
 
 from .config import (
     RelayConfig,
