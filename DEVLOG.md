@@ -1,5 +1,37 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-06 — Release: android-v1.3.0 + plugin-v1.3.0; voice floor fixes; #165 lands for v1.3.1
+
+**Voice floor fixes (post-e2e).** On-device testing of the realtime batch surfaced
+two client bugs: (1) background-run progress events (`hermes.tool.started` /
+`tool.delta` / `run.progress` and the shared `emitStatus` path) forced
+`VoiceState.Thinking` on every tick, pinning the overlay in spinner+Stop and making
+the mic unusable for the whole run even though the relay's floor was free — those
+paths now update only the chip while a run is active; (2) `exitVoiceMode` (and the
+Stop interrupt) sent a run-cancel, killing in-flight background tasks and letting the
+relay's `hermes.run.cancelled` confirm replace an already-delivered answer with
+"Cancelled." in the chat — exit now detaches (relay delivers via next session or
+proactive notification), Stop silences audio only, the chip's ✕ is the sole cancel,
+and the cancel confirm never clobbers non-empty content (Stopped badge instead).
+Verified: build + lint green, on-device voice e2e passed ("works nicely").
+
+**Release act.** Cut both tracks at 1.3.0: CHANGELOG `[Unreleased]` → `[1.3.0]`,
+Android bumped to 1.3.0 (code 21) with refreshed RELEASE_NOTES / whats_new /
+changelog.json / Play notes, plugin release notes written (with a #165
+native-install known-issue callout). Release PR merged `dev` → `main` after a
+Dependabot sync (branch protection requires up-to-date), tags `android-v1.3.0` +
+`plugin-v1.3.0` cut from the merge commit. Both release workflows green:
+the Android release published with the new 2-asset layout (sideload APK +
+googlePlay AAB + SHA256SUMS — first release demonstrating the #144 fix), the
+plugin release published wheel + sdist + checksums.
+
+**#165 branch merged to dev post-tag.** `fix/plugin-native-imports` (package-relative
+imports, dashboard standalone-load bootstrap, doctor import-chain check, installer
+venv autodetection with unit/shims templated to the detected interpreter, AST-guard +
+native-layout smoke tests wired into plugin CI) merged to `dev` per the plan's
+sequencing — it ships as plugin-v1.3.1 after owner validation on the official
+Docker image.
+
 ## 2026-07-06 — Open-issue resolution batch (triage of all 13 open issues + 5 fix branches)
 
 **Why.** The tracker had accumulated 13 open issues spanning real bugs, already-shipped

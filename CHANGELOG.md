@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Relay plugin works under the native `hermes plugins install` path.** The plugin's runtime imports assumed the repo's editable layout, so upstream's native installer (which loads plugins under its own package namespace) broke `hermes relay start` and `hermes pair` with `ModuleNotFoundError: No module named 'plugin'`. All runtime imports are now package-relative, the dashboard module boots correctly when the upstream web server loads it standalone, and `hermes relay doctor` now exercises the real import chain so this class of breakage can't pass doctor again. (#165)
+- **Installer handles modern venv layouts.** `install.sh` now autodetects the classic venv, uv-managed `.venv`, and containerized layouts — and everything it generates (the systemd unit and all four command shims) points at the interpreter it actually detected instead of a hardcoded classic path. On immutable container images it steers to the native install path with a clear message instead of dying mid-run. (#165)
+
 ## [1.3.0] - 2026-07-06
 
 ### Added
