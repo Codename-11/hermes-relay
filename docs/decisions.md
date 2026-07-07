@@ -252,9 +252,17 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 | Voice mode | Depends on Hermes TTS/STT maturity | Phase 6 |
 | Notification listener | Not needed for app core | Phase 6 |
 | File transfer | Can use agent tools (terminal) as workaround | Phase 6 |
-| Android as Hermes platform/channel | See ADR 12 below — relay server as platform adapter | Phase 2+ (after terminal/bridge) |
+| Android as Hermes platform/channel | See ADR 12 — shipped as the `phone` plugin platform; unified-session "Threads" UI in progress | Shipped 2026-06-28 |
 
-### 12. Android as a Hermes Platform/Channel (Future)
+### 12. Android as a Hermes Platform/Channel — "Threads" (Shipped 2026-06-28; unified-session model 2026-06-29)
+
+> **Status (2026-06-29):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); cron `deliver=phone` is the one remaining broken path. See TODO.md "Phone platform — usability roadmap".
+>
+> **Decision (2026-06-29) — unified-session "Threads", not a separate surface:** the proactive agent↔phone conversation is **not** a separate app lane/tab/segment. It is a **source-tagged session inside the one Chat surface** — a **Thread** (`source=phone`). The three things distinguishing a Thread from a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate a turn, (b) it rides the relay `proactive` transport and is relay-gated, (c) it's a standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = the relay `proactive` push** (→ notification); **send = `proactive.reply`**. The local `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability is surfaced in the **connection best-path/capability UI** (a relay-tier capability, like terminal/bridge/voice) and as a clean **Threads** entry (thread-spool icon, NOT a phone glyph) pinned atop the session drawer when active — never a connection-wizard step. Degrades cleanly: no relay plugin → no `source=phone` sessions → Chat is unchanged (standard-path-safe). This **supersedes the earlier "separate Agent lane / 4th nav segment" sketch** and folds in the "show chat source/platform attribution in Chat" goal in one stroke.
+>
+> **Why unified, not separate:** a separate "agent chat" tab is redundant — a Thread is just a chat session the agent can also start. One Chat surface (sessions tagged by source) matches the Discord/messaging-app model the product targets. **Two distinct senses of "gateway" to keep straight:** the *messaging gateway / platform layer* (`gateway/platforms/*` — phone/Discord/Slack as platforms; this is the Thread's `source`) vs. the *dashboard gateway transport* (`/api/ws` tui_gateway — how live chat bytes flow). A Thread is defined by its **platform/source**, not its transport; the two are orthogonal.
+
+**Original research (2026-04-07, retained as lineage — the `mobile:<device_id>` syntax and the ~16-file upstream-fork registration below are SUPERSEDED by the no-fork plugin path):**
 
 **Decision:** Register the Android app as a Hermes platform adapter — like Discord, Telegram, or Slack — so the agent can proactively push messages TO the phone, not just respond to requests.
 

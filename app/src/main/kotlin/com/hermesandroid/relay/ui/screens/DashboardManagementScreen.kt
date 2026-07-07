@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Key
@@ -100,9 +101,7 @@ import com.hermesandroid.relay.network.upstream.DashboardStatus
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayMetricCard
-import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayNavTile
-import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelaySectionCaption
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -286,7 +285,7 @@ private data class PendingDashboardAction(
 fun DashboardManagementScreen(
     connectionViewModel: ConnectionViewModel,
     onNavigateToConnections: () -> Unit,
-    onNavigateToChat: () -> Unit = {},
+    onBack: () -> Unit = {},
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
@@ -1034,6 +1033,13 @@ fun DashboardManagementScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Manage") },
+                navigationIcon = {
+                    RelayChromeIconButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        onClick = onBack,
+                    )
+                },
                 actions = {
                     RelayChromeIconButton(
                         icon = Icons.Filled.Code,
@@ -1073,16 +1079,6 @@ fun DashboardManagementScreen(
                 .background(RelayRefresh.Background)
                 .relayGridTexture(alpha = 0.12f)
         ) {
-            RelayModeStrip(
-                selected = RelayPrimaryMode.Manage,
-                onModeSelected = { mode ->
-                    when (mode) {
-                        RelayPrimaryMode.Chat -> onNavigateToChat()
-                        RelayPrimaryMode.Manage -> Unit
-                        RelayPrimaryMode.Bridge -> onNavigateToBridge()
-                    }
-                },
-            )
             if (dashboardUrl.isNotBlank()) {
                 ManageDashboardTargetLine(
                     dashboardUrl = dashboardUrl,

@@ -85,8 +85,6 @@ import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
-import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
-import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
@@ -138,6 +136,7 @@ import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
+import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
 import com.hermesandroid.relay.ui.theme.AppThemes
@@ -152,7 +151,6 @@ import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.upstream.DynamicDashboardCookieJar
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
-import com.hermesandroid.relay.viewmodel.ConnectionStatusTone
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
@@ -257,11 +255,30 @@ sealed class Screen(
         }
     }
     data object ConnectionsSettings : Screen("settings/connections", "Connections", Icons.Filled.Settings)
+    // Level-2 detail for a single connection (tabbed: Overview / Routes /
+    // Advanced / Security). Drilled into from the Connections list. The
+    // `connectionId` path segment survives process death via SavedStateHandle;
+    // the route template registers a typed StringType arg and `route(id)`
+    // builds the concrete URI (mirrors Screen.ProfileInspector).
+    data object ConnectionDetail : Screen(
+        "settings/connections/{connectionId}",
+        "Connection",
+        Icons.Filled.Settings,
+    ) {
+        const val ARG_CONNECTION_ID: String = "connectionId"
+        fun route(connectionId: String): String {
+            val encoded = java.net.URLEncoder.encode(connectionId, "UTF-8")
+                .replace("+", "%20")
+            return "settings/connections/$encoded"
+        }
+    }
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
     // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
         Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
     // === END PHASE3-notif-listener-followup ===
+    data object ProactiveSettings :
+        Screen("settings/proactive", "Threads", Icons.Filled.Settings)
     data object PermissionsSettings : Screen("settings/permissions", "Permissions", Icons.Filled.Settings)
     // === PHASE3-safety-rails: bridge safety route ===
     data object BridgeSafetySettings :
@@ -387,10 +404,25 @@ fun RelayApp() {
     // the entire StateFlow snapshot was preserved across backgrounding
     // even when the underlying server had died or the network had flipped.
     val lifecycleOwner = LocalLifecycleOwner.current
+    // Timestamp of the last ON_PAUSE, so ON_RESUME can debounce the re-probe by
+    // how long we were actually away (a quick app-switch skips it).
+    val lastPausedAtMs = remember { mutableStateOf(0L) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                connectionViewModel.revalidate()
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> lastPausedAtMs.value = System.currentTimeMillis()
+                Lifecycle.Event.ON_RESUME -> {
+                    // First resume (cold start) forces a probe; otherwise pass
+                    // the away-duration so a brief, healthy switch-away skips
+                    // the cache-clearing re-probe + Probing badge flash.
+                    val awayMs = if (lastPausedAtMs.value == 0L) {
+                        Long.MAX_VALUE
+                    } else {
+                        System.currentTimeMillis() - lastPausedAtMs.value
+                    }
+                    connectionViewModel.revalidateOnResume(awayMs)
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -785,13 +817,29 @@ fun RelayApp() {
     // client to follow the new dashboard route instead of stranding the turn on
     // the dead one.
     val effectiveApiUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    // Debounce a route FLIP before re-acquiring the gateway chat client. The
+    // network-layer hysteresis (ConnectionManager) already keeps _activeEndpoint
+    // stable on a transient endpoint-resolution miss, so effectiveApiUrl should
+    // not flap — this is belt-and-suspenders against any residual sub-second
+    // LAN⇄Tailscale flip, which would otherwise shutdown the warm gateway socket
+    // (when idle) or retarget mid-turn (burning MAX_TURN_REJOINS). The FIRST
+    // acquisition (lastAcquiredApiUrl == null) and non-url key changes
+    // (url unchanged) are NOT delayed, so cold-start connect latency is
+    // unaffected; only a genuine url change waits for a settle window, and if
+    // the url flips back within it the LaunchedEffect cancels + restarts so no
+    // rebuild happens.
+    var lastAcquiredApiUrl by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability, effectiveApiUrl) {
+        if (lastAcquiredApiUrl != null && lastAcquiredApiUrl != effectiveApiUrl) {
+            delay(750L)
+        }
         val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
         chatViewModel.streamingEndpoint = resolved
         chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()
         chatViewModel.updateGatewayClient(
             if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
         )
+        lastAcquiredApiUrl = effectiveApiUrl
     }
 
     // What's New auto-show
@@ -813,6 +861,7 @@ fun RelayApp() {
     val themePreference by connectionViewModel.theme.collectAsState()
     val appThemeId by connectionViewModel.appTheme.collectAsState()
     val fontScale by connectionViewModel.fontScale.collectAsState()
+    val appFontId by connectionViewModel.appFont.collectAsState()
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
@@ -873,6 +922,7 @@ fun RelayApp() {
         appThemeId = appThemeId,
         themePreference = themePreference,
         fontScale = fontScale,
+        appFontId = appFontId,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
@@ -897,6 +947,53 @@ fun RelayApp() {
             }
         }
         // === END PHASE3-safety-rails-followup ===
+
+        // Wire the proactive "session" surfacing once: a message with
+        // surfacing="session" is injected into the active chat conversation.
+        // ChatViewModel isn't available where ConnectionViewModel builds the
+        // handler, so the session sink is set here at the app root where both
+        // ViewModels are in scope.
+        LaunchedEffect(connectionViewModel, chatViewModel) {
+            connectionViewModel.proactiveMessageHandler.toSession = { msg ->
+                val text = buildString {
+                    msg.title?.takeIf { it.isNotBlank() }?.let { append(it); append(": ") }
+                    append(msg.text)
+                }
+                chatViewModel.injectProactiveMessage(text)
+            }
+            // Agent Thread reply path: a send from the chat composer while a
+            // source=phone Thread is open routes over the relay proactive
+            // channel (continues the gateway phone session) instead of a normal
+            // chat send; the relay's per-reply ack settles the bubble's status.
+            chatViewModel.onProactiveReply = { text, chatId, replyTo, messageId ->
+                connectionViewModel.sendProactiveReply(text, chatId, replyTo, messageId)
+            }
+            connectionViewModel.proactiveMessageHandler.onReplyAck = { clientMsgId, status ->
+                chatViewModel.onProactiveReplyAck(clientMsgId, status)
+            }
+            // Unified Threads: render an inbound agent message inline in the open
+            // Thread (suppressing the notification/inbox) when it belongs there.
+            connectionViewModel.proactiveMessageHandler.injectIntoThread = { msg ->
+                chatViewModel.injectThreadMessage(msg)
+            }
+            // Persist + re-apply user-chosen Thread names so a named Thread keeps
+            // its name across restart/reconnect (overrides the gateway auto-title).
+            chatViewModel.onSaveThreadName = { sessionId, name ->
+                connectionViewModel.saveThreadName(sessionId, name)
+            }
+            launch {
+                connectionViewModel.threadNames.collect { names ->
+                    chatViewModel.applyPersistedThreadNames(names)
+                }
+            }
+            // Seed reply routing from the relay's /phone/threads (the session→
+            // chat_id map the API omits), so any Thread routes replies correctly.
+            launch {
+                connectionViewModel.phoneThreadChatIds.collect { map ->
+                    chatViewModel.seedThreadChatIds(map)
+                }
+            }
+        }
 
         LaunchedEffect(onboardingCompleted, postOnboardingRoute) {
             val route = postOnboardingRoute
@@ -960,12 +1057,14 @@ fun RelayApp() {
         val bridgeReturnAction: (() -> Unit)? = bridgePrimaryReturnRoute?.let { route ->
             {
                 clearBridgeReturn()
+                // Reliable navigate to the remembered route. saveState +
+                // restoreState no-op'd when the route was Chat (the start
+                // destination), leaving the user stuck on Bridge.
                 navController.navigate(route) {
                     popUpTo(navController.graph.findStartDestination().id) {
-                        saveState = true
+                        inclusive = false
                     }
                     launchSingleTop = true
-                    restoreState = true
                 }
             }
         }
@@ -990,6 +1089,7 @@ fun RelayApp() {
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
         val globalConnectionStatus by connectionViewModel.globalConnectionStatus.collectAsState()
+        val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
         val relayReady by connectionViewModel.relayReady.collectAsState()
@@ -1300,39 +1400,24 @@ fun RelayApp() {
         val updateHandle = rememberUpdateAvailability()
         val availableUpdateStatus by updateHandle.visibleStatus
 
-        // Content-identity key so a swipe-up dismiss sticks for THIS status but
-        // a genuinely new status (different title/tone/phase) re-shows.
-        var dismissedStatusKey by remember { mutableStateOf<String?>(null) }
-        val currentStatusKey = globalConnectionStatus?.let {
-            "${it.title}|${it.tone}|${it.active}|${it.success}|${it.route}"
-        }
-        val showConnectionStatusToast =
-            globalConnectionStatus != null &&
-                currentStatusKey != dismissedStatusKey &&
-                !suppressGlobalChrome &&
-                !showStartupSphere &&
-                !voiceUiState.voiceMode
-        // Split the connection-status surface by severity (user request): the
-        // frequent transient/active/warning states render as a take-space top
-        // BANNER (content slides down, no overlay), while a persistent ERROR
-        // keeps the floating overlay so it still demands attention. Steady
-        // state is null (buildGlobalConnectionStatus → else null), so the
-        // banner only occupies space during a transition/problem.
-        val connectionStatusIsError =
-            globalConnectionStatus?.tone == ConnectionStatusTone.Error
-        val showConnectionStatusBanner = showConnectionStatusToast && !connectionStatusIsError
-        val showConnectionStatusOverlay = showConnectionStatusToast && connectionStatusIsError
-        val onConnectionStatusBannerClick: () -> Unit = {
-            val title = globalConnectionStatus?.title.orEmpty()
-            val destination = when {
-                title.contains("No Hermes connection", ignoreCase = true) -> Screen.Pair.route()
-                title.contains("dashboard", ignoreCase = true) -> Screen.Manage.route
-                else -> Screen.ConnectionsSettings.route
-            }
-            navController.navigate(destination) {
-                launchSingleTop = true
-            }
-        }
+        // Connection status has no top-of-screen surface. The two connections are
+        // surfaced where they matter, never covering or shifting the top:
+        //   • Chat/agent (gateway/API) → the chat header SUBTITLE swaps the model
+        //     line for "Connecting…"/"Disconnected" when the chat path is down
+        //     (WhatsApp-style; see ChatScreen). That's the "can I talk to the
+        //     agent?" signal.
+        //   • Relay socket (bridge/terminal/relay-voice) → the bottom
+        //     RelayStatusStrip's "Reconnecting…" cue only. It never blocks chat,
+        //     so it stays ambient. (`connectionReconnecting` below.)
+        // A routine in-progress reconnect surfaces only in the bottom strip.
+        // Computed off the raw status (not the dismiss-gated `toast`) because the
+        // strip cue isn't dismissible — it just mirrors live connection state.
+        // Gated by postResumeQuiet so a benign background→foreground re-handshake
+        // stays fully silent (the health "Connecting" cue used to flash here for a
+        // few seconds and then clear with no "Connected" toast).
+        val connectionReconnecting =
+            globalConnectionStatus?.active == true && !postResumeQuiet &&
+                !suppressGlobalChrome && !showStartupSphere && !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
         // Multi-connection switcher has moved into the AgentInfoSheet's
@@ -1409,27 +1494,17 @@ fun RelayApp() {
             DemoModeBanner(onConnect = exitDemoToConnect)
         }
 
-        // Connection status as a take-space banner (non-error). Replaces the
-        // floating ConnectionStatusToast for the frequent transient/active/
-        // warning states so content slides down instead of being covered.
-        AnimatedVisibility(
-            visible = showConnectionStatusBanner,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-        ) {
-            ConnectionStatusBanner(
-                status = globalConnectionStatus,
-                includeStatusBarPadding = !showUnattendedBanner && !showDemoBanner,
-                onClick = onConnectionStatusBannerClick,
-            )
-        }
+        // Connection status intentionally has NO top-of-screen surface (no
+        // banner, no strip, no float). Chat/agent status rides the chat header
+        // subtitle; the relay socket rides the bottom RelayStatusStrip cue. See
+        // the note at the top of this composable.
 
         // Transient info/status banner. Sits below the persistent banners and
         // owns the status-bar inset only when no banner is above it (otherwise
         // that banner already padded the top — avoid double padding).
         MessageBannerHost(
             includeStatusBarPadding =
-                !showUnattendedBanner && !showDemoBanner && !showConnectionStatusBanner,
+                !showUnattendedBanner && !showDemoBanner,
         )
 
         // The update banner AND the connection-status indicator now render as
@@ -1470,7 +1545,7 @@ fun RelayApp() {
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
                     if (showUnattendedBanner || showDemoBanner || connectionChipVisible ||
-                        showMessageBanner || showConnectionStatusBanner
+                        showMessageBanner
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
@@ -1531,6 +1606,9 @@ fun RelayApp() {
                         } else {
                             null
                         },
+                        // Routine in-progress reconnect surfaces here (amber cue)
+                        // instead of a take-space banner or a floating toast.
+                        reconnecting = connectionReconnecting,
                     )
                 }
             }
@@ -1595,13 +1673,17 @@ fun RelayApp() {
                         },
                     ),
                 ) { backStackEntry ->
-                    // Responsive bubble width based on screen width
+                    // Responsive bubble width based on screen width. The "Blend"
+                    // chat look favors wider bubbles: on compact phones the cap is
+                    // raised so long turns fill most of the row (binding on the
+                    // available width minus the assistant avatar gutter) instead
+                    // of wrapping early in a narrow column.
                     val configuration = LocalConfiguration.current
                     val screenWidthDp = configuration.screenWidthDp.dp
                     val maxBubbleWidth = when {
-                        screenWidthDp >= 840.dp -> 600.dp  // Expanded (tablet)
-                        screenWidthDp >= 600.dp -> 480.dp  // Medium (landscape / small tablet)
-                        else -> 300.dp                      // Compact (phone portrait)
+                        screenWidthDp >= 840.dp -> 640.dp  // Expanded (tablet)
+                        screenWidthDp >= 600.dp -> 520.dp  // Medium (landscape / small tablet)
+                        else -> 340.dp                      // Compact (phone portrait)
                     }
 
                     // Consume-once semantics: ChatScreen only treats the
@@ -1701,15 +1783,13 @@ fun RelayApp() {
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
-                        onNavigateToChat = {
-                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        // Standard back: return to wherever Manage was opened
+                        // from (Settings → Hermes management, the agent sheet,
+                        // etc.). The prior forced navigate(Chat) with
+                        // saveState/restoreState was a no-op at runtime —
+                        // navigating to the start destination with restoreState
+                        // restored an equivalent stack and nothing moved.
+                        onBack = { navController.popBackStack() },
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Manage.route,
@@ -1778,14 +1858,12 @@ fun RelayApp() {
                                     navController.navigate(Screen.BridgeSafetySettings.route)
                                 },
                                 onNavigateToChat = {
+                                    // Standard back. The prior navigate(Chat) with
+                                    // saveState/restoreState was a no-op — Chat is
+                                    // the start destination, so restoreState just
+                                    // restored the same stack and nothing moved.
                                     clearBridgeReturn()
-                                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
+                                    navController.popBackStack()
                                 },
                                 onNavigateToManage = {
                                     clearBridgeReturn()
@@ -1814,14 +1892,12 @@ fun RelayApp() {
                                     navController.navigate(Screen.ConnectionsSettings.route)
                                 },
                                 onNavigateToChat = {
+                                    // Standard back. The prior navigate(Chat) with
+                                    // saveState/restoreState was a no-op — Chat is
+                                    // the start destination, so restoreState just
+                                    // restored the same stack and nothing moved.
                                     clearBridgeReturn()
-                                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
+                                    navController.popBackStack()
                                 },
                                 onNavigateToManage = {
                                     clearBridgeReturn()
@@ -1908,6 +1984,9 @@ fun RelayApp() {
                         onNavigateToNotificationCompanion = {
                             navController.navigate(Screen.NotificationCompanionSettings.route)
                         },
+                        onNavigateToProactiveSettings = {
+                            navController.navigate(Screen.ProactiveSettings.route)
+                        },
                         onNavigateToPermissions = {
                             navController.navigate(Screen.PermissionsSettings.route)
                         },
@@ -1943,6 +2022,8 @@ fun RelayApp() {
                     } else {
                     val standardVoiceSignInRouteHint by
                         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
+                    val voiceDashboardUrl by
+                        connectionViewModel.effectiveDashboardUrl.collectAsState()
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
@@ -1951,6 +2032,10 @@ fun RelayApp() {
                         standardVoiceAvailability = standardVoiceAvailability,
                         standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
                         relayVoiceReady = relayVoiceReady,
+                        dashboardUrl = voiceDashboardUrl,
+                        dashboardCookieStoreProvider = {
+                            connectionViewModel.activeDashboardCookieStore()
+                        },
                         onOpenManage = {
                             navController.navigate(Screen.Manage.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
@@ -1971,6 +2056,18 @@ fun RelayApp() {
                     )
                 }
                 // === END PHASE3-notif-listener-followup ===
+                composable(Screen.ProactiveSettings.route) {
+                    ProactiveSettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onOpenChat = {
+                            navController.navigate(Screen.Chat.route()) {
+                                popUpTo(Screen.Chat.route()) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
                 composable(Screen.PermissionsSettings.route) {
                     PermissionsStatusScreen(
                         onBack = { navController.popBackStack() },
@@ -1994,13 +2091,9 @@ fun RelayApp() {
                                 navController.navigate(Screen.ConnectionsSettings.route)
                             },
                             onNavigateToChat = {
-                                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
+                                // popBackStack: navigate(Chat) with restoreState
+                                // no-ops (Chat is the start destination).
+                                navController.popBackStack()
                             },
                             onNavigateToManage = {
                                 navController.navigate(Screen.Manage.route) {
@@ -2077,52 +2170,11 @@ fun RelayApp() {
                         connections = connectionsList,
                         activeConnectionId = activeId,
                         activeRelayUiState = activeRelayUiState,
-                        onReconnectActive = {
-                            connectionViewModel.connectRelay()
-                            UiMessageBus.status("Reconnecting to relay…")
-                        },
-                        // Multi-connection: typed VM helpers (Worker B2)
-                        // handle the full mutations — rename persists via
-                        // ConnectionStore.updateConnection; revoke issues
-                        // the server-side /sessions/{prefix} DELETE and
-                        // clears local auth; remove deletes the backing
-                        // EncryptedSharedPreferences via ConnectionStore.
-                        onRenameConnection = { id, newLabel ->
-                            connectionSwitchScope.launch {
-                                connectionViewModel.renameConnection(id, newLabel)
-                                    .onFailure { err ->
-                                        snackbarHostState.showSnackbar(
-                                            err.message ?: "Rename failed",
-                                        )
-                                    }
-                            }
-                        },
-                        onRepairConnection = { id ->
-                            connectionSwitchScope.launch {
-                                // Wait for the AuthManager swap before the
-                                // scanner can apply a QR payload.
-                                connectionViewModel.switchConnection(id).join()
-                                navController.navigate(Screen.Pair.route(id))
-                            }
-                        },
-                        onRevokeConnection = { id ->
-                            connectionSwitchScope.launch {
-                                val result = connectionViewModel.revokeConnection(id)
-                                if (result.isFailure) {
-                                    // v1 constraint: revokeConnection only
-                                    // works on the active connection.
-                                    // Surface a snackbar so the user
-                                    // understands why nothing happened.
-                                    snackbarHostState.showSnackbar(
-                                        "Only the active connection can be revoked right now",
-                                    )
-                                }
-                            }
-                        },
-                        onRemoveConnection = { id ->
-                            connectionSwitchScope.launch {
-                                connectionViewModel.removeConnection(id)
-                            }
+                        // Tapping a connection card drills into its tabbed
+                        // detail (Overview / Routes / Advanced / Security),
+                        // where rename / re-pair / revoke / remove now live.
+                        onOpenConnection = { id ->
+                            navController.navigate(Screen.ConnectionDetail.route(id))
                         },
                         onAddConnection = {
                             connectionSwitchScope.launch {
@@ -2139,6 +2191,68 @@ fun RelayApp() {
                             }
                         },
                         onBack = { navController.popBackStack() },
+                        // Pass the VM so the list cards can read live status
+                        // for the active connection. Null-safe — if the VM
+                        // isn't wired (tests, previews), cards degrade to the
+                        // flat layout.
+                        connectionViewModel = connectionViewModel,
+                    )
+                }
+                composable(
+                    route = Screen.ConnectionDetail.route,
+                    arguments = listOf(
+                        navArgument(Screen.ConnectionDetail.ARG_CONNECTION_ID) {
+                            type = NavType.StringType
+                        },
+                    ),
+                ) { backStackEntry ->
+                    val detailId = backStackEntry.arguments
+                        ?.getString(Screen.ConnectionDetail.ARG_CONNECTION_ID)
+                        .orEmpty()
+                    com.hermesandroid.relay.ui.screens.ConnectionDetailScreen(
+                        connectionId = detailId,
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onReconnect = {
+                            connectionViewModel.connectRelay()
+                            UiMessageBus.status("Reconnecting to relay…")
+                        },
+                        onRename = { id, newLabel ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.renameConnection(id, newLabel)
+                                    .onFailure { err ->
+                                        snackbarHostState.showSnackbar(
+                                            err.message ?: "Rename failed",
+                                        )
+                                    }
+                            }
+                        },
+                        onRepair = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.switchConnection(id).join()
+                                navController.navigate(Screen.Pair.route(id))
+                            }
+                        },
+                        onRevoke = { id ->
+                            connectionSwitchScope.launch {
+                                val result = connectionViewModel.revokeConnection(id)
+                                if (result.isFailure) {
+                                    snackbarHostState.showSnackbar(
+                                        "Only the active connection can be revoked right now",
+                                    )
+                                }
+                            }
+                        },
+                        onRemove = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.removeConnection(id)
+                            }
+                        },
+                        onSwitchToConnection = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.switchConnection(id)
+                            }
+                        },
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route) {
                                 launchSingleTop = true
@@ -2147,13 +2261,6 @@ fun RelayApp() {
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
                         },
-                        // Pass the VM so the active card can render the
-                        // shared EndpointsCard inline AND the unified
-                        // Advanced section (manual URL / insecure toggle /
-                        // manual pairing code). Null-safe — if the VM
-                        // isn't wired (tests, previews), the active card
-                        // degrades to the flat layout.
-                        connectionViewModel = connectionViewModel,
                     )
                 }
                 composable(
@@ -2390,18 +2497,9 @@ fun RelayApp() {
                     )
                 }
             }
-            AnimatedVisibility(
-                visible = showConnectionStatusOverlay,
-                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
-                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
-            ) {
-                ConnectionStatusToast(
-                    status = globalConnectionStatus,
-                    includeStatusBarPadding = false,
-                    onClick = onConnectionStatusBannerClick,
-                    onDismiss = { dismissedStatusKey = currentStatusKey },
-                )
-            }
+            // Connection status has no surface here (or anywhere at the top).
+            // Chat/agent status rides the chat header subtitle; the relay socket
+            // rides the bottom RelayStatusStrip cue. Only the update banner floats.
         }
 
         // (The ConnectionSwitcherSheet modal that used to live here was

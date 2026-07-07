@@ -4,7 +4,6 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -29,7 +27,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,7 +36,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.onSizeChanged
@@ -54,192 +50,34 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.pointer.pointerInput
-import com.hermesandroid.relay.viewmodel.ConnectionHandoffStatus
 import com.hermesandroid.relay.viewmodel.ConnectionHandoffTraceEntry
 import com.hermesandroid.relay.viewmodel.ConnectionStatusSnapshot
 import com.hermesandroid.relay.viewmodel.ConnectionStatusTone
 import com.hermesandroid.relay.viewmodel.ConnectionStepState
-import com.hermesandroid.relay.viewmodel.asConnectionStatusSnapshot
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@Composable
-fun ConnectionHandoffBanner(
-    status: ConnectionHandoffStatus?,
-    modifier: Modifier = Modifier,
-    includeStatusBarPadding: Boolean = false,
-) {
-    ConnectionStatusBanner(
-        status = status?.asConnectionStatusSnapshot(),
-        modifier = modifier,
-        includeStatusBarPadding = includeStatusBarPadding,
-    )
-}
-
-@Composable
-fun ConnectionStatusBanner(
-    status: ConnectionStatusSnapshot?,
-    modifier: Modifier = Modifier,
-    includeStatusBarPadding: Boolean = false,
-    onClick: (() -> Unit)? = null,
-) {
-    val current = status ?: return
-    val containerColor = when {
-        current.tone == ConnectionStatusTone.Error -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.86f)
-        current.tone == ConnectionStatusTone.Warning -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.62f)
-        current.success -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.58f)
-        current.active -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.74f)
-        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f)
-    }
-    val contentColor = when {
-        current.tone == ConnectionStatusTone.Error ||
-            current.tone == ConnectionStatusTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
-        current.success -> MaterialTheme.colorScheme.onTertiaryContainer
-        current.active -> MaterialTheme.colorScheme.onSecondaryContainer
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val insetModifier = if (includeStatusBarPadding) {
-        Modifier.windowInsetsPadding(WindowInsets.statusBars)
-    } else {
-        Modifier
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f))
-            .then(insetModifier)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Surface(
-            color = containerColor,
-            contentColor = contentColor,
-            shape = RoundedCornerShape(10.dp),
-            tonalElevation = 0.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-                .animateContentSize(animationSpec = tween(durationMillis = 180)),
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 34.dp)
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    when {
-                        current.active -> PulsingSyncIcon(contentColor)
-                        current.success -> Icon(
-                            imageVector = Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            tint = contentColor,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        current.tone == ConnectionStatusTone.Warning ||
-                            current.tone == ConnectionStatusTone.Error -> Icon(
-                                imageVector = Icons.Filled.Warning,
-                                contentDescription = null,
-                                tint = contentColor,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        else -> Icon(
-                            imageVector = Icons.Filled.Sync,
-                            contentDescription = null,
-                            tint = contentColor,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = current.title,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = contentColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            current.route?.takeIf { it.isNotBlank() }?.let { route ->
-                                Text(
-                                    text = route,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = contentColor.copy(alpha = 0.76f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            current.actionLabel?.takeIf { it.isNotBlank() }?.let { label ->
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = contentColor.copy(alpha = 0.86f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        val outputLines = current.entries
-                            .takeLast(2)
-                            .mapNotNull { entry ->
-                                val label = entry.label.trim().takeIf { it.isNotBlank() }
-                                val detail = entry.detail?.trim()?.takeIf { it.isNotBlank() }
-                                when {
-                                    label != null && detail != null -> "$label: $detail"
-                                    label != null -> label
-                                    detail != null -> detail
-                                    else -> null
-                                }
-                            }
-                            .distinct()
-                        outputLines.forEach { line ->
-                            Text(
-                                text = line,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = contentColor.copy(alpha = 0.72f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-                }
-                if (current.active) {
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 2.dp, max = 2.dp),
-                        color = contentColor.copy(alpha = 0.76f),
-                        trackColor = contentColor.copy(alpha = 0.16f),
-                    )
-                }
-            }
-        }
-    }
-}
-
 private const val SWIPE_DISMISS_THRESHOLD_PX = 80f
 
 /**
- * Floating, in-theme connection status **toast** for connection switches,
- * network handoffs, and disconnects.
+ * Floating, in-theme status **toast** with an animated multi-step stepper
+ * (checking → ✓/✕).
  *
- * Unlike [ConnectionStatusBanner] (edge-to-edge, takes layout space above the
- * Scaffold and so resizes the content), this is meant to be rendered as a
- * top-aligned overlay inside a `Box` — it slides down OVER the UI without
- * shifting it. Pair it with `AnimatedVisibility(enter = slideInVertically{-it})`
- * at the call site.
+ * NOTE: currently **not wired** into the app — connection status now lives in the
+ * chat header subtitle (chat/agent) + the bottom RelayStatusStrip cue (relay
+ * socket), with nothing at the top. This is **intentionally kept as a parked,
+ * general-purpose toast primitive**: it's the only notification surface with a
+ * live multi-step stepper, so it's the natural home for any future "N-step
+ * progress" moment (pairing, long upload, a bridge action sequence). When first
+ * reused, decouple it from [ConnectionStatusSnapshot] and rename to a generic
+ * `StatusToast`. It also anchors [UpdateAvailableBanner]'s visual language + the
+ * shared [ConnectionStepRow]/[StepGlyph] helpers. See TODO.md.
+ *
+ * Rendered as a top-aligned overlay inside a `Box` — it slides down OVER the UI
+ * without shifting layout. Pair it with `AnimatedVisibility(enter =
+ * slideInVertically{-it})` at the call site.
  *
  * - Spinner while [ConnectionStatusSnapshot.active] (handoff / loading).
  * - [onClick] acts on it (reconnect / open the relevant screen).
@@ -553,23 +391,5 @@ private fun StepGlyph(state: ConnectionStepState, contentColor: Color) {
             ConnectionStepState.Failed -> MaterialTheme.colorScheme.error
         },
         modifier = Modifier.width(12.dp),
-    )
-}
-
-@Composable
-private fun PulsingSyncIcon(color: androidx.compose.ui.graphics.Color) {
-    // Throttled to ~30fps. Reverse ping-pong over 0.9s each way → a 1.8s linear
-    // phase folded into a 0→1→0 triangle. See [rememberAmbientPhase].
-    val phase = rememberAmbientPhase(periodMillis = 1800)
-    val triangle = 1f - kotlin.math.abs(2f * phase - 1f)
-    val alpha = 0.45f + 0.55f * triangle
-    Icon(
-        imageVector = Icons.Filled.Sync,
-        contentDescription = null,
-        tint = color,
-        modifier = Modifier
-            .size(16.dp)
-            .clip(CircleShape)
-            .alpha(alpha),
     )
 }

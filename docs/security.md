@@ -29,36 +29,43 @@ AccessibilityService-backed Device Control (screen reading, taps, typing, screen
 - The server relay only accepts one phone at a time
 - All tool commands are proxied through the relay — the phone is never directly exposed
 
-## Known Limitations (Prototype)
+## Known Limitations
 
-### No Encryption
-WebSocket connections may use `ws://` (plaintext) instead of `wss://` (TLS). This means:
+### Plaintext `ws://` legs are possible
+The relay can run without TLS (`hermes relay start --no-ssl`), in which case connections use `ws://` (plaintext) instead of `wss://` (TLS). On a plaintext leg:
 - Commands, screen content, and screenshots travel unencrypted
 - Anyone on the network path between phone and server can intercept traffic
-- **Mitigation**: Use over a trusted network, or set up a reverse proxy with TLS (nginx/caddy)
+
+The clients do not accept this silently: each pairing candidate carries a `transport_hint`, and the Android app keeps plain `ws://` disabled until the operator turns on "Allow plain (unencrypted) connections" and acknowledges the one-time warning dialog. TLS connections get trust-on-first-use SPKI certificate pinning on both the Android app and the desktop CLI.
+- **Mitigation**: Use plaintext only on a trusted network, or front the relay with Tailscale (`hermes-relay-tailscale enable`) or a TLS reverse proxy (nginx/caddy)
 
 Hermes API bearer tokens on `/voice/*` are stricter than the legacy WebSocket path: non-loopback API-bearer requests are rejected unless the request is HTTPS, comes through a trusted HTTPS reverse-proxy signal, or the operator has explicitly enabled the insecure dev escape hatch with `hermes relay insecure-api-key on` or the startup env var.
 
-### Full Device Access
-Once paired, the agent has unrestricted access to:
+### Broad device access once Device Control is enabled
+On a `sideload` build with Bridge enabled, the agent can:
 - Read all screen content (any app)
 - Tap, type, swipe anywhere
 - Open any app
 - Take screenshots
 - Read installed app list
 
-There is no granular permission system — the agent can access banking apps, messages, etc.
-- **Mitigation**: Only pair with trusted Hermes instances. Disconnect when not in use.
+This access is fenced by several shipped rails rather than a per-app Android permission model:
+- **Per-channel grants with TTLs** on the relay session token — bridge access can be excluded or time-boxed at pair time and revoked from any client.
+- **Bridge safety rails** (`BridgeSafetyManager`): a per-app blocklist, destructive-verb confirmation prompts (fail-closed on `/call` and `/send_sms`), and an auto-disable timer.
+- **Master toggle + status overlay** so control is visible and can be cut instantly on the phone.
 
-### No Command Audit Log
-There is no persistent log of what commands the agent executed on the phone.
-- **Mitigation**: The relay logs commands to stdout when run with INFO logging.
+The rails are deny-lists and confirmations, not sandboxing — a permissive configuration still exposes sensitive apps.
+- **Mitigation**: Only pair with trusted Hermes instances, keep the blocklist populated, and disconnect (or let auto-disable fire) when not in use.
+
+### Command audit is local, not centralized
+The Bridge screen keeps an on-device activity log of executed device-control commands, and the relay logs commands to its service log at INFO level. There is no centralized, tamper-evident audit trail across surfaces.
+- **Mitigation**: Review the Bridge activity log on the phone and the relay service log (`journalctl`) on the host.
 
 ### Remote connectivity
 
 Hermes-Relay does **not** ship its own application-layer crypto. The operator owns both endpoints, and the trust model assumes TLS is terminated somewhere on the path that the operator already controls — Tailscale (managed TLS + tailnet ACL identity), a reverse proxy with Let's Encrypt, a WireGuard / other VPN, or a Cloudflare Tunnel. See [`docs/remote-access.md`](remote-access.md) for the decision matrix and setup recipes per mode.
 
-Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-class case: a single QR carries `lan` / `tailscale` / `public` candidates in strict-priority order and the phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog — explicit operator consent is still required for any unencrypted leg. The TOFU cert pin is keyed by `host:port`, so two endpoints pointing at the same hostname share a pin (correct — same cert, same pin) while distinct hostnames each get their own.
+Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-class case: a single QR carries `lan` / `tailscale` / `public` candidates in strict-priority order and the phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` gating — an unencrypted leg is used only after the operator has enabled and acknowledged plain connections. The TOFU cert pin is keyed by `host:port`, so two endpoints pointing at the same hostname share a pin (correct — same cert, same pin) while distinct hostnames each get their own.
 
 ## Recommendations for Production Use
 

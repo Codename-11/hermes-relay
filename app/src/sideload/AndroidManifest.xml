@@ -47,6 +47,15 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!-- Doze allow-list for the opt-in "Persistent connection" keep-alive.
+         A specialUse FGS holds the process up but does NOT exempt from Doze's
+         network deferral, so the socket still drops in deep sleep unless the
+         app is battery-optimization exempt. Sideload only — Google Play
+         restricts this permission to a short list of app categories, so the
+         googlePlay flavor never declares it (the Settings nudge is flavor-
+         gated to sideload). See util/BatteryOptimizations.kt. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Screen recording — sideload only. googlePlay doesn't declare
          /screenshot or the MEDIA_PROJECTION FGS type. See the main
          manifest's comment on why the permission was moved here. -->

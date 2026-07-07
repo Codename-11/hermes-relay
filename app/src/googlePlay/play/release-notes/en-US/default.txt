@@ -1,4 +1,6 @@
-v1.2.6 — Tidier chats & calmer status.
+v1.3.0 — Voice that multitasks & sturdier chats.
 
-• Chats no longer get stuck on "Untitled" — your first message stands in as the title until the chat is named, plus a new refresh button in the session list. Renaming a chat now sticks on non-default profiles.
-• Connection status now slides in as a thin banner at the top instead of a card floating over your chat; the floating alert is kept for persistent errors.
+• Long voice tasks run in the background with a live progress chip — keep talking, cancel with a tap, and hear the result even after a dropped connection.
+• Chat answers are no longer lost when the connection drops mid-reply.
+• Your agent can message you first (opt-in), with replies straight from the notification.
+• Pick your app font; onboarding fits small screens; cleaner Connections screen.

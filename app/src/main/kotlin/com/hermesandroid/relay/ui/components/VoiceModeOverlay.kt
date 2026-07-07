@@ -3,8 +3,12 @@ package com.hermesandroid.relay.ui.components
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -26,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -75,6 +80,9 @@ import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
+import kotlinx.coroutines.delay
+import com.hermesandroid.relay.viewmodel.BackgroundRunPhase
+import com.hermesandroid.relay.viewmodel.BackgroundRunState
 import com.hermesandroid.relay.viewmodel.DestructiveCountdownState
 import com.hermesandroid.relay.viewmodel.HermesConfirmationState
 import com.hermesandroid.relay.viewmodel.InteractionMode
@@ -144,6 +152,9 @@ fun VoiceModeOverlay(
     // visible if not wired (the chip itself is also gated on
     // `uiState.permissionDeniedCallout` being non-null).
     onPermissionDeniedChipTap: (PermissionDeniedCallout) -> Unit = {},
+    // Cancels the promoted/durable background Hermes run from the chip's ✕.
+    // Default no-op so existing call sites/previews keep compiling.
+    onBackgroundRunCancel: () -> Unit = {},
     onHermesConfirmationAnswer: (String) -> Unit = {},
     // === END v0.4.1 ===
 ) {
@@ -337,27 +348,13 @@ fun VoiceModeOverlay(
                     )
                 }
 
-                AnimatedVisibility(
-                    visible = uiState.backgroundRun != null,
-                    enter = fadeIn(tween(140)),
-                    exit = fadeOut(tween(180)),
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = uiState.backgroundRun?.message
-                                ?: "Working on it in the background…",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                        )
-                    }
-                }
+                BackgroundRunChip(
+                    run = uiState.backgroundRun,
+                    onCancel = onBackgroundRunCancel,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 4.dp),
+                )
 
                 Spacer(Modifier.height(8.dp))
 
@@ -1461,6 +1458,124 @@ private fun DestructiveCountdownRow(
                 color = MaterialTheme.colorScheme.tertiary,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * ADR 33 live background-run chip.
+ *
+ * With timer-driven spoken progress off by default, this chip is the primary
+ * in-between signal for a promoted/durable Hermes run: a pulsing dot, a
+ * phase-aware title, a live secondary line (active tool · steps · elapsed),
+ * and a ✕ that cancels the run. Phases: RUNNING (normal), RECONNECTING (the
+ * voice socket dropped mid-run — the relay keeps the run alive while the
+ * client retries), DELIVERING (run finished; summary queued behind the floor).
+ *
+ * Takes the nullable state and remembers the last non-null value so the exit
+ * fade shows real content instead of snapping empty (same pattern as
+ * [PermissionDeniedChip]).
+ */
+@Composable
+private fun BackgroundRunChip(
+    run: BackgroundRunState?,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var latest by remember { mutableStateOf<BackgroundRunState?>(null) }
+    run?.let { latest = it }
+    val display = latest ?: return
+
+    AnimatedVisibility(
+        visible = run != null,
+        enter = fadeIn(tween(140)),
+        exit = fadeOut(tween(180)),
+        modifier = modifier,
+    ) {
+        // mm:ss ticker — recomposes this chip once a second while visible.
+        var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(display.startedAtMs) {
+            while (true) {
+                nowMs = System.currentTimeMillis()
+                delay(1_000L)
+            }
+        }
+        val elapsedSeconds = ((nowMs - display.startedAtMs) / 1000L).coerceAtLeast(0L)
+        val elapsedLabel = "%d:%02d".format(elapsedSeconds / 60, elapsedSeconds % 60)
+
+        val pulse by rememberInfiniteTransition(label = "bgRunPulse").animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+            label = "bgRunPulseAlpha",
+        )
+        val dotColor = when (display.phase) {
+            BackgroundRunPhase.RECONNECTING -> MaterialTheme.colorScheme.tertiary
+            else -> MaterialTheme.colorScheme.primary
+        }
+        val title = when (display.phase) {
+            BackgroundRunPhase.RECONNECTING -> "Reconnecting — your task is still running"
+            BackgroundRunPhase.DELIVERING -> display.message
+            BackgroundRunPhase.RUNNING -> display.message
+        }
+        val detail = buildList {
+            display.statusLine
+                ?.takeIf { it.isNotBlank() }
+                ?.let { add(it.trimEnd('.', '…')) }
+            if (display.completedToolCount > 0) {
+                add(
+                    "${display.completedToolCount} step" +
+                        if (display.completedToolCount == 1) "" else "s"
+                )
+            }
+            add(elapsedLabel)
+        }.joinToString(" · ")
+
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(dotColor.copy(alpha = pulse)),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (detail.isNotBlank()) {
+                        Text(
+                            text = detail,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onCancel,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Cancel background task",
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
         }
     }
 }

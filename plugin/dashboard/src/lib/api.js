@@ -48,6 +48,14 @@ export function getAgentContext() {
   return fetchJSON("/agent-context");
 }
 
+export function getPhoneConfig() {
+  return fetchJSON("/phone/config");
+}
+
+export function getUpdateCheck({ refresh = false } = {}) {
+  return fetchJSON(`/update-check${refresh ? "?refresh=true" : ""}`);
+}
+
 export function putEnvSetting(key, value) {
   return fetchHostJSON("/api/env", {
     method: "PUT",

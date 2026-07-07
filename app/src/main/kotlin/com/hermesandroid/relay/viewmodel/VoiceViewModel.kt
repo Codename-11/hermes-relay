@@ -152,7 +152,31 @@ data class BackgroundRunState(
     /** "promoted" (auto-detached long run) or "durable" (explicit mode=background). */
     val tier: String = "promoted",
     val message: String = "Working on it in the background…",
+    /**
+     * Live secondary line from the run's progress/tool events (e.g. "Running
+     * command."). With timer-driven spoken progress off by default, this chip
+     * line is the primary in-between signal for a background run.
+     */
+    val statusLine: String? = null,
+    /** Tools completed so far (from hermes.run.progress). */
+    val completedToolCount: Int = 0,
+    /** Wall-clock at promotion — drives the chip's mm:ss elapsed ticker. */
+    val startedAtMs: Long = System.currentTimeMillis(),
+    val phase: BackgroundRunPhase = BackgroundRunPhase.RUNNING,
 )
+
+/** Connection-aware phase for the background-run chip. */
+enum class BackgroundRunPhase {
+    /** Run in flight; progress events are flowing. */
+    RUNNING,
+
+    /** The voice socket dropped mid-run; the relay keeps the run alive and the
+     *  client is retrying the resume — the task is safe, not lost. */
+    RECONNECTING,
+
+    /** The run finished; the spoken summary is queued behind the floor. */
+    DELIVERING,
+}
 
 data class VoiceHandoffStatus(
     val title: String,
@@ -382,6 +406,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val SILENCE_WATCHDOG_POLL_MS: Long = 150L
 
         /**
+         * Idle/no-speech auto-close for a Listening turn that never hears
+         * speech — parity with hermes-desktop voice_mode `idleSilenceMs`. The
+         * turn is cancelled WITHOUT transcribing (nothing was said), then the
+         * loop is free to re-arm.
+         */
+        private const val IDLE_NO_SPEECH_MS: Long = 12_000L
+
+        /**
+         * Hard ceiling on a single Listening turn — parity with hermes-desktop
+         * voice_mode's 60 s turn timeout. Whatever was captured is sent to
+         * transcription so a long monologue still completes.
+         */
+        private const val MAX_LISTEN_TURN_MS: Long = 60_000L
+
+        /**
          * Explicit allow-list of cancel utterances. Intentionally NOT
          * fuzzy — ambiguous words like "yes"/"ok" must NOT terminate a
          * pending SMS by accident. Matching: lowercase, trim, trim
@@ -437,6 +476,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // the open path reset them at each turn boundary.
     private var realtimeSessionJob: Job? = null
     private var realtimeTurnChannel: kotlinx.coroutines.channels.Channel<RealtimeTurnInput>? = null
+
+    /** Watchdog that clears a DELIVERING background-run chip if no summary
+     *  audio ever arrives (visual-only delivery, provider hiccup). */
+    private var deliveringChipClearJob: Job? = null
     private var rtUserText: String = ""
     private var rtAssistantMessageId: String = ""
     private var rtConversationContext: List<RealtimeConversationContextMessage> = emptyList()
@@ -1202,6 +1245,40 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(voiceMode = true, state = VoiceState.Idle, outputAudioActive = false, error = null)
         }
+        prewarmRealtimeSession()
+    }
+
+    /**
+     * Open the persistent Realtime Agent session at voice-mode entry, before
+     * the first utterance — pulling the session POST + relay websocket +
+     * provider connect out of first-turn latency. Sends no input and touches
+     * no turn state; the first utterance rides [submitRealtimeTurn] exactly
+     * like a follow-up turn. No-op unless the engine is Realtime Agent with
+     * the persistent-session toggle on, or when a session is already open.
+     * A failed warm-up is silent — the first turn just opens fresh.
+     */
+    private fun prewarmRealtimeSession() {
+        if (voiceEngineMode != VoiceEngineMode.RealtimeAgent) return
+        if (!realtimePersistentSession) return
+        val client = voiceClient ?: return
+        val chatVm = chatViewModel ?: return
+        if (realtimeSessionJob?.isActive == true && realtimeTurnChannel != null) return
+        closeRealtimeSession()
+        realtimeTurnChannel = kotlinx.coroutines.channels.Channel(
+            kotlinx.coroutines.channels.Channel.UNLIMITED,
+        )
+        Log.i(TAG, "Prewarming persistent Realtime Agent session on voice-mode entry")
+        realtimeSessionJob = viewModelScope.launch {
+            runRealtimeAgentTurn(
+                client = client,
+                chatVm = chatVm,
+                userText = "",
+                inputPcm = ByteArray(0),
+                inputSampleRate = 16_000,
+                persistentOpen = true,
+                prewarm = true,
+            )
+        }
     }
 
     private fun cancelRealtimeAgentTurn(reason: String) {
@@ -1217,6 +1294,29 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         realtimeAgentControl = null
         realtimeConfirmationControl = null
+    }
+
+    /** Apply [transform] to the background-run chip state, if one is showing. */
+    private fun updateBackgroundRun(transform: (BackgroundRunState) -> BackgroundRunState) {
+        _uiState.update { state ->
+            val run = state.backgroundRun ?: return@update state
+            state.copy(backgroundRun = transform(run))
+        }
+    }
+
+    /**
+     * Cancel the promoted/durable background run from the overlay chip. The
+     * relay confirms with `hermes.run.cancelled`, which clears the chip; the
+     * message flips immediately so the tap feels acknowledged.
+     */
+    fun cancelBackgroundRun() {
+        Log.i(
+            TAG,
+            "Background run cancel requested from chip " +
+                "run=${_uiState.value.backgroundRun?.runId ?: "?"}",
+        )
+        updateBackgroundRun { it.copy(message = "Cancelling…", statusLine = null) }
+        cancelRealtimeAgentTurn("background_run_chip")
     }
 
     fun exitVoiceMode() {
@@ -1244,7 +1344,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
         try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
-        cancelRealtimeAgentTurn("exit voice mode")
+        // Exit = detach, chip ✕ = cancel. A promoted/durable run stays alive
+        // server-side; the relay delivers its result on the next voice session
+        // or as a proactive notification. Cancelling here both killed the task
+        // and let the relay's run-cancelled confirm overwrite an already-
+        // delivered answer with "Cancelled." in the chat transcript.
+        val detachedRun = _uiState.value.backgroundRun
+        if (detachedRun != null) {
+            Log.i(
+                TAG,
+                "Exiting voice mode with background run=${detachedRun.runId ?: "?"} " +
+                    "active — detaching, not cancelling",
+            )
+        } else {
+            cancelRealtimeAgentTurn("exit voice mode")
+        }
         closeRealtimeSession()
         // B4: tear down the barge-in listener + timers before we kill the
         // player so AEC doesn't try to track a released audio session.
@@ -1498,10 +1612,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * watchdog uses, already tuned to reject mic hiss and room tone on
      * Bailey's devices while catching whispered speech.
      *
-     * Grace window: auto-stop does NOT fire until we've seen at least one
-     * above-floor frame. If the user taps to start a turn and never
-     * speaks, we wait forever (or until a manual stop) rather than
-     * insta-closing the turn the moment recording begins.
+     * Three timeouts, aligned to hermes-desktop's voice_mode defaults so the
+     * standard-path loop feels like the official desktop:
+     *  - **End-of-speech** ([VoiceSettings.silenceThresholdMs], default 1250 ms,
+     *    desktop `silenceMs`): after speech is heard, this much silence
+     *    auto-stops and transcribes the turn.
+     *  - **Idle/no-speech** ([IDLE_NO_SPEECH_MS] = 12 s, desktop `idleSilenceMs`):
+     *    a turn that never hears speech is cancelled WITHOUT transcribing.
+     *  - **Hard cap** ([MAX_LISTEN_TURN_MS] = 60 s): any turn running this long
+     *    is stopped and transcribed.
+     *
+     * Grace window: the end-of-speech timeout does NOT fire until we've seen at
+     * least one above-floor frame. The amplitude floor [RESUME_SILENCE_THRESHOLD]
+     * (0.08) is the analog of desktop's `silenceLevel` (0.075).
      *
      * No-op when [voicePreferences] is unwired (pre-fix test call sites)
      * or when the threshold is <= 0 (reserved for a future "Off" option).
@@ -1517,18 +1640,35 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             val rec = recorder ?: return@launch
             var hasSpoken = false
             var lastVoiceMs = System.currentTimeMillis()
+            val turnStartedMs = System.currentTimeMillis()
 
             while (isActive && _uiState.value.state == VoiceState.Listening) {
                 val amp = rec.amplitude.value
                 val now = System.currentTimeMillis()
-                if (amp > RESUME_SILENCE_THRESHOLD) {
-                    hasSpoken = true
-                    lastVoiceMs = now
-                } else if (hasSpoken && (now - lastVoiceMs) >= thresholdMs) {
-                    Log.d(TAG, "silence watchdog: ${thresholdMs}ms of silence after speech — auto-stop")
-                    // stopListening() is state-guarded (early-returns if
-                    // already out of Listening), so a concurrent manual
-                    // stop between here and dispatch is a safe no-op.
+                when {
+                    amp > RESUME_SILENCE_THRESHOLD -> {
+                        hasSpoken = true
+                        lastVoiceMs = now
+                    }
+                    hasSpoken && (now - lastVoiceMs) >= thresholdMs -> {
+                        Log.d(TAG, "silence watchdog: ${thresholdMs}ms of silence after speech — auto-stop")
+                        // stopListening() is state-guarded (early-returns if
+                        // already out of Listening), so a concurrent manual
+                        // stop between here and dispatch is a safe no-op.
+                        stopListening()
+                        return@launch
+                    }
+                    !hasSpoken && (now - turnStartedMs) >= IDLE_NO_SPEECH_MS -> {
+                        Log.d(TAG, "silence watchdog: ${IDLE_NO_SPEECH_MS}ms with no speech — closing idle turn")
+                        cancelListeningWithoutProcessing(
+                            title = "No speech detected",
+                            detail = "No speech within ${IDLE_NO_SPEECH_MS / 1000}s",
+                        )
+                        return@launch
+                    }
+                }
+                if ((System.currentTimeMillis() - turnStartedMs) >= MAX_LISTEN_TURN_MS) {
+                    Log.d(TAG, "silence watchdog: ${MAX_LISTEN_TURN_MS}ms hard turn cap — auto-stop")
                     stopListening()
                     return@launch
                 }
@@ -1552,7 +1692,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             TAG,
             "Interrupting speech pipeline",
         )
-        cancelRealtimeAgentTurn("interrupt")
+        // Stop = "stop talking", not "kill my task": with a background run
+        // active, silence the audio pipeline below but leave the run alive —
+        // the chip's ✕ is the explicit cancel affordance.
+        if (_uiState.value.backgroundRun != null) {
+            Log.i(TAG, "Interrupt with background run active — stopping audio only")
+        } else {
+            cancelRealtimeAgentTurn("interrupt")
+        }
         // Drop realtime audio deltas still in flight on the open socket so a
         // stopped turn's tail can't re-create the player and resume playback.
         realtimeAudioSuppressed = true
@@ -2221,8 +2368,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         inputPcm: ByteArray,
         inputSampleRate: Int,
         persistentOpen: Boolean = false,
+        /**
+         * Voice-mode-entry warm-up: open the persistent session/socket with no
+         * first turn. All turn-scoped side effects (Thinking state, the chat
+         * assistant placeholder, the turn-active flag) are skipped — the first
+         * real utterance rides [submitRealtimeTurn] like any follow-up turn.
+         */
+        prewarm: Boolean = false,
     ) {
-        providerRealtimeAgentTurnActive.set(true)
+        if (!prewarm) providerRealtimeAgentTurnActive.set(true)
         // New turn requested → allow this response's audio through again.
         realtimeAudioSuppressed = false
         streamObserverJob?.cancel()
@@ -2241,13 +2395,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         firstFrameWatchdogJob?.cancel(); firstFrameWatchdogJob = null
         clearSpokenChunksState()
 
-        _uiState.update {
-            it.copy(
-                state = VoiceState.Thinking,
-                outputAudioActive = false,
-                transcribedText = userText,
-                responseText = "",
-            )
+        if (!prewarm) {
+            _uiState.update {
+                it.copy(
+                    state = VoiceState.Thinking,
+                    outputAudioActive = false,
+                    transcribedText = userText,
+                    responseText = "",
+                )
+            }
         }
 
         // Per-turn event state is hoisted to fields so one session-lived callback
@@ -2263,10 +2419,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         spokenStatusCount = 0
         rtUserText = userText
         rtConversationContext = chatVm.realtimeAgentContextMessages()
-        rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
-            userText = userText,
-            chatSessionId = chatVm.currentSessionId.value,
-        )
+        if (!prewarm) {
+            rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
+                userText = userText,
+                chatSessionId = chatVm.currentSessionId.value,
+            )
+        }
         val conversationContext = rtConversationContext
         val pcmPlayer = realtimePcmPlayer
 
@@ -2283,12 +2441,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 title = line.trimEnd('.'),
                 detail = "Realtime Agent",
             )
-            _uiState.update {
-                it.copy(
-                    state = VoiceState.Thinking,
-                    outputAudioActive = false,
-                    responseText = line,
-                )
+            // A promoted/durable background run owns the chip; the global
+            // voice state must stay conversational (Idle/Listening) so the
+            // mic keeps working — flipping Thinking on every status event is
+            // what wedged the floor during background runs. Optional spoken
+            // narration below is unaffected.
+            if (_uiState.value.backgroundRun == null) {
+                _uiState.update {
+                    it.copy(
+                        state = VoiceState.Thinking,
+                        outputAudioActive = false,
+                        responseText = line,
+                    )
+                }
             }
             if (speak && (!audioSeen.get() || speakEvenAfterProviderAudio)) {
                 // W3: per-turn throttle independent of the per-key dedupe above.
@@ -2357,6 +2522,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 onHandoff = ::recordVoiceHandoff,
                 turnInputs = if (persistentOpen) realtimeTurnChannel else null,
                 onTurnComplete = { summary -> onRealtimeTurnComplete(summary) },
+                prewarm = prewarm,
             ) { event, control ->
                 realtimeAgentControl = control
                 chatVm.applyRealtimeAgentEvent(
@@ -2415,17 +2581,30 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         speakEvenAfterProviderAudio = true,
                     )
                     val tool = event.toolName?.replace('_', ' ') ?: "tool"
-                    _uiState.update {
-                        it.copy(
-                            state = VoiceState.Thinking,
-                            responseText = "Using $tool...",
+                    if (_uiState.value.backgroundRun == null) {
+                        _uiState.update {
+                            it.copy(
+                                state = VoiceState.Thinking,
+                                responseText = "Using $tool...",
+                            )
+                        }
+                    }
+                    // Live chip: tool starts are the fastest-updating signal for
+                    // a background run (progress events only tick every ~5s).
+                    updateBackgroundRun { run ->
+                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        else run.copy(
+                            statusLine = realtimeToolStatusLine(event.toolName),
+                            phase = BackgroundRunPhase.RUNNING,
                         )
                     }
                 }
                 "hermes.tool.delta" -> {
                     realtimeToolProgressLine(event)?.let { line ->
-                        _uiState.update {
-                            it.copy(state = VoiceState.Thinking, responseText = line)
+                        if (_uiState.value.backgroundRun == null) {
+                            _uiState.update {
+                                it.copy(state = VoiceState.Thinking, responseText = line)
+                            }
                         }
                     }
                 }
@@ -2445,11 +2624,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             speakEvenAfterProviderAudio = true,
                         )
                     }
-                    _uiState.update {
-                        it.copy(
-                            state = VoiceState.Thinking,
-                            outputAudioActive = false,
-                            responseText = line,
+                    if (_uiState.value.backgroundRun == null) {
+                        _uiState.update {
+                            it.copy(
+                                state = VoiceState.Thinking,
+                                outputAudioActive = false,
+                                responseText = line,
+                            )
+                        }
+                    }
+                    // Live chip: active tool + completed-step count. Progress
+                    // arriving at all also means the socket is healthy, so a
+                    // RECONNECTING chip can flip back to RUNNING here.
+                    updateBackgroundRun { run ->
+                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        else run.copy(
+                            statusLine = event.activeToolName
+                                ?.takeIf { name -> name.isNotBlank() }
+                                ?.let { name -> realtimeToolStatusLine(name) }
+                                ?: run.statusLine,
+                            completedToolCount = event.completedToolCount
+                                ?: run.completedToolCount,
+                            phase = BackgroundRunPhase.RUNNING,
                         )
                     }
                 }
@@ -2479,13 +2675,38 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "hermes.run.background_completed" -> {
                     // Background run finished; the spoken summary follows via the
-                    // provider's forced-summary turn. Clear the chip.
+                    // provider's forced-summary turn once the floor is clear (up
+                    // to ~12s later). Show a "delivering" chip for that gap; the
+                    // first summary audio (or the watchdog) clears it.
                     Log.i(
                         TAG,
                         "Realtime background run completed run=${event.runId ?: "?"} " +
                             "ok=${event.success != false}",
                     )
-                    _uiState.update { it.copy(backgroundRun = null) }
+                    if (event.success == false) {
+                        _uiState.update { it.copy(backgroundRun = null) }
+                    } else {
+                        updateBackgroundRun { run ->
+                            run.copy(
+                                phase = BackgroundRunPhase.DELIVERING,
+                                message = "Done — delivering the answer…",
+                                statusLine = null,
+                            )
+                        }
+                        // Watchdog: if no summary audio ever starts (visual-only
+                        // delivery, provider hiccup), don't pin a stale chip.
+                        deliveringChipClearJob?.cancel()
+                        deliveringChipClearJob = viewModelScope.launch {
+                            delay(20_000L)
+                            _uiState.update { state ->
+                                if (state.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
+                                    state.copy(backgroundRun = null)
+                                } else {
+                                    state
+                                }
+                            }
+                        }
+                    }
                 }
                 "hermes.confirmation.requested" -> {
                     val confirmationId = event.confirmationId
@@ -2642,7 +2863,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // A persistent session ending in error must drop so the next turn opens
         // a fresh one rather than submitting into a dead channel.
         closeRealtimeSession()
-        surfaceError(err, context = "voice_config")
+        // A failed warm-up must stay silent: no user action happened, and the
+        // first real utterance will simply open a fresh session.
+        if (!prewarm) {
+            surfaceError(err, context = "voice_config")
+        }
     }
 
     /**
@@ -2671,6 +2896,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun submitRealtimeTurn(chatVm: ChatViewModel, inputPcm: ByteArray, inputSampleRate: Int) {
         val channel = realtimeTurnChannel ?: return
+        // A new turn while a background task runs: remind visually that the
+        // earlier task is still going (the agent also says so if the user asks
+        // for another task — the relay answers busy rather than orphaning it).
+        updateBackgroundRun { run ->
+            if (run.phase == BackgroundRunPhase.RUNNING) {
+                run.copy(statusLine = "Still working on the earlier task…")
+            } else {
+                run
+            }
+        }
         // New turn requested → allow this response's audio through again.
         realtimeAudioSuppressed = false
         drainQueuedLocalTts()
@@ -3247,6 +3482,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         audioSeen.set(true)
         audioBytes.addAndGet(audio.size)
         lastRealtimeAudioDeltaAtMs = System.currentTimeMillis()
+        // The spoken summary started — the DELIVERING chip has done its job.
+        if (_uiState.value.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
+            deliveringChipClearJob?.cancel()
+            _uiState.update { it.copy(backgroundRun = null) }
+        }
         val sampleRate = event.sampleRate ?: 24_000
         Log.i(
             TAG,
@@ -4077,6 +4317,25 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun recordVoiceHandoff(event: VoiceHandoffEvent) {
         voiceHandoffReporter?.invoke(event)
+        // Background-run chip: reflect the voice socket's health so a mid-run
+        // drop reads as "reconnecting — task still running", not silence. The
+        // relay keeps the run alive across the retry window; progress events
+        // (or the resumed signal) flip the chip back to RUNNING.
+        _uiState.value.backgroundRun?.let { run ->
+            if (run.phase != BackgroundRunPhase.DELIVERING) {
+                when (event.label) {
+                    "Connection changed", "Waiting for route", "Trying voice route",
+                    "Resume sent", "Route changed",
+                    -> updateBackgroundRun { it.copy(phase = BackgroundRunPhase.RECONNECTING) }
+                    "Voice reconnected" -> updateBackgroundRun {
+                        it.copy(
+                            phase = BackgroundRunPhase.RUNNING,
+                            statusLine = "Back online — still working…",
+                        )
+                    }
+                }
+            }
+        }
         val detail = when {
             !event.previousRoute.isNullOrBlank() && !event.nextRoute.isNullOrBlank() ->
                 "${event.previousRoute} -> ${event.nextRoute}"

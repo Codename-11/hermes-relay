@@ -67,8 +67,6 @@ import com.hermesandroid.relay.ui.components.BridgeMasterToggle
 import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayHeroPanel
-import com.hermesandroid.relay.ui.components.RelayModeStrip
-import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelayStatusPill
 // === v0.4.1 unattended-access ===
@@ -215,6 +213,13 @@ fun BridgeScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Bridge") },
+                navigationIcon = {
+                    RelayChromeIconButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back to chat",
+                        onClick = onNavigateToChat,
+                    )
+                },
                 actions = {
                     RelayChromeIconButton(
                         icon = Icons.Filled.Tune,
@@ -239,16 +244,6 @@ fun BridgeScreen(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            RelayModeStrip(
-                selected = RelayPrimaryMode.Bridge,
-                onModeSelected = { mode ->
-                    when (mode) {
-                        RelayPrimaryMode.Chat -> onNavigateToChat()
-                        RelayPrimaryMode.Manage -> onNavigateToManage()
-                        RelayPrimaryMode.Bridge -> Unit
-                    }
-                },
-            )
             if (returnTitle != null && onReturn != null) {
                 RelayReturnStrip(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,

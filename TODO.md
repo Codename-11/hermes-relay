@@ -6,6 +6,349 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Voice background-run v2 (2026-07-06 roadmap — post plugin-v1.3.0)
+
+The v1 shape shipped in plugin-v1.3.0 (single durable run, free floor during
+background work, busy answer, deliver-on-reattach, exit-detaches / chip-✕-
+cancels). Ranked next increments, in value-per-complexity order:
+
+1. **Fast lane** — while one durable run is detached, allow a second
+   `hermes_run_task` *inline only*: run it on a separate ephemeral session
+   (context injected the same way turns pass `realtimeAgentContextMessages`),
+   normal grace window; if it would promote, fall through to the busy/queue
+   answer. Fixes the real gap: today ANY second Hermes-backed request is
+   refused during a background run, even a 2-second lookup.
+2. **Task queue** — upgrade the busy answer from refusal to offer ("want me
+   to queue it?"): small FIFO in the broker session, start-next-on-completion
+   with a spoken handoff, chip shows "+1 queued". Pairs with (1).
+3. **Chip tap-through to the transcript** — the run executes on a real
+   gateway session, so full tool calls/outputs already live in that session's
+   history; make the chip (or the finished turn) open it. Cheapest "see tool
+   output" step.
+4. **Live tool-output sheet** — chip expands to a run timeline (tool name,
+   status, capped ~500-char output snippet). Relay adds a truncated output
+   field to `hermes.tool.*` events; client renders a lane (reuse the
+   `SubagentLane` pattern).
+5. **Injection framing (recorded earlier, still open)** — on providers with
+   native async function calling, leave the tool call pending and deliver the
+   real `function_call_output` late instead of interim-ack + synthetic
+   instruction text. Needs a live xAI parity check first.
+6. **Pending-result FIFO** — `pending_background_result` is a single slot
+   (correct for one run); generalize to an ordered list the day (1)/(2) land
+   so two results delivered during a detach don't race.
+7. **Full N-way concurrent background runs — deliberately deferred.** Needs
+   session-per-run topology (a gateway session serializes turns), which
+   fragments conversation context, multiplies delivery/floor/failure modes,
+   and needs run-id-targeted cancel + a multi-run chip. Only worth it when
+   two *long* tasks genuinely need parallel wall-clock; revisit if the queue
+   feels slow in practice.
+
+## Open-issue resolution batch (2026-07-06) — owner GitHub actions + deferrals
+
+Plan: `docs/plans/2026-07-06-open-issue-resolution.md` (13 open issues triaged;
+fix-state claims verified against tags with `git merge-base --is-ancestor`).
+**Automation never posts to GitHub** — every comment/close/label below is an
+owner action, deliberately queued here:
+
+- [ ] **#131** — close: fixed by `3573ba8` (PR #136), shipped android-v1.2.5
+      (reporter was on 1.2.3). Optionally re-check Play vitals for the
+      "Invalid URL host" signature on ≥1.2.5 first.
+- [ ] **#129** — close: fixed by `99b9cf1` (PR #128), shipped android-v1.2.4
+      (owner already promised v1.2.4 in-thread).
+- [ ] **#124** — post the promised follow-up + close: fixed by `802385c`
+      (PR #125), first shipped android-v1.2.3.
+- [ ] **#70** — close both prongs: original keyset force-close fixed `48ddba5`
+      (android-v1.1.0); the in-thread TLS/Tailscale crash is #124's bug, fixed
+      android-v1.2.3. Invite reopening if it recurs on ≥1.2.3.
+- [ ] **#94** — pull Play Console vitals for the versionCode-13 / Z Fold7
+      cluster; hardening shipped `a455e46` (android-v1.2.0). Confirm no
+      recurrence on v1.2.x, then close.
+- [ ] **#155 / #154** — support comments + close as user-config: `localhost`
+      on the phone points at the phone itself (#154 is the downstream probe
+      failure of the same misconfig). Link the new troubleshooting entry once
+      it deploys. Relabel away from `bug`/`area:plugin`.
+- [ ] **#146** — needs-info comment (Tailscale up on the phone? follow-up
+      Error entry? agent bound on the tailnet address?); close as support if
+      no response.
+- [ ] **#166** — relabel `area:plugin` → `area:android`; reply with the root
+      cause (phone drops the SSE socket on long local-model turns; upstream
+      finishes + persists the answer; app now recovers it) and credit the
+      reporter's `supports_async_delivery` instinct. Ask: screen off during
+      the hang? does reopening the session later show the answer?
+- [ ] **#165** — reply: both failure modes confirmed (absolute `plugin.`
+      imports under the native loader; install.sh layout assumptions); fix
+      ships as plugin-v1.3.1. The uv-pip gap they mention was already fixed in
+      plugin-v1.1.0+. Owner must e2e the fix on the official Docker image.
+- [ ] **#145** — confirm-triage reply; on-device check after fix (max font +
+      display size, all 5 slides); close after the next android-v* release.
+- [ ] **#144** — close after the next android-v* release demonstrates the
+      2-asset layout + new Download block; optionally edit the published
+      android-v1.2.6 release body to drop the "Parity/testing artifact" wording.
+- [ ] **#121** — label (`enhancement` + area) and milestone onto the next
+      `cli-v*` release; it's scheduled feature work, not part of this batch.
+
+Deferred from the batch (coordination / decisions):
+
+- **Localhost-advisory UI wiring** (`ConnectionWizard` / `ConnectionDetailScreen`
+  `supportingText`) — the util (`ServerAddress.loopbackHostWarning`) + tests land
+  in WS-C, but the wizard wiring waits on the parallel connections-UI workstream
+  to avoid colliding in those files.
+- **#166 optional hardening** — extend the opt-in keep-alive foreground service
+  to cover an in-flight SSE turn (reduces disconnect incidence; googlePlay-flavor
+  FGS declaration implications). Recovery poller ships without it.
+- **Upstream PR candidates from #166** — intentional detached-run semantics on
+  client disconnect in `_handle_session_chat_stream`; pollable/resumable
+  session-turn status. Decide whether to file against hermes-agent.
+- **"Vanilla Hermes" docs naming** — app dropped the label in v1.2.2; docs still
+  use it as a concept term. Owner decision whether to retire it docs-wide
+  (WS-F only fixes verbatim UI-label quotes).
+- **Docker venv pivot for install.sh** — beyond steer-to-native: optionally
+  create a dedicated relay venv under a writable path so the full installer
+  works in-container.
+
+Implementation-batch follow-ups (from the per-branch reviews):
+
+- **#166 recovery: empty-session fail-fast.** `HermesApiClient.getMessages()`
+  maps fetch failures to `emptyList()`, so the recovery poller can't distinguish
+  "server unreachable" from "session genuinely empty" — a `Result`-returning
+  history read would let the never-landed-send fail-fast also cover a dropped
+  FIRST message of a fresh session (today that case polls to the cap).
+- **#166 recovery cap.** Recovery gives up after 30 minutes; longer turns still
+  land in session history but only surface after a manual reload. Consider a
+  "keep waiting" affordance if real turns exceed the cap.
+- **CI android slice.** `ServerAddressTest` + `IssueReportAndDiagnosticsTest`
+  added to the focused `--tests` slice; the Robolectric/MockWebServer recovery
+  tests and the compact-onboarding Roborazzi test stay local-only (same
+  precedent as `StoreScreenshotTest`) until the broad-suite hang (#32) is fixed.
+- **Skills docs still cite editable-only fixes.** `skills/devops/hermes-relay-pair/SKILL.md`
+  and `skills/android/SKILL.md` document `python -m plugin.pair` + `pip install -e`
+  as the ModuleNotFoundError fix — add the native-layout equivalent when the
+  #165 branch ships.
+- **Dashboard API tests not CI-visible.** `plugin/dashboard/test_plugin_api.py`
+  isn't discovered by `unittest discover -s plugin/tests` and needs
+  fastapi/httpx — wire into a CI runner or move under plugin/tests with skips.
+- **Desktop tool-count drift.** `user-docs/desktop/index.md` counts client-side
+  handlers (clipboard/screenshot/open_in_editor) that have no server-side
+  `desktop_*` registration in `plugin/tools/desktop_tool.py` — reconcile the
+  advertised set; also `user-docs/desktop/pairing.md` wrongly says Android uses
+  `~/.hermes/remote-sessions.json` (it's Keystore/EncryptedSharedPrefs; the file
+  is shared with the Ink TUI). CLAUDE.md Key Files also still says 18/24 tools.
+- **Info-report button label.** The diagnostics Report button reads "Report"
+  even when the first tap only reveals the expectation field — a "Continue"
+  label would make the two-step flow clearer.
+
+## Connections UI / status banner (2026-06-30 restructure follow-ups)
+
+The Connections screen was split into a scannable list + a tabbed detail screen
+(Overview / Routes / Advanced / Security). Connection-status presentation went
+through a few iterations (persistence-tiered top strip → no-float → …) and **landed
+on a two-connection model (2026-07-01):**
+- **Chat/agent** (gateway/API) → the chat header **subtitle** swaps model ⇄
+  "Reconnecting…"/"Connecting…"/"Disconnected" (WhatsApp-style; `ChatScreen`).
+- **Relay socket** (bridge/terminal/relay-voice) → the **bottom `RelayStatusStrip`**
+  amber "Reconnecting…" cue only.
+- **No top-of-screen surface** for connection status at all (no strip, banner, or
+  float). Route changes are **ambient only** (the bottom strip's route label updates;
+  no explicit "switched to Tailscale" notification — decided 2026-07-01).
+
+Deferred:
+
+- ~~**Dead connection-status-surface code.**~~ *(Cleaned up 2026-07-01.)* Removed the
+  now-unused top-strip machinery: `ConnectionHandoffBanner` + `ConnectionStatusBanner`
+  (+ `PulsingSyncIcon`), `ConnectionStatusSurface` + `presentationSurface()` +
+  `ConnectionStatusSurfaceTest`. **`ConnectionStatusToast` retained** as a parked
+  general-purpose toast primitive (the only surface with a live multi-step stepper;
+  decouple from `ConnectionStatusSnapshot` + rename to `StatusToast` on first reuse).
+- **Bottom-strip route-change flash (optional).** Route change is ambient-only for
+  now. If a "switched to Tailscale" confirmation is wanted, surface it briefly in the
+  **bottom strip** (where the route label already lives), not the top — keeps the
+  no-top-chrome principle. The VM still detects + logs the change (`lastConnectedRole`).
+- ~~**Resume suppression covers only the handoff path.**~~ *(Fixed 2026-07-01.)* Added
+  `postResumeQuiet`: a benign background→foreground re-handshake no longer flashes the
+  bottom-strip "Reconnecting…" cue (the health "Connecting" path used to leak it).
+- **Stuck "Reconnecting" cue during a sustained/flapping outage (backoff gaps).**
+  Confirmed in a both-sides trace (DEVLOG 2026-07-01): when a reconnect attempt fails
+  (`Reconnecting→Disconnected`) **no handoff branch matches**, so the active
+  "Reconnecting" handoff persists on its 30s backstop — including during the backoff
+  *gap* where the socket is idle (`Disconnected`, not actually trying) and during the
+  20s connect timeout. The cue then clears on the timer with no resolution ("no toast
+  after"). The post-resume case is fixed (`postResumeQuiet`); this sustained/non-resume
+  case is not. Fix idea: drive the bottom-strip cue off the LIVE
+  `relayConnectionState`/`relayUiState` (show only while actually Connecting/
+  Reconnecting), and clear the active handoff when `relayUiState` goes `Stale`/`Expired`
+  so the live "Relay unreachable" state surfaces instead of a stuck cue. Deferred:
+  hard to repro on a stable network; also risks surfacing the take-space "unreachable"
+  banner more often on a chronically-flappy link (decide the escalation threshold).
+- **Rapid real flaps still churn the cue/subtitle.** On a genuinely flapping network
+  (DEVLOG 2026-07-01 — Samsung adaptive Wi-Fi cycling the radio), each real drop→recover
+  toggles the bottom-strip cue (relay) and, if chat drops too, the header subtitle. Now
+  unobtrusive (no top surface), but a short coalescing/debounce would quiet a
+  chronically-flappy link further. Deferred — the flap is environmental, not an app bug.
+- **Non-active connection detail is Overview-only.** Routes/Advanced/Security tabs
+  appear only for the active connection (they read the single active-connection VM
+  state); a non-active connection shows a "Switch to this connection" CTA. A future
+  read-only preview of a non-active connection's saved routes could be nice.
+- **Store screenshot regeneration.** The `07_connections` scene mock was updated to
+  the new list design; confirm the regenerated PNG + Play-graphics export at
+  release-prep (only auto-publishes on a `main` release merge).
+
+## Chat UI/UX polish (2026-07-01 readability pass)
+
+A 5-agent audit compared the chat surface to Discord/Telegram/Messenger/iMessage/
+GitHub-mobile. **Shipped this pass (pending on-device verification):** a chat-tuned
+`markdownTypography()` ramp (headings were falling through to M3 display roles —
+h1=`displayLarge` 57sp in this app's scale — so a `#` was a billboard; now h1≈20sp
+scaling down, list/paragraph unified to 14sp, inline+fenced code 13sp, `textLink`
+accent+underline) in `MarkdownContent.kt`; timestamp gated to `isLastInGroup` (was on
+every bubble) + grouping breaks on a >5min gap (`GROUP_GAP_MS`) so a resumed
+conversation gets its own beat; long-press haptic on the action menu; streaming dots
+gated to pre-first-token. Deferred:
+
+- **Streaming↔final render parity (kill the reflow).** `StreamingMarkdownContent`
+  renders raw markdown source (`## `, `**bold**`, `- item`) as plain 14sp text for the
+  whole turn, then swaps to the full renderer at completion — headings still pop
+  14sp→20sp on finalize (much reduced now that settled headings are small and lists no
+  longer resize, but not zero). Run the real renderer on the settled prefix and keep
+  only the trailing unterminated block raw. Riskier (partial-fence flicker) — needs
+  on-device testing. Highest-effort audit item.
+- **Bubble body 14sp → 15sp/21.** 14sp is the smallest body of the five reference
+  apps. Bump markdown paragraph/text/list + the two plain `Text` sites
+  (`MessageBubble.kt` user/system) together; keep ~1.4 leading so the ~272dp measure
+  stays ~36–38 chars/line. Debatable/broad — left out of the certain heading win.
+- **Tail-corner on last-in-group only (design decision).** The audit flagged the
+  per-bubble bottom tail as "half-implemented," but it's a deliberate aesthetic
+  (every bubble tails). Switching to iMessage-style "tail on the last bubble only"
+  changes the look — get design intent before flipping. `isLastInGroup` is now
+  meaningful (grouping breaks on gaps) so it's ready if wanted.
+- **Wide tables.** GFM tables use the default renderer on ~272dp (columns crush);
+  code fences already horizontal-scroll. Add a custom `table` component in
+  `markdownComponents` with `horizontalScroll` + ~110dp min column + right-edge fade.
+- **Assistant bubble width decoupled from user.** Both cap at 300dp though only the
+  assistant carries markdown/code; let the assistant run wider (~92% of available /
+  340–360dp cap) so fences wrap/scroll later. Keep user ~300dp.
+- **Token counts out of the bubble; delivery → glyph.** Move `TokenDisplay` to a
+  long-press "message info" sheet; collapse `Sending…/Delivered/Not sent` to a single
+  trailing check/clock/! glyph on the last bubble (declutters every message).
+- **SelectionContainer vs long-press conflict.** Long-pressing the words can start
+  text selection instead of opening Copy/Quote. Pick one owner (drop
+  `SelectionContainer`, expose Copy via the menu — chat-app norm — or move actions to a
+  kebab). Needs on-device confirmation of the current conflict first.
+- **Jump-to-bottom FAB unread badge** + drop the no-op tap ripple on bubbles
+  (`combinedClickable onClick={}` still ripples). Telegram pattern.
+- **Sessions-transport `animateItem` flash.** Stream-complete rebuilds the list with
+  new ids → every visible bubble replays its enter animation (gateway transport,
+  stable id, is unaffected). Reuse the streaming bubble's id for the final message.
+- **Viewport re-pin on the `isStreaming` true→false height growth** (gateway
+  transport): `ChatScreen` early-returns on `onlyStreamingFlagChanged`; issue one
+  `withFrameNanos{}` + instant `scrollToItem(last)` when the flag flips and the user
+  isn't scrolled away. Largely neutralized once render parity removes the height delta.
+- **Full 15-role `Typography` + metadata contrast.** Type.kt declares only 7 roles at
+  0 tracking; the rest inherit M3 defaults with 0.1–0.5sp tracking (ChatScreen uses
+  several) — declare all 15 for one coherent scale. Separately, floor muted-metadata
+  alpha at ≥0.6 and verify ≥4.5:1 per theme (11sp timestamps were alpha 0.5 over
+  `onSurfaceVariant` ≈ 2–2.5:1; the surviving timestamp is now 0.6).
+
+## Realtime voice (ADR 33) follow-ups — 2026-07-01 robustness batch
+
+The deliver-on-reattach / adaptive-promotion / milestone-speech / resume-retry /
+prewarm batch shipped (see DEVLOG 2026-07-01). Deferred:
+
+- **Result injection framing (needs xAI parity check).** The completed background
+  summary is injected as a synthetic *user* message (`send_text` →
+  `conversation.item.create` role=user). Cleaner per current realtime-API practice:
+  inject as a function-call output / out-of-band response so the model can't mistake
+  it for the human speaking. OpenAI realtime supports this; xAI support unverified —
+  requires a live parity test before switching. Keep the user-message path as the
+  fallback.
+- **Pre-existing test failure:** `test_realtime_voice_routes.py::
+  test_reads_hermes_xai_oauth_credential_pool` fails at HEAD too (`token is None`) —
+  looks like an environment/fixture dependency on a local xai oauth pool, not a code
+  regression. Diagnose or gate on the fixture.
+- **Prewarm cost watch.** Voice-mode entry now opens the provider session before the
+  first utterance. If users habitually open+close voice mode without speaking, idle
+  provider sessions cost connect/teardown churn — consider a short "no utterance in
+  N min → close" reaper if it shows up in practice.
+- **E2E verification pending** for the new paths on-device: deferred result spoken on
+  resume after a mid-run drop; proactive notification when the session dies for good;
+  busy answer on a second task; adaptive promotion timing; first-turn latency with
+  prewarm; the live background-run chip (progress line/steps/timer, RECONNECTING and
+  DELIVERING phases, ✕-to-cancel).
+- **Ambient background-run visibility OUTSIDE voice mode.** Exiting the voice overlay
+  mid-run leaves no on-screen indication a task is still going (the run survives and
+  the result arrives as a notification via the proactive fallback). Surface a small
+  indicator on the chat screen — natural home is the bottom `RelayStatusStrip`, which
+  the connection-management work owns → **coordinate before implementing**.
+- **Dev-env note:** the local hermes-agent app venv (`AppData/Local/hermes/...`) can
+  prune `aiohttp`/`segno` (uv sync), breaking `python -m unittest plugin.tests.*` with
+  ModuleNotFoundError — restore with
+  `uv pip install --python <venv>/Scripts/python.exe aiohttp segno`.
+
+## Phone as a Hermes platform (proactive agent → phone)
+
+Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_message target=phone` → loopback `/phone/message` → relay `ProactiveChannel` → phone WSS → system notification, gated off by default (`PHONE_ENABLED` server-side + "Let Hermes message me" app-side + pairing). Remaining:
+
+- **Phase 2a — dedicated "Hermes" inbox surface.** An always-present inbound conversation/section for agent-initiated messages (reuse chat *rendering* components, do NOT restyle — chat-ux worktree owns visuals). Land proactive messages there in addition to the notification. `ProactiveMessageHandler.onReceived` + `dispatch()` are the seams already in place; key the surfacing on `ProactiveMessage.surfacing` (notification / inbox / session / default = notification + inbox). Needs a small persistence store + a nav entry.
+- **Phase 2b — session injection.** Deliver a proactive message into the relevant/active chat session (continue that conversation) when `surfacing == "session"`. Keep the `ChatViewModel` change SMALL/localized (one injection entry point) to avoid conflicting with the chat-ux branch.
+- **Phase 2c — two-way reply. SHIPPED + DEVICE-VERIFIED (2026-06-29).** All three legs landed: (1) inline-reply notification (`RemoteInput` + `ProactiveReplyReceiver`) + a reply box in the Hermes inbox; (2) `proactive.reply` envelope (app→relay) buffered by `ProactiveChannel` + a loopback `GET /phone/replies` long-poll; (3) `PhoneAdapter.connect()` inbound loop drains `/phone/replies` → `handle_message()` so the reply continues the originating conversation (keyed by `chat_id`/`reply_to`), and the agent's answer rides the existing `send()` back. Inbound source is `role_authorized=True` (the relay pairing layer is the auth boundary), so replies work without `PHONE_ALLOW_ALL_USERS`. Verified via `python -m unittest` (proactive + phone tests) and `./gradlew :app:lint`, then **end-to-end on-device (2026-06-29)** after two faults the device test surfaced (see DEVLOG): `PhoneAdapter.connect()` was missing the `is_reconnect` kwarg the gateway passes (→ `TypeError`, adapter never connected, reply loop never polled); and a stale duplicate plugin copy in the user-plugins dir was winning the loader's name-dedup, so the gateway loaded old code and ignored every deploy. Residual deferred (below): outbound buffering / a persistent send-when-reconnected queue (currently the agent's answer `503`s and is **lost** if the phone's subscription dropped); inbound media in replies (text-first in v1).
+- **Phase 3 — full controls.** DataStore-backed `ProactivePreferences` expanding `data/ProactivePrefs.kt`: quiet hours / DND (suppress or defer), per-profile push scoping, rate limiting (debounce/cap), and TTS-on-voice (route to the existing voice player API when a voice turn is active — call, don't modify, the voice path). Surface on the existing `ProactiveSettingsScreen`. Also: a persistent outbound-reply queue so a reply typed while the relay is disconnected (notification inline-reply in a killed process, or a dropped WS) is sent on the next connect instead of dropped.
+
+**Maintainer verification (live box + device — can't be done off-device):**
+- Live gateway must discover the plugin (`~/.hermes/plugins/hermes-relay` → `plugin/`) and `plugins.enabled` must include `hermes-relay` for the `phone` platform to register. Confirm `phone` appears in `hermes gateway status` with `PHONE_ENABLED=1`.
+- End-to-end: with the app paired + "Let Hermes message me" on, run `send_message target=phone text=...` (and a cron `deliver=phone`) and confirm a notification on the device. Verify 503 (no phone) and the off-by-default gates.
+- **Phase 2c reply round-trip — ✅ DONE (verified on-device 2026-06-29).** Confirmed: agent → phone notification → inline reply → drained through the relay's loopback `GET /phone/replies` (different process) → `handle_message` (`role_authorized=True`, no `PHONE_ALLOW_ALL_USERS`) → agent answer back in the *same* thread. Both fixes required (see DEVLOG / the Phase 2c bullet above).
+- **FIX: cron `deliver=phone` / standalone send is broken.** Live testing: `hermes send --to phone` returns `{"error": "Unknown platform: phone"}`. The standalone (non-gateway) send path doesn't run a `kind=standalone` plugin's programmatic `ctx.register_platform`, so it never learns `phone` — only the running gateway (which loads `register()` at startup) does. The agent path (`send_message target=phone` in the gateway) works and was verified end-to-end on-device; the standalone/cron path needs the platform discoverable there too (declare it so the standalone loader picks it up, or route cron through the gateway). Until then `cron deliver=phone` won't work.
+- **FIX: installer leaves stale plugin backup copies in the plugins dir (root cause of the 2026-06-29 round-trip failure).** `install.sh`'s plugin-clone rebuild backs the old copy up *inside* `~/.hermes/plugins/` (e.g. `hermes-relay.copy-backup-…`). Because the loader dedups discovered plugins by manifest `name` and both copies declare `name: hermes-relay`, the backup can win the dedup and the gateway loads stale code — so every later deploy is silently ignored. Fix: back up *outside* the plugins dir (or delete the old copy), and have `hermes relay doctor` warn when more than one directory under `~/.hermes/plugins/` resolves to the same plugin `name`.
+
+## Phone platform — usability roadmap (post device-verification, 2026-06-29)
+
+**North-star (2026-06-29): the phone should replace Discord-on-the-phone for agent contact.** The agent lane is meant to be a place you live in — proactive messages land, you reply inline or open a real thread, you multitask in and out of it like a chat app. That framing (not "an inbox of notifications") drives every item below: it must feel like a first-class messaging surface, attributed as its own gateway lane, with the conversation persisted and continuable.
+
+**Decision (2026-06-29): "separate lanes, unified surface."** The phone/agent conversation stays its own **gateway-platform lane** — distinct from the Standard Chat tab, which must keep working on vanilla upstream Hermes with no plugin — but is surfaced as a **first-class chat-style thread** that reuses the chat UI and sits alongside Chat. NOT a Chat "transport": a transport is an interchangeable pipe for the *same* user-chat conversation; the phone platform is a *different* conversation (agent-initiated, own session store/attribution, relay auth), so treating it as a transport miscategorizes it and couples a standard surface to a relay-only capability.
+
+**Refinement (2026-06-29) — unified-session model: "Threads."** Going further on "unified surface": the agent conversation is **not a separate tab/segment** at all — it is a **source-tagged session inside the one Chat surface**, a **Thread** (`source=phone`). What makes a Thread special vs. a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate, (b) relay `proactive` transport + relay-gated, (c) standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = relay `proactive` push** (→ notification); **send = `proactive.reply`**. `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability shows in the **best-path/capability UI** (relay tier, like terminal/bridge/voice) and as a clean **Threads** entry — thread-spool icon, NOT a phone glyph — pinned atop the session drawer when active; never a connection-wizard step. Degrades cleanly (no plugin → no `source=phone` sessions → Chat unchanged). **Supersedes the "separate Agent lane / 4th nav segment" sketch** and merges with the "source attribution in Chat" goal below. Keep the two "gateway" senses straight: *platform layer* (the Thread's `source`) ≠ *dashboard `/api/ws` transport* (how live bytes flow). Full re-cut: docs/decisions.md ADR 12.
+
+- **Outbound buffering — ✅ relay-side DONE (2026-06-29).** `ProactiveChannel.push()` now queues agent→phone messages in a bounded deque (drop-oldest, 24 h TTL) when no phone is subscribed and returns `{queued: true}` (not 503); `_flush_outbound` delivers FIFO on the next subscribe (stale pruned). Inspect/cancel via `peek_outbound`/`cancel_outbound` + loopback `GET`/`DELETE /phone/outbound`. **UI surfacing of the queued state** (host-side, since the queue exists while the phone is OFFLINE): (a) ✅ **desktop CLI `relay queue` / `relay queue --clear` / `--cancel <id>` DONE (2026-06-29)** over the new endpoints (loopback-only — run on the relay host); a dashboard Relay-tab view is the optional GUI equivalent; (b) **remaining** — in the threaded agent surface, mark messages that arrived-while-away, and show the user's OWN pending replies (the Phase 3 reply queue) with a sending/Cancel affordance — that's where phone-side "queued + cancel" belongs.
+- **Threads surface (unified-session model — see ADR 12 + the Refinement above).** Build order, each shippable: **(1)** source tags in the session drawer (`source=phone` → clean **Threads** chip + thread-spool icon, NOT a phone glyph) — also delivers the "source attribution in Chat" goal; **(2)** open a Thread in Chat from its session-store history (reuse the existing message-history path); **(3)** route the live `proactive` push into the session view + notification + unread, demoting `ProactiveInboxStore` to cache/outbox; **(4)** reply from the Chat composer via `proactive.reply` + persist the user turn + local `Sending/Queued/Failed` status — **MVP**; **(5)** a **Threads capability row** in the best-path UI + a pinned **Threads** entry atop the drawer (thread-spool icon, shown only when relay-paired + opted-in) + retire `HermesInboxScreen`, re-point the notification deep-link + Settings "View messages"; **(6)** outbox/retry on reconnect; **(7)** relay `proactive.reply.ack` (honest Delivered) + `proactive.cancel`; **(8)** multi-thread `chat_id` (named/project Threads). **Verify gate before (1):** confirm the app's session-list/history path surfaces a `source=phone` session cleanly (upstream `session.list` returns all sources flat, so it should — but check whether the drawer currently filters it out). Honesty call: do NOT show "Delivered" until (7) lands (can't confirm it client-side before the ack).
+  - **Status (2026-06-29, implemented UNBUILT — verify in Studio):** **CODE-COMPLETE on `dev`:** slice **1** (drawer source tags + `ThreadSpoolGlyph` + Threads filter), **2** (open a Thread from history — free via the existing `loadSessionHistory` path), **3-parse** (carry `reply_to` on `ProactiveMessage`), **4** (composer reply in a `source=phone` session routes over `proactive.reply`; `MessageDeliveryStatus` SENDING→DELIVERED/FAILED on the bubble), **5** (Threads capability row in `SessionPathCard` + `threadsCapabilityActive` drawer wiring), **7** (relay `proactive.reply.ack` + `proactive.cancel` — 25/25 `unittest` green — and client ack handling). **DONE since (2026-06-29, built + on phone):** live **in-thread reply rendering** (an agent reply lands in the open Thread as an ASSISTANT bubble, suppressing the notification/inbox — `injectIntoThread`); **user-created named Threads** ("+ New Thread"); **retire `HermesInboxScreen`** (deleted; route + nav removed; notification tap + Settings "View messages" re-pointed to Chat; surface renamed "Hermes messages" → **"Threads"**); relay slice-7 ack/cancel **DEPLOYED** to the host so **"Delivered" is live**. **DEFERRED (reasons):** per-session **unread badge**; **outbox/retry** (needs multiplexer connection-state); **exact-Thread deep-link** from the notification (opens Chat today, not the specific thread — needs select-session-on-entry); **remove the now-orphaned `ProactiveInboxStore`** (viewer-less write-only log); **agent-initiated** named Threads (upstream `send_message` thread param). On-device verifies for the create-flow: fresh-`chat_id` auto-create, the `…:dm:<chat_id>` id form, `renameSession` on a phone session.
+  - **User-created Threads (slice 8, Discord-style) — CODE-COMPLETE on `dev` (built + installed 2026-06-29; on-device behavior pending).** "+ New Thread" in the drawer's Threads view → name dialog → `ChatViewModel.startNewThread` mints a fresh `chat_id`; the first composer message opens it over `proactive.reply` (gateway auto-creates the `source=phone` session) → `switchToCreatedThread` polls + switches to the real session + applies the name. Existing-thread replies route by the `chat_id` parsed from the session id (`…:dm:<chat_id>`; opaque id → home fallback). **On-device verifies:** (1) a fresh-`chat_id` no-`reply_to` inbound creates a new `source=phone` session; (2) the phone session id carries the `…:dm:<chat_id>` form the client parses; (3) `renameSession` titles a phone session. **Remaining slice-8:** AGENT-initiated named Threads (the upstream `send_message` thread/chat_id param so the agent can open its own named Threads).
+  - **`chat_id` not exposed by `/api/sessions` (root cause of the 2026-06-29 on-device create-flow bugs — fixed client-side).** Confirmed on the host: a phone session's `id` is a timestamp (e.g. `20260629_204755_94f391d6`); the real `chat_id` lives in the `session_key` (`agent:main:phone:dm:<chat_id>`) and a `chat_id` column — but `/api/sessions` returns **neither `chat_id` nor `session_key`**, only `source` + the timestamp `id`. So the client could not map a session ↔ its `chat_id`, which broke create-thread switch/rename + reply routing + in-thread injection. **Client workaround shipped:** find a created thread by session-list **diff** (the new `source=phone` session), keep an in-memory `sessionId → chat_id` map (learned at creation + from incoming `phone.message`s) for reply routing, and inject by source (+ learned chat_id) rather than a parsed id. **Limitation:** for a thread the app didn't create *this* session (agent-created, another device, or after an app restart) `chat_id` is unknown until a message arrives while viewing it → its replies fall back to the home channel until then. **RESOLVED via the plugin (2026-06-29, per upstream-or-plugin policy):** the relay now exposes `GET /phone/threads` (`plugin/relay/session_store.py` reads the gateway store read-only → `[{session_id, chat_id, title}]`; `server.py` `handle_phone_threads`, bearer for the app / loopback for diag; 5 unit tests). The app (`RelayHttpClient.fetchPhoneThreads` → `ConnectionViewModel.phoneThreadChatIds` on every `auth.ok` → `ChatViewModel.seedThreadChatIds`, authoritative over the learned map) now routes replies correctly for **any** Thread — incl. ones it didn't create + after restart. Deployed + verified live. **Still-nice-to-have (lower priority): the upstream PR** to add `chat_id`/`session_key` to `/api/sessions` (the standard-path proper fix; the relay route then becomes redundant + the client prefers upstream when present).
+- **Threads as named/project conversations (Discord-parity — folds into multi-thread #8).** A stable *named* `chat_id` per project = a persistent, agent-reachable project Thread (Discord named-thread parity for "persist a session for a project"). Enables: the agent **opening** a new named Thread for a background job/topic (a relay/gateway "open thread" affordance + a `send_message`-adjacent tool); cron/job updates landing in their own Thread; and replying to a Thread from any surface (desktop CLI / dashboard) since it is just a gateway session. Also evaluate per-Thread profile binding (a project Thread uses the "work" profile — ties to profile=contact).
+- **Thread vs. normal gateway chat — keep complementary, don't force one.** A Thread is a gateway chat + proactive delivery + `source` attribution. Use a *normal* gateway chat for live foreground interactive work (live `reasoning.delta` over `/api/ws`); use a *Thread* for persistent/named/agent-reachable/background-delivered conversations. Possible future enhancement (verify first): when a Thread is open in the foreground, allow a live `/api/ws prompt.submit` turn into that `source=phone` session for live reasoning — but confirm it does NOT break platform attribution or the proactive reply loop before relying on it; the proven send path stays `proactive.reply`.
+  - **LOOK INTO (own item, owner-requested 2026-06-29): live `/api/ws` transport for a foregrounded Thread.** Goal: when a Thread is open in the app foreground, give it the *same* live experience as Chat (live `reasoning.delta` + tool-progress) by running the turn over the `/api/ws` dashboard-gateway transport into that `source=phone` session, instead of the notification-grade `proactive.reply` path. Spec the experiment: (1) does `session.resume` + `prompt.submit` on a `source=phone` session over `/api/ws` keep `source=phone` (not silently re-tag `tui`)? (2) does it bypass `PhoneAdapter` / the role_authorized reply loop, and does that matter when the user is the one typing? (3) reconcile the two send paths (foreground→`/api/ws`, background/notification→`proactive.reply`) without double-sends. If it holds, a Thread becomes "background-delivered like a DM, but live like Chat when you open it" — the best of both. Until verified, `proactive.reply` stays the only send path.
+- **Docs/user-docs for Threads (lockstep — author with the user-facing slices 4–5).** Dev refs are done (ADR 12 carries the unified-session decision + the two-"gateway" split). Still to write when the surface ships: a plain-language `user-docs/features/threads.md` — what a Thread *is*, **Chat vs Threads** (live foreground work vs. persistent, agent-reachable conversations), the two opt-in gates, that it's relay-only — plus a **brief in-app explainer** (e.g. a one-line hint on the Threads filter empty state or a small info affordance, not a wall of text), and `docs/relay-protocol.md` + relay-server route docs for the wire. Replace the stale user-docs "Coming Soon → Push Notifications" row; keep it distinct from the clipboard inbox and the inbound Notification Companion.
+- **More Threads fold-ins (capture now, build with the relevant slice).** (a) **Read-state back to the agent** — tell the gateway you saw a proactive message (Discord-style read receipt) so the agent knows; fold into the `proactive.reply.ack` design (#7). (b) **Cross-surface reply** — because a Thread is just a gateway session, a reply could come from the desktop CLI / dashboard too, not only the phone; near-free once unified, verify the reply routing. (c) **Priority/importance on a proactive message** — let the agent mark urgent vs FYI → notification importance / quiet-hours bypass; small payload field + maps to the notifier channel.
+- **Per-thread `chat_id`.** Everything is hardcoded `chat_id="phone"` (one thread) today; the adapter already plumbs `chat_id`, so varying it yields multiple threads (per topic, or the agent opening distinct conversations). Ties into the threaded surface.
+- **Message status + delivery state.** Surface sent / delivered / queued / failed per message in the thread (depends on outbound buffering's queued state) so the user knows whether the agent actually reached them.
+- **Auto-title the phone thread** like other sessions (first confirm whether the gateway already auto-titles platform sessions; wire it through if so).
+### Discord/Telegram replacement — capability gaps (to fully retire reaching for them)
+
+The gateway-platform model is the *correct + sufficient architecture* (the phone is a registered platform peer, so anything that routes to a platform — `send_message`, cron `deliver=`, channel directory, background jobs — can reach the phone). These are the concrete gaps between "architecturally a peer" and "I never open Discord":
+
+- **Guaranteed background delivery (the biggest gap; no push today).** Delivery is **live-WSS-only** + a 24 h relay buffer; there is **no FCM/UnifiedPush** wake-up. If the app process is dead AND not holding a socket, a message waits for the next reconnect, and the relay buffer is ephemeral (lost on relay restart). Discord/Telegram feel instant because they wake the device via push even when the app is dead. Decide a **push transport**: **UnifiedPush/ntfy** (recommended — self-hostable, no Google dependency, upstream *already* ships an `ntfy` platform, on-brand for self-hosted) vs **FCM** (simplest UX but adds Play Services + a push relay; clashes with self-hosted ethos — at most the `googlePlay` flavor) vs **persistent foreground keep-alive service** holding the relay WSS (zero new infra, like `GatewayKeepAliveService`, but battery cost + Doze-fragile). Likely: UnifiedPush primary + foreground-keepalive fallback.
+- **Cron / background-job delivery is BROKEN** (already tracked above): `deliver=phone` standalone path → `Unknown platform: phone`. This is load-bearing for "receiver of crons/background jobs" — fix is required, not optional, for the replacement goal.
+- **Multi-thread is wired-for but never varied** (already tracked: per-thread `chat_id`). For real DM/channel parity the agent must *open distinct threads* (vary `chat_id` per topic/job), the app must render a **thread list** (N conversations, not one), and replies route back by `chat_id`+`reply_to` (already plumbed).
+- **Durable history / scrollback.** The relay buffer is ephemeral; a real messaging surface needs persisted scrollback. Read the gateway **session store** for the `phone` platform's history (relay-exposed read path) so reopening a thread shows the full conversation, not just buffered-while-away.
+- **Profile = contact mapping (new idea, fold in).** Multiple Hermes **profiles** (distinct agent personas/configs) could each be a distinct thread *source*/"contact" — DMing different agents. Maps cleanly onto the per-thread `chat_id` + source-attribution work; lets the app feel like a contact list of agents.
+- **Per-thread notification controls + deep-link (Discord-parity affordances).** Per-thread notification channels, mute/DND/quiet-hours (Phase 3 partially), and a notification that **deep-links into the exact thread** (tap → land in that conversation) so dipping in/out while multitasking is frictionless.
+- **Agent-initiated rich content.** Agent → phone thread with **images/cards** (relay media infra + `InboundAttachmentCard`/`HermesCardBubble` already exist on the chat side — reuse). Inbound (phone → agent) reply media stays deferred (text-first), but outbound rich content is low-cost parity.
+- **In-thread "agent is working" indicator.** A typing/working state in the thread while the agent thinks/runs tools (Discord typing-dots parity) — the chat surface already has thinking indicators to reuse.
+
+- **Source/platform attribution + filtering in the drawer (NOW READY — owner-requested 2026-06-29; the gateway/Threads surface has shipped).** `/api/sessions` DOES expose `source` (confirmed live: `tui`, `cli`, `api_server`, `web`, `discord`, `telegram`, `cron`, `webhook`, `phone`). Build: **(a)** a clean **source badge** per session in the drawer — phone → the thread-spool (done); discord / telegram / cron / webhook / web → a small per-platform chip/icon (match hermes-desktop's convention); the app's own `tui`/`api_server` chats get no badge (or a subtle one). **(b)** a **filter** (drawer dropdown) to show/hide sources. **(c)** a **setting** (Chat settings) for the default — **hide the agent's other-gateway/automation sessions (cron / webhook / discord / telegram) by default** so the drawer shows just your chats + Threads, with a toggle to reveal them (the live default `state.db` is full of cron/discord/webhook noise). Persist the visibility prefs. Can't see the official desktop (no clone) — infer its chip styling; match exactly if specifics surface. Standard-path: read-only display of the upstream `source` field. Fold cross-restart **Thread-name persistence** (currently in-memory) into this drawer pass.
+- **Beta-gate the Threads featureset (owner direction 2026-06-29).** Mark Threads **Beta** with a clean badge in the UI (the Threads filter chip + the best-path "Threads" capability row) until the enhancements land. Full (non-beta) release is gated on: **live `/api/ws` transport for a foregrounded Thread** (an open Thread streams like Chat — the headline), per-session **unread**, the **`chat_id`-on-`/api/sessions` upstream fix** (so threads route after restart / cross-device), and **outbox/retry**.
+
+## Voice — Standard-path parity follow-ups
+
+- **On-device verification of the Server voice config card.** Static read + unit tests cover the client/merge logic, but the card's render, provider-scoped field switching, the ElevenLabs picker (key-present and `available:false`), and a live save round-trip against a real dashboard still need an on-device pass. Confirm a save reaches `config.yaml` and the next voice turn reflects it.
+- **Generic Manage "Config" tab is still read-only.** This work added a *voice-scoped* editor; the Manage Config tab still renders `/api/config/schema` as two non-editable rows (`fields`, `category_order`). A full schema-driven editor for all categories (general/agent/terminal/…) grouped by `category_order`, GET-merge-PUT-whole, is a separate, larger task if we want full desktop Config parity.
+- **`silenceThresholdMs` default change (3000 → 1250 ms) is user-facing.** Confirm on-device that 1.25 s end-of-speech doesn't clip slow speakers in real use, and that the new 12 s idle/no-speech auto-close (which now also applies to Tap-to-talk — previously "wait forever") feels right. Easy to revert the default if too aggressive.
+- **Standard voice config targets the launch-profile config (`profile = null`).** Standard voice is host-global, so the editor writes the base `config.yaml`. If a user runs a non-default *launch* profile, revisit whether to scope the config write to the active profile (the dashboard `/api/config?profile=` supports it).
+- **CLI `voice.*` config not surfaced.** The editor covers `tts.*`/`stt.*`; the separate `voice.*` block (record_key, beep_enabled, the CLI's own silence_threshold/duration) is intentionally out of scope — surface it only if a phone use-case appears.
+## Chat UI refresh — follow-ups
+
+- **`/font <name>` slash command (optional, deferred).** The chat-UX brief floated a chat slash command mirroring the Appearance Font picker. Deferred to keep the work inside the chat-UI/theme lane: it needs the command intercepted in the chat send path (`ChatViewModel`) before it forwards to the server, plus a `SlashCommand` palette entry. The settings picker is the primary, shipped surface. Add `/font` later as a thin wrapper over `ConnectionViewModel.setAppFont`, discoverable via the slash palette.
+- **On-device verification of the chat refresh.** The Roborazzi harness proves layout + that Inter/Nunito load as distinct faces host-side, but the final typeface crispness and feel (avatar size, bubble width, density on a real Samsung) are a maintainer on-device gate. Confirm the variable-font weights (400/500/600/700) resolve on-device and Inter reads clean at body sizes.
+- **Growing the font set.** The `AppFont` registry is open — add more OFL/Apache faces (e.g. a serif or a display mono) by dropping a TTF into `app/src/main/res/font` and adding one enum entry; keep the license text in `licenses/`.
+
 ## Crash-class follow-ups
 
 - **Audit remaining throwing URL-build sites for the "Invalid URL host" class (#131).** The #131 fix guarded the two clients that take a user-entered base URL on the Manage/voice path (`DashboardApiClient`, `StandardHermesVoiceClient`) and validates input at entry, but two lower-risk site groups still call okhttp's throwing `url(String)` / `.toHttpUrl()`:
@@ -48,6 +391,12 @@ The client-side mitigations shipped (see DEVLOG 2026-06-27): the `updateSessions
 - [x] **Voice dropdown state mixes + label overflow** *(impl 2026-06-21, orchestration batch — unbuilt.)* Invalid engine/route combos made unreachable (RealtimeAgent disabled without relay, unavailable routes disabled, `coerceAudioRoute` auto-corrects); long dropdown/provider labels get `maxLines=1`+ellipsis. Original note: *Fix the voice dropdown mode toggles to not allow weird state mixes - labels need overflow control to prevent 2 lines or crunching.*
 
 - [x] **Per-profile agent icon + static-image avatar (shipped 2026-06-20 —** `d827e46`**, see DEVLOG).** Per-profile icon: client-side `ProfileIconStore` (per `(connection, profile)`, never sent to Hermes; stores a copied-file path) → small Coil image beside the agent name in `MessageBubble` via `LocalAgentIconPath`; picker is `AgentIconRow` under the local-name row in `ConnectionInfoSheet`. Static image: "Add a pet" accepts a single image (magic-byte detect → one-frame static pet). Scope shipped: small name-adjacent icon only; big avatar stays global. Follow-ups: on-device smoke (import an image as a pet; set a profile icon, confirm it shows by the name + persists across restart); optionally also show the icon in the profile picker.
+
+- [ ] **Dot-matrix "thinking" indicator** *(prototype impl 2026-06-28 — unbuilt; verify in Studio.)* New `DotMatrixIndicator` (`ui/components/DotMatrixIndicator.kt`): a Compose-`Canvas` dot grid with a brightness wave sweeping left→right — the dot-anime-react concept reimplemented natively (not a port). Swaps the in-bubble `StreamingDots` working indicator via `LocalThinkingIndicator` (provided in `ChatScreen` around the message `LazyColumn`), behind a new **Chat settings → "Thinking indicator" (Dots / Matrix)** selector with a live preview (`thinkingIndicatorStyle` pref on `ConnectionViewModel`, default "matrix"). Brand-themed (uses the bubble `textColor`), frame-throttled via `rememberAmbientPhase` (not `rememberInfiniteTransition`), and renders a static frame when `animationEnabled` is off. Follow-ups once the base motion is approved:
+  - [x] **Preset frame patterns** *(impl 2026-06-28)* — `ThinkingMatrixPattern` (Wave/Pulse/Bounce/Sparkle): Wave stays procedural, the rest are authored `List<Set<Int>>` frame sequences (built generatively in `buildMatrixFrames`, addressed `row*cols+col`), crossfaded between frames. New `thinkingMatrixPattern` pref + a Matrix-only "Pattern" selector in Chat settings. Width widened twice on request (column pitch now 9dp).
+  - [x] **Per-indicator color** *(impl 2026-06-28)* — `ThinkingMatrixColor` (Auto + brand accents relay/cyan/green/amber/purple/pink) resolved against `LocalBrand` via `toColor()`, so accents re-theme per app theme. New `thinkingMatrixColor` pref + a Matrix-only swatch row in Chat settings; Auto follows the bubble text color. Possible later add-on: a freeform custom-color picker.
+  - **OS-level reduce-motion / TalkBack** — currently gates only on the app's `animationEnabled` pref. Also honor OS reduce-motion + touch-exploration like `CleanChatMode` does (`rememberCleanMotionState().osAnimations`).
+  - **Optional: promote to a full avatar style** — the alternative scope (a `DotMatrixAvatar` `AgentAvatar` shown everywhere via `LocalAvailableAvatars`, selected in Appearance). Deferred in favor of the narrower in-bubble indicator.
 
 ## Demo mode (2026-06-27) — deferred polish
 
@@ -201,6 +550,8 @@ Things to look into:
 - **Skill distribution as separate from plugin distribution** — right now skills ride along with the plugin install via `external_dirs`. Should skills be installable independently (e.g. `hermes skill install <git-url>`)? Would that fragment maintenance or improve reuse?
 - **Tool registration discoverability** — `android_*` tools register at gateway import time. There's no canonical "list installed plugin tools" API. Would adding one to upstream make sense, or is `gateway tool list` already enough?
 - **Versioning + compatibility ranges** — `pip install -e` doesn't enforce version pins between hermes-agent and our plugin. A breaking change in upstream's plugin loader could silently break us. Do we need a `hermes_compat: ">=0.8.0,<1.0.0"` field somewhere?
+- **Update discovery (shipped 2026-06-30 — CLI + dashboard + app).** `hermes relay update-check`, a dashboard "Plugin version" card, and an app **About → "Relay"** row all compare the installed plugin against the latest `plugin-v*` release and surface the right update command (`hermes plugins update hermes-relay` vs `hermes-relay-update`). The app polls the relay's `GET /relay/update-check` (`:8767`, bearer) on each `auth.ok`; the relay is the single source of truth (the app never hits GitHub). Possible polish (deferred): a more prominent dismissible "relay is behind" banner outside About (today it's capability-first + the About row), and showing the app's own version alongside the relay's in the same readout (the app-Version row already exists separately just above it).
+- **Per-profile enablement (shipped 2026-06-30).** `hermes relay profiles list|enable [--all|NAME]` + `plugin/profiles.py` resolve the install-once/enable-per-profile papercut; docs now cover the pair-once/one-relay model. Possible follow-up: an `install.sh` / `hermes plugins install` prompt offering "enable for all existing profiles" so new installs don't need the manual `profiles enable --all`.
 - `**hermes-relay-self-setup` SKILL.md as a precedent** — we just shipped a self-installing skill that an LLM can fetch from a raw GitHub URL and execute. Does this pattern generalize? Could it become a recommended way for any third-party Hermes project to ship setup automation?
 - **Bootstrap injection** — `hermes_relay_bootstrap/` monkey-patches `aiohttp.web.Application` to inject endpoints into vanilla upstream. This is intentional but feels like a hack. Upstream PR #8556 (`feat/session-api`) will eventually let us delete it — verified 2026-04-15 that its scope covers the full bootstrap surface (sessions, memory, skills, config, available-models). Track that PR's status periodically.
 - **Gateway slash-command preprocessor — upstream Stage 1 PR.** Sibling follow-up to #8556. Intercepts known gateway commands on `/v1/runs` + `/v1/chat/completions`, dispatches the stateless ones (`/help`, `/commands`) via `gateway_help_lines()`, returns a deterministic "use a channel with session state" notice for the stateful majority. Currently being prepared in `C:/Users/Bailey/Desktop/Open-Projects/hermes-agent-pr-prep/` on branch `feat/api-server-gateway-commands`; awaiting subagent's code + draft PR body before pushing. See `docs/upstream-contributions.md` §5.

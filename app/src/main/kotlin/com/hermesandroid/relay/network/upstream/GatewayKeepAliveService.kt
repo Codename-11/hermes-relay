@@ -22,10 +22,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Opt-in foreground service that keeps the app process alive so the gateway
- * chat WebSocket (held by [com.hermesandroid.relay.viewmodel.ConnectionViewModel]'s
- * [GatewayChatClient]) survives Android's background-freeze / Doze — i.e.
- * "keep connected in the background".
+ * Opt-in foreground service that holds the app process up so the app's
+ * connection to Hermes survives Android's background-freeze / Doze — i.e.
+ * "persistent connection". Concretely it keeps the gateway chat WebSocket
+ * (held by [com.hermesandroid.relay.viewmodel.ConnectionViewModel]'s
+ * [GatewayChatClient]) open; for relay-paired setups, holding the whole
+ * process up incidentally also keeps the relay WSS — device control and
+ * notification mirroring — reachable. It does NOT warm Manage (stateless
+ * HTTP) or voice (per-turn sockets).
  *
  * # Both flavors (Play declaration required)
  *
@@ -56,7 +60,7 @@ class GatewayKeepAliveService : Service() {
     companion object {
         private const val TAG = "GatewayKeepAliveSvc"
         const val CHANNEL_ID = "gateway_keepalive"
-        private const val CHANNEL_NAME = "Background connection"
+        private const val CHANNEL_NAME = "Persistent connection"
         const val NOTIFICATION_ID = 4713
         const val ACTION_STOP = "com.hermesandroid.relay.gateway.KEEPALIVE_STOP"
 
@@ -146,14 +150,14 @@ class GatewayKeepAliveService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Hermes stays connected")
-            .setContentText("Keeping your chat connection warm in the background.")
+            .setContentTitle("Hermes connection active")
+            .setContentText("Keeping your connection to Hermes open in the background.")
             .setContentIntent(tapPending)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .addAction(0, "Disconnect", stopPending)
+            .addAction(0, "Turn off", stopPending)
             .build()
     }
 
@@ -164,7 +168,7 @@ class GatewayKeepAliveService : Service() {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply {
                 description =
-                    "Persistent indicator while Hermes keeps your chat connection open in the background."
+                    "Shows while Hermes keeps its connection open in the background so messages and live features stay responsive."
                 setShowBadge(false)
             },
         )

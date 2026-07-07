@@ -19,18 +19,21 @@ import { getSession, listSessions } from '../remoteSessions.js'
 
 const RELAY_USAGE: UsageSpec = {
   name: 'relay',
-  summary: 'inspect the relay server — info, security toggles, injected agent context',
-  usage: ['relay info', 'relay security', 'relay context'],
+  summary: 'inspect the relay server — info, security toggles, injected context, outbound queue',
+  usage: ['relay info', 'relay security', 'relay context', 'relay queue'],
   subcommands: [
     { verb: 'info', desc: 'Version, uptime, sessions, pending (loopback-only — run on the relay host)' },
     { verb: 'security', desc: 'Runtime security toggles (loopback-only)' },
-    { verb: 'context', desc: 'Audit the system-prompt context the relay injects into the agent' }
+    { verb: 'context', desc: 'Audit the system-prompt context the relay injects into the agent' },
+    { verb: 'queue', desc: 'Agent→phone messages queued for an offline phone; cancel with --clear / --cancel <id> (loopback-only)' }
   ],
   flags: [
     { flag: '--remote <url>', desc: 'Relay to query (default: stored/active)' },
+    { flag: '--clear', desc: 'queue: cancel ALL queued outbound messages' },
+    { flag: '--cancel <id>', desc: 'queue: cancel one queued message by id' },
     { flag: '--json', desc: 'Machine-readable output' }
   ],
-  examples: ['hermes-relay relay context', 'hermes-relay relay info']
+  examples: ['hermes-relay relay queue', 'hermes-relay relay queue --clear', 'hermes-relay relay context']
 }
 
 function wsToHttp(url: string): string {
@@ -94,6 +97,37 @@ async function getJson(
     }
   }
   return { status: res.status, body }
+}
+
+async function deleteJson(
+  httpUrl: string,
+  token: string
+): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(httpUrl, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+  })
+  const text = await res.text()
+  let body: unknown
+  if (text.length > 0) {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = text
+    }
+  }
+  return { status: res.status, body }
+}
+
+function fmtAge(sentAtMs?: number): string {
+  if (!sentAtMs || !Number.isFinite(sentAtMs)) return '?'
+  const secs = Math.max(0, Math.floor((Date.now() - sentAtMs) / 1000))
+  if (secs < 60) return `${secs}s ago`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
 }
 
 function fmtUptime(seconds: number): string {
@@ -212,6 +246,79 @@ async function relayContext(args: ParsedArgs, t: Theme): Promise<number> {
   return 0
 }
 
+async function relayQueue(args: ParsedArgs, t: Theme): Promise<number> {
+  const { url, token } = await resolveRemoteAndToken(args)
+  const base = `${wsToHttp(url)}/phone/outbound`
+
+  // Cancel paths: --clear (all) or --cancel <id> (one).
+  const cancelId = typeof args.flags.cancel === 'string' ? args.flags.cancel.trim() : null
+  if (cancelId || args.flags.clear === true) {
+    const target = cancelId ? `${base}?message_id=${encodeURIComponent(cancelId)}` : base
+    const { status, body } = await deleteJson(target, token)
+    if (status === 403) {
+      process.stderr.write(loopbackNote(t, '/phone/outbound') + '\n')
+      return 1
+    }
+    if (status !== 200) {
+      process.stderr.write(t.err(`error: DELETE /phone/outbound returned ${status}`) + '\n')
+      return 1
+    }
+    if (args.flags.json) {
+      process.stdout.write(JSON.stringify(body, null, 2) + '\n')
+      return 0
+    }
+    const n = Number((body as Record<string, unknown> | undefined)?.cancelled ?? 0)
+    process.stdout.write(t.ok(`cancelled ${n} queued message${n === 1 ? '' : 's'}`) + '\n')
+    return 0
+  }
+
+  // List path.
+  const { status, body } = await getJson(base, token)
+  if (status === 403) {
+    process.stderr.write(loopbackNote(t, '/phone/outbound') + '\n')
+    return 1
+  }
+  if (status === 404) {
+    process.stderr.write(
+      t.muted(`relay at ${url} has no /phone/outbound — server predates outbound buffering.`) + '\n'
+    )
+    return 1
+  }
+  if (status !== 200) {
+    process.stderr.write(t.err(`error: GET /phone/outbound returned ${status}`) + '\n')
+    return 1
+  }
+  if (args.flags.json) {
+    process.stdout.write(JSON.stringify(body, null, 2) + '\n')
+    return 0
+  }
+
+  const r = (body ?? {}) as {
+    queued?: number
+    messages?: { message_id?: string; chat_id?: string; text?: string; sent_at?: number }[]
+  }
+  const messages = r.messages ?? []
+  process.stdout.write(t.bold(`Phone outbound queue — ${url}`) + '\n')
+  if (messages.length === 0) {
+    process.stdout.write(
+      t.muted('  (nothing queued — the phone is delivering live, or nothing is waiting)') + '\n'
+    )
+    return 0
+  }
+  process.stdout.write(t.muted(`  ${messages.length} waiting for the phone to reconnect`) + '\n\n')
+  for (const m of messages) {
+    const id = (m.message_id ?? '').slice(0, 12).padEnd(13)
+    const when = fmtAge(m.sent_at).padEnd(9)
+    const text = (m.text ?? '').replace(/\s+/g, ' ').trim()
+    const preview = text.length > 80 ? text.slice(0, 79) + '…' : text
+    process.stdout.write(`  ${t.muted(id)} ${t.muted(when)} ${preview}\n`)
+  }
+  process.stdout.write(
+    '\n' + t.muted('  cancel one: `relay queue --cancel <id>`   ·   clear all: `relay queue --clear`') + '\n'
+  )
+  return 0
+}
+
 export async function relayCommand(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
   if (args.flags.help) {
@@ -240,6 +347,10 @@ export async function relayCommand(args: ParsedArgs): Promise<number> {
   if (sub === 'context') {
     args.positional.shift()
     return run(relayContext)
+  }
+  if (sub === 'queue') {
+    args.positional.shift()
+    return run(relayQueue)
   }
   return unknownSubcommand(RELAY_USAGE, sub, t)
 }

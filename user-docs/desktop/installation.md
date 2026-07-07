@@ -115,7 +115,7 @@ HERMES_RELAY_VERSION=cli-v0.3.0-alpha.18 \
 
 See [Uninstall](#uninstall) below — the curl one-liner reverses install.sh, with optional tiers for session-data purge and service cleanup.
 
-## Self-update — `hermes-relay update`
+## Self-update — `hermes-relay update` {#self-update-hermes-relay-update}
 
 Once installed, you don't have to keep re-running the `curl | sh` one-liner. The binary self-updates:
 
@@ -136,7 +136,7 @@ The updater:
 
 If `hermes-relay update --check` says "Up to date" but you know there's a newer alpha, see the [troubleshooting note](./troubleshooting.md#hermes-relay-update-says-up-to-date-but-i-know-there-s-a-newer-alpha).
 
-## Install from source (Node ≥21)
+## Install from source (Node ≥21) {#install-from-source-node-21}
 
 For dev / contributors / custom builds:
 

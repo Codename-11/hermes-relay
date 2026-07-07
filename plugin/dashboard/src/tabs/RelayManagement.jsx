@@ -5,7 +5,9 @@ const { useState, useEffect, useCallback } = SDK.hooks;
 import {
   getAgentContext,
   getOverview,
+  getPhoneConfig,
   getSessions,
+  getUpdateCheck,
   putEnvSetting,
   revokeSession,
 } from "../lib/api.js";
@@ -32,6 +34,7 @@ const {
   CardHeader,
   CardTitle,
   CardContent,
+  Input,
   Label,
 } = SDK.components;
 
@@ -307,10 +310,166 @@ function AgentContextCard({ data, saving, onToggle }) {
   );
 }
 
+function HomeChannelCard({ config, onSaved }) {
+  // Lazy-init the draft from the loaded name. The card is keyed by the loaded
+  // name at the call site, so it remounts (re-seeding the draft) only when the
+  // server value actually changes — autorefresh won't clobber active typing.
+  const [draft, setDraft] = useState((config && config.home_channel_name) || "Phone");
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [error, setError] = useState(null);
+
+  const chatId = (config && config.home_channel_id) || "phone";
+  const envKey = (config && config.name_env_key) || "PHONE_HOME_CHANNEL_NAME";
+
+  const save = useCallback(async () => {
+    const name = draft.trim();
+    if (!name) {
+      setError("Display name cannot be empty.");
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    try {
+      await putEnvSetting(envKey, name);
+      setSavedAt(Date.now());
+      if (onSaved) await onSaved();
+    } catch (err) {
+      setError(err && err.message ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, envKey, onSaved]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Home channel</CardTitle>
+        <CardDescription>
+          Where Hermes delivers proactive pushes, cron results, and
+          cross-platform messages when no specific Thread is named. The phone is
+          a single paired device, so this is auto-configured — you only set a
+          display name.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1">
+          <Label htmlFor="phone-home-name">Display name</Label>
+          <Input
+            id="phone-home-name"
+            value={draft}
+            placeholder="Phone"
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Notification title and Thread label. Applies after the next gateway
+            restart.
+          </p>
+        </div>
+
+        <div className="text-xs text-muted-foreground">
+          Channel id <code className="font-mono">{chatId}</code> — fixed;
+          changing it would orphan existing Threads.
+        </div>
+
+        {error ? (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={save} disabled={saving || !draft.trim()}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+          {savedAt ? (
+            <span className="text-xs text-muted-foreground">
+              Saved {relativeTime(savedAt)}
+            </span>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function UpdateCheckCard({ info, onRefresh }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onRefresh]);
+
+  const cmd = info && info.update_command;
+  const copyCmd = useCallback(async () => {
+    if (!cmd) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(cmd);
+      } else {
+        window.prompt("Copy update command", cmd);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (_err) {
+      window.prompt("Copy update command", cmd);
+    }
+  }, [cmd]);
+
+  if (!info) return null;
+  const current = info.current || "—";
+  const available = !!info.update_available;
+  const description = available
+    ? `Update available — you're on ${current}.`
+    : info.error
+    ? `On ${current}. Couldn't reach GitHub to check.`
+    : `On ${current}${info.latest ? ` — latest is ${info.latest}.` : "."}`;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle>Plugin version</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </div>
+        <Button size="sm" variant="outline" onClick={doRefresh} disabled={refreshing}>
+          {refreshing ? "Checking…" : "Check"}
+        </Button>
+      </CardHeader>
+      {available ? (
+        <CardContent className="space-y-2">
+          <Badge variant="secondary" className="w-fit text-xs">
+            {current} → {info.latest}
+          </Badge>
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/30 p-2 font-mono text-xs">
+            <span className="truncate">{cmd}</span>
+            <Button size="sm" variant="ghost" onClick={copyCmd}>
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Run it on your Hermes host, then restart the gateway to load the new plugin.
+          </p>
+        </CardContent>
+      ) : info.error ? (
+        <CardContent className="pt-0 text-xs text-muted-foreground">{info.error}</CardContent>
+      ) : null}
+    </Card>
+  );
+}
+
 export default function RelayManagement({ autoRefresh }) {
   const [overview, setOverview] = useState(null);
   const [sessions, setSessions] = useState(null);
   const [agentContext, setAgentContext] = useState(null);
+  const [phoneConfig, setPhoneConfig] = useState(null);
+  const [updateInfo, setUpdateInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [pairOpen, setPairOpen] = useState(false);
@@ -321,16 +480,18 @@ export default function RelayManagement({ autoRefresh }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [ov, se, ctx] = await Promise.all([
+      const [ov, se, ctx, phone] = await Promise.all([
         getOverview(),
         getSessions(),
         getAgentContext(),
+        getPhoneConfig(),
       ]);
       setOverview(ov || null);
       // Relay /sessions returns either {sessions:[...]} or [...] — handle both.
       const list = Array.isArray(se) ? se : (se && se.sessions) || [];
       setSessions(list);
       setAgentContext(ctx || null);
+      setPhoneConfig(phone || null);
     } catch (err) {
       setError(err && err.message ? err.message : String(err));
     } finally {
@@ -341,6 +502,21 @@ export default function RelayManagement({ autoRefresh }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Update check runs independently of the main load — a GitHub round-trip
+  // shouldn't block (or fail) the management tab. Cached server-side for an
+  // hour; the "Check" button forces a refresh.
+  const loadUpdate = useCallback(async (refresh = false) => {
+    try {
+      setUpdateInfo(await getUpdateCheck({ refresh }));
+    } catch (err) {
+      setUpdateInfo({ error: err && err.message ? err.message : String(err) });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUpdate(false);
+  }, [loadUpdate]);
 
   useEffect(() => {
     if (!autoRefresh) return undefined;
@@ -433,11 +609,21 @@ export default function RelayManagement({ autoRefresh }) {
         />
       </div>
 
+      <UpdateCheckCard info={updateInfo} onRefresh={loadUpdate} />
+
       <AgentContextCard
         data={agentContext}
         saving={contextSaving}
         onToggle={onToggleAgentContext}
       />
+
+      {phoneConfig && phoneConfig.enabled ? (
+        <HomeChannelCard
+          key={phoneConfig.home_channel_name || "phone"}
+          config={phoneConfig}
+          onSaved={load}
+        />
+      ) : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

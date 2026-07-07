@@ -118,7 +118,11 @@ class RelayConfig:
     realtime_voice_promote_after_ms: int = 6000
     realtime_voice_background_default_mode: str = "promote"
     realtime_voice_spoken_handoff: bool = True
-    realtime_voice_progress_spoken_after_ms: int = 15000
+    # Timer-driven spoken progress defaults OFF (0 = disabled): milestone
+    # speech (promotion handoff, completion, failure) carries the signal and
+    # the visual progress chip covers the in-between. Set a positive value to
+    # opt back in to periodic spoken filler.
+    realtime_voice_progress_spoken_after_ms: int = 0
     realtime_voice_progress_repeat_ms: int = 30000
     realtime_voice_result_delivery: str = "speak_when_idle"
     realtime_voice_max_background_runs: int = 1

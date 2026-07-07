@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
@@ -70,7 +71,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hermesandroid.relay.util.BatteryOptimizations
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -143,6 +150,7 @@ fun SettingsScreen(
     onNavigateToDiagnostics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
+    onNavigateToProactiveSettings: () -> Unit,
     onNavigateToPermissions: () -> Unit,
     // === PHASE3-safety-rails: bridge safety entry-point ===
     onNavigateToBridgeSafety: () -> Unit,
@@ -375,6 +383,17 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
+            // ── Quick Controls ─────────────────────────────────────────
+            // The switches flipped most often, pinned to the top-level Settings
+            // landing instead of buried in a sub-screen. Persistent connection is
+            // connection-level (not chat-specific), so it belongs here beside the
+            // agent / profile cards. Extensible — add more frequently-toggled
+            // switches in QuickControlsCard.
+            QuickControlsCard(
+                connectionViewModel = connectionViewModel,
+                isDarkTheme = isDarkTheme,
+            )
+
             // (The "Active Connection quick-look card" that used to live
             // here — showing API / Relay / Session status rows with a
             // clickable shortcut into a separate singular-connection
@@ -426,6 +445,14 @@ fun SettingsScreen(
                 title = "Voice mode",
                 subtitle = "Dashboard voice, realtime relay options, providers",
                 onClick = onNavigateToVoiceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.AutoMirrored.Filled.Message,
+                title = "Threads",
+                subtitle = "Let the agent start conversations with you (off by default)",
+                onClick = onNavigateToProactiveSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -766,6 +793,160 @@ private fun ProfileLockCard(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * Quick Controls card on the top-level Settings landing — the switches the user
+ * flips most often (Persistent connection, turn-complete alerts), kept out of
+ * the per-feature sub-screens so they're one tap from the Settings root. Wired
+ * straight to the same ConnectionViewModel flows the sub-screens use.
+ */
+@Composable
+private fun QuickControlsCard(
+    connectionViewModel: ConnectionViewModel,
+    isDarkTheme: Boolean,
+) {
+    val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
+    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gradientBorder(
+                shape = RoundedCornerShape(12.dp),
+                isDarkTheme = isDarkTheme,
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Quick Controls",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            // Persistent connection — connection-level keep-alive: holds the app
+            // process up via a notification so the gateway chat socket (and, for
+            // relay-paired setups, device control + notification mirroring) stays
+            // reachable in the background. Off by default; uses more battery.
+            QuickControlToggle(
+                title = "Persistent connection",
+                subtitle = if (gatewayKeepAlive) {
+                    "Keeping your connection to Hermes open in the background"
+                } else {
+                    "Connect on demand only · saves battery"
+                },
+                checked = gatewayKeepAlive,
+                onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) },
+            )
+            // Doze: even with the keep-alive service running, a specialUse FGS
+            // still gets its network deferred in deep sleep unless the app is
+            // battery-optimization exempt. Nudge for the exemption when the
+            // toggle is on and we're not yet exempt (sideload only — Play
+            // restricts the permission).
+            if (gatewayKeepAlive && BuildFlavor.isSideload) {
+                BatteryOptimizationNudge()
+            }
+            HorizontalDivider()
+            QuickControlToggle(
+                title = "Turn-complete alerts",
+                subtitle = if (notifyTurnComplete) {
+                    "Notify when a reply finishes while the app is in the background"
+                } else {
+                    "No alert when a backgrounded reply finishes"
+                },
+                checked = notifyTurnComplete,
+                onCheckedChange = { connectionViewModel.setNotifyTurnComplete(it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickControlToggle(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * Doze allow-list nudge shown under the "Persistent connection" toggle when
+ * it's on but the app isn't battery-optimization exempt (sideload only).
+ * Re-checks on ON_RESUME so it disappears after the user grants the exemption
+ * in the system dialog. See [BatteryOptimizations].
+ */
+@Composable
+private fun BatteryOptimizationNudge() {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var exempt by remember {
+        mutableStateOf(BatteryOptimizations.isIgnoringBatteryOptimizations(context))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                exempt = BatteryOptimizations.isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    if (exempt) return
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "Keep it connected in deep sleep",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                text = "Android can still pause the connection once the screen's " +
+                    "been off a while (Doze). Allow unrestricted battery so " +
+                    "Persistent connection keeps working in the background.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            TextButton(
+                onClick = { BatteryOptimizations.launchRequest(context) },
+                contentPadding = PaddingValues(horizontal = 0.dp),
+            ) {
+                Text("Allow unrestricted battery")
+            }
         }
     }
 }

@@ -315,5 +315,92 @@ class RemoteAccessStatusTests(PluginApiTestCase):
         self.assertFalse(body["upstream_canonical"])
 
 
+class PhoneConfigTests(PluginApiTestCase):
+    """``GET /phone/config`` reflects the phone adapter's env resolution.
+
+    No relay round-trip — the route reads process env directly, so these are
+    hermetic with no MockTransport.
+    """
+
+    _ENV_KEYS = ("PHONE_ENABLED", "PHONE_HOME_CHANNEL", "PHONE_HOME_CHANNEL_NAME")
+
+    def setUp(self) -> None:
+        super().setUp()
+        import os
+
+        self._saved = {k: os.environ.get(k) for k in self._ENV_KEYS}
+        for k in self._ENV_KEYS:
+            os.environ.pop(k, None)
+
+    def tearDown(self) -> None:
+        import os
+
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_disabled_defaults(self) -> None:
+        resp = self.client.get("/phone/config")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertFalse(body["enabled"])
+        self.assertEqual(body["home_channel_id"], "phone")
+        self.assertEqual(body["home_channel_name"], "Phone")
+        self.assertEqual(body["name_env_key"], "PHONE_HOME_CHANNEL_NAME")
+
+    def test_enabled_custom_name(self) -> None:
+        import os
+
+        os.environ["PHONE_ENABLED"] = "1"
+        os.environ["PHONE_HOME_CHANNEL_NAME"] = "Pixel 9"
+        body = self.client.get("/phone/config").json()
+        self.assertTrue(body["enabled"])
+        self.assertEqual(body["home_channel_name"], "Pixel 9")
+        self.assertEqual(body["home_channel_id"], "phone")
+
+
+class UpdateCheckTests(PluginApiTestCase):
+    """``GET /update-check`` compares installed vs latest GitHub plugin release."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Reset the module cache so every test triggers a (mocked) fetch.
+        plugin_api._UPDATE_CACHE.update(latest=None, fetched_at=0.0, error=None)
+
+    def test_update_available(self) -> None:
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[{"tag_name": "plugin-v99.0.0"}])
+
+        _install_mock_transport(self, handler)
+        body = self.client.get("/update-check").json()
+        self.assertTrue(body["update_available"])
+        self.assertEqual(body["latest"], "99.0.0")
+        self.assertIn("hermes", body["update_command"])
+
+    def test_up_to_date(self) -> None:
+        from plugin import update_check
+
+        cur = update_check.current_version()
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[{"tag_name": f"plugin-v{cur}"}])
+
+        _install_mock_transport(self, handler)
+        body = self.client.get("/update-check").json()
+        self.assertFalse(body["update_available"])
+        self.assertEqual(body["latest"], cur)
+
+    def test_github_error_degrades_softly(self) -> None:
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, text="nope")
+
+        _install_mock_transport(self, handler)
+        body = self.client.get("/update-check").json()
+        self.assertFalse(body["update_available"])
+        self.assertIsNotNone(body["error"])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

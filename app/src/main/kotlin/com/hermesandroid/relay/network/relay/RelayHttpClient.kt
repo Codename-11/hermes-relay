@@ -7,6 +7,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -61,12 +62,12 @@ class RelayHttpClient(
     /**
      * True when relay media is actually FETCHABLE right now: a non-blank relay
      * URL AND a current paired session token. Synchronous. The token check
-     * matters because the relay's SessionManager is in-memory and wiped on
-     * restart, so a configured relay URL can outlive the pairing — gating on URL
-     * alone made the media-capability badge read "available" while every
+     * matters because a configured relay URL can outlive a usable pairing — the
+     * session can expire, be revoked, or never have been established — so gating
+     * on URL alone made the media-capability badge read "available" while every
      * `/media/by-path` fetch failed for a missing token. Now the badge (and the
-     * SSE media hint) agree with what the fetch can do, and self-correct on
-     * re-pair.
+     * SSE media hint) agree with what the fetch can do, and self-correct once a
+     * valid paired token is present.
      */
     fun mediaUrlConfigured(): Boolean =
         !relayUrlProvider().isNullOrBlank() && !pairedTokenSnapshot().isNullOrBlank()
@@ -390,6 +391,167 @@ class RelayHttpClient(
             Result.failure(e)
         } catch (e: Exception) {
             Log.w(TAG, "fetchInjectedContext parse error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /** One phone Thread's identity from the relay's `/phone/threads`. */
+    @Serializable
+    data class PhoneThreadInfo(
+        @SerialName("session_id") val sessionId: String = "",
+        @SerialName("chat_id") val chatId: String = "",
+        val title: String? = null,
+    )
+
+    @Serializable
+    private data class PhoneThreadsResponse(
+        val threads: List<PhoneThreadInfo> = emptyList(),
+    )
+
+    /**
+     * Fetch the phone-Thread `session_id → chat_id` map the upstream
+     * `/api/sessions` omits (the relay reads it from the gateway store). The app
+     * seeds its reply-routing map from this so a Thread it didn't create — or any
+     * Thread after a restart — routes replies to the right conversation.
+     *
+     * Optional + fail-soft: an older relay without the route returns 404 → an
+     * empty list, and the client falls back to its learned map.
+     */
+    suspend fun fetchPhoneThreads(): Result<List<PhoneThreadInfo>> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        }
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = try {
+            "$httpBase/phone/threads".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+        }
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+        val client = okHttpClient.newBuilder()
+            .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    return@withContext Result.success(emptyList())
+                }
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) {
+                    return@withContext Result.success(emptyList())
+                }
+                Result.success(
+                    sessionsJson.decodeFromString(PhoneThreadsResponse.serializer(), body).threads
+                )
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "fetchPhoneThreads failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchPhoneThreads parse error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /** The relay's update-check result from `/relay/update-check`. */
+    @Serializable
+    data class RelayUpdateInfo(
+        val current: String = "",
+        val latest: String? = null,
+        @SerialName("update_available") val updateAvailable: Boolean = false,
+        @SerialName("update_command") val updateCommand: String? = null,
+        val error: String? = null,
+    )
+
+    /**
+     * Ask the relay whether a newer plugin release is available — it compares its
+     * installed version against the latest `plugin-v*` GitHub release (cached an
+     * hour server-side, so the app polling this is cheap). Surfaced as a soft,
+     * dismissible "your relay is behind" nudge plus a version readout.
+     *
+     * Optional + fail-soft: an older relay without the route returns 404 → null,
+     * and the app simply shows no update hint.
+     */
+    suspend fun fetchUpdateCheck(): Result<RelayUpdateInfo?> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        }
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = try {
+            "$httpBase/relay/update-check".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+        }
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+        // Slightly longer than the other reads — a cache-miss on the relay does a
+        // GitHub round-trip in an executor before responding.
+        val client = okHttpClient.newBuilder()
+            .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    return@withContext Result.success(null)
+                }
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) {
+                    return@withContext Result.success(null)
+                }
+                Result.success(
+                    sessionsJson.decodeFromString(RelayUpdateInfo.serializer(), body)
+                )
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "fetchUpdateCheck failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchUpdateCheck parse error: ${e.message}")
             Result.failure(e)
         }
     }

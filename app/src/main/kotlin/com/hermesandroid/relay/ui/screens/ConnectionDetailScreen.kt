@@ -1,0 +1,572 @@
+package com.hermesandroid.relay.ui.screens
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
+import com.hermesandroid.relay.ui.components.ActiveCardFeaturesSection
+import com.hermesandroid.relay.ui.components.ActiveCardRoutesSection
+import com.hermesandroid.relay.ui.components.ActiveCardSecurityPosture
+import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
+import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
+import com.hermesandroid.relay.ui.components.RelayInfoSheet
+import com.hermesandroid.relay.ui.components.SessionInfoSheet
+import com.hermesandroid.relay.ui.theme.LocalBrand
+import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.statusText
+
+/**
+ * Tabbed detail for a single Hermes connection — the level-2 screen the
+ * (slim) [ConnectionsSettingsScreen] list drills into. Replaces the old
+ * "everything crammed into the active card" body.
+ *
+ * Layout:
+ *  - TopAppBar: back + connection label + an `Active` badge (active conn) +
+ *    an overflow `⋮` menu (Rename / Re-pair / Revoke / Remove).
+ *  - When this connection is the **active** one, a 4-tab segmented bar:
+ *    **Overview** (status header + the steps/timeline capability list) ·
+ *    **Routes** (ADR 24 endpoint management) · **Advanced** (manual URL /
+ *    insecure / manual pairing) · **Security** (transport posture + the
+ *    prominent Relay sessions entry).
+ *  - When this connection is **not** active, only Overview shows — the deep
+ *    live content reads the single active-connection VM state, so we surface
+ *    a "Switch to this connection" CTA instead of stale/foreign data.
+ *
+ * All deep sections are the existing reusable composables in
+ * `ActiveConnectionSections.kt`; this screen is orchestration + the
+ * screen-scoped info sheets / confirm dialogs (hoisted here so a tab switch
+ * or scroll can't silently dismiss an open sheet).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConnectionDetailScreen(
+    connectionId: String,
+    connectionViewModel: ConnectionViewModel,
+    onBack: () -> Unit,
+    onReconnect: () -> Unit,
+    onRename: (id: String, newLabel: String) -> Unit,
+    onRepair: (id: String) -> Unit,
+    onRevoke: (id: String) -> Unit,
+    onRemove: (id: String) -> Unit,
+    onSwitchToConnection: (id: String) -> Unit,
+    onNavigateToManage: () -> Unit,
+    onNavigateToPairedDevices: () -> Unit,
+) {
+    val context = LocalContext.current
+    val isDarkTheme = LocalBrand.current.isDark
+
+    val connections by connectionViewModel.connections.collectAsState()
+    val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
+    val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val relayRow by connectionViewModel.relayRowState.collectAsState()
+    val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
+    val relayEnabled by FeatureFlags.relayEnabled(context)
+        .collectAsState(initial = FeatureFlags.isDevBuild)
+
+    val connection = connections.firstOrNull { it.id == connectionId }
+    // Connection was removed (e.g. via the overflow menu) — leave the screen.
+    LaunchedEffect(connection == null) {
+        if (connection == null) onBack()
+    }
+    if (connection == null) return
+
+    val isActive = connectionId == activeConnectionId
+
+    // Screen-scoped sheet/dialog visibility (survives tab switches + scroll).
+    var showSessionInfoSheet by remember { mutableStateOf(false) }
+    var showApiInfoSheet by remember { mutableStateOf(false) }
+    var showRelayInfoSheet by remember { mutableStateOf(false) }
+    var showInsecureAckDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showRevokeConfirm by remember { mutableStateOf(false) }
+    var showRemoveConfirm by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    val tabs = if (isActive) {
+        listOf(DetailTab.Overview, DetailTab.Routes, DetailTab.Advanced, DetailTab.Security)
+    } else {
+        listOf(DetailTab.Overview)
+    }
+    // Reset selection when the active/non-active shape changes so we never
+    // index past the available tabs.
+    var selectedTab by remember(isActive) { mutableStateOf(0) }
+    val safeIndex = selectedTab.coerceIn(0, tabs.lastIndex)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = connection.label,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (isActive) {
+                            Badge(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ) {
+                                Text(
+                                    text = "Active",
+                                    modifier = Modifier.padding(horizontal = 6.dp),
+                                )
+                            }
+                        }
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "More actions",
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Rename") },
+                            onClick = {
+                                menuExpanded = false
+                                showRenameDialog = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(if (connection.pairedAt == null) "Pair Relay" else "Re-pair")
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onRepair(connectionId)
+                            },
+                        )
+                        if (connection.pairedAt != null) {
+                            DropdownMenuItem(
+                                text = { Text("Revoke") },
+                                onClick = {
+                                    menuExpanded = false
+                                    showRevokeConfirm = true
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = {
+                                Text("Remove", color = MaterialTheme.colorScheme.error)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                showRemoveConfirm = true
+                            },
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+        ) {
+            if (tabs.size > 1) {
+                TabRow(selectedTabIndex = safeIndex) {
+                    tabs.forEachIndexed { index, tab ->
+                        Tab(
+                            selected = safeIndex == index,
+                            onClick = { selectedTab = index },
+                            text = { Text(tab.label) },
+                        )
+                    }
+                }
+            }
+
+            val scrollState = rememberScrollState()
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                when (tabs[safeIndex]) {
+                    DetailTab.Overview -> {
+                        if (isActive) {
+                            ActiveOverview(
+                                connectionViewModel = connectionViewModel,
+                                connection = connection,
+                                relayConfigured = relayConfigured,
+                                relayStatusText = relayRow.statusText(connectedLabel = "Connected"),
+                                relayUiState = relayUiState,
+                                relayEnabled = relayEnabled,
+                                onReconnect = onReconnect,
+                                onRepair = { onRepair(connectionId) },
+                                onOpenApiInfo = { showApiInfoSheet = true },
+                                onOpenDashboard = onNavigateToManage,
+                                onOpenRelayInfo = { showRelayInfoSheet = true },
+                                onOpenSessionInfo = { showSessionInfoSheet = true },
+                            )
+                        } else {
+                            InactiveOverview(
+                                connection = connection,
+                                onSwitch = { onSwitchToConnection(connectionId) },
+                                onRepair = { onRepair(connectionId) },
+                            )
+                        }
+                    }
+
+                    DetailTab.Routes -> ActiveCardRoutesSection(
+                        connectionViewModel = connectionViewModel,
+                        connection = connection,
+                        liveState = relayUiState,
+                    )
+
+                    DetailTab.Advanced -> ActiveCardAdvancedSection(
+                        connectionViewModel = connectionViewModel,
+                        relayEnabled = relayEnabled,
+                        isDarkTheme = isDarkTheme,
+                        onInsecureAckRequested = { showInsecureAckDialog = true },
+                    )
+
+                    DetailTab.Security -> ActiveCardSecurityPosture(
+                        connectionViewModel = connectionViewModel,
+                        onNavigateToPairedDevices = onNavigateToPairedDevices,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+
+    // ── Screen-scope sheets + dialogs ────────────────────────────────────
+    if (showSessionInfoSheet) {
+        SessionInfoSheet(
+            connectionViewModel = connectionViewModel,
+            onDismiss = { showSessionInfoSheet = false },
+        )
+    }
+    if (showApiInfoSheet) {
+        ApiServerInfoSheet(
+            connectionViewModel = connectionViewModel,
+            onDismiss = { showApiInfoSheet = false },
+        )
+    }
+    if (showRelayInfoSheet) {
+        RelayInfoSheet(
+            connectionViewModel = connectionViewModel,
+            onDismiss = { showRelayInfoSheet = false },
+        )
+    }
+    if (showInsecureAckDialog) {
+        InsecureConnectionAckDialog(
+            onConfirm = { reason ->
+                connectionViewModel.setInsecureAckComplete(reason)
+                connectionViewModel.setInsecureMode(true)
+                showInsecureAckDialog = false
+            },
+            onCancel = { showInsecureAckDialog = false },
+        )
+    }
+    if (showRenameDialog) {
+        RenameConnectionDialog(
+            initialLabel = connection.label,
+            onDismiss = { showRenameDialog = false },
+            onConfirm = { newLabel ->
+                onRename(connectionId, newLabel)
+                showRenameDialog = false
+            },
+        )
+    }
+    if (showRevokeConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRevokeConfirm = false },
+            title = { Text("Revoke this connection?") },
+            text = {
+                Text(
+                    "The server session will be invalidated. The connection stays " +
+                        "on this device but will need to be re-paired to use again.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRevoke(connectionId)
+                        showRevokeConfirm = false
+                    },
+                ) { Text("Revoke") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRevokeConfirm = false }) { Text("Cancel") }
+            },
+        )
+    }
+    if (showRemoveConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRemoveConfirm = false },
+            title = { Text("Remove this connection?") },
+            text = {
+                Text(
+                    "The connection will be deleted from this device along with its " +
+                        "saved session token. This cannot be undone.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        // The LaunchedEffect above pops the screen once the
+                        // connection disappears from the list.
+                        onRemove(connectionId)
+                        showRemoveConfirm = false
+                    },
+                ) {
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRemoveConfirm = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+private enum class DetailTab(val label: String) {
+    Overview("Overview"),
+    Routes("Routes"),
+    Advanced("Advanced"),
+    Security("Security"),
+}
+
+/**
+ * Overview for the **active** connection: a one-line status header followed
+ * by the steps/timeline capability list ([ActiveCardFeaturesSection]) and
+ * quick actions. The timeline is intentionally the hero of this tab.
+ */
+@Composable
+private fun ActiveOverview(
+    connectionViewModel: ConnectionViewModel,
+    connection: Connection,
+    relayConfigured: Boolean,
+    relayStatusText: String,
+    relayUiState: RelayUiState,
+    relayEnabled: Boolean,
+    onReconnect: () -> Unit,
+    onRepair: () -> Unit,
+    onOpenApiInfo: () -> Unit,
+    onOpenDashboard: () -> Unit,
+    onOpenRelayInfo: () -> Unit,
+    onOpenSessionInfo: () -> Unit,
+) {
+    val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
+    val headerLine = if (relayConfigured) relayStatusText else "Standard · $hostname"
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = headerLine,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = hostname,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+
+    Text(
+        text = "What this connection can do. Routes only choose how the phone " +
+            "reaches Hermes.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    ActiveCardFeaturesSection(
+        connectionViewModel = connectionViewModel,
+        relayEnabled = relayEnabled,
+        onOpenApiInfo = onOpenApiInfo,
+        onOpenDashboard = onOpenDashboard,
+        onOpenRelayInfo = onOpenRelayInfo,
+        onOpenSessionInfo = onOpenSessionInfo,
+    )
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (relayUiState == RelayUiState.Stale) {
+            Button(onClick = onReconnect) { Text("Reconnect") }
+        }
+        TextButton(onClick = onRepair) {
+            Text(if (connection.pairedAt == null) "Pair Relay" else "Re-pair")
+        }
+    }
+}
+
+/**
+ * Overview for a **non-active** connection. The deep live content reads the
+ * single active-connection VM state, so rather than show stale/foreign data
+ * we surface the path to make this connection active.
+ */
+@Composable
+private fun InactiveOverview(
+    connection: Connection,
+    onSwitch: () -> Unit,
+    onRepair: () -> Unit,
+) {
+    val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
+    val statusLine = when {
+        connection.pairedAt != null -> "Paired · relay configured"
+        connection.apiServerUrl.isNotBlank() -> "Standard · relay not paired"
+        else -> "Not configured"
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = hostname,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = statusLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text(
+                text = "This connection isn't active. Switch to it to see its live " +
+                    "status and manage routes, advanced settings, and relay sessions.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(onClick = onSwitch) { Text("Switch to this connection") }
+                TextButton(onClick = onRepair) {
+                    Text(if (connection.pairedAt == null) "Pair Relay" else "Re-pair")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenameConnectionDialog(
+    initialLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var input by remember { mutableStateOf(initialLabel) }
+    val validation = com.hermesandroid.relay.data.ConnectionValidation.validateLabel(input)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename connection") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    singleLine = true,
+                    isError = validation != null,
+                    supportingText = {
+                        if (validation != null) Text(validation)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(input.trim()) },
+                enabled = validation == null && input.trim() != initialLabel,
+            ) {
+                Text("Rename")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}

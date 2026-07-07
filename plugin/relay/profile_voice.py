@@ -176,8 +176,12 @@ def realtime_voice_settings(config: Any, profile: str | None) -> dict[str, Any]:
             config, "realtime_voice_background_default_mode", "promote"
         ),
         "spoken_handoff": bool(getattr(config, "realtime_voice_spoken_handoff", True)),
+        # Timer-driven spoken progress defaults OFF (0): milestone speech — the
+        # promotion handoff, completion summary, and failures — carries the
+        # signal, and the visual progress chip covers the in-between. Set a
+        # positive value to opt back in to periodic spoken filler.
         "progress_spoken_after_ms": int(
-            getattr(config, "realtime_voice_progress_spoken_after_ms", 15000)
+            getattr(config, "realtime_voice_progress_spoken_after_ms", 0)
         ),
         "progress_repeat_ms": int(
             getattr(config, "realtime_voice_progress_repeat_ms", 30000)

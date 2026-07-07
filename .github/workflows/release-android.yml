@@ -127,10 +127,12 @@ jobs:
         # Flavor dimension adds an extra path segment to the AGP output layout.
         # APKs live under `apk/<flavor>/release/`, AABs under `bundle/<flavor>Release/`
         # (note the concatenated camelCase — AGP path quirk, documented but
-        # different between APK and AAB). The globs below match both flavors.
+        # different between APK and AAB). Checksums cover EXACTLY the files
+        # attached to the GitHub Release (see the 2-asset policy on the
+        # release step below) so SHA256SUMS.txt matches the assets 1:1.
         run: |
           cd app/build/outputs
-          sha256sum apk/*/release/*.apk bundle/*Release/*.aab > SHA256SUMS.txt
+          sha256sum apk/sideload/release/*.apk bundle/googlePlayRelease/*.aab > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
@@ -140,16 +142,22 @@ jobs:
           tag_name: android-v${{ needs.validate.outputs.version }}
           body_path: RELEASE_NOTES.md
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
-          # Attach all four flavored artifacts — users sideload the
-          # `hermes-relay-<version>-sideload-release.apk` for the full
-          # Phase 3 / Tier 3/4/6 feature set; the
-          # `hermes-relay-<version>-googlePlay-release.aab` is what gets
-          # uploaded to Play Console. APK twin of the googlePlay flavor
-          # and AAB twin of the sideload flavor are included for parity
-          # (useful for diff tooling, not primary downloads).
+          # Deliberate 2-asset policy (#144): attach ONLY
+          # `hermes-relay-<version>-sideload-release.apk` (the file users
+          # install by tapping — full Device Control feature set) and
+          # `hermes-relay-<version>-googlePlay-release.aab` (the Play Console
+          # upload bundle — NOT tap-installable on a phone), plus the
+          # SHA256SUMS.txt covering exactly those two files. GitHub sorts
+          # assets alphabetically, so extra files made the non-installable
+          # .aab list first and confused new users. The parity twins
+          # (googlePlay APK, sideload AAB) are still BUILT by the step above
+          # and reproducible from the tag via CI, just not attached.
+          # NEVER rename the sideload APK: the in-app update checker
+          # (update/UpdateChecker.kt) matches assets by ".apk" + "sideload"
+          # in the name, and user-docs verify steps cite the filename.
           files: |
-            app/build/outputs/apk/*/release/*.apk
-            app/build/outputs/bundle/*Release/*.aab
+            app/build/outputs/apk/sideload/release/*.apk
+            app/build/outputs/bundle/googlePlayRelease/*.aab
             app/build/outputs/SHA256SUMS.txt
 
       - name: Upload to Play Console (production draft)

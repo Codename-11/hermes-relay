@@ -19,6 +19,7 @@ import os
 import secrets
 import struct
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -112,6 +113,22 @@ _RESUME_TTL_SECONDS = 30.0
 _BACKGROUND_FLOOR_WAIT_SECONDS = 12.0
 _EVENT_RING_LIMIT = 256
 _AUDIO_RING_LIMIT = 96
+# A promoted/durable background run can outlive the 30s resume window. While such
+# a run is still in flight we keep a *detached* session (and its recorded event
+# ring) alive up to this hard cap, so a transient network drop doesn't orphan the
+# run — the client can resume within the window and replay the recorded result.
+# Bounded so an abandoned session can't pin the provider connection open forever.
+_BACKGROUND_DETACHED_MAX_SECONDS = 360.0
+# Hard ceiling on a single background run: a hung tool (e.g. a stuck cron call)
+# is cancelled and surfaced as a timeout instead of waiting forever.
+_BACKGROUND_RUN_MAX_SECONDS = 300.0
+# When a known-long tool starts mid-grace-window, the run still gets this short
+# quick-finish window before promoting — a long-CLASS tool that completes fast
+# (a quick desktop lookup) stays Tier A instead of paying the promote/summarize
+# round-trip.
+_LONG_TOOL_QUICK_FINISH_SECONDS = 1.5
+# Poll cadence for the detached-session keep-alive loop.
+_BACKGROUND_DETACHED_POLL_SECONDS = 2.0
 _PROFILE_SOUL_PROMPT_MAX_CHARS = 6000
 _PROFILE_MEMORY_PROMPT_MAX_FILES = 4
 _PROFILE_MEMORY_PROMPT_MAX_CHARS = 6000
@@ -202,6 +219,19 @@ class RealtimeAgentSession:
     hermes_seen_tool_call_ids: set[str] = field(default_factory=set)
     hermes_last_spoken_progress_at: float = 0.0
     hermes_last_spoken_progress_key: str | None = None
+    # Spoken-progress knobs, wired from realtime_voice settings at create.
+    # <= 0 disables timer-driven spoken filler entirely (milestone speech —
+    # promotion handoff, completion, failure — is unaffected).
+    progress_spoken_after_seconds: float = 0.0
+    progress_repeat_seconds: float = _HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS
+    # A completed background result that could not be spoken because the phone
+    # was detached. Injected on resume; pushed via the proactive fallback if
+    # the session closes first.
+    pending_background_result: dict[str, Any] | None = None
+    # Set by the Hermes event stream when a known-long tool starts, so a
+    # hermes_run_task can promote to background immediately instead of
+    # waiting out the full grace window. Fresh per hermes_run_task call.
+    long_tool_event: asyncio.Event | None = None
     profile_prompt_context: dict[str, Any] = field(default_factory=dict)
     floor: RealtimeFloor = field(default_factory=RealtimeFloor)
 
@@ -218,6 +248,11 @@ class RealtimeAgentHandler:
             OpenAIRealtimeAgentProvider.provider_id: OpenAIRealtimeAgentProvider(),
             XAIRealtimeAgentProvider.provider_id: XAIRealtimeAgentProvider(),
         }
+        # Optional durable-fallback hook (wired by the relay server to
+        # ProactiveChannel.push, which buffers for an offline phone): a
+        # completed background result whose session died undelivered is pushed
+        # as a proactive phone message instead of silently dropped.
+        self.proactive_push: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
 
     async def handle_config(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:realtime")
@@ -350,6 +385,12 @@ class RealtimeAgentHandler:
             promote_after_ms=int(settings.get("promote_after_ms", 6000)),
             spoken_handoff=bool(settings.get("spoken_handoff", True)),
             result_delivery=str(settings.get("result_delivery", "speak_when_idle")),
+            progress_spoken_after_seconds=(
+                max(0, int(settings.get("progress_spoken_after_ms", 0))) / 1000.0
+            ),
+            progress_repeat_seconds=(
+                max(0, int(settings.get("progress_repeat_ms", 30000))) / 1000.0
+            ),
         )
         self.sessions[session_id] = session
         self._log(session, "voice.realtime_agent.session.created")
@@ -718,6 +759,18 @@ class RealtimeAgentHandler:
                     await self._detach_native_session(session, "websocket_disconnected")
         return ws
 
+    def _background_run_active(self, session: RealtimeAgentSession) -> bool:
+        """True while a promoted/durable Hermes run (or its delivery) is in flight.
+
+        Used to keep a *detached* session alive past the normal 30s resume window
+        so a transient drop mid-run doesn't orphan the run and lose the result.
+        """
+        task = session.hermes_task
+        if task is not None and not task.done():
+            return True
+        delivery = session.background_delivery_task
+        return delivery is not None and not delivery.done()
+
     async def _detach_native_session(
         self,
         session: RealtimeAgentSession,
@@ -727,7 +780,12 @@ class RealtimeAgentHandler:
             return
         now = time.time()
         session.detached_at = now
-        session.resume_deadline = now + session.resume_ttl_seconds
+        # A live background run gets a longer resume window than the default 30s,
+        # so a network blip mid-run can still resume and replay the result.
+        window = session.resume_ttl_seconds
+        if self._background_run_active(session):
+            window = max(window, _background_detached_max_seconds())
+        session.resume_deadline = now + window
         await self._send(
             None,
             session,
@@ -735,7 +793,7 @@ class RealtimeAgentHandler:
                 "type": SERVER_EVT_SESSION_DETACHED,
                 "session_id": session.session_id,
                 "reason": reason,
-                "resume_ttl_ms": int(session.resume_ttl_seconds * 1000),
+                "resume_ttl_ms": int(window * 1000),
             },
         )
         self._log(
@@ -757,8 +815,27 @@ class RealtimeAgentHandler:
         self,
         session: RealtimeAgentSession,
     ) -> None:
+        # Poll until the resume window elapses. For a background run we hold the
+        # session open until the run finishes plus a short grace (so a late resume
+        # can still replay the recorded result), bounded by resume_deadline — which
+        # _detach_native_session already stretched to the background cap.
+        grace_after_run = _RESUME_TTL_SECONDS
+        run_done_at: float | None = None
         try:
-            await asyncio.sleep(session.resume_ttl_seconds)
+            while True:
+                if session.closed or session.attached_ws is not None or session.detached_at is None:
+                    return
+                now = time.time()
+                if session.resume_deadline is not None and now >= session.resume_deadline:
+                    break
+                if self._background_run_active(session):
+                    run_done_at = None
+                else:
+                    if run_done_at is None:
+                        run_done_at = now
+                    elif now - run_done_at >= grace_after_run:
+                        break
+                await asyncio.sleep(_BACKGROUND_DETACHED_POLL_SECONDS)
         except asyncio.CancelledError:
             return
         if session.attached_ws is not None or session.detached_at is None or session.closed:
@@ -784,6 +861,38 @@ class RealtimeAgentHandler:
         if delivery_task is not None and not delivery_task.done():
             delivery_task.cancel()
         session.background_delivery_task = None
+        # Durable fallback: a background result that finished but never reached
+        # the phone is pushed as a proactive phone message (buffered while the
+        # phone is offline) instead of dying with the session. The full answer
+        # already persists in the Hermes chat session.
+        pending = session.pending_background_result
+        session.pending_background_result = None
+        hermes_task = session.hermes_task
+        if (
+            pending is None
+            and hermes_task is not None
+            and hermes_task.done()
+            and not hermes_task.cancelled()
+            and hermes_task.exception() is None
+            and session.hermes_run_tier in ("promoted", "durable")
+        ):
+            # The run finished but its delivery task was cancelled before it
+            # could record the result (close raced completion).
+            maybe = hermes_task.result()
+            if isinstance(maybe, dict) and maybe.get("promoted") is not True:
+                pending = maybe
+        if pending is not None and self.proactive_push is not None:
+            fallback = asyncio.create_task(
+                self._push_undelivered_result_notice(session, pending)
+            )
+            fallback.add_done_callback(
+                _log_task_failure(session, "proactive_fallback_task")
+            )
+        # Cancel any still-running (promoted/durable) Hermes run so a hung tool
+        # can't keep executing against the gateway after the session is gone.
+        if hermes_task is not None and not hermes_task.done():
+            hermes_task.cancel()
+        session.hermes_task = None
         connection = session.native_connection
         if connection is not None:
             await connection.close()
@@ -796,6 +905,46 @@ class RealtimeAgentHandler:
             {
                 "type": "voice.realtime_agent.session.closed",
                 "reason": reason,
+            },
+        )
+
+    async def _push_undelivered_result_notice(
+        self,
+        session: RealtimeAgentSession,
+        result: dict[str, Any],
+    ) -> None:
+        """Push a completed-but-undelivered background result to the phone.
+
+        Rides the proactive channel (buffered while the phone is offline), so
+        the user learns the task finished even though the voice session died.
+        The full answer persists in the Hermes chat session either way.
+        """
+        push = self.proactive_push
+        if push is None:
+            return
+        text = str(
+            result.get("text") or result.get("answer") or result.get("summary") or ""
+        ).strip()
+        preview = text[:280] + "…" if len(text) > 280 else text
+        await push(
+            {
+                "title": "Background task finished",
+                "text": preview
+                or "Your background voice task finished — open the chat to see the result.",
+                "surfacing": "notification",
+                "metadata": {
+                    "source": "realtime_agent",
+                    "run_id": session.hermes_run_id,
+                    "chat_session_id": session.chat_session_id,
+                },
+            }
+        )
+        self._log(
+            session,
+            "voice.realtime_agent.result_pushed_proactive",
+            {
+                "type": "voice.realtime_agent.result_pushed_proactive",
+                "run_id": session.hermes_run_id,
             },
         )
 
@@ -874,6 +1023,10 @@ class RealtimeAgentHandler:
             last_audio_event_id=last_audio_event_id,
             played_audio_event_id=played_audio_event_id,
         )
+        # A background result that completed while detached was deliberately
+        # held instead of spoken into the ring — deliver it now that the phone
+        # is back and the replay has caught it up.
+        await self._deliver_pending_background_result(ws, session)
 
     async def _replay_session_events(
         self,
@@ -1488,12 +1641,28 @@ class RealtimeAgentHandler:
                         reason="provider_error",
                     )
                     continue
-                await self._send_error(
-                    ws,
-                    session,
-                    str(event.payload.get("message") or "provider error"),
-                    provider=session.provider,
-                )
+                error_message = str(event.payload.get("message") or "provider error")
+                if _is_benign_provider_error(error_message):
+                    # A non-fatal provider notice (e.g. cancelling when no
+                    # response is active) must NOT be surfaced as a fatal
+                    # voice.error — the client closes the session on that, which
+                    # killed a live turn right as the reply was arriving.
+                    self._log(
+                        session,
+                        "voice.realtime_agent.provider_notice",
+                        {
+                            "type": "voice.realtime_agent.provider_notice",
+                            "message": error_message,
+                            "provider": session.provider,
+                        },
+                    )
+                else:
+                    await self._send_error(
+                        ws,
+                        session,
+                        error_message,
+                        provider=session.provider,
+                    )
 
     async def _send_provider_audio_delta(
         self,
@@ -2008,7 +2177,33 @@ class RealtimeAgentHandler:
         if call.name != "hermes_run_task":
             return await self._execute_brokered_tool(ws, session, call)
 
+        # max_background_runs=1: a second hermes_run_task while one is still in
+        # flight must NOT create a new task — that would overwrite the
+        # session.hermes_task reference and cancel the first run's delivery,
+        # orphaning it. Answer with a speakable busy result instead.
+        existing = session.hermes_task
+        if existing is not None and not existing.done():
+            return {
+                "ok": True,
+                "status": "already_running",
+                "run_id": session.hermes_run_id,
+                "session_id": session.chat_session_id,
+                "instruction": (
+                    "A previous task is still running in the background. Tell "
+                    "the user it's still in progress; they can wait, ask for "
+                    "status, or cancel it (hermes_cancel) before starting "
+                    "something new."
+                ),
+                "interface": _interface_context(session),
+            }
+
+        # Adaptive promotion: the Hermes event stream flags this the moment a
+        # known-long tool starts (cron/desktop/browser/...), so the turn can
+        # promote right away instead of waiting out the full grace window.
+        long_tool_event = asyncio.Event()
+        session.long_tool_event = long_tool_event
         task = asyncio.create_task(self._execute_brokered_tool(ws, session, call))
+        task.add_done_callback(_log_task_failure(session, "hermes_task"))
         session.hermes_task = task
         # Tier C: an explicit mode="background" request detaches immediately,
         # even when grace-period promotion is otherwise off.
@@ -2017,32 +2212,65 @@ class RealtimeAgentHandler:
         try:
             if promote_after is None:
                 return await task
+            # Shield so a promotion timeout cancels only the wait, not the run.
+            shielded = asyncio.ensure_future(asyncio.shield(task))
+            long_tool_waiter = asyncio.create_task(long_tool_event.wait())
+            long_tool_seen = False
             try:
-                # Shield so a promotion timeout cancels only the wait, not the run.
-                return await asyncio.wait_for(asyncio.shield(task), timeout=promote_after)
-            except asyncio.TimeoutError:
-                # Tier B/C: detach the run to the background and hand control back
-                # to the pump (ADR 33). The task keeps running;
-                # _deliver_background_result awaits and delivers it.
-                session.hermes_run_tier = "durable" if force_background else "promoted"
-                session.promoted_transcript = str(call.arguments.get("text") or "").strip()
-                self._log(
-                    session,
-                    "voice.hermes_run.promoted",
-                    {
-                        "type": "voice.hermes_run.promoted",
-                        "run_id": session.hermes_run_id,
-                        "promote_after_ms": session.promote_after_ms,
-                        "call_id": call.call_id,
-                    },
+                done, _ = await asyncio.wait(
+                    {shielded, long_tool_waiter},
+                    timeout=promote_after,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                return {
-                    "ok": True,
-                    "promoted": True,
+                if shielded in done:
+                    # Completed (or raised) within the grace window: Tier A.
+                    return shielded.result()
+                if long_tool_waiter in done:
+                    # A known-long tool started mid-grace. Give the run a short
+                    # quick-finish window (a long-CLASS tool can still be a fast
+                    # call), then promote early instead of burning the full
+                    # grace window on a run that is now expected to be long.
+                    long_tool_seen = True
+                    quick_finish = min(
+                        _LONG_TOOL_QUICK_FINISH_SECONDS,
+                        max(promote_after, 0.1),
+                    )
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        return await asyncio.wait_for(
+                            asyncio.shield(task), timeout=quick_finish
+                        )
+            finally:
+                long_tool_waiter.cancel()
+                if not shielded.done():
+                    shielded.cancel()
+            # Tier B/C: detach the run to the background and hand control back
+            # to the pump (ADR 33). The task keeps running;
+            # _deliver_background_result awaits and delivers it.
+            promote_reason = (
+                "explicit_background"
+                if force_background
+                else ("long_tool_started" if long_tool_seen else "grace_elapsed")
+            )
+            session.hermes_run_tier = "durable" if force_background else "promoted"
+            session.promoted_transcript = str(call.arguments.get("text") or "").strip()
+            self._log(
+                session,
+                "voice.hermes_run.promoted",
+                {
+                    "type": "voice.hermes_run.promoted",
                     "run_id": session.hermes_run_id,
-                    "session_id": session.chat_session_id,
-                    "interface": _interface_context(session),
-                }
+                    "promote_after_ms": session.promote_after_ms,
+                    "call_id": call.call_id,
+                    "reason": promote_reason,
+                },
+            )
+            return {
+                "ok": True,
+                "promoted": True,
+                "run_id": session.hermes_run_id,
+                "session_id": session.chat_session_id,
+                "interface": _interface_context(session),
+            }
         except asyncio.CancelledError:
             session.hermes_run_status = "cancelled"
             return {
@@ -2053,6 +2281,8 @@ class RealtimeAgentHandler:
                 "interface": _interface_context(session),
             }
         finally:
+            if session.long_tool_event is long_tool_event:
+                session.long_tool_event = None
             # A promoted task is still running; keep it referenced for delivery.
             if session.hermes_task is task and task.done():
                 session.hermes_task = None
@@ -2122,9 +2352,11 @@ class RealtimeAgentHandler:
             and not session.background_delivery_task.done()
         ):
             session.background_delivery_task.cancel()
-        session.background_delivery_task = asyncio.create_task(
+        delivery = asyncio.create_task(
             self._deliver_background_result(ws, session, connection)
         )
+        delivery.add_done_callback(_log_task_failure(session, "background_delivery_task"))
+        session.background_delivery_task = delivery
 
     async def _deliver_background_result(
         self,
@@ -2136,7 +2368,34 @@ class RealtimeAgentHandler:
         if task is None:
             return
         try:
-            result = await task
+            # Bound the run: a hung tool (e.g. a stuck cron call) is cancelled and
+            # surfaced as a timeout instead of pinning the delivery task forever.
+            result = await asyncio.wait_for(task, timeout=_background_run_max_seconds())
+        except asyncio.TimeoutError:
+            if not task.done():
+                task.cancel()
+            session.hermes_run_status = "timeout"
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED,
+                    "source": "hermes",
+                    "session_id": session.chat_session_id,
+                    "chat_session_id": session.chat_session_id,
+                    "run_id": session.hermes_run_id,
+                    "ok": False,
+                    "error": "background run timed out",
+                },
+            )
+            await self._send_error(
+                ws,
+                session,
+                "The background task ran too long and was stopped.",
+                provider=session.provider,
+            )
+            session.hermes_run_tier = "foreground"
+            return
         except asyncio.CancelledError:
             session.hermes_run_status = "cancelled"
             await self._send(
@@ -2198,9 +2457,61 @@ class RealtimeAgentHandler:
         # speak_when_idle / notify_then_speak: wait for the floor to clear, then
         # have the provider speak a natural summary via the forced-summary path.
         session.floor.note_result_ready()
-        await self._await_floor_idle_for_result(session)
-        await self._inject_background_summary(ws, session, connection, result)
+        floor_idle = await self._await_floor_idle_for_result(session)
+        # If the phone is detached, don't speak into the void: the provider's
+        # summary audio would only land in the bounded replay ring, and a long
+        # summary can evict its own head before the phone resumes. Hold the
+        # result; resume injects it, and _close_native_session pushes the
+        # proactive fallback if the session dies first.
+        attached = session.attached_ws
+        if attached is None or attached.closed:
+            session.pending_background_result = dict(result)
+            self._log(
+                session,
+                "voice.realtime_agent.result_deferred",
+                {
+                    "type": "voice.realtime_agent.result_deferred",
+                    "run_id": session.hermes_run_id,
+                    "reason": "websocket_detached",
+                },
+            )
+            session.hermes_run_tier = "foreground"
+            return
+        # Only interrupt the provider when it's likely still speaking (the floor
+        # didn't clear). If the floor is already idle there's no active response
+        # to cancel — cancelling anyway makes xAI emit a benign "no active
+        # response" notice that used to tear the whole voice turn down.
+        await self._inject_background_summary(
+            ws, session, connection, result, cancel_current=not floor_idle
+        )
         session.hermes_run_tier = "foreground"
+
+    async def _deliver_pending_background_result(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+    ) -> None:
+        """Speak a background result that completed while the phone was away.
+
+        Called after a successful resume + replay. The `background_completed`
+        event already replayed from the ring; this injects the provider-spoken
+        summary that was deliberately deferred while detached.
+        """
+        result = session.pending_background_result
+        if result is None:
+            return
+        connection = session.native_connection
+        if connection is None:
+            return
+        session.pending_background_result = None
+        if session.result_delivery == "visual_only":
+            await self._emit_background_text_only(ws, session, result)
+            return
+        session.floor.note_result_ready()
+        floor_idle = await self._await_floor_idle_for_result(session)
+        await self._inject_background_summary(
+            ws, session, connection, result, cancel_current=not floor_idle
+        )
 
     async def _await_floor_idle_for_result(
         self,
@@ -2223,6 +2534,8 @@ class RealtimeAgentHandler:
         session: RealtimeAgentSession,
         connection: RealtimeAgentConnection,
         result: dict[str, Any],
+        *,
+        cancel_current: bool = True,
     ) -> None:
         transcript = session.promoted_transcript or ""
         session.native_forced_summary_active = True
@@ -2231,9 +2544,27 @@ class RealtimeAgentHandler:
         session.native_forced_summary_result = dict(result)
         session.native_forced_summary_buffer.clear()
         session.native_forced_summary_text_parts.clear()
-        with contextlib.suppress(Exception):
-            await connection.cancel_response()
-        await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+        # Cancel only when a response is likely in flight (see caller). Cancelling
+        # with nothing active makes xAI reply with a benign "no active response"
+        # error that must not be treated as fatal.
+        if cancel_current:
+            with contextlib.suppress(Exception):
+                await connection.cancel_response()
+        try:
+            await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+        except Exception as exc:  # noqa: BLE001
+            # The background_completed event + result are already recorded in the
+            # event ring, so a resume will replay them; don't let a dead provider
+            # socket turn result delivery into an unhandled background-task crash.
+            self._log(
+                session,
+                "voice.realtime_agent.summary_send_failed",
+                {
+                    "type": "voice.realtime_agent.summary_send_failed",
+                    "run_id": session.hermes_run_id,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                },
+            )
 
     async def _emit_background_text_only(
         self,
@@ -2532,6 +2863,7 @@ class RealtimeAgentHandler:
                 session.hermes_active_tool_name = tool_name
                 session.hermes_last_tool_name = tool_name
                 session.hermes_last_tool_status = "running"
+                _flag_long_tool(session, tool_name)
             delta = str(event.get("delta") or event.get("message") or "").strip()
             if delta:
                 session.hermes_last_tool_message = _compact_status_text(delta)
@@ -2598,15 +2930,26 @@ class RealtimeAgentHandler:
                 and "drafting a response" in status_key.lower()
             )
             coarse_key = _coarse_spoken_status_key(status, status_key)
+            # Timer-driven spoken filler is opt-in (progress_spoken_after_ms
+            # setting; 0 = off, the default). Milestone speech — the promotion
+            # handoff, completion summary, and failures — is unaffected; the
+            # progress *events* keep flowing for the visual chip either way.
+            spoken_after = session.progress_spoken_after_seconds
             should_speak = (
-                speakable_progress
-                and elapsed_seconds >= _HERMES_SPOKEN_PROGRESS_AFTER_SECONDS
+                spoken_after > 0
+                and speakable_progress
+                and elapsed_seconds >= spoken_after
                 and session.floor.can_speak(FloorMouth.ANDROID_FILLER)
                 and _should_repeat_spoken_status(
                     now,
                     session.hermes_last_spoken_progress_at,
                     session.hermes_last_spoken_progress_key,
                     coarse_key,
+                    repeat_after_seconds=(
+                        session.progress_repeat_seconds
+                        if session.progress_repeat_seconds > 0
+                        else _HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS
+                    ),
                 )
             )
             if should_speak:
@@ -3911,6 +4254,89 @@ def _configured_resume_ttl_seconds() -> float:
     if value is not None and value > 0:
         return value / 1000.0
     return _RESUME_TTL_SECONDS
+
+
+def _background_detached_max_seconds() -> float:
+    """How long a *detached* session with a live background run is kept alive."""
+    value = _int_value(os.getenv("RELAY_VOICE_BACKGROUND_DETACHED_MAX_MS"))
+    if value is not None and value > 0:
+        return value / 1000.0
+    return _BACKGROUND_DETACHED_MAX_SECONDS
+
+
+def _background_run_max_seconds() -> float:
+    """Hard ceiling on a single background run before it is timed out/cancelled."""
+    value = _int_value(os.getenv("RELAY_VOICE_BACKGROUND_RUN_MAX_MS"))
+    if value is not None and value > 0:
+        return value / 1000.0
+    return _BACKGROUND_RUN_MAX_SECONDS
+
+
+_DEFAULT_LONG_TOOL_HINTS = (
+    "cron",
+    "desktop_",
+    "browser",
+    "execute_code",
+    "terminal",
+    "spawn",
+)
+
+
+def _long_tool_hints() -> tuple[str, ...]:
+    """Substrings of tool names that mark a run as long the moment they start."""
+    raw = os.getenv("RELAY_VOICE_LONG_TOOL_HINTS")
+    if raw is None:
+        return _DEFAULT_LONG_TOOL_HINTS
+    return tuple(hint.strip().lower() for hint in raw.split(",") if hint.strip())
+
+
+def _flag_long_tool(session: RealtimeAgentSession, tool_name: str) -> None:
+    """Signal adaptive promotion when a known-long tool starts mid-grace-window."""
+    event = session.long_tool_event
+    if event is None or event.is_set():
+        return
+    lowered = tool_name.lower()
+    if any(hint in lowered for hint in _long_tool_hints()):
+        event.set()
+
+
+def _log_task_failure(
+    session: RealtimeAgentSession,
+    label: str,
+) -> Callable[[asyncio.Task[Any]], None]:
+    """Done-callback that surfaces (and retrieves) unexpected task failures.
+
+    Without this, an exception the task's own handlers missed dies as a silent
+    "Task exception was never retrieved" long after the fact.
+    """
+
+    def _callback(task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        logger.warning(
+            "Realtime-agent %s failed for session %s: %s: %s",
+            label,
+            session.session_id,
+            exc.__class__.__name__,
+            exc,
+        )
+
+    return _callback
+
+
+def _is_benign_provider_error(message: str) -> bool:
+    """Provider 'errors' that must NOT tear down a live voice turn.
+
+    Cancelling a response when none is active (the background-summary
+    re-injection path) makes xAI emit 'Cancellation failed: no active response
+    found'. Surfacing that as a fatal voice.error made the client close the
+    session right before the summary was spoken, so the reply was never heard.
+    """
+    lowered = message.lower()
+    return "no active response" in lowered or "cancellation failed" in lowered
 
 
 def _token_hash(token: str) -> str:

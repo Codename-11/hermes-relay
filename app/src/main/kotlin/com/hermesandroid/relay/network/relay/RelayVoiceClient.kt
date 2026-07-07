@@ -9,6 +9,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -107,6 +108,27 @@ class RelayVoiceClient(
         private const val REALTIME_AGENT_WAIT_SLICE_MS = 1_000L
         private const val REALTIME_INPUT_CHUNK_BYTES = 6_400
         private const val SESSION_CALL_TIMEOUT_SECONDS = 15L
+
+        /**
+         * Periodic resume retry for the realtime-agent socket. A failed resume
+         * used to park forever on "waiting for route change" — but the relay
+         * holds a detached session (and any background run's result) open for
+         * minutes, so the client should keep knocking until that window closes.
+         */
+        private const val REALTIME_RESUME_RETRY_INTERVAL_MS = 10_000L
+        private const val REALTIME_RESUME_RETRY_WINDOW_MS = 5 * 60_000L
+
+        /**
+         * Provider "errors" that must NOT end a live realtime turn. Cancelling a
+         * response when none is active (the background-summary re-injection path)
+         * makes xAI emit "Cancellation failed: no active response found" — a benign
+         * notice that should never close the session or dead-end the user with a
+         * Retry. The relay now filters these too; this is defense in depth.
+         */
+        private fun isTransientRealtimeProviderError(message: String): Boolean {
+            val m = message.lowercase()
+            return m.contains("no active response") || m.contains("cancellation failed")
+        }
     }
 
     private fun sessionClient(): OkHttpClient =
@@ -1232,6 +1254,13 @@ class RelayVoiceClient(
         onHandoff: (VoiceHandoffEvent) -> Unit = {},
         turnInputs: kotlinx.coroutines.channels.ReceiveChannel<RealtimeTurnInput>? = null,
         onTurnComplete: (RealtimeVoiceSummary) -> Unit = {},
+        /**
+         * Open the session + socket without a first turn (voice-mode entry
+         * warm-up). No input is sent and no response is requested; the turn
+         * guards stay disarmed until the first real utterance arrives on
+         * [turnInputs]. Persistent mode only.
+         */
+        prewarm: Boolean = false,
         onEvent: (RealtimeVoiceEvent, RealtimeAgentSessionControl) -> Unit,
     ): Result<RealtimeVoiceSummary> = withContext(Dispatchers.IO) {
         val persistent = turnInputs != null
@@ -1269,7 +1298,9 @@ class RelayVoiceClient(
         val lastEventAtMs = AtomicLong(turnStartedAtMs.get())
         // True while a turn is awaiting its response. In persistent mode the idle
         // guard only applies while a turn is active; between-turn idle is normal.
-        val activeTurn = AtomicBoolean(true)
+        // A prewarm open has no turn in flight, so its guards stay disarmed
+        // until the first utterance arrives on the turn channel.
+        val activeTurn = AtomicBoolean(!prewarm)
         // W3: set true once a turn is known to be a long/background Hermes run
         // (e.g. `hermes.run.promoted`). The relay can legitimately go quiet for
         // minutes while such a run executes, so the 90s idle guard would kill an
@@ -1277,6 +1308,10 @@ class RelayVoiceClient(
         // persistent between-turn idle is — REALTIME_AGENT_MAX_TURN_MS remains
         // the absolute backstop. Reset at every turn boundary.
         val longRunningTurn = AtomicBoolean(false)
+        // True while a resume attempt has failed and we're between retries —
+        // the periodic retry loop only knocks while this is set; a successful
+        // socket open clears it.
+        val resumeWaiting = AtomicBoolean(false)
         val inputChunks = buildList {
             var offset = 0
             var chunkId = 1L
@@ -1390,6 +1425,7 @@ class RelayVoiceClient(
                         webSocket.close(1000, "stale route")
                         return
                     }
+                    resumeWaiting.set(false)
                     if (resume) {
                         val resumeToken = session.resumeToken.orEmpty()
                         Log.i(
@@ -1491,9 +1527,21 @@ class RelayVoiceClient(
                             }
                             webSocket.close(1000, "done")
                         }
-                    } else if (event.type == "voice.error" || event.type == "voice.session.resume_failed") {
+                    } else if (event.type == "voice.session.resume_failed") {
                         completeFailure(event.message ?: "Realtime agent error")
                         webSocket.close(1011, "provider error")
+                    } else if (event.type == "voice.error") {
+                        val msg = event.message ?: "Realtime agent error"
+                        if (isTransientRealtimeProviderError(msg)) {
+                            // A benign provider notice (e.g. a cancel with no
+                            // active response) must not tear down a live turn —
+                            // the reply is often still on its way. The relay now
+                            // filters these too; this is defense in depth.
+                            Log.i(TAG, "Realtime agent transient provider notice ignored: $msg")
+                        } else {
+                            completeFailure(msg)
+                            webSocket.close(1011, "provider error")
+                        }
                     }
                 }
 
@@ -1505,7 +1553,8 @@ class RelayVoiceClient(
                         return
                     }
                     if (session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.get()) {
-                        Log.i(TAG, "Realtime agent resume websocket failed; waiting for route change: ${t.message}")
+                        Log.i(TAG, "Realtime agent resume websocket failed; will retry: ${t.message}")
+                        resumeWaiting.set(true)
                         requestRouteProbeOnce("Realtime agent", t.message, routeProbeRequested)
                         onHandoff(
                             VoiceHandoffEvent(
@@ -1547,7 +1596,8 @@ class RelayVoiceClient(
                         return
                     }
                     if (code != 1000 && session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.get()) {
-                        Log.i(TAG, "Realtime agent resume websocket closed; waiting for route change: $code $reason")
+                        Log.i(TAG, "Realtime agent resume websocket closed; will retry: $code $reason")
+                        resumeWaiting.set(true)
                         requestRouteProbeOnce("Realtime agent", "Closed $code $reason", routeProbeRequested)
                         onHandoff(
                             VoiceHandoffEvent(
@@ -1697,6 +1747,28 @@ class RelayVoiceClient(
             onHandoff = onHandoff,
             completeFailure = ::completeFailure,
         )
+        // Periodic resume retry: a failed resume used to park forever waiting
+        // for a route-change signal, while the relay held the detached session
+        // (and any background run's result) open for minutes. Keep knocking on
+        // an interval until the retry window closes; the route watcher stays as
+        // the fast path when the network actually switches.
+        val resumeRetry: Job? = if (session.resumeSupported && !session.resumeToken.isNullOrBlank()) {
+            launch {
+                val deadline = System.currentTimeMillis() + REALTIME_RESUME_RETRY_WINDOW_MS
+                while (!completed.get() && System.currentTimeMillis() < deadline) {
+                    delay(REALTIME_RESUME_RETRY_INTERVAL_MS)
+                    if (completed.get() || !resumeWaiting.get()) continue
+                    try {
+                        Log.i(TAG, "Realtime agent periodic resume retry")
+                        openSocket(resume = true)
+                    } catch (e: Exception) {
+                        Log.i(TAG, "Realtime agent periodic resume retry failed: ${e.message}")
+                    }
+                }
+            }
+        } else {
+            null
+        }
         try {
             awaitRealtimeAgentCompletion()
         } catch (e: Exception) {
@@ -1705,6 +1777,7 @@ class RelayVoiceClient(
             Result.failure(IOException(e.message ?: "Realtime agent timed out", e))
         } finally {
             routeWatcher?.cancel()
+            resumeRetry?.cancel()
             turnReader?.cancel()
         }
     }
@@ -2297,6 +2370,9 @@ class RelayVoiceClient(
                 responseDoneMs = (metrics?.get("response_done_ms") as? JsonPrimitive)?.doubleOrNull,
                 tier = (obj["tier"] as? JsonPrimitive)?.contentOrNull,
                 floor = (obj["floor"] as? JsonPrimitive)?.contentOrNull,
+                activeToolName = (obj["active_tool_name"] as? JsonPrimitive)?.contentOrNull,
+                completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull,
+                elapsedMs = (obj["elapsed_ms"] as? JsonPrimitive)?.longOrNull,
                 raw = raw,
             )
         } catch (e: Exception) {
@@ -2669,6 +2745,10 @@ data class RealtimeVoiceEvent(
     // ADR 33: background-run promotion fields.
     val tier: String? = null,
     val floor: String? = null,
+    // hermes.run.progress extras — drive the live background-run chip.
+    val activeToolName: String? = null,
+    val completedToolCount: Int? = null,
+    val elapsedMs: Long? = null,
     val raw: String,
 ) {
     val isAudioDelta: Boolean

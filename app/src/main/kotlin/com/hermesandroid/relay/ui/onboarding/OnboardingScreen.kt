@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -208,11 +209,15 @@ fun OnboardingScreen(
             // Bottom navigation only on informational pages — the wizard
             // owns its own back/pair affordances.
             if (pages[pagerState.currentPage] != OnboardingPage.Connect) {
+                // Short viewports get a tighter footer so more of the pager
+                // content stays above the fold; indicator + Back/Next remain
+                // pinned outside the (scrollable) pager pages either way.
+                val compactHeight = LocalConfiguration.current.screenHeightDp < 620
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 32.dp)
-                        .padding(bottom = 48.dp),
+                        .padding(bottom = if (compactHeight) 16.dp else 48.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     PageIndicator(
@@ -220,7 +225,7 @@ fun OnboardingScreen(
                         currentPage = pagerState.currentPage
                     )
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(if (compactHeight) 12.dp else 24.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),

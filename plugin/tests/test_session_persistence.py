@@ -327,6 +327,87 @@ class SessionPersistenceCorruptionTests(unittest.TestCase):
         self.assertIsNotNone(mgr.get_session("good-token"))
 
 
+class SessionPersistenceVersionTests(unittest.TestCase):
+    """A relay update must not force a re-pair just because the on-disk
+    schema version moved. The load path is version-aware but drop-averse:
+    a newer/older/absent version still loads its records best-effort."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "sessions.json"
+
+    def test_newer_version_file_still_loads_sessions_and_trusted_devices(self) -> None:
+        """A file stamped with a FUTURE version (e.g. after a relay
+        downgrade) keeps its sessions AND its trusted-device refresh
+        credentials — neither a valid session nor a refresh recovery is
+        dropped over a version number alone."""
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=3600,
+            issue_refresh_token=True,
+        )
+        token = session.token
+        refresh = session.refresh_token
+        assert refresh is not None
+
+        # Simulate a file written by a newer relay: bump the on-disk version
+        # far past what this code understands.
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data["version"] = 999
+        self.path.write_text(json.dumps(data), encoding="utf-8")
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        # The live session survived (no re-pair needed at all).
+        self.assertEqual(mgr2.active_count(), 1)
+        self.assertIsNotNone(mgr2.get_session(token))
+        # And the trusted-device record survived, so a lost session would
+        # still recover via refresh rather than forcing a QR re-pair.
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNotNone(recovered)
+
+    def test_versionless_file_still_loads(self) -> None:
+        """A file with no ``version`` key (hand-edited or pre-versioning)
+        still loads its sessions rather than starting empty."""
+        now = time.time()
+        payload = {
+            "sessions": [
+                {
+                    "token": "live-token",
+                    "device_name": "Live",
+                    "device_id": "live",
+                    "created_at": now,
+                    "last_seen": now,
+                    "expires_at": now + 3600,
+                    "grants": {"chat": now + 3600},
+                    "transport_hint": "wss",
+                    "first_seen": now,
+                },
+            ],
+        }
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+        mgr = SessionManager(persistence_path=self.path)
+        self.assertEqual(mgr.active_count(), 1)
+        self.assertIsNotNone(mgr.get_session("live-token"))
+
+    def test_missing_file_is_logged(self) -> None:
+        """A missing session file (e.g. an update that lost it) is logged
+        so the forced-re-pair cause is diagnosable, not silent."""
+        with self.assertLogs("hermes_relay.auth", level="INFO") as cm:
+            SessionManager(persistence_path=self.path)
+        self.assertTrue(
+            any("no session file" in line.lower() for line in cm.output),
+            msg=f"expected a 'no session file' log, got: {cm.output}",
+        )
+
+
 class SessionPersistenceDisabledTests(unittest.TestCase):
     """``persistence_path=None`` (the default) must stay fully in-memory."""
 

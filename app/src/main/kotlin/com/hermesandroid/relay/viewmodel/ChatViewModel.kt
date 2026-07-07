@@ -13,6 +13,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
+import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
@@ -23,6 +24,9 @@ import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.HermesCardField
 import com.hermesandroid.relay.data.HermesCardInput
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -33,6 +37,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
 import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.upstream.SteerResult
@@ -55,6 +60,7 @@ import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.util.PhoneSnapshot
 import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
+import com.hermesandroid.relay.util.isConnectivityError
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
@@ -110,6 +116,26 @@ class ChatViewModel : ViewModel() {
      */
     private var activeStreamIsGateway = false
     private var intentionallyCancelled = false
+
+    /**
+     * Answer-recovery poller for a sessions-endpoint turn whose SSE transport
+     * died while the server kept running the turn (issue #166) — see
+     * [ChatStreamRecovery] and [startAnswerRecovery]. At most one per turn;
+     * null while idle.
+     */
+    private var streamRecovery: ChatStreamRecovery? = null
+
+    /** Test seam for the recovery poll cadence — production uses the defaults. */
+    internal var recoveryTimingOverride: ChatStreamRecovery.Timing? = null
+
+    private val _recoveringAnswer = MutableStateFlow(false)
+
+    /**
+     * True while [streamRecovery] polls for a dropped turn's answer — drives
+     * the "Reconnecting to your answer…" copy on the streaming placeholder.
+     */
+    val recoveringAnswer: StateFlow<Boolean> = _recoveringAnswer.asStateFlow()
+
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
     private var connectionSwitchJob: Job? = null
@@ -175,6 +201,77 @@ class ChatViewModel : ViewModel() {
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
 
+    /**
+     * Send a user message into an agent **Thread** (a `source=phone` session)
+     * over the relay proactive channel instead of the normal chat transport —
+     * set by RelayApp to [ConnectionViewModel.sendProactiveReply]. `(text,
+     * chatId, replyTo, messageId)`; `messageId` is the user bubble's id so the
+     * relay's ack can settle it. Null when no relay/ConnectionViewModel is wired.
+     */
+    var onProactiveReply: ((String, String?, String?, String) -> Unit)? = null
+
+    /**
+     * A "+ New Thread" the user just created + named, before its first message
+     * is sent. The first send routes to [PendingThread.chatId] (which makes the
+     * gateway create the `source=phone` session keyed by it); we then poll for +
+     * switch to that real session and apply the chosen name.
+     */
+    private data class PendingThread(val chatId: String, val name: String)
+    private var pendingThread: PendingThread? = null
+
+    /**
+     * A "+ New Thread" whose first message has been sent — we're now polling for
+     * the gateway-created `source=phone` session to switch to it. [knownIds] is
+     * the set of phone-session ids that existed BEFORE the send, so the new one
+     * is found by *difference* (the session `id` is a timestamp and the sessions
+     * API exposes neither `chat_id` nor `session_key`, so we can't match by id).
+     */
+    private data class CreatingThread(
+        val chatId: String,
+        val name: String,
+        val knownIds: Set<String>,
+    )
+    private var creatingThread: CreatingThread? = null
+
+    /**
+     * `sessionId` → phone-platform `chat_id`, learned for threads this app
+     * created ([switchToCreatedThread]) or received a message in
+     * ([injectThreadMessage]). Routes a reply to the right thread, since the
+     * sessions API doesn't return `chat_id`. Unknown → null → the relay/adapter's
+     * home channel ("phone"). In-memory (lost on restart) — the proper fix
+     * exposes `chat_id` on `/api/sessions` upstream (see TODO).
+     */
+    private val threadChatIds = mutableMapOf<String, String>()
+
+    /**
+     * Persist a user-chosen Thread name (sessionId → name) — set by RelayApp to
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.saveThreadName].
+     * Null when no relay/ConnectionViewModel is wired.
+     */
+    var onSaveThreadName: ((String, String) -> Unit)? = null
+
+    /**
+     * Latest persisted Thread names, re-applied to the handler on every load and
+     * on [initialize] so a handler created after the DataStore load still picks
+     * them up (the user's name overrides the gateway auto-title in the drawer).
+     */
+    private var persistedThreadNames: Map<String, String> = emptyMap()
+
+    fun applyPersistedThreadNames(names: Map<String, String>) {
+        persistedThreadNames = names
+        chatHandler?.setUserThreadNames(names)
+    }
+
+    /**
+     * Seed the reply-routing map from the relay's `/phone/threads` (the
+     * `session_id → chat_id` the API omits). Authoritative over the in-memory
+     * learned map, so any Thread routes its replies to the right conversation —
+     * including one this app didn't create, or any Thread after a restart.
+     */
+    fun seedThreadChatIds(map: Map<String, String>) {
+        threadChatIds.putAll(map)
+    }
+
     // --- Human-readable error events ---
     // One-shot events consumed by ChatScreen via snackbar. Shape mirrors
     // other VMs for consistency; DROP_OLDEST so a burst of errors never
@@ -187,7 +284,22 @@ class ChatViewModel : ViewModel() {
     val errorEvents: SharedFlow<HumanError> = _errorEvents.asSharedFlow()
 
     private fun emitError(t: Throwable?, context: String?) {
-        _errorEvents.tryEmit(classifyError(t, context = context))
+        val human = classifyError(t, context = context)
+        // Cold-start / reconnect bootstrap (session-list load, session create)
+        // runs without the user asking and on every reconnect. A "can't reach
+        // the server" failure there is non-actionable noise — the themed
+        // connection banner + startup sphere already surface the unreachable
+        // state. Keep the diagnostics record (classifyError above) but suppress
+        // the redundant, scary "server isn't accepting connections" snackbar
+        // that used to flash from the bottom on first load. Actionable failures
+        // (auth rejected, server error) and all interactive contexts
+        // (send_message, …) still surface normally.
+        if ((context == "load_sessions" || context == "create_session") &&
+            isConnectivityError(t)
+        ) {
+            return
+        }
+        _errorEvents.tryEmit(human)
     }
 
     // --- Message queue ---
@@ -1337,6 +1449,69 @@ class ChatViewModel : ViewModel() {
     val currentSessionId: StateFlow<String?>
         get() = chatHandler?.currentSessionId ?: _emptySessionId
 
+    /**
+     * Inject an agent-initiated ("proactive") message into the active session
+     * so it continues that conversation (the `phone` platform's
+     * `surfacing="session"` path). Local-only bubble that survives the history
+     * reconcile; no-op when no session is active. Small, localized entry point —
+     * the routing decision lives in
+     * [com.hermesandroid.relay.network.relay.ProactiveMessageHandler].
+     */
+    fun injectProactiveMessage(text: String) {
+        chatHandler?.addProactiveMessage(text)
+    }
+
+    /**
+     * Settle a Thread reply bubble when the relay acks it
+     * (`proactive.reply.ack`) — wired by RelayApp to the proactive handler's
+     * `onReplyAck`. [clientMsgId] is the user bubble's id (the app stamped it on
+     * the reply). Any non-"failed" status is treated as DELIVERED (the relay
+     * buffered the reply for the agent).
+     */
+    fun onProactiveReplyAck(clientMsgId: String, status: String) {
+        val resolved = if (status.equals("failed", ignoreCase = true)) {
+            MessageDeliveryStatus.FAILED
+        } else {
+            MessageDeliveryStatus.DELIVERED
+        }
+        chatHandler?.updateDeliveryStatus(clientMsgId, resolved)
+    }
+
+    /**
+     * Render an inbound agent message inline in the open Thread when it belongs
+     * there (the unified-Threads live path) — wired to the proactive handler's
+     * `injectIntoThread`. Returns true when shown in-thread, so the handler
+     * suppresses the notification + inbox entry. Matches the open Thread (or a
+     * pending "+ New Thread" draft) by chat_id, falling back to "accept" when
+     * either side has no parseable chat_id (the single home thread).
+     */
+    fun injectThreadMessage(msg: ProactiveMessage): Boolean {
+        val handler = chatHandler ?: return false
+        val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
+        // A freshly-created thread whose real session we're still switching to:
+        // show the agent's first reply in the draft view now (the switch
+        // reconciles it from history). Covers the gap before currentSessionId is
+        // set, so the very first reply doesn't fall through to a notification.
+        creatingThread?.let { creating ->
+            if (msgChatId == null || msgChatId == creating.chatId) {
+                handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+                return true
+            }
+        }
+        val activeId = handler.currentSessionId.value ?: return false
+        val active = handler.sessions.value.firstOrNull { it.sessionId == activeId } ?: return false
+        if (active.source != "phone") return false
+        // Match by the learned chat_id when known; otherwise accept (we can't read
+        // a session's chat_id from the API, so default to showing it in the open
+        // phone thread). Learn the mapping from the message for reply routing.
+        val knownChatId = threadChatIds[activeId]
+        val belongs = knownChatId == null || msgChatId == null || knownChatId == msgChatId
+        if (!belongs) return false
+        if (msgChatId != null) threadChatIds[activeId] = msgChatId
+        handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+        return true
+    }
+
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
         val handler = chatHandler ?: return emptyList()
         return handler.messages.value
@@ -1372,6 +1547,9 @@ class ChatViewModel : ViewModel() {
     fun initialize(apiClient: HermesApiClient, chatHandler: ChatHandler) {
         this.apiClient = apiClient
         this.chatHandler = chatHandler
+        // A handler created after the persisted Thread names loaded still gets
+        // them, so a named Thread keeps its name across restart / reconnect.
+        chatHandler.setUserThreadNames(persistedThreadNames)
         fetchSkills()
         fetchPersonalities()
         fetchModels()
@@ -1522,6 +1700,7 @@ class ChatViewModel : ViewModel() {
                 intentionallyCancelled = true
                 activeStream?.cancel()
                 activeStream = null
+                cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
                 activeProfileContextKey = null
@@ -1581,6 +1760,7 @@ class ChatViewModel : ViewModel() {
             stream.cancel()
         }
         activeStream = null
+        cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
@@ -1790,9 +1970,10 @@ class ChatViewModel : ViewModel() {
         val client = apiClient ?: return
         val handler = chatHandler ?: return
 
-        // Cancel any in-flight stream
+        // Cancel any in-flight stream (and any answer-recovery poller)
         activeStream?.cancel()
         activeStream = null
+        cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         // Gateway transport: a new chat is a fresh DRAFT with NO session id.
@@ -1868,14 +2049,87 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Start a user-created agent **Thread** (Discord-style "+ New Thread"): mint
+     * a fresh phone-platform `chat_id`, blank the chat to a draft, and stash it
+     * as [pendingThread]. The first message the user sends opens the conversation
+     * on that `chat_id` (the gateway creates the `source=phone` session keyed by
+     * it), after which [switchToCreatedThread] swaps the draft for the real
+     * session. Gated on relay pairing + "Let Hermes message me" by the caller.
+     */
+    fun startNewThread(name: String) {
+        val handler = chatHandler ?: return
+        activeStream?.cancel()
+        activeStream = null
+        cancelAnswerRecovery(settleUi = false)
+        historyLoadGeneration.incrementAndGet()
+        val slug = name.trim().lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(24)
+        val chatId = "t-" + slug.ifBlank { "thread" } + "-" +
+            java.util.UUID.randomUUID().toString().take(6)
+        pendingThread = PendingThread(chatId = chatId, name = name.trim())
+        // Blank draft — the first send routes to the new thread (handled in
+        // sendMessageInternal's pendingThread branch).
+        gatewayClient?.clearSession()
+        handler.setSessionId(null)
+        handler.clearMessages()
+        _contextUsage.value = null
+        _contextWindow.value = null
+        _pendingAsk.value = null
+        onSessionChanged?.invoke(null)
+    }
+
+    /**
+     * After a "+ New Thread" first send, poll the session list until the gateway
+     * has created the new `source=phone` session, then switch to it (loading its
+     * history) and apply the user's chosen name. The new session is found by
+     * *difference* — the `source=phone` session id not present before the send —
+     * because the sessions API exposes neither `chat_id` nor `session_key` (the
+     * id is just a timestamp). Records sessionId → chat_id so later replies in
+     * this thread route correctly. Best-effort: if it doesn't appear within the
+     * window the thread still exists and shows in the drawer's Threads filter.
+     */
+    private fun switchToCreatedThread() {
+        val creating = creatingThread ?: return
+        viewModelScope.launch {
+            for (delayMs in longArrayOf(900L, 1300L, 1800L, 2500L, 3500L, 4500L)) {
+                delay(delayMs)
+                refreshSessions()
+                delay(400L) // let the refresh job land in the sessions flow
+                val match = chatHandler?.sessions?.value?.firstOrNull {
+                    it.source == "phone" && it.sessionId !in creating.knownIds
+                }
+                if (match != null) {
+                    threadChatIds[match.sessionId] = creating.chatId
+                    creatingThread = null
+                    // The user's name is authoritative (Discord-style): apply it
+                    // as a local override so the server's async auto-titler can't
+                    // clobber it, and also best-effort rename the server session
+                    // for other surfaces.
+                    if (creating.name.isNotBlank()) {
+                        chatHandler?.setUserThreadName(match.sessionId, creating.name)
+                        onSaveThreadName?.invoke(match.sessionId, creating.name)
+                        if (match.title != creating.name) {
+                            renameSession(match.sessionId, creating.name)
+                        }
+                    }
+                    switchSession(match.sessionId)
+                    return@launch
+                }
+            }
+            creatingThread = null // gave up — it still appears in the drawer
+        }
+    }
+
     fun switchSession(sessionId: String) {
         apiClient ?: return
         val handler = chatHandler ?: return
 
-        // Cancel any in-flight stream
+        // Cancel any in-flight stream (and any answer-recovery poller — the
+        // switched-to session must not receive the old turn's reconcile).
         intentionallyCancelled = true
         activeStream?.cancel()
         activeStream = null
+        cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
@@ -2580,6 +2834,183 @@ class ChatViewModel : ViewModel() {
         )
     }
 
+    // === Dropped-stream answer recovery (issue #166) ===
+
+    /**
+     * Terminal side effects every successfully finished turn shares — the
+     * normal stream completion ([startStream]'s onCompleteCb) and a recovered
+     * dropped-stream turn ([startAnswerRecovery]) both end here, so recovery
+     * finalizes with exactly the completion semantics.
+     */
+    private fun finalizeTurnSideEffects(handler: ChatHandler, messageId: String) {
+        handler.onStreamComplete(messageId)
+        activeStream = null
+        _steerableTurn.value = false
+        _steerNotice.value = null
+        // Turn over — any blocked ask has been resolved server-side
+        // (answer, timeout, or interrupt). Timed cards self-collapse;
+        // an unanswered approval gets a neutral "Resolved" stamp so its
+        // buttons don't dead-end in "no longer active" notices.
+        clearPendingAsk(approvalStamp = "Resolved")
+
+        // Notify when the turn finished while the app is backgrounded —
+        // never for cancelled streams; errors end via onErrorCb instead.
+        maybeNotifyTurnComplete(handler, messageId)
+
+        // v0.4.1 polish: auto-return to Hermes-Relay if the bridge
+        // moved the foreground app during this run. No-op when the
+        // LLM already called `android_return_to_hermes` itself (in
+        // that case the tracker's internal flag was cleared by the
+        // /return_to_hermes dispatch's respond()). See BridgeRunTracker
+        // KDoc for the full contract.
+        com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
+    }
+
+    /**
+     * Stop any in-flight answer recovery — and ALWAYS settle the handler's
+     * streaming/turn-status state when a poller was actually running.
+     *
+     * When recovery is live there is NO live [activeStream] (it was nulled
+     * when the poller started), so nothing else fires onStreamComplete /
+     * onStreamError to clear the "Reconnecting to your answer…" caption and
+     * the global streaming flag. If abort left them set the chat would wedge
+     * in streaming mode (dead Stop button, frozen caption) until process
+     * death (issue #166).
+     *
+     * [settleUi] chooses HOW to settle:
+     *  - `true` (a new send about to add its own placeholder) finalizes the
+     *    leftover streaming placeholder into a completed bubble.
+     *  - `false` (abandon paths — session/profile switch, new chat/thread,
+     *    connection switch, user Stop, straggler-completion guard) drops the
+     *    global streaming/turn-status flags SILENTLY: no error badge, and no
+     *    placeholder finalize that could fight a subsequent loadMessageHistory
+     *    or hide the message from cancelStream's Stopped-badge findLast. Those
+     *    callers clear or reload the transcript themselves.
+     */
+    private fun cancelAnswerRecovery(settleUi: Boolean = true) {
+        val hadRecovery = streamRecovery != null
+        streamRecovery?.cancel()
+        streamRecovery = null
+        _recoveringAnswer.value = false
+        if (!hadRecovery) return
+        chatHandler?.let { handler ->
+            if (settleUi) {
+                val streaming = handler.messages.value.findLast { it.isStreaming }
+                if (streaming != null) handler.onStreamComplete(streaming.id)
+                else handler.clearStreamingStatus()
+            } else {
+                handler.clearStreamingStatus()
+            }
+        }
+    }
+
+    /**
+     * Issue #166: on slow-model / delegating-skill turns the phone's SSE
+     * socket dies (screen-off, Doze, Wi-Fi power-save) long before the server
+     * finishes — but upstream api_server keeps executing the run after the
+     * SSE writer dies and PERSISTS the final answer to the session store. So
+     * a sessions-endpoint transport error must not finalize the turn as an
+     * error: poll the session transcript (native upstream
+     * `/api/sessions/{id}/messages` — standard-path safe) until the answer
+     * lands, reconciling through the normal [ChatHandler.loadMessageHistory]
+     * path, then finish with the same side effects as a normal completion.
+     * On cap expiry or a run that never started, fall back to the existing
+     * error UI.
+     */
+    private fun startAnswerRecovery(
+        handler: ChatHandler,
+        sessionId: String,
+        pendingUserText: String,
+        placeholderMessageId: String,
+        cause: String,
+    ) {
+        cancelAnswerRecovery(settleUi = false)
+        _recoveringAnswer.value = true
+        handler.setTurnStatus("Reconnecting to your answer…")
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Api,
+            severity = DiagnosticSeverity.Warning,
+            title = "Chat stream dropped — recovering the answer in the background",
+            detail = cause,
+        )
+        // Positional invariant for the anchor (issue #166): how many user-role
+        // rows the client knew about BEFORE this send. handler.messages already
+        // holds the in-flight pair (the just-added pending user message + the
+        // streaming assistant placeholder), so subtract the one pending user
+        // row. The pending send, once persisted, must land as the
+        // (priorUserCount+1)-th user row — this stops a short repeated prompt
+        // ("yes"/"continue") from anchoring on a stale identical earlier row.
+        val priorUserCount = (
+            handler.messages.value.count { it.role == MessageRole.USER } - 1
+        ).coerceAtLeast(0)
+        val recovery = ChatStreamRecovery(
+            scope = viewModelScope,
+            fetchHistory = { loadSessionHistory(sessionId) },
+            timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
+        )
+        streamRecovery = recovery
+        recovery.start(
+            pendingUserText = pendingUserText,
+            priorUserMessageCount = priorUserCount,
+            onIntermediateHistory = { items ->
+                if (streamRecovery === recovery && handler.currentSessionId.value == sessionId) {
+                    // Progressive recovery: surface already-persisted rows as
+                    // they appear. The reload drops the (never-persisted)
+                    // streaming placeholder, so re-add one — with a stable id —
+                    // to keep the reconnecting indicator alive until the
+                    // answer lands.
+                    handler.loadMessageHistory(items)
+                    handler.addPlaceholderMessage(
+                        ChatMessage(
+                            id = "recovering-$placeholderMessageId",
+                            role = MessageRole.ASSISTANT,
+                            content = "",
+                            timestamp = System.currentTimeMillis(),
+                            isStreaming = true,
+                            agentName = handler.activeAgentName,
+                        )
+                    )
+                }
+            },
+            onRecovered = { items ->
+                if (streamRecovery === recovery) {
+                    streamRecovery = null
+                    _recoveringAnswer.value = false
+                    if (handler.currentSessionId.value == sessionId) {
+                        // Server-authoritative reconcile — replaces the
+                        // placeholder with the recovered answer (the same
+                        // reload path a normal sessions completion uses).
+                        handler.loadMessageHistory(items)
+                    }
+                    finalizeTurnSideEffects(handler, placeholderMessageId)
+                    refreshSessions()
+                    scheduleTitleReconcile(sessionId)
+                    drainQueue()
+                }
+            },
+            onGaveUp = { reason ->
+                if (streamRecovery === recovery) {
+                    streamRecovery = null
+                    _recoveringAnswer.value = false
+                    val message = when (reason) {
+                        ChatStreamRecovery.GiveUpReason.RUN_NOT_FOUND ->
+                            "Connection dropped before the server received this message — please resend."
+                        ChatStreamRecovery.GiveUpReason.TIMED_OUT ->
+                            "Lost the connection mid-reply and the answer never arrived — check the server and try again."
+                    }
+                    AppAnalytics.onStreamError()
+                    handler.onStreamError(message)
+                    emitError(Exception(message), context = "send_message")
+                    _queuedMessages.value = emptyList()
+                    // Parity with the sibling stream-error branch: the turn is
+                    // over server-side, so force-deny any still-blocked approval
+                    // card instead of leaving its buttons dead-ended.
+                    clearPendingAsk(approvalStamp = "deny")
+                }
+            },
+        )
+    }
+
     fun clearQueue() {
         _queuedMessages.value = emptyList()
     }
@@ -2637,6 +3068,47 @@ class ChatViewModel : ViewModel() {
 
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
+
+        // User-created Thread: the first message of a "+ New Thread" opens a new
+        // source=phone gateway session keyed by the minted chat_id. Route it over
+        // the proactive channel, snapshot the existing phone-session ids, then
+        // poll for the NEW one (by difference) and switch to it.
+        pendingThread?.let { pending ->
+            pendingThread = null
+            val send = onProactiveReply
+            if (send != null) {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
+                val knownIds = handler.sessions.value
+                    .filter { it.source == "phone" }
+                    .map { it.sessionId }
+                    .toSet()
+                creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
+                send(text.trim(), pending.chatId, null, messageId)
+                switchToCreatedThread()
+            } else {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
+            }
+            return
+        }
+
+        // Agent Thread (existing source=phone session): the user is replying
+        // inside a proactive conversation, so route the turn over the relay
+        // proactive channel (continues that thread's gateway session) instead of
+        // a normal chat send. The user bubble was already added above — mark it
+        // SENDING and stamp its id as the reply's message_id so the relay's ack
+        // can settle it. The chat_id comes from the learned map (the API doesn't
+        // expose it); unknown → null → the relay/adapter's home channel ("phone").
+        val activeThread = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
+        if (activeThread?.source == "phone") {
+            val send = onProactiveReply
+            if (send != null) {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
+                send(text.trim(), threadChatIds[activeThread.sessionId], null, messageId)
+            } else {
+                handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
+            }
+            return
+        }
 
         // Optimistic drawer preview: a chat created via "New Chat" still reads
         // "New Chat"/untitled in the drawer until the server auto-titles it after
@@ -3058,7 +3530,21 @@ class ChatViewModel : ViewModel() {
                 activeStream = null
             }
             "hermes.run.cancelled" -> {
-                handler.replaceMessageContent(assistantMessageId, "Cancelled.")
+                // Don't clobber a delivered answer: the cancel confirm can
+                // arrive after the summary already streamed into this bubble
+                // (chip-cancel racing completion, or a stale confirm). Only a
+                // bubble with no real content becomes "Cancelled."; anything
+                // else keeps its text and gets the Stopped badge instead.
+                val existingContent = handler.messages.value
+                    .firstOrNull { it.id == assistantMessageId }
+                    ?.content
+                    ?.trim()
+                    .orEmpty()
+                if (existingContent.isBlank()) {
+                    handler.replaceMessageContent(assistantMessageId, "Cancelled.")
+                } else {
+                    handler.markStopped(assistantMessageId)
+                }
                 handler.onStreamComplete(assistantMessageId)
                 realtimeAgentUserMessages.remove(assistantMessageId)
                 realtimeAgentInputTranscripts.remove(assistantMessageId)
@@ -3264,6 +3750,12 @@ class ChatViewModel : ViewModel() {
         // fallback when no profile metadata is available.
         handler.activeAgentName = currentAgentDisplayName()
 
+        // A new send always aborts any in-flight dropped-stream answer
+        // recovery — exactly one poller per turn (issue #166). settleUi
+        // finalizes the previous turn's leftover streaming placeholder so it
+        // can't pulse forever next to this turn's fresh one.
+        cancelAnswerRecovery()
+
         // A new turn is starting: clear any leftover cancellation flag so a
         // stale `true` from a PRIOR cancelled turn (the flag is sticky — a
         // clean gateway cancel never fires onError to consume it) can't make
@@ -3277,6 +3769,12 @@ class ChatViewModel : ViewModel() {
         // Track the current message ID — starts with our generated ID,
         // but updates when the server sends message.started with its own ID.
         var currentMessageId = assistantMessageId
+
+        // The SSE endpoint this turn actually dispatched on (null on a gateway
+        // dispatch) — set by dispatchSse below. onErrorCb keys the dropped-
+        // stream answer recovery (issue #166) on "sessions": the other
+        // endpoints keep their existing error behavior.
+        var dispatchedSseEndpoint: String? = null
 
         // Show placeholder "thinking" message immediately — filled when first delta arrives
         handler.addPlaceholderMessage(
@@ -3329,28 +3827,13 @@ class ChatViewModel : ViewModel() {
             handler.onTurnComplete(currentMessageId)
         }
         val onCompleteCb = {
-            handler.onStreamComplete(currentMessageId)
+            // Double-finalize guard: if a straggler completion arrives while
+            // the answer-recovery poller is running, the normal completion
+            // wins — stop the poller before finalizing so the turn can't
+            // finish twice.
+            cancelAnswerRecovery(settleUi = false)
+            finalizeTurnSideEffects(handler, currentMessageId)
             AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
-            activeStream = null
-            _steerableTurn.value = false
-            _steerNotice.value = null
-            // Turn over — any blocked ask has been resolved server-side
-            // (answer, timeout, or interrupt). Timed cards self-collapse;
-            // an unanswered approval gets a neutral "Resolved" stamp so its
-            // buttons don't dead-end in "no longer active" notices.
-            clearPendingAsk(approvalStamp = "Resolved")
-
-            // Notify when the turn finished while the app is backgrounded —
-            // never for cancelled streams; errors end via onErrorCb instead.
-            maybeNotifyTurnComplete(handler, currentMessageId)
-
-            // v0.4.1 polish: auto-return to Hermes-Relay if the bridge
-            // moved the foreground app during this run. No-op when the
-            // LLM already called `android_return_to_hermes` itself (in
-            // that case the tracker's internal flag was cleared by the
-            // /return_to_hermes dispatch's respond()). See BridgeRunTracker
-            // KDoc for the full contract.
-            com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
 
             // Command catalog rides the now-live socket after the first real
             // gateway turn — never a cold /api/ws open at composition.
@@ -3449,6 +3932,7 @@ class ChatViewModel : ViewModel() {
             }
         }
         val onErrorCb = { errorMsg: String ->
+            val errorSessionId = handler.currentSessionId.value
             if (intentionallyCancelled) {
                 intentionallyCancelled = false
                 // Cancellation (user Stop / session switch): suppress the
@@ -3457,6 +3941,33 @@ class ChatViewModel : ViewModel() {
                 // button if a cancel and a transport error race.
                 handler.messages.value.findLast { it.isStreaming }
                     ?.let { handler.onStreamComplete(it.id) }
+                activeStream = null
+                _queuedMessages.value = emptyList()
+                _steerableTurn.value = false
+                _steerNotice.value = null
+                clearPendingAsk(approvalStamp = "deny")
+            } else if (
+                dispatchedSseEndpoint == "sessions" &&
+                errorSessionId != null &&
+                HermesApiClient.isTransportStreamError(errorMsg)
+            ) {
+                // Issue #166: a transport drop on the sessions endpoint does
+                // NOT mean the turn failed — upstream api_server keeps running
+                // it and persists the final answer. Don't finalize as an
+                // error; recover the answer by polling the transcript. The
+                // send queue is deliberately KEPT: a successful recovery
+                // drains it exactly like a normal completion; give-up flushes
+                // it in the error fallback.
+                startAnswerRecovery(
+                    handler = handler,
+                    sessionId = errorSessionId,
+                    pendingUserText = message,
+                    placeholderMessageId = currentMessageId,
+                    cause = errorMsg,
+                )
+                activeStream = null
+                _steerableTurn.value = false
+                _steerNotice.value = null
             } else {
                 AppAnalytics.onStreamError()
                 handler.onStreamError(errorMsg)
@@ -3469,24 +3980,25 @@ class ChatViewModel : ViewModel() {
                 // switch, watchdog timeout) AFTER the server already finished it
                 // — reload history so the completed answer still surfaces
                 // instead of stranding the turn on its partial/errored state.
-                val sid = handler.currentSessionId.value
-                if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
+                if (errorSessionId != null &&
+                    (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")
+                ) {
                     viewModelScope.launch {
                         runCatching {
                             // Profile-aware read — see onCompleteCb: a bare
                             // getMessages 404s for a non-default-profile session
                             // and silently empties the transcript.
-                            val serverMessages = loadSessionHistory(sid)
+                            val serverMessages = loadSessionHistory(errorSessionId)
                             handler.loadMessageHistory(serverMessages)
                         }
                     }
                 }
+                activeStream = null
+                _queuedMessages.value = emptyList()
+                _steerableTurn.value = false
+                _steerNotice.value = null
+                clearPendingAsk(approvalStamp = "deny")
             }
-            activeStream = null
-            _queuedMessages.value = emptyList()
-            _steerableTurn.value = false
-            _steerNotice.value = null
-            clearPendingAsk(approvalStamp = "deny")
         }
 
         // === v0.4.1 voice-intent + v0.7.x card-dispatch session sync ===
@@ -3577,6 +4089,7 @@ class ChatViewModel : ViewModel() {
         // branch's per-turn fallback (gateway unreachable / not the resolved
         // transport). Warns once per dispatch about any attachment it can't carry.
         fun dispatchSse(endpoint: String): ActiveTurnHandle {
+            dispatchedSseEndpoint = endpoint
             warnIfAttachmentsDropped(endpoint)
             return when (endpoint) {
             "runs" -> client.sendRunStream(
@@ -3832,6 +4345,10 @@ class ChatViewModel : ViewModel() {
 
     fun cancelStream() {
         intentionallyCancelled = true
+        // User Stop also aborts a dropped-stream answer recovery. settleUi
+        // false: the Stopped-badge block below finalizes the placeholder
+        // itself (completing it here first would hide it from findLast).
+        cancelAnswerRecovery(settleUi = false)
         activeStream?.cancel()
         activeStream = null
         _queuedMessages.value = emptyList()
@@ -4367,6 +4884,10 @@ class ChatViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         activeStream?.cancel()
+        // viewModelScope teardown already cancels the poller job; this just
+        // drops the reference symmetrically.
+        streamRecovery?.cancel()
+        streamRecovery = null
     }
 
     private fun appendRealtimeThinkingStatus(

@@ -5,7 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 
 /**
- * Single source of truth for the opt-in "keep the gateway chat connection
+ * Single source of truth for the opt-in "keep the app's connection to Hermes
  * alive in the background" preference. Off by default.
  *
  * Shared by [com.hermesandroid.relay.viewmodel.ConnectionViewModel] (the

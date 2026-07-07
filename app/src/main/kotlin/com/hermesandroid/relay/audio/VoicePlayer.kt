@@ -5,6 +5,8 @@ import android.media.audiofx.Visualizer
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.net.toUri
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -425,9 +427,25 @@ class VoicePlayer(
  * Production ExoPlayer factory — used as the default for [VoicePlayer].
  * Split out as a top-level function so unit tests can swap it for a
  * MockK mock without touching Media3's `Builder` class loader.
+ *
+ * Audio attributes (USAGE_MEDIA + CONTENT_TYPE_SPEECH) with
+ * `handleAudioFocus = true` are set so ExoPlayer requests audio focus when
+ * the first TTS clip starts, which warms the audio HAL output path before
+ * playback begins. Without them the very first turn of a cold voice session
+ * could lose its opening syllables to the AudioTrack/HAL allocation window —
+ * the standard-path twin of the deep-buffer cold-start the relay PCM player
+ * already mitigates. SPEECH also lets the system duck other audio
+ * appropriately for a spoken assistant reply.
  */
 @OptIn(UnstableApi::class)
 private fun defaultExoPlayer(context: Context): ExoPlayer =
     ExoPlayer.Builder(context)
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
         .setHandleAudioBecomingNoisy(true)
         .build()

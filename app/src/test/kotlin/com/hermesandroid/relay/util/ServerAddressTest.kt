@@ -101,6 +101,52 @@ class ServerAddressTest {
         assertEquals("https", ServerAddress.parse("https://h.example")?.scheme)
     }
 
+    // --- loopbackHostWarning: loopback addresses can't reach the server from a phone ---
+
+    @Test
+    fun loopbackHostWarningFlagsLoopbackAndAnyInterfaceHosts() {
+        val loopbacks = listOf(
+            "localhost",
+            "localhost:8642",
+            "http://localhost:8642",
+            "127.0.0.1",
+            "https://127.0.0.1:9119",
+            "::1",
+            "[::1]",
+            "http://[::1]:8642",
+            "0.0.0.0",
+            "http://0.0.0.0:8642",
+        )
+        for (value in loopbacks) {
+            assertNotNull("expected warning: '$value'", ServerAddress.loopbackHostWarning(value))
+        }
+    }
+
+    @Test
+    fun loopbackHostWarningIsNullForReachableAddresses() {
+        val reachable = listOf(
+            "192.168.1.10",
+            "192.168.1.10:8642",
+            "http://10.0.0.5:8642",
+            "100.64.0.1:8642",
+            "hermes.tail1234.ts.net",
+            "https://hermes.example.com:8642",
+            "hermes-box",
+            // Not loopback: hostname that merely starts with 127.
+            "127.evil.example.com",
+        )
+        for (value in reachable) {
+            assertNull("expected no warning: '$value'", ServerAddress.loopbackHostWarning(value))
+        }
+    }
+
+    @Test
+    fun loopbackHostWarningIsNullForBlankAndJunk() {
+        assertNull(ServerAddress.loopbackHostWarning(""))
+        assertNull(ServerAddress.loopbackHostWarning("   "))
+        assertNull(ServerAddress.loopbackHostWarning("not a host"))
+    }
+
     // --- fieldError: inline UI message contract ---
 
     @Test

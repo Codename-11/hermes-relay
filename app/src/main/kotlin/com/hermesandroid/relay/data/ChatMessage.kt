@@ -111,6 +111,15 @@ data class ChatMessage(
      * reconcile normally. Only [clientOnly] gates orphan preservation.
      */
     val clientOnly: Boolean = false,
+    /**
+     * Delivery state for a message the user sends into an agent **Thread** over
+     * the relay proactive channel ([com.hermesandroid.relay.viewmodel.ChatViewModel]
+     * routes `source=phone` sessions here instead of the normal chat send).
+     * `SENDING` until the relay acks (`proactive.reply.ack`) → `DELIVERED`;
+     * `FAILED` on a send error. Null for ordinary chat messages — those render
+     * no status affix.
+     */
+    val deliveryStatus: MessageDeliveryStatus? = null,
 )
 
 /**
@@ -304,6 +313,17 @@ enum class MessageRole {
     SYSTEM
 }
 
+/**
+ * Delivery state of a user reply sent into an agent Thread over the relay
+ * proactive channel. Only set on Thread replies; ordinary chat messages leave
+ * it null and show no status affix.
+ *
+ * - [SENDING]   handed to the relay; awaiting the per-reply ack.
+ * - [DELIVERED] the relay acked (`proactive.reply.ack`) — buffered for the agent.
+ * - [FAILED]    the send errored (e.g. relay disconnected).
+ */
+enum class MessageDeliveryStatus { SENDING, DELIVERED, FAILED }
+
 data class ChatSession(
     val sessionId: String,
     val title: String?,
@@ -311,7 +331,14 @@ data class ChatSession(
     val messageCount: Int = 0,
     val updatedAt: Long = 0L,
     val startedAt: Long = 0L,
-    val lastActivityAt: Long = 0L
+    val lastActivityAt: Long = 0L,
+    /**
+     * Originating gateway platform/source for this session (upstream `sessions.source`):
+     * `tui`/`api_server` for ordinary app chats, `phone` for an agent **Thread**, and
+     * `discord`/`slack`/… for other platforms. Null when the server didn't supply it or
+     * for locally-created optimistic rows. Drives the drawer's Thread tag (see ADR 12).
+     */
+    val source: String? = null,
 ) {
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)

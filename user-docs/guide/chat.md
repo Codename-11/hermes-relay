@@ -217,16 +217,18 @@ in your saved chat history — so there the agent reads phone state on demand vi
 the `android_phone_status` tool. Privacy-sensitive fields (foreground app,
 battery) default off and are only added when you opt in.
 
-## Keep connected in background
+## Persistent connection
 
-By default the chat connection is held open while Hermes-Relay is on screen and
-for a couple of minutes after you switch away, so a quick return is instant; on
-a longer absence it reconnects when you reopen the chat. Returning to a chat the
-app pre-warms the connection in the background so your first message is fast.
+By default the connection to Hermes is held open while Hermes-Relay is on screen
+and for a couple of minutes after you switch away, so a quick return is instant;
+on a longer absence it reconnects when you reopen the chat. Returning to a chat,
+the app pre-warms the connection in the background so your first message is fast.
 
 If you want the connection to stay fully open even when the app is in the
-background, turn on **Settings → Chat → Keep connected in background** (off by
-default). It shows an ongoing notification — tap **Disconnect** on it, or flip
-the toggle, to stop. This uses more battery; swiping the app away from recents
-also ends it. It's the same approach apps like Home Assistant use to stay
-connected.
+background, turn on **Settings → Quick Controls → Persistent connection** (off by
+default). It holds the app's connection to Hermes open via an ongoing
+notification, so messages and live features stay responsive; for relay-paired
+setups it also keeps device control and notification mirroring reachable. Tap
+**Turn off** on the notification, or flip the toggle, to stop. This uses more
+battery; swiping the app away from recents also ends it. It's the same approach
+apps like Home Assistant use to stay connected.

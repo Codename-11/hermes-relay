@@ -54,10 +54,12 @@ from .channels.bridge import BridgeError, BridgeHandler
 from .channels.chat import ChatHandler
 from .channels.desktop import DesktopChannel
 from .channels.notifications import NotificationsChannel
+from .channels.proactive import ProactiveChannel, ProactiveError
 from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
+from .session_store import read_phone_threads
 from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
 from .realtime_voice import RealtimeVoiceHandler
@@ -112,6 +114,14 @@ class RelayServer:
         # === PHASE3-notif-listener: notifications channel ===
         self.notifications = NotificationsChannel()
         # === END PHASE3-notif-listener ===
+        # Proactive channel — agent-initiated messages pushed to the phone
+        # (send_message target=phone). Mirror of bridge, reversed: server→app
+        # push with no awaited reply. Latched on proactive.subscribe.
+        self.proactive = ProactiveChannel()
+        # Durable fallback for realtime voice: a background run whose result
+        # never reached the phone (voice session died before resume) is pushed
+        # as a proactive phone message — buffered while the phone is offline.
+        self.realtime_agent.proactive_push = self.proactive.push
         # Desktop CLI awareness channel — stashes workspace + active-editor
         # hints per session (ephemeral; no persistence). Wired in alpha.6
         # as the keystone for future prompt-injection plugin hooks.
@@ -145,6 +155,7 @@ class RelayServer:
         await self.bridge.close()
         await self.desktop.close()
         await self.tui.close()
+        await self.proactive.close()
 
         # Close all WebSocket connections
         for ws in list(self._clients):
@@ -3174,6 +3185,190 @@ async def handle_notifications_recent(request: web.Request) -> web.Response:
 # === END PHASE3-notif-listener ===
 
 
+async def handle_phone_message(request: web.Request) -> web.Response:
+    """Forward an agent-initiated message to the subscribed phone.
+
+    Called by the phone platform adapter (``plugin/phone_platform.py``) over
+    loopback. The relay pushes a ``phone.message`` envelope over the phone's
+    WSS via the :class:`ProactiveChannel`.
+
+    Loopback-only: the adapter runs in the gateway process on the same host.
+    Unlike the bridge routes (which need a paired phone to do anything), an
+    outbound push could spam the user's notifications, so this route is not
+    exposed to the LAN.
+
+    POST /phone/message  {chat_id, text, title?, surfacing?, reply_to?, metadata?}
+      → 200 {"delivered": true, "message_id": "..."}  (sent to a live phone)
+      → 200 {"delivered": false, "queued": true, "message_id": "...", "buffered": N}
+            (no phone subscribed — queued, flushed on the next subscribe)
+      → 400 invalid body / empty text
+      → 403 non-loopback caller
+      → 502 socket write failed
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        return web.json_response({"error": "loopback only"}, status=403)
+
+    server: RelayServer = request.app["server"]
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return web.json_response({"error": "text is required"}, status=400)
+
+    try:
+        result = await server.proactive.push(payload)
+    except ProactiveError as exc:
+        # push() now buffers when no phone is subscribed, so the only
+        # ProactiveError path left is a live socket write that failed → 502.
+        return web.json_response({"error": str(exc)}, status=502)
+
+    return web.json_response(result, status=200)
+
+
+async def handle_phone_outbound(request: web.Request) -> web.Response:
+    """Inspect or cancel the queued agent→phone outbound messages.
+
+    Loopback-only (same rationale as ``/phone/message``). Lets a status view /
+    `relay` CLI / dashboard show what's waiting for an offline phone and cancel
+    it before it flushes on the next subscribe.
+
+    GET    /phone/outbound                  → {queued, messages:[{message_id, chat_id, text, sent_at}]}
+    DELETE /phone/outbound                  → cancel ALL → {cancelled}
+    DELETE /phone/outbound?message_id=<id>  → cancel one → {cancelled}
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        return web.json_response({"error": "loopback only"}, status=403)
+
+    server: RelayServer = request.app["server"]
+    if request.method == "DELETE":
+        mid = request.query.get("message_id") or None
+        cancelled = server.proactive.cancel_outbound(mid)
+        return web.json_response({"cancelled": cancelled}, status=200)
+
+    messages = server.proactive.peek_outbound()
+    return web.json_response({"queued": len(messages), "messages": messages}, status=200)
+
+
+# Cap the server-side long-poll hold so a wedged gateway poller can't pin a
+# request open forever; the adapter re-polls. Generous vs. the adapter's own
+# read timeout so a normal empty poll returns from here, not from a client
+# timeout.
+_REPLIES_MAX_LONGPOLL_SECONDS = 30.0
+
+
+async def handle_phone_replies(request: web.Request) -> web.Response:
+    """Long-poll for buffered phone replies (the inbound reply leg).
+
+    The phone platform adapter (``plugin/phone_platform.py``) runs in the
+    gateway process and polls this loopback route. Replies arrive over the
+    phone WSS as ``proactive.reply`` envelopes and are buffered by the
+    :class:`ProactiveChannel`; this drains them. Mirror image of the outbound
+    ``POST /phone/message`` hop — the two processes can't hand a reply over
+    in-process, so it is parked and polled.
+
+    Loopback-only for the same reason as ``/phone/message``: only the
+    co-located gateway adapter should consume the user's replies.
+
+    GET /phone/replies?timeout=<seconds>
+      → 200 {"replies": [{text, chat_id, reply_to, message_id, ts}, ...]}
+            (possibly empty after the long-poll window elapses)
+      → 403 non-loopback caller
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        return web.json_response({"error": "loopback only"}, status=403)
+
+    server: RelayServer = request.app["server"]
+
+    raw_timeout = request.query.get("timeout", "25")
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError):
+        timeout = 25.0
+    # Clamp to a sane window: non-negative, and never longer than the server cap.
+    timeout = max(0.0, min(timeout, _REPLIES_MAX_LONGPOLL_SECONDS))
+
+    replies = await server.proactive.take_replies(timeout)
+    return web.json_response({"replies": replies}, status=200)
+
+
+async def handle_phone_threads(request: web.Request) -> web.Response:
+    """Map phone Threads to their ``chat_id`` — the field ``/api/sessions`` omits.
+
+    A phone **Thread** is a ``source=phone`` gateway session keyed by a
+    ``chat_id`` (the platform conversation id). The gateway persists ``chat_id``
+    in its session store but does NOT return it from ``/api/sessions`` (only the
+    opaque timestamp ``id`` + ``source``), so the Android client can't map a
+    session to its Thread to route a reply. This reads the gateway store
+    (read-only) and returns the mapping the client needs — it survives an app
+    restart and covers Threads the client didn't create itself. Redundant once
+    upstream adds ``chat_id`` to ``/api/sessions``.
+
+    Loopback callers skip bearer auth (dashboard/diagnostics); the paired phone
+    app presents its relay session bearer (same gate as ``/context/injected``).
+
+    GET /phone/threads
+      → 200 {"threads": [{session_id, chat_id, title}, ...]}
+      → 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+    if not is_loopback:
+        _server, _session = _require_bearer_session(request)
+    return web.json_response({"threads": read_phone_threads()})
+
+
+# Update-check cache — a GitHub round-trip per poll would be wasteful and risk
+# rate-limiting, so the resolved result is cached for an hour. The app polls
+# this far less often than that; ``?refresh=1`` forces a re-fetch.
+_UPDATE_CHECK_CACHE: dict[str, Any] = {"result": None, "at": 0.0}
+_UPDATE_CHECK_TTL: float = 3600.0
+
+
+async def handle_relay_update_check(request: web.Request) -> web.Response:
+    """Report whether a newer hermes-relay plugin release is available.
+
+    The dashboard has its own (loopback) update-check; this is the **app-facing**
+    twin on the relay port so the phone can surface a soft "your relay is behind"
+    nudge. Compares the installed ``plugin.relay.__version__`` against the latest
+    ``plugin-v*`` GitHub release and names the right update command for the host.
+
+    Loopback callers skip bearer auth (diagnostics); the paired phone presents
+    its relay session bearer (same gate as ``/phone/threads``). The blocking
+    GitHub fetch runs in an executor so it never stalls the event loop, and the
+    result is cached for an hour. Failures degrade to
+    ``update_available=false`` with an ``error`` — never a 5xx.
+
+    GET /relay/update-check[?refresh=1]
+      → 200 {current, latest, update_available, update_command, error?}
+      → 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+    if not is_loopback:
+        _server, _session = _require_bearer_session(request)
+
+    force = request.query.get("refresh", "").strip().lower() in ("1", "true", "yes")
+    now = time.monotonic()
+    cached = _UPDATE_CHECK_CACHE["result"]
+    if force or cached is None or (now - _UPDATE_CHECK_CACHE["at"]) > _UPDATE_CHECK_TTL:
+        from .. import update_check
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, update_check.check)
+        _UPDATE_CHECK_CACHE["result"] = result
+        _UPDATE_CHECK_CACHE["at"] = now
+
+    return web.json_response(_UPDATE_CHECK_CACHE["result"])
+
+
 async def handle_context_injected(request: web.Request) -> web.Response:
     """Return the relay-owned system-prompt context audit shape.
 
@@ -3562,6 +3757,12 @@ async def _on_message(
         task = asyncio.create_task(server.notifications.handle(ws, envelope))
         _track_task(server, ws, task)
     # === END PHASE3-notif-listener ===
+    elif channel == "proactive":
+        # Phone subscribing to / unsubscribing from agent-initiated pushes.
+        # Outbound phone.message envelopes originate from the HTTP route, not
+        # here; this only handles the phone→server subscribe lifecycle.
+        task = asyncio.create_task(server.proactive.handle(ws, envelope))
+        _track_task(server, ws, task)
     elif channel == "desktop":
         # Desktop CLI awareness — workspace + active-editor hints. Stashed
         # on the session; never replied to. Dispatching as a tracked task
@@ -3656,6 +3857,11 @@ async def _on_disconnect(
     # the 30s timeout on every in-flight request_id.
     await server.bridge.detach_ws(ws, reason=f"client {remote_ip} disconnected")
     # === END PHASE3-bridge-server ===
+
+    # If this ws was the proactive subscriber, release it so the next
+    # /phone/message returns 503 (no phone) instead of writing to a dead
+    # socket.
+    await server.proactive.detach_ws(ws, reason=f"client {remote_ip} disconnected")
 
     # Desktop CLI context is per-ws and should not outlive the socket — the
     # next client connect will re-advertise its workspace anyway.
@@ -3938,6 +4144,19 @@ def create_app(config: RelayConfig) -> web.Application:
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
+    # Proactive push: agent → phone. Loopback-only (the phone platform
+    # adapter POSTs here). Forwards over the phone WSS via ProactiveChannel.
+    app.router.add_post("/phone/message", handle_phone_message)
+    # Inbound reply leg (Phase 2c) — the gateway adapter long-polls here to
+    # drain ``proactive.reply`` envelopes buffered by the ProactiveChannel.
+    app.router.add_get("/phone/replies", handle_phone_replies)
+    # Inspect / cancel the queued agent→phone outbound buffer (offline phone).
+    app.router.add_get("/phone/outbound", handle_phone_outbound)
+    app.router.add_delete("/phone/outbound", handle_phone_outbound)
+    # Map phone Threads → chat_id (the field /api/sessions omits) so the app can
+    # route a reply into the right Thread. Bearer for the app; loopback for diag.
+    app.router.add_get("/phone/threads", handle_phone_threads)
+    app.router.add_get("/relay/update-check", handle_relay_update_check)
 
     # Relay-owned agent context audit.
     app.router.add_get("/context/injected", handle_context_injected)

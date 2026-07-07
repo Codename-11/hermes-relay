@@ -19,7 +19,7 @@ features:
       width: 40
       height: 40
     title: Chat that streams, not spins
-    details: Direct HTTP/SSE to your Hermes API server — markdown, syntax-highlighted code, reasoning blocks, live tool-progress cards. No cloud relay in the path.
+    details: Rides your dashboard's live gateway WebSocket when signed in — live thinking included — and falls back to direct HTTP/SSE against the API server. Markdown, syntax-highlighted code, reasoning blocks, tool-progress cards. No cloud relay in the path.
   - icon:
       src: /icons/personalities.svg
       width: 40

@@ -11,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.components.avatar.PetImporter
 import com.hermesandroid.relay.ui.components.avatar.PetImportResult
@@ -36,6 +37,13 @@ import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
+import com.hermesandroid.relay.data.proactiveEnabledFlow
+import com.hermesandroid.relay.data.setProactiveEnabled
+import com.hermesandroid.relay.data.DEFAULT_HIDDEN_SOURCES
+import com.hermesandroid.relay.data.ProactiveInboxEntry
+import com.hermesandroid.relay.data.ProactiveInboxRepository
+import com.hermesandroid.relay.data.SessionSourcePrefs
+import com.hermesandroid.relay.data.ThreadNameStore
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -70,7 +78,10 @@ import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.accessibility.BridgeStatusReporter
 import com.hermesandroid.relay.accessibility.ScreenCapture
 import com.hermesandroid.relay.network.relay.BridgeCommandHandler
+import com.hermesandroid.relay.network.relay.ProactiveMessageHandler
+import com.hermesandroid.relay.network.relay.models.Envelope
 // === END PHASE3-accessibility ===
+import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.viewmodel.connection.PairingController
 import com.hermesandroid.relay.viewmodel.connection.ProfileController
@@ -102,6 +113,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 private data class RelayUiInputs(
     val auth: AuthState,
@@ -152,6 +165,12 @@ enum class ChatConnectState {
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
+        // Shared log tag for connection lifecycle + handoff tracing. Pairs with
+        // ConnectionManager's "ConnectionManager" tag so a single
+        // `logcat -s ConnectionVM ConnectionManager` shows the full relay
+        // socket → derived-state → surfaced-banner story.
+        private const val TAG = "ConnectionVM"
+
         // API Server (direct chat)
         private val KEY_API_SERVER_URL = stringPreferencesKey("api_server_url")
         private const val DEFAULT_API_URL = "http://localhost:8642"
@@ -169,6 +188,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // reconnect genuinely fails (server down, bad network).
         private const val RELAY_RECONNECT_GRACE_MS = 5_000L
 
+        // A brief switch-away (glance at another app) doesn't need the full
+        // cache-clearing re-probe [revalidateOnResume] normally does — the
+        // sockets keep 30s pings and the connection was healthy moments ago.
+        // Only pay the re-probe (+ Probing badge flash) when we were away long
+        // enough that the connection could have gone stale, or when it isn't
+        // already healthy. Network *changes* are handled independently by the
+        // ConnectivityObserver/network callbacks, not by revalidate(), so
+        // skipping here can't miss a Wi-Fi↔cellular flip.
+        private const val BRIEF_RESUME_REVALIDATE_MS = 15_000L
+
         /**
          * Placeholder label written by [beginAddConnection] before the
          * user has scanned a QR. The pair-success watcher treats a
@@ -184,6 +213,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected app theme id (palette/personality). Orthogonal to KEY_THEME,
         // which is the light/dark/auto mode axis honored by BOTH-mode themes.
         private val KEY_APP_THEME = stringPreferencesKey("app_theme")
+        // Selected app font id (body typeface). Resolved against AppFont at the
+        // Compose theme root; defaults to Inter. Orthogonal to KEY_FONT_SCALE
+        // (which scales sizes); this picks the family.
+        private val KEY_APP_FONT = stringPreferencesKey("app_font")
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
@@ -199,6 +232,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val KEY_LAST_SESSION_ID = stringPreferencesKey("last_session_id")
         private val KEY_SHOW_THINKING = booleanPreferencesKey("show_thinking")
         private val KEY_TOOL_DISPLAY = stringPreferencesKey("tool_display")
+        private val KEY_THINKING_INDICATOR_STYLE = stringPreferencesKey("thinking_indicator_style")
+        private val KEY_THINKING_MATRIX_PATTERN = stringPreferencesKey("thinking_matrix_pattern")
+        private val KEY_THINKING_MATRIX_COLOR = stringPreferencesKey("thinking_matrix_color")
         private val KEY_APP_CONTEXT = booleanPreferencesKey("app_context_prompt")
         // === PHASE3-status: granular phone-status sub-toggles ===
         // Gated by the master KEY_APP_CONTEXT. Privacy-sensitive fields
@@ -421,7 +457,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         pairedTokenSnapshot = {
             // Same synchronous paired-token read the fetch uses, so the media-
             // capability badge agrees with whether /media/by-path can actually
-            // fetch (the token is wiped on relay restart until we re-pair).
+            // fetch (no current paired token → the fetch can't authenticate).
             (authManager.authState.value as? AuthState.Paired)?.token
         },
     )
@@ -487,6 +523,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val connectionHandoffStatus: StateFlow<ConnectionHandoffStatus?> =
         _connectionHandoffStatus.asStateFlow()
     private var connectionHandoffClearJob: Job? = null
+    // Timestamp of the last app foreground resume (cold start counts). A relay
+    // reconnect within RELAY_RECONNECT_GRACE_MS of this is almost always the
+    // same connection re-handshaking after the OS dropped the socket in the
+    // background — we suppress its transient banner so the user isn't shown a
+    // misleading "Reconnecting"/"Connection changed" flash on every app switch.
+    @Volatile
+    private var lastForegroundResumeAtMs: Long = 0L
+    // True while a just-resumed reconnect's banner is being withheld. Lets the
+    // subsequent "Connection restored" pair stay silent too if we never showed
+    // the reconnecting banner. Touched only from the main-thread state collector.
+    private var suppressedTransientReconnect = false
+    private var transientReconnectJob: Job? = null
+    // True for RELAY_RECONNECT_GRACE_MS right after a foreground resume. The
+    // handoff path suppresses its own "Reconnecting" banner on resume, but the
+    // *health*-derived cue ("Connecting to Hermes", active) leaks the bottom-strip
+    // "Reconnecting…" cue independently — so a benign resume flashed the cue and
+    // then cleared with no "Connected" toast (handoff stayed suppressed). The UI
+    // gates the bottom-strip cue on this so a benign resume is fully silent; if
+    // the socket is still down past the window it un-gates and the cue shows.
+    private val _postResumeQuiet = MutableStateFlow(false)
+    val postResumeQuiet: StateFlow<Boolean> = _postResumeQuiet.asStateFlow()
+    private var postResumeQuietJob: Job? = null
     private val _serverChatDisplaySettings =
         MutableStateFlow<DashboardChatDisplaySettings?>(null)
 
@@ -603,6 +661,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
         _authManagerFlow
             .flatMapLatest { it.profilesUpdatedEvents }
+            .shareIn(
+                scope = viewModelScope,
+                started = SharingStarted.Eagerly,
+                replay = 0,
+            )
+
+    /**
+     * Per-connection auth-success signal, sourced from the *current*
+     * [AuthManager] so it follows connection switches (the `var authManager`
+     * is rebuilt on switch). Drives proactive re-subscribe on every reconnect.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val authOkEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _authManagerFlow
+            .flatMapLatest { it.authOkEvents }
             .shareIn(
                 scope = viewModelScope,
                 started = SharingStarted.Eagerly,
@@ -980,6 +1053,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             preferences[KEY_APP_THEME] ?: AppThemes.DEFAULT_ID
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
+
+    // Selected app font id (body typeface). Defaults to Inter. Resolved against
+    // AppFont.byId at the Compose theme root, which rebuilds Typography so the
+    // whole app re-themes live when this changes.
+    val appFont: StateFlow<String> = application.relayDataStore.data
+        .map { preferences ->
+            preferences[KEY_APP_FONT] ?: AppFont.DEFAULT.id
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppFont.DEFAULT.id)
 
     // Selected sphere skin id ("auto" follows the theme). Resolved against
     // SphereRegistry + loaded user skins at the Compose root.
@@ -1521,6 +1603,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // In-bubble streaming "thinking" indicator style: "dots" (classic three
+    // fading bullets) or "matrix" (the DotMatrixIndicator grid). Local-only
+    // display pref; defaults to "matrix".
+    val thinkingIndicatorStyle: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_THINKING_INDICATOR_STYLE] ?: "matrix" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "matrix")
+
+    fun setThinkingIndicatorStyle(value: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_THINKING_INDICATOR_STYLE] = if (value == "matrix") "matrix" else "dots"
+            }
+        }
+    }
+
+    // Which authored motion the "matrix" thinking indicator plays: "wave"
+    // (procedural sweep), "pulse", "bounce", or "sparkle". Local-only display
+    // pref; unknown values resolve to wave at the UI layer.
+    val thinkingMatrixPattern: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_THINKING_MATRIX_PATTERN] ?: "wave" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "wave")
+
+    fun setThinkingMatrixPattern(value: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_THINKING_MATRIX_PATTERN] = value
+            }
+        }
+    }
+
+    // Which color the "matrix" thinking indicator paints with: "auto" (follow
+    // the bubble text) or a brand accent ("relay"/"cyan"/"green"/"amber"/
+    // "purple"/"pink"). Local-only; unknown values resolve to auto at the UI.
+    val thinkingMatrixColor: StateFlow<String> = application.relayDataStore.data
+        .map { it[KEY_THINKING_MATRIX_COLOR] ?: "auto" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
+    fun setThinkingMatrixColor(value: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_THINKING_MATRIX_COLOR] = value
+            }
+        }
+    }
+
     // Close the session drawer after a successful send. Default ON because
     // sending should return focus to the live conversation; users who use the
     // drawer as a pinned session navigator can keep it open.
@@ -1684,6 +1811,162 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
     // === END PHASE3-accessibility (plus safety-rails wiring above) ===
 
+    // === Proactive (agent → phone) messages ===
+    // Handles inbound `phone.message` envelopes. Receiving is gated by
+    // [proactiveEnabled]: the relay only pushes when the app has sent
+    // `proactive.subscribe`, which we only do when the toggle is on. Off by
+    // default.
+
+    /** Persisted "Hermes" inbox of agent-initiated messages (Phase 2a). */
+    val proactiveInbox = ProactiveInboxRepository(application)
+
+    val inboxMessages: StateFlow<List<ProactiveInboxEntry>> =
+        proactiveInbox.entries.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // The handler centralizes surfacing (notification / inbox / session). The
+    // inbox sink persists messages here; the session sink lands in Phase 2b.
+    val proactiveMessageHandler = ProactiveMessageHandler(
+        context = application,
+        toInbox = { msg ->
+            viewModelScope.launch {
+                proactiveInbox.add(
+                    ProactiveInboxEntry(
+                        id = msg.messageId ?: java.util.UUID.randomUUID().toString(),
+                        title = msg.title ?: "Hermes",
+                        text = msg.text,
+                        receivedAt = msg.sentAt ?: System.currentTimeMillis(),
+                        chatId = msg.chatId,
+                    ),
+                )
+            }
+        },
+    )
+
+    /** "Let Hermes message me" — off by default. */
+    val proactiveEnabled: StateFlow<Boolean> = application.proactiveEnabledFlow()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    // Drawer source visibility — which gateway sources are hidden (default:
+    // the noisy automation lanes cron + webhook). Edited from the drawer source
+    // filter + Chat settings; both write the same persisted set.
+    private val sessionSourcePrefs = SessionSourcePrefs(application)
+    val hiddenSources: StateFlow<Set<String>> = sessionSourcePrefs.hiddenSources
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_HIDDEN_SOURCES)
+
+    fun setSourceHidden(source: String, hidden: Boolean) {
+        viewModelScope.launch { sessionSourcePrefs.setHidden(source, hidden) }
+    }
+
+    // Persisted user-chosen Thread names (sessionId → name) — applied to the
+    // drawer so a named Thread keeps its name across restarts and beats the
+    // gateway's async auto-title. Wired to ChatViewModel via RelayApp.
+    private val threadNameStore = ThreadNameStore(application)
+    val threadNames: StateFlow<Map<String, String>> = threadNameStore.names
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    fun saveThreadName(sessionId: String, name: String) {
+        viewModelScope.launch { threadNameStore.setName(sessionId, name) }
+    }
+
+    // Phone Thread session_id → chat_id, fetched from the relay's /phone/threads
+    // (the gateway store has chat_id but /api/sessions doesn't). Seeds the chat
+    // composer's reply routing so a Thread the app didn't create — or any Thread
+    // after restart — routes to the right conversation. Fail-soft: empty on an
+    // older relay / fetch error, and the client's learned map still applies.
+    private val _phoneThreadChatIds = MutableStateFlow<Map<String, String>>(emptyMap())
+    val phoneThreadChatIds: StateFlow<Map<String, String>> = _phoneThreadChatIds.asStateFlow()
+
+    fun refreshPhoneThreadChatIds() {
+        viewModelScope.launch {
+            relayHttpClient.fetchPhoneThreads().onSuccess { threads ->
+                val map = threads
+                    .filter { it.sessionId.isNotBlank() && it.chatId.isNotBlank() }
+                    .associate { it.sessionId to it.chatId }
+                if (map.isNotEmpty()) _phoneThreadChatIds.value = map
+            }
+        }
+    }
+
+    // Relay plugin update status from /relay/update-check (the relay compares its
+    // installed version to the latest plugin-v* release, cached an hour). Drives
+    // the Settings version readout + a soft, dismissible "relay is behind" nudge.
+    // Fail-soft: stays null on an older relay (no route) or a fetch error.
+    private val _relayUpdateInfo = MutableStateFlow<RelayHttpClient.RelayUpdateInfo?>(null)
+    val relayUpdateInfo: StateFlow<RelayHttpClient.RelayUpdateInfo?> = _relayUpdateInfo.asStateFlow()
+
+    fun refreshRelayUpdateInfo() {
+        viewModelScope.launch {
+            relayHttpClient.fetchUpdateCheck().onSuccess { info ->
+                if (info != null) _relayUpdateInfo.value = info
+            }
+        }
+    }
+
+    private fun sendProactiveSubscribe() {
+        multiplexer.send(Envelope(channel = "proactive", type = "proactive.subscribe"))
+    }
+
+    private fun sendProactiveUnsubscribe() {
+        multiplexer.send(Envelope(channel = "proactive", type = "proactive.unsubscribe"))
+    }
+
+    /**
+     * Flip the "Let Hermes message me" preference. The actual
+     * subscribe/unsubscribe over the WSS is driven reactively by the
+     * [proactiveEnabled] collector in init, so this only persists the flag.
+     */
+    fun setProactiveEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().setProactiveEnabled(enabled)
+        }
+    }
+
+    /** Clear the Hermes inbox of agent-initiated messages. */
+    fun clearProactiveInbox() {
+        viewModelScope.launch { proactiveInbox.clear() }
+    }
+
+    /**
+     * Send a reply to a proactive message back to the agent (Phase 2c). The
+     * relay buffers it and the gateway adapter long-polls it, turning it into
+     * an inbound platform message that continues the originating conversation.
+     *
+     * Best-effort over the live relay WS (dropped if disconnected — the same
+     * semantics as [sendProactiveSubscribe]). Used by the Hermes inbox reply
+     * box; the notification inline-reply path goes through
+     * [com.hermesandroid.relay.notifications.ProactiveReplyReceiver] instead.
+     *
+     * @param chatId the conversation to continue (from the original message).
+     * @param replyTo the answered message's id (anchors the reply).
+     */
+    fun sendProactiveReply(
+        text: String,
+        chatId: String?,
+        replyTo: String?,
+        messageId: String? = null,
+    ) {
+        val body = text.trim()
+        if (body.isEmpty()) return
+        multiplexer.send(
+            Envelope(
+                channel = "proactive",
+                type = "proactive.reply",
+                payload = buildJsonObject {
+                    put("text", body)
+                    if (!chatId.isNullOrBlank()) put("chat_id", chatId)
+                    if (!replyTo.isNullOrBlank()) put("reply_to", replyTo)
+                    // The app-minted id the relay echoes back in
+                    // `proactive.reply.ack`, so a Thread reply bubble can settle
+                    // SENDING → DELIVERED. Omitted by the inbox/notification
+                    // paths (they don't track per-bubble status).
+                    if (!messageId.isNullOrBlank()) put("message_id", messageId)
+                    put("ts", System.currentTimeMillis())
+                },
+            ),
+        )
+    }
+    // === END Proactive ===
+
     // --- Connection switch orchestration ----------------------------------
     //
     // Multi-connection v0.5.0: the coordinator owns the heavy swap sequence
@@ -1822,6 +2105,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val cleanTitle = title.trim().takeIf { it.isNotBlank() } ?: "Connection changed"
         val cleanRoute = route?.trim()?.takeIf { it.isNotBlank() }
         val cleanDetail = detail?.trim()?.takeIf { it.isNotBlank() }?.take(120)
+        // Trace which strip/banner actually surfaced (and why). Best-practice
+        // permanent logging: handoffs are infrequent, and this is the single
+        // line that answers "what made that status appear?" during triage.
+        android.util.Log.i(
+            TAG,
+            "handoff: '$cleanTitle' active=$active success=$success " +
+                "route=${cleanRoute ?: "-"} detail=${cleanDetail ?: "-"}",
+        )
         val entry = ConnectionHandoffTraceEntry(
             label = cleanTitle,
             detail = cleanDetail,
@@ -2555,6 +2846,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         bridgeStatusReporter.start()
 
+        // === Proactive (agent → phone) wiring ===
+        // Inbound `phone.message` → notification handler.
+        multiplexer.registerHandler("proactive") { envelope ->
+            proactiveMessageHandler.onMessage(envelope)
+        }
+        // Re-send `proactive.subscribe` on every auth.ok (the relay tracks the
+        // subscription per-WebSocket, so it must be re-established on each
+        // reconnect). Only when the user opted in. Sent AFTER auth.ok so it
+        // never races ahead of the auth handshake.
+        viewModelScope.launch {
+            authOkEvents.collect {
+                if (proactiveEnabled.value) sendProactiveSubscribe()
+                // Pull the phone Thread → chat_id map so replies route correctly
+                // (covers Threads the app didn't create + survives restart).
+                refreshPhoneThreadChatIds()
+                // Check whether the relay's plugin is behind the latest release.
+                refreshRelayUpdateInfo()
+            }
+        }
+        // React to the toggle flipping while already connected. drop(1) skips
+        // the initial DataStore replay (a fresh connect's auth.ok handles the
+        // first subscribe). Best-effort: a send while disconnected is dropped,
+        // and the auth.ok collector re-subscribes on the next connect.
+        viewModelScope.launch {
+            proactiveEnabled
+                .drop(1)
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    if (enabled) sendProactiveSubscribe() else sendProactiveUnsubscribe()
+                }
+        }
+        // === END Proactive wiring ===
+
         // === PHASE3-status: push status immediately on master toggle flip ===
         // The periodic tick is 30 s, but the relay-side cache (and the
         // agent's `android_phone_status()` tool that reads it) should see
@@ -2649,6 +2973,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .multiplexer = multiplexer
         // === END PHASE3-notif-listener-followup ===
 
+        // Proactive notification inline-reply (Phase 2c) — the BroadcastReceiver
+        // lives outside the ViewModel scope, so it reads the live multiplexer
+        // from this static slot (same pattern as the notification companion
+        // above). Replies sent while the relay is disconnected drop best-effort.
+        com.hermesandroid.relay.notifications.ProactiveReplyReceiver
+            .multiplexer = multiplexer
+
         // Resolve [relayUiState] from the three raw inputs (authState,
         // relayConnectionState, relayUrl) with a grace-window transition
         // to Stale. Lifted here from three separate ad-hoc helpers across
@@ -2703,9 +3034,37 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 }
         }
 
+        // Stamp the resume timestamp whenever the process returns to the
+        // foreground (and on the initial start). Read by the reconnect handoff
+        // logic below to decide whether a reconnect is a benign post-resume
+        // re-handshake worth suppressing.
+        viewModelScope.launch {
+            AppForegroundTracker.isForeground.collect { foreground ->
+                if (foreground) {
+                    lastForegroundResumeAtMs = System.currentTimeMillis()
+                    // Open the quiet window: hide the reconnect cue while a benign
+                    // post-resume re-handshake settles. Reopen (un-gate) after the
+                    // grace window so a genuine outage still surfaces.
+                    _postResumeQuiet.value = true
+                    postResumeQuietJob?.cancel()
+                    postResumeQuietJob = launch {
+                        delay(RELAY_RECONNECT_GRACE_MS)
+                        _postResumeQuiet.value = false
+                    }
+                }
+            }
+        }
+
         viewModelScope.launch {
             var previousState: ConnectionState? = null
             var previousRole: String? = null
+            // Role at the last time we surfaced a "connected" handoff. Lets the
+            // single connect message decide "Connected" vs "Connection changed
+            // X → Y" at the moment the socket is actually up — so a route swap is
+            // ONE message, never "Connection changed" followed by a redundant
+            // "Connected". (previousRole can't do this: the endpoint often
+            // republishes the new role mid-swap, before the reconnect completes.)
+            var lastConnectedRole: String? = null
             combine(
                 relayConnectionState,
                 connectionManager.activeEndpoint,
@@ -2718,49 +3077,94 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     previousRole = role
                     if (priorState == null) return@collect
 
+                    // Every relay socket-state / endpoint-role transition that
+                    // *could* surface a handoff banner. This is the "both sides"
+                    // client trace: pair it with the server's connection log to
+                    // tell a real drop (server saw a close) from a client-only
+                    // role flip (server saw nothing → spurious "route changed").
+                    android.util.Log.i(
+                        TAG,
+                        "relay transition: $priorState→$state " +
+                            "role=${priorRole ?: "-"}→${role ?: "-"}",
+                    )
+
                     when {
                         state == ConnectionState.Reconnecting -> {
-                            recordConnectionHandoff(
-                                title = "Connection changed",
-                                route = displayEndpointRole(role ?: priorRole),
-                                detail = "Trying relay route",
-                                active = true,
-                                success = false,
-                            )
-                        }
-                        state == ConnectionState.Connected &&
-                            priorState == ConnectionState.Reconnecting -> {
-                            recordConnectionHandoff(
-                                title = "Connection restored",
-                                route = displayEndpointRole(role),
-                                detail = "Relay path ready",
-                                active = false,
-                                success = true,
-                            )
+                            // Same connection re-handshaking — never imply a switch
+                            // ("Connection changed" used to mislead here; a genuine
+                            // route switch is handled by its own branch below).
+                            val reconnectHandoff = {
+                                recordConnectionHandoff(
+                                    title = "Reconnecting",
+                                    route = displayEndpointRole(role ?: priorRole),
+                                    detail = "Re-establishing the relay socket",
+                                    active = true,
+                                    success = false,
+                                )
+                            }
+                            val resumeAgeMs = System.currentTimeMillis() - lastForegroundResumeAtMs
+                            val justResumed = resumeAgeMs in 0 until RELAY_RECONNECT_GRACE_MS
+                            transientReconnectJob?.cancel()
+                            if (justResumed) {
+                                // Withhold the banner: on a foreground resume the OS
+                                // commonly drops + re-handshakes the socket. Only
+                                // surface "Reconnecting" if it's still down past the
+                                // grace window (a real outage, not an app switch).
+                                suppressedTransientReconnect = true
+                                transientReconnectJob = launch {
+                                    delay(RELAY_RECONNECT_GRACE_MS)
+                                    if (relayConnectionState.value == ConnectionState.Reconnecting) {
+                                        suppressedTransientReconnect = false
+                                        reconnectHandoff()
+                                    }
+                                }
+                            } else {
+                                suppressedTransientReconnect = false
+                                reconnectHandoff()
+                            }
                         }
                         state == ConnectionState.Connected &&
                             priorState != ConnectionState.Connected -> {
-                            recordConnectionHandoff(
-                                title = "Connected to Hermes",
-                                route = displayEndpointRole(role),
-                                detail = "Relay path ready",
-                                active = false,
-                                success = true,
-                            )
-                        }
-                        state == ConnectionState.Connected &&
-                            !priorRole.isNullOrBlank() &&
-                            !role.isNullOrBlank() &&
-                            !priorRole.equals(role, ignoreCase = true) -> {
-                            val from = displayEndpointRole(priorRole)
-                            val to = displayEndpointRole(role)
-                            recordConnectionHandoff(
-                                title = "Connection route changed",
-                                route = to,
-                                detail = listOfNotNull(from, to).joinToString(" -> "),
-                                active = false,
-                                success = true,
-                            )
+                            // ONE message for every transition into Connected
+                            // (from Reconnecting / Connecting / Disconnected). If
+                            // the route changed since we were last connected it's
+                            // "Connection changed · LAN → Tailscale" (which itself
+                            // implies connected — no redundant "Connected" after);
+                            // otherwise just "Connected to Hermes". This single
+                            // point replaces the old three positive branches
+                            // ("restored" + "connected" + "route changed") that
+                            // fired in pairs on a flap or a swap.
+                            transientReconnectJob?.cancel()
+                            val fromRole = lastConnectedRole
+                            if (suppressedTransientReconnect) {
+                                // Benign post-resume recovery we kept silent — stay
+                                // silent on the restore too.
+                                suppressedTransientReconnect = false
+                            } else {
+                                val routeSwapped = !fromRole.isNullOrBlank() &&
+                                    !role.isNullOrBlank() &&
+                                    !fromRole.equals(role, ignoreCase = true)
+                                if (routeSwapped) {
+                                    val from = displayEndpointRole(fromRole)
+                                    val to = displayEndpointRole(role)
+                                    recordConnectionHandoff(
+                                        title = "Connection changed",
+                                        route = listOfNotNull(from, to).joinToString(" → "),
+                                        detail = null,
+                                        active = false,
+                                        success = true,
+                                    )
+                                } else {
+                                    recordConnectionHandoff(
+                                        title = "Connected to Hermes",
+                                        route = displayEndpointRole(role),
+                                        detail = "Relay path ready",
+                                        active = false,
+                                        success = true,
+                                    )
+                                }
+                            }
+                            lastConnectedRole = role
                         }
                         state == ConnectionState.Disconnected &&
                             priorState == ConnectionState.Connected -> {
@@ -3409,6 +3813,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * the existing one finish. Cheap enough that callers don't need to
      * debounce themselves.
      */
+    /**
+     * Resume-path entry to [revalidate], debounced by how long the app was
+     * away. A quick app-switch with an already-healthy API connection skips
+     * the cache-clearing re-probe (and the Probing badge flash) entirely;
+     * a longer absence — or an unhealthy connection — re-probes as usual.
+     *
+     * @param awayMs milliseconds since the Activity was last paused. Callers
+     *   that can't measure it (or want to force a probe) pass [Long.MAX_VALUE].
+     */
+    fun revalidateOnResume(awayMs: Long) {
+        val healthy = _apiServerHealth.value == HealthStatus.Reachable
+        if (awayMs in 0 until BRIEF_RESUME_REVALIDATE_MS && healthy) {
+            return
+        }
+        revalidate()
+    }
+
     fun revalidate() {
         if (isDemoMode.value) return // Demo mode is offline — skip all probes.
         if (revalidationJob?.isActive == true) return
@@ -5237,6 +5658,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_APP_THEME] = themeId
+            }
+        }
+    }
+
+    /** Persist the selected body font; the Compose root re-themes live. */
+    fun setAppFont(fontId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_APP_FONT] = fontId
             }
         }
     }

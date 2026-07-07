@@ -73,7 +73,8 @@ const BOOLEAN_FLAGS = new Set([
   'check',
   'yes',
   'new',
-  'watch-editor'
+  'watch-editor',
+  'clear'
 ])
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -166,7 +167,7 @@ Usage:
   hermes-relay tools               List tools available on the server
   hermes-relay audit               Show what the agent ran on this machine (desktop tools)
   hermes-relay devices             List / revoke / extend server-side paired devices
-  hermes-relay relay               Inspect the relay server (info / security / injected context)
+  hermes-relay relay               Inspect the relay server (info / security / context / queue)
   hermes-relay daemon [start|stop|status]   Headless tool router — 'start' runs it in the background
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
   hermes-relay update              Check for and install the latest cli-v* release

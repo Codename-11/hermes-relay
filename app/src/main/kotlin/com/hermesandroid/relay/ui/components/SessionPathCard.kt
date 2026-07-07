@@ -140,6 +140,7 @@ internal fun sessionCapabilities(
     relayConnected: Boolean,
     relayConfigured: Boolean,
     voiceReady: Boolean,
+    threadsActive: Boolean = false,
 ): List<SessionCapability> {
     val liveThinkingReason = when {
         transport.isGateway -> null
@@ -176,6 +177,15 @@ internal fun sessionCapabilities(
             label = "Voice",
             available = voiceReady,
             reason = if (voiceReady) null else "Voice not ready on this connection.",
+        ),
+        SessionCapability(
+            label = "Threads",
+            available = threadsActive,
+            reason = if (threadsActive) {
+                null
+            } else {
+                "Pair the relay and turn on “Let Hermes message me” so the agent can open Threads."
+            },
         ),
     )
 }
@@ -245,7 +255,17 @@ internal fun SessionPathSummary(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 activeCaps.forEach { cap ->
-                    CapabilityChip(label = cap.label)
+                    if (cap.label == "Threads") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            CapabilityChip(label = cap.label)
+                            BetaChip()
+                        }
+                    } else {
+                        CapabilityChip(label = cap.label)
+                    }
                 }
             }
         }

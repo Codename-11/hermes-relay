@@ -1447,12 +1447,16 @@ fun AgentInfoSheet(
                         .extractDefaultLabel(apiServerUrl)
                         .takeIf { it.isNotBlank() }
                 val relayConnected = relayConnectionState == ConnectionState.Connected
+                val threadsActive = connectionViewModel.proactiveEnabled.collectAsState().value &&
+                    connectionViewModel.authState.collectAsState().value is
+                        com.hermesandroid.relay.auth.AuthState.Paired
                 val sessionCaps = sessionCapabilities(
                     transport = sessionTransport,
                     gatewayAvailability = gatewayAvailability,
                     relayConnected = relayConnected,
                     relayConfigured = relayUrl.isNotBlank(),
                     voiceReady = voiceReady,
+                    threadsActive = threadsActive,
                 )
                 SessionPathSummary(
                     transport = sessionTransport,

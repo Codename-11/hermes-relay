@@ -12,9 +12,9 @@ Hermes-Relay now treats connection auth as three related but separate contexts:
 - **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for API-server SSE fallback paths.
 - **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for vanilla dashboard/API use, but it is required for relay power tools.
 
-The default bottom navigation is **Chat**, **Manage**, and **Settings**. Terminal and Bridge are still available from **Settings → Power tools** and deep links, but unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
+**Chat** is the home screen. **Manage** is reached from **Settings → Hermes management**, and **Terminal** and **Bridge** from **Settings → Power tools** (and deep links); Manage and Bridge each keep a back arrow to Chat. Unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
 
-The **Manage** tab uses the dashboard session, not relay pairing. It covers Skills, Cron jobs, MCP servers, the MCP catalog, Profiles, Models, and Config. Actions that write dashboard state use upstream dashboard endpoints; profile SOUL is view-only here, while SOUL/memory file editing remains a paired power tool.
+**Manage** uses the dashboard session, not relay pairing. It covers Skills, Cron jobs, MCP servers, the MCP catalog, Profiles, Models, and Config. Actions that write dashboard state use upstream dashboard endpoints; profile SOUL is view-only here, while SOUL/memory file editing remains a paired power tool.
 
 **On any card (active or not) — the per-connection action row:**
 - **Reconnect** (only on Stale state)
@@ -196,6 +196,56 @@ python -m plugin.relay --no-ssl
 **Pairing alphabet:** As of 2026-04-11, the relay accepts any 6-character code from `A-Z / 0-9` (36 chars). The earlier "no ambiguous 0/O/1/I" 32-char restriction was dropped once the pairing flow became QR + HTTP — the phone-side generator in `AuthManager.kt` uses the full alphabet, and the restriction silently rejected roughly one in eight valid codes.
 
 For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md).
+
+### Phone Threads (proactive messaging) — Beta
+
+The optional **phone platform** lets the Hermes agent proactively message your paired device — `send_message target=phone`, cron `deliver=phone`, and named Threads in chat. It is off by default; opt in via `~/.hermes/.env` and restart the gateway:
+
+```bash
+PHONE_ENABLED=1
+```
+
+**The home channel is auto-configured — no `/sethome` needed.** Other platforms (Telegram, Discord) make you run `/sethome` to choose *which* of their many chats receives cron results and cross-platform messages. A paired phone is a single device, so its home channel is set automatically when you enable the platform. To give it a friendly display name (used as the notification title and the Thread label), set it in the dashboard under **Relay → Management → Home channel**, or directly in `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PHONE_ENABLED` | _unset_ | Set to `1` to let the agent proactively message the phone |
+| `PHONE_HOME_CHANNEL_NAME` | `Phone` | Display name for the phone home channel / Threads label |
+
+Name changes apply after the next gateway restart. The underlying channel id stays fixed (`phone`) so existing Threads are never orphaned.
+
+### Profiles & the relay
+
+If you run multiple Hermes **profiles** (agents), two things are easy to conflate:
+
+- **You pair once.** The relay is a single shared service (`:8767`) with one pairing store. A device pairs with the relay, not with a profile — chat, bridge, terminal, and voice all ride that one relay regardless of which agent you talk to.
+- **The plugin is installed once, enabled per profile.** The plugin *code* lives at a single global path (`~/.hermes/plugins/hermes-relay`). But each profile's `config.yaml` has its own `plugins.enabled` list, so an agent only sees the relay's tools (and can proactively message the phone) if *its* profile enables `hermes-relay`.
+
+So a multi-agent host never re-pairs, but may want the plugin enabled for every agent. Check and fix that in one step:
+
+```bash
+hermes relay profiles list          # show enablement per profile
+hermes relay profiles enable --all  # enable hermes-relay in every profile
+hermes relay profiles enable gary   # …or just one profile
+```
+
+Each edited config is backed up to `<config>.yaml.bak`. Restart the affected gateway afterward (`systemctl --user restart hermes-gateway`) to load the plugin.
+
+### Keeping the relay plugin updated
+
+The app, the relay plugin, and the desktop CLI version **independently** — they do not need to match. To see whether a newer plugin release exists:
+
+```bash
+hermes relay update-check           # compares your version to the latest plugin release
+```
+
+The dashboard's **Relay → Management** tab shows the same as a "Plugin version" card with a **Check** button. When an update is available, apply it with whichever matches your install, then restart the gateway:
+
+```bash
+hermes plugins update hermes-relay   # native plugin install
+hermes-relay-update                  # full-relay installer (install.sh)
+systemctl --user restart hermes-gateway
+```
 
 ### Compatibility Hook
 

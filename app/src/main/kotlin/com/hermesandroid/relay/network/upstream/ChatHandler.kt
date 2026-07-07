@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.HermesCard
+import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
@@ -219,8 +220,52 @@ class ChatHandler {
     private val _isStreaming = MutableStateFlow(false)
     val isStreaming: StateFlow<Boolean> = _isStreaming.asStateFlow()
 
+    /**
+     * Silently drop the global streaming flag + turn-status caption without
+     * touching the message list, error, or per-message `isStreaming` flags.
+     * For abandoning an in-flight answer recovery (issue #166) on a path that
+     * clears or reloads the transcript itself: there is no placeholder to
+     * finalize and nothing went wrong, so [onStreamComplete] (which reconciles
+     * a specific message) and [onStreamError] (which raises an error banner)
+     * are both the wrong tool. Leaves per-message streaming flags intact so a
+     * caller that still needs to find the placeholder afterwards (e.g.
+     * cancelStream's Stopped-badge pass) can.
+     */
+    fun clearStreamingStatus() {
+        _isStreaming.value = false
+        _turnStatus.value = null
+    }
+
     private val _sessions = MutableStateFlow<List<ChatSession>>(emptyList())
     val sessions: StateFlow<List<ChatSession>> = _sessions.asStateFlow()
+
+    // User-chosen Thread names (sessionId → name), authoritative over the
+    // server's auto-title — applied in [updateSessions] so the gateway's async
+    // auto-titler can't clobber the name. Fed by ChatViewModel. In-memory for
+    // now (survives list refreshes within a session); cross-restart persistence
+    // is a follow-up (see TODO).
+    private val userThreadNames = mutableMapOf<String, String>()
+
+    /** Record a user-chosen name for one Thread session + re-apply it now. */
+    fun setUserThreadName(sessionId: String, name: String) {
+        userThreadNames[sessionId] = name
+        reapplyThreadNames()
+    }
+
+    /** Merge persisted user-thread-names in (e.g. the initial DataStore load) —
+     *  merge, not replace, so a just-created name set this session isn't clobbered
+     *  by a slightly-stale persisted emission. */
+    fun setUserThreadNames(names: Map<String, String>) {
+        userThreadNames.putAll(names)
+        reapplyThreadNames()
+    }
+
+    private fun reapplyThreadNames() {
+        if (userThreadNames.isEmpty()) return
+        _sessions.update { list ->
+            list.map { s -> userThreadNames[s.sessionId]?.let { s.copy(title = it) } ?: s }
+        }
+    }
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
@@ -309,6 +354,18 @@ class ChatHandler {
     }
 
     /**
+     * Update the [ChatMessage.deliveryStatus] of a sent message by id — used by
+     * the agent-Thread reply path (`source=phone`) to move a bubble through
+     * SENDING → DELIVERED (on the relay's `proactive.reply.ack`) / FAILED.
+     * No-op when the id isn't present (it may have aged out of the window).
+     */
+    fun updateDeliveryStatus(messageId: String, status: MessageDeliveryStatus) {
+        _messages.update { list ->
+            list.map { if (it.id == messageId) it.copy(deliveryStatus = status) else it }
+        }
+    }
+
+    /**
      * Append a SYSTEM-role notice bubble (e.g. a gateway interactive ask the
      * phone can't answer). SYSTEM role keeps it out of the voice TTS observer
      * and renders with the muted system styling in MessageBubble.
@@ -323,6 +380,50 @@ class ChatHandler {
                 clientOnly = true,
             )
             (list + notice).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
+     * Inject an agent-initiated ("proactive") message into the active session
+     * (the `phone` platform's `surfacing="session"` path). SYSTEM role — like
+     * [addSystemNotice] — keeps it out of the voice TTS stream observer (which
+     * only voices ASSISTANT messages) so injection can't trigger uncontrolled
+     * speech; Phase 3's TTS-on-voice will speak proactive messages explicitly.
+     * [ChatMessage.clientOnly] preserves it across the history reconcile.
+     */
+    fun addProactiveMessage(text: String) {
+        _messages.update { list ->
+            val msg = ChatMessage(
+                id = "proactive-msg-${java.util.UUID.randomUUID()}",
+                role = MessageRole.SYSTEM,
+                content = text,
+                timestamp = System.currentTimeMillis(),
+                clientOnly = true,
+            )
+            (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
+     * Render an agent-initiated message inline in the open Thread as an
+     * ASSISTANT bubble (the unified-Threads live path — the agent's reply shows
+     * in the conversation, not just as a notification). [clientOnly] preserves it
+     * across the history reconcile; idempotent on the proactive [messageId] so a
+     * re-delivered push (e.g. an outbound-buffer flush) never double-posts.
+     */
+    fun addAgentThreadMessage(text: String, messageId: String?, agentName: String?) {
+        val id = messageId?.let { "proactive-$it" } ?: "proactive-${java.util.UUID.randomUUID()}"
+        _messages.update { list ->
+            if (messageId != null && list.any { it.id == id }) return@update list
+            val msg = ChatMessage(
+                id = id,
+                role = MessageRole.ASSISTANT,
+                content = text,
+                timestamp = System.currentTimeMillis(),
+                agentName = agentName,
+                clientOnly = true,
+            )
+            (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
     }
 
@@ -1369,7 +1470,11 @@ class ChatHandler {
             val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
             val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
             val serverTitle = item.title?.takeIf { it.isNotBlank() }
-            val resolvedTitle = serverTitle
+            // A user-chosen Thread name is authoritative (Discord-style): it
+            // overrides the server's auto-title so the gateway's async auto-titler
+            // can't clobber the name the user set.
+            val resolvedTitle = userThreadNames[item.id]
+                ?: serverTitle
                 ?: existingById[item.id]?.title?.takeIf { it.isNotBlank() }
             ChatSession(
                 sessionId = item.id,
@@ -1379,6 +1484,11 @@ class ChatHandler {
                 updatedAt = activityAtMs,
                 startedAt = startedAtMs,
                 lastActivityAt = lastActivityAtMs,
+                // Carry the upstream platform/source so the drawer can tag agent
+                // Threads (source=phone) — this is the one list site fed by the wire
+                // SessionItem; the other ChatSession() call sites are local optimistic
+                // rows (default source). (ADR 12 — Threads surface, slice 1.)
+                source = item.source,
             )
         }.sortedByDescending { it.activityTimestamp }
         // Preserve the active session's optimistic row when the server list
@@ -2550,6 +2660,9 @@ class ChatHandler {
 
     fun onStreamError(message: String) {
         _isStreaming.value = false
+        // The turn is over — a stale lifecycle/recovery caption must not
+        // outlive it (onStreamComplete clears the same way).
+        _turnStatus.value = null
         _error.value = message
         // Clear streaming flag on any actively streaming message
         _messages.update { messages ->

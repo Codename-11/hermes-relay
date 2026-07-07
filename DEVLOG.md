@@ -1,5 +1,561 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-06 — Open-issue resolution batch (triage of all 13 open issues + 5 fix branches)
+
+**Why.** The tracker had accumulated 13 open issues spanning real bugs, already-shipped
+fixes nobody closed, auto-filed diagnostics noise, and docs drift. A multi-agent triage
+pass verified every claim against code and release tags (`git merge-base --is-ancestor`,
+never issue comments), then implementation ran on isolated worktree branches with an
+independent code-review pass per branch. Plan: `docs/plans/2026-07-06-open-issue-resolution.md`.
+
+**Triage outcomes.** #131/#129/#124/#70/#94 were already fixed in released tags
+(v1.2.5 / v1.2.4 / v1.2.3 / v1.1.0+v1.2.3 / v1.2.0 respectively) — closure comments are
+queued as owner actions in TODO. #121 is scheduled feature work for the next `cli-v*`
+release. The rest became fix branches.
+
+**What landed on `dev` (merged `--no-ff`):**
+- `fix/chat-stream-recovery` (#166) — sessions-SSE turns that die on a transport error
+  now enter a recovery poller (5s→30s backoff, 30-min cap) that reconciles the
+  server-persisted answer instead of stranding "Still working…". Root cause verified
+  against upstream `api_server.py`: the run survives the disconnect and persists; only
+  the client gave up. Review pass caught and fixed two real defects before merge:
+  a wedged streaming state when switching sessions mid-recovery, and a stale-anchor
+  adoption when a repeated short message ("continue") never reached the server —
+  the anchor is now positional (user-row count invariant), not text-only.
+- `fix/diagnostics-report-noise` (#155/#154/#146) — severity-gated Report flow
+  (`[Diagnostic]`/`question` prefills for non-error entries, expectation pre-flight for
+  Info, real route role in the body), `ServerAddress.loopbackHostWarning()` util
+  (UI wiring deferred to the connections-UI workstream), troubleshooting docs rebuilt
+  around the app's real diagnostic titles.
+- `fix/onboarding-scroll` (#145) — slides scroll under short viewports/large font,
+  hero compacts under 620dp, compact-height Roborazzi render test added.
+- `fix/release-assets` (#144) — android releases attach only sideload APK +
+  googlePlay AAB + SHA256SUMS (checksums narrowed to match); release-notes template
+  leads with the install file; RELEASE.md codifies the format. In-app update checker
+  asset matching verified unaffected.
+- `docs/freshness-pass` — "Vanilla Hermes" button label corrected to the app's
+  actual "Hermes" (stale since v1.2.2), 7 dead anchors fixed across the built site
+  (0 remain), README tool counts corrected (35 android, 25 desktop),
+  security.md plain-`ws://` gating described accurately.
+
+**Parked, not merged:** `fix/plugin-native-imports` (#165) — package-relative imports
+so the plugin works under the native `hermes plugins install` loader
+(`hermes_plugins.<slug>`), dashboard `plugin_api` standalone-load bootstrap, doctor
+import-chain check, installer venv autodetection (classic/uv/Docker) with generated
+unit/shims templated to the detected interpreter, and an AST-guard + native-layout
+smoke test (wired into plugin CI). Holds until the pending plugin release tag is cut,
+then ships as the next plugin patch release so the in-flight voice e2e validation
+stays meaningful.
+
+**Verification.** Per-branch: plugin suite 1051 tests (1 pre-existing environmental
+failure, verified at base); android unit tests + lint green per branch (12 pre-existing
+Windows-local DataStore temp-file failures verified at base by three independent
+agents); VitePress build clean with a full-site anchor sweep; release workflow YAML
+parses; combined lint + unit gate re-run on merged `dev`. On-device checks
+(Doze/screen-off recovery, max-font onboarding) are owner-driven and queued in TODO.
+
+**Why.** With timer-driven spoken progress off by default (see the robustness batch
+below), the voice overlay's background-run chip became the primary in-between signal —
+but it was a static string set at promotion and cleared at completion. The relay's
+`hermes.run.progress` events already carry `active_tool_name` / `completed_tool_count`
+/ `elapsed_ms` (added by the ADR 33 plan precisely for a live chip) and the client
+ignored them; none of the new connection states (resume retrying, result deferred) had
+any visual; and there was no cancel affordance despite the path existing.
+
+**What.**
+- `RelayVoiceClient` parses the progress extras (`active_tool_name`,
+  `completed_tool_count`, `elapsed_ms`) into `RealtimeVoiceEvent`.
+- `VoiceViewModel`: `BackgroundRunState` gains `statusLine` / `completedToolCount` /
+  `startedAtMs` / `phase` (`RUNNING` / `RECONNECTING` / `DELIVERING`). Tool-start and
+  progress events drive the live line (reusing `realtimeToolStatusLine`); handoff
+  labels flip the chip to RECONNECTING during a mid-run socket drop and back on
+  "Voice reconnected"; `background_completed` shows a DELIVERING chip until the first
+  summary audio (20s watchdog for visual-only delivery); a new turn while a run is
+  active sets a "Still working on the earlier task…" line; `cancelBackgroundRun()`
+  sends the existing `response.cancel` and flips the chip to "Cancelling…" (the
+  relay's `hermes.run.cancelled` clears it).
+- `VoiceModeOverlay`: the static chip is now `BackgroundRunChip` — pulsing dot
+  (tertiary while reconnecting), phase-aware title, live detail line
+  (step · N steps · m:ss ticker), and a ✕ that cancels; remembers the last non-null
+  state so the exit fade doesn't snap empty (PermissionDeniedChip pattern).
+  `ChatScreen` wires `onBackgroundRunCancel`.
+
+**Verification.** `assembleSideloadDebug` + `lintSideloadDebug` green. Client-only —
+no relay changes. On-device check rides the pending realtime e2e list in TODO;
+ambient visibility outside voice mode deferred to coordinate with the
+connection-management status-strip work (TODO).
+
+## 2026-07-01 — Realtime voice: ADR 33 robustness batch (deliver-on-reattach, adaptive promotion, milestone speech, resume retry, prewarm)
+
+**Why.** An architecture review of the ADR 33 background-run path against current
+realtime-API practice (the interim-tool-result + later-injection shape now ships
+natively in gpt-realtime; the design itself is sound) surfaced a set of lifecycle and
+UX gaps: a result completing while the phone was detached was spoken into the bounded
+replay ring (a long summary can evict its own head), a second `hermes_run_task`
+overwrote `session.hermes_task` and cancelled the first run's delivery (silent orphan),
+timer-driven spoken progress narrated over the floor every N seconds, promotion always
+waited the full 6s grace even when the first tool was obviously long, a failed client
+resume parked forever on "waiting for route change", and the first voice turn paid the
+session POST + websocket + provider connect.
+
+**What (relay — `broker.py`, `providers/*.py`, `config.py`, `profile_voice.py`, `server.py`).**
+- **Deliver-on-reattach:** `_deliver_background_result` holds the result as
+  `session.pending_background_result` when the phone is detached; resume injects it
+  after replay (`_deliver_pending_background_result`). `_close_native_session` pushes an
+  undelivered result via a new `proactive_push` hook (wired to `ProactiveChannel.push`,
+  which buffers for an offline phone) — including the close-races-completion case where
+  the run finished but delivery was cancelled.
+- **Busy answer:** a second `hermes_run_task` while one is in flight returns a speakable
+  `already_running` result instead of orphaning run #1 (`max_background_runs=1`).
+- **Adaptive promotion:** the Hermes event stream flags known-long tools on start
+  (`RELAY_VOICE_LONG_TOOL_HINTS`, default cron/desktop_/browser/execute_code/terminal/
+  spawn); `_run_brokered_tool` races that signal against the grace window and promotes
+  after a short quick-finish window (1.5s) so fast long-class calls stay Tier A.
+- **Milestone speech:** timer-driven spoken progress is now config-wired per session and
+  **off by default** (`realtime_voice_progress_spoken_after_ms: 0`); promotion handoff,
+  completion, and failure speech unchanged; `hermes.run.progress` events keep flowing
+  for the visual chip.
+- **Robustness plumbing:** done-callbacks log unretrieved failures on `hermes_task` /
+  `background_delivery_task`; provider websockets use an explicit `heartbeat=20.0` +
+  connect-bounded `ClientTimeout(total=None)` instead of an ambient total timeout.
+
+**What (Android).** `RelayVoiceClient`: a failed realtime resume now retries every 10s
+for up to 5 min (matching the relay's extended detached window) alongside the existing
+route-change trigger; new `prewarm` mode opens the persistent session with no first turn
+and the guards disarmed. `VoiceViewModel`: `enterVoiceMode()` prewarms the persistent
+Realtime Agent session (engine + toggle gated, silent on failure); turn-scoped side
+effects are skipped for the warm-up and the first utterance rides `submitRealtimeTurn`.
+
+**Verification.** `python -m unittest` — 65 realtime tests green, including 4 new
+promotion tests (deferred-injection-on-resume, busy second task, long-tool promotes
+before an 8s grace, config default 0); the spoken-status routes test now opts in via
+the per-session knob. One pre-existing failure noted in `test_realtime_voice_routes`
+(xai oauth pool fixture; fails at HEAD too — recorded in TODO). Android
+`assembleSideloadDebug` green. Injection framing (function-call output instead of a
+synthetic user message) deliberately deferred pending an xAI parity check — in TODO.
+
+## 2026-07-01 — Realtime voice: a benign provider cancel-notice no longer kills the turn
+
+**Why.** On-device + correlated relay/event-log tracing of a realtime voice run showed
+the spoken answer was never heard after a promoted/background Hermes run: the summary
+re-injection called `cancel_response()` when no provider response was active, xAI replied
+`Cancellation failed: no active response found`, the relay forwarded it as a fatal
+`voice.error`, and the client closed the whole realtime session (surfacing an error toast
++ Retry) right as the reply was about to be spoken. The relay's own background-run
+keep-alive was working; the session was being deliberately torn down by the client on a
+non-fatal notice.
+
+**What.**
+- `broker.py`: `_deliver_background_result` now passes `cancel_current=not floor_idle` to
+  `_inject_background_summary`, which only calls `cancel_response()` when a response is
+  likely still speaking — avoiding the needless cancel (and its benign error) at source.
+  `_pump_provider_events` classifies benign provider notices (no-active-response /
+  cancellation-failed) via `_is_benign_provider_error()` and logs them as a non-fatal
+  `voice.realtime_agent.provider_notice` instead of a fatal `voice.error`.
+- `RelayVoiceClient.kt`: a `voice.error` matching a transient provider notice is logged
+  and ignored (session stays alive) instead of `completeFailure` + close — defense in
+  depth so no benign error can nuke a live turn.
+
+**Verification.** `python -m unittest` — 61 realtime-broker tests green, including a new
+test asserting a benign provider error is not forwarded as `voice.error` while a genuinely
+fatal one still is. Client change is scoped to the realtime `voice.error` branch. On-box +
+on-device e2e verification is owner-driven.
+
+## 2026-07-01 — Realtime voice: background runs survive a transient drop
+
+**Why.** In realtime voice mode, asking the agent to run a long/background Hermes task
+(ADR 33 promotion) could lose the result on a brief network blip. Correlated client +
+relay logs traced the trigger to a transient Wi-Fi outage (all sockets dropped together,
+recovered ~20s later) — but the relay tore the realtime session down 30s after any
+disconnect (`_RESUME_TTL_SECONDS`), well before a minutes-long durable run finishes,
+cancelling result delivery and orphaning the run. A separate factor: a tool that hung
+server-side left the run waiting indefinitely.
+
+**What (`plugin/relay/realtime_agent/broker.py`).**
+- **Keep a detached session alive while a background run is in flight** — the resume
+  window stretches from 30s to a background cap (default 6 min,
+  `RELAY_VOICE_BACKGROUND_DETACHED_MAX_MS`); a poll loop closes only after the run
+  finishes plus a grace. The existing event/audio replay ring then re-delivers the
+  result when the client resumes, so a transient drop mid-run no longer loses it.
+- **Bound a run** — a hung run is cancelled at a hard cap (default 5 min,
+  `RELAY_VOICE_BACKGROUND_RUN_MAX_MS`) and surfaced as a `background_completed` error
+  instead of pinning the delivery task forever.
+- **Cancel the orphaned run on close** so a hung tool can't keep executing against the
+  gateway after the session is gone; **guard the summary send** so a dead provider
+  socket can't turn result delivery into an unhandled background-task crash.
+
+**Verification.** `python -m unittest` — 60 realtime-broker tests green, including two
+new promotion tests: a detached session with a live run survives past a shrunken base
+TTL and records the result for replay; a hung run times out and is cancelled.
+`py_compile` clean. The complementary app-side realtime-resume retry (the client gave
+up reconnecting after one attempt while the gateway/relay sockets recovered) is tracked
+for the connection-management work. On-box verification is owner-driven.
+
+## 2026-07-01 — Chat markdown typography + bubble grouping polish
+
+**Why.** Markdown headings in chat rendered at display scale: `MarkdownContent` set
+only `paragraph`/`code` in `markdownTypography()`, so `h1..h6` fell through to the
+mikepenz M3 defaults (h1=`displayLarge` — 57sp in this app's scale) and a single `#`
+became a billboard inside a ~272dp bubble. List items also rendered 2sp larger than
+paragraphs (the library `text`/list role defaults to bodyLarge 16sp), and every bubble
+stamped its own timestamp — noisier than any mainstream chat client.
+
+**What.**
+- **`MarkdownContent`** — explicit chat-tuned type ramp: h1 20sp → h6 13sp, all
+  derived from bodyLarge/bodyMedium so the live font-picker still applies, largest
+  heading ~1.4× the 14sp body; `paragraph`/`text`/`bullet`/`ordered`/`list` unified to
+  14sp; inline + fenced code 13sp (tracking reset to 0); italic muted blockquote;
+  `textLink` given a primary accent + underline. Side effect: settled body/list sizes
+  now match the streaming renderer, so the stream-end reflow shrinks to headings only.
+- **`MessageBubble`** — timestamp gated to `isLastInGroup` (was on every bubble),
+  alpha 0.5 → 0.6; long-press action menu fires a haptic on open; streaming dots show
+  only before the first token (previously throbbed under the text for the whole turn).
+- **`ChatScreen`** — same-author grouping now breaks on a >5min gap (`GROUP_GAP_MS`),
+  so a conversation resumed after a pause gets a fresh name label + its own timestamp.
+
+**Verification.** CLI `assembleSideloadDebug` compiled clean; `markdownTypography` /
+`markdownColor` parameter names verified against the installed mikepenz 0.42.0 source
+(the naive `markdownColor(linkText=…)` would not have compiled — 0.42.0 has no such
+param; link color rides `textLink`). Deferred items (streaming/final render parity,
+15sp body, wide-table scroll, tail-on-last-only, etc.) recorded in `TODO.md`. On-device
+review pending.
+
+## 2026-07-01 — Connection status: two-connection model (subtitle + bottom strip, no top surface)
+
+**Why.** The persistence-tiered top strip (previous entry, shipped in the prior
+`refactor(connections)` commit) still surfaced connection status *above the nav*, and
+on-device it read as obtrusive: a reconnect flashed a status that covered the profile,
+and it fired "at random". Iterating with the owner surfaced the real problem — and it
+wasn't a UI-placement problem.
+
+**Trace (both sides).** Added permanent INFO logging to the client
+(`ConnectionViewModel`: every relay `state→state role→role` transition + every
+`handoff:` record) and read the relay's log server-side (read-only journalctl). They
+correlate to the millisecond:
+
+- Client `onFailure SocketException "Software caused connection abort"` ⇄ relay
+  `Client disconnected 172.16.24.13` at the **same instant** → a real network teardown,
+  not a spurious client event. Reconnect then **timed out after 20s**; a later attempt
+  reconnected then dropped again. The relay itself was healthy throughout (loopback
+  `/phone/replies` polling never missed).
+- Root cause of the flapping: the **Wi-Fi path** between the phone and the LAN relay —
+  raw logcat showed Samsung's `SemWifiIntelligentConnectionManager` cycling the radio.
+
+**The realization.** There are **two independent connections**, and conflating them was
+the design error: **chat/agent** (gateway/API, `apiReachable`) — if this is down you
+genuinely can't talk to the agent; and the **relay socket** (`:8767`, bridge / terminal
+/ relay-voice) — when only this reconnects, chat still works over the gateway. The
+flapping was mostly the *relay* socket, so it never deserved a prominent interruption.
+
+**What.** Landed on a two-connection model with **no top-of-screen surface**:
+- **Chat/agent → the chat header subtitle** (WhatsApp-style; `ChatScreen`). The model
+  line swaps to `Reconnecting…` (was connected) / `Connecting…` (cold) / `Disconnected`,
+  amber/red, and crossfades back to the model on recovery. This slot was already there;
+  added the reconnecting-vs-connecting wording (`everConnected`).
+- **Relay socket → the bottom `RelayStatusStrip`** amber `Reconnecting…` cue only
+  (`ReconnectingCue`), gated by a new **`postResumeQuiet`** window so a benign
+  background→foreground re-handshake is fully silent (the health "Connecting" path used
+  to leak the cue there and clear with no resolution).
+- **Handoff de-dup:** merged the three positive branches ("restored" + "connected" +
+  "route changed") into one, deciding "Connected to Hermes" vs "Connection changed ·
+  LAN → Tailscale" at the actual connect via `lastConnectedRole` — so a flap or a swap
+  can't emit a pair. Route change is ambient-only (the bottom strip's route label).
+- **Removed the top strip entirely** — the `ConnectionStatusSurface`/`presentationSurface`
+  tiering + `ConnectionStatusBanner` top render fell out of use and were **removed**
+  in a follow-up commit (`ConnectionHandoffBanner`/`ConnectionStatusBanner`/
+  `PulsingSyncIcon` + `ConnectionStatusSurface`/`presentationSurface`/its test).
+  `ConnectionStatusToast` is deliberately parked as a general toast primitive.
+- Permanent client-side logging (tag `ConnectionVM`, pairs with `ConnectionManager`) so
+  "why did that status appear?" is a one-line `logcat -s ConnectionVM ConnectionManager`.
+
+**Verification.** `:app:assembleSideloadDebug` + `testSideloadDebugUnitTest` green;
+iterated on-device across the build cycle. Server access was read-only (journalctl) —
+no restart/deploy. Flap-specific cases hard to re-verify once the network stabilized
+(tracked in `TODO.md`).
+
+## 2026-06-30 — Connection status: tier the surface by persistence, not severity
+
+**Why.** After the connections restructure, every reconnect/handoff/health blip
+rendered as the take-space `ConnectionStatusBanner` — it shoved the whole app down
+~50px, then snapped it back. Reconnects are the *most frequent* connection event, so
+the most frequent event was also the most disruptive. Worse, the intended "error →
+floating overlay" branch was **dead**: `buildGlobalConnectionStatus` only ever emits
+`Warning`/`Info` and handoffs only emit `Success`/`Info`, so `ConnectionStatusTone.Error`
+is never produced and *everything* routed through the take-space banner. The bottom
+`RelayStatusStrip` already carries steady-state (transport tier + route), so the top
+surface was partly redundant too.
+
+**What.** Re-tiered the connection-status surface by **persistence, not severity**
+(user decision: "lean on the bottom strip, float on failure"):
+- **`viewmodel/RelayUiState.kt`: `ConnectionStatusSurface { None, Float, Banner }` +
+  `ConnectionStatusSnapshot.presentationSurface()`.** `active` (in-flight
+  reconnect/checking) → `None`; `success` (reconnected / route switched) → `Float`;
+  sustained `Warning`/`Error` (no connection / no internet / API/relay unreachable) →
+  `Banner`. This maps 1:1 onto the existing handoff producers: "Reconnecting" /
+  "Connection interrupted" are `active` → strip; "Connection restored" / "Connected" /
+  "route changed" are `success` → float; the health-derived Warnings are sustained →
+  banner.
+- **`ui/components/RelayStatusStrip.kt`: `reconnecting` param + `ReconnectingCue`.** A
+  routine in-progress reconnect now shows *only* an amber, softly-pulsing
+  "Reconnecting…" cue in the always-visible bottom strip (replacing the route label,
+  which is in flux mid-reconnect) — **zero layout shift** for the common case. Pulse
+  is frame-throttled via `rememberAmbientPhase`.
+- **`ui/RelayApp.kt`:** the two existing render sites are re-routed off
+  `presentationSurface()` — take-space `ConnectionStatusBanner` fires only for
+  `Banner`, floating `ConnectionStatusToast` only for `Float`, and `None` lights the
+  strip via `connectionReconnecting` (computed off the raw status, not the
+  dismiss-gated toast, since the cue mirrors live state and isn't dismissible). No
+  component rewrites — both surfaces already existed; only the routing changed.
+
+Net: routine reconnect = a quiet strip cue, no shift; recovery = a brief self-dismissing
+float; a stuck/actionable problem = the honest take-space banner. The post-resume
+`suppressedTransientReconnect` silencing still applies (no handoff recorded → nothing
+anywhere for a benign resume).
+
+**Verification.** `:app:lintSideloadDebug` — _pending_ (running). On-device pass owner-driven.
+
+## 2026-06-30 — Update discovery: app-facing relay route + About version readout
+
+**Why.** The update-discovery work (CLI + dashboard) shipped the same day, but the phone was the missing surface — the app could read the relay's version from `/health` yet had no signal that a newer relay *release* existed. The dashboard's check is dashboard-auth-gated, so the app needs its own route on the relay port.
+
+**What.**
+- **`plugin/relay/server.py`: `GET /relay/update-check`.** App-facing twin of the dashboard route (bearer for the paired phone, loopback for diagnostics — same gate as `/phone/threads`). Reuses `plugin/update_check.check()` in an executor so the blocking GitHub fetch never stalls the event loop; result cached an hour; degrades to `update_available=false` + `error` offline (never a 5xx).
+- **App (`RelayHttpClient.fetchUpdateCheck()` → `ConnectionViewModel.relayUpdateInfo` → `AboutScreen`).** A "Relay" row beside the existing app-Version row shows the connected relay's version and, when it trails the latest release, a soft nudge + a Copy-the-command action (`hermes plugins update hermes-relay` vs `hermes-relay-update`). Refreshed on each `auth.ok`; fail-soft (older relay 404 → no row). The app never talks to GitHub — the relay is the single source of truth.
+
+**Verification.** `:app:assembleSideloadDebug` — **BUILD SUCCESSFUL**; installed + launched on the test device. Relay route verified live on the host (loopback `GET /relay/update-check` → `{"current":"1.2.1","latest":"1.2.1","update_available":false}`). The About "Relay" row reads "On v1.2.1 — up to date"; the nudge stays hidden until a newer `plugin-v*` release exists.
+
+## 2026-06-30 — Per-profile enablement helper + update discovery
+
+**Why.** Two gaps surfaced while productizing the phone Threads work: (1) Hermes installs a plugin's *code* once but enables it *per profile*, so a multi-agent host hand-edits N `config.yaml` files to expose the relay's tools everywhere — and docs didn't explain the install-once / enable-per-profile / **pair-once** split. (2) Updating works (`hermes plugins update` / `hermes-relay-update`) but nothing *tells* an operator a newer plugin release exists, and the app/plugin/CLI version tracks aren't surfaced together.
+
+**What.**
+- **`plugin/profiles.py` + `hermes relay profiles list|enable [--all|NAME]`.** Enumerates the default config + every `profiles/<name>/config.yaml`, reports `hermes-relay` enablement, and bulk-adds it to `plugins.enabled` (removing it from `disabled`), backing up each rewritten file to `.bak` and skipping already-enabled configs (comments/order preserved in the common case). Pairing is untouched — one relay, pair once.
+- **`plugin/update_check.py` + `hermes relay update-check` + dashboard "Plugin version" card.** Compares the installed `plugin.relay.__version__` against the latest `plugin-v*` GitHub release, detects the right update command (full-relay shim present → `hermes-relay-update`, else `hermes plugins update hermes-relay`), surfaced in the Management tab via loopback `GET /api/plugins/hermes-relay/update-check` (GitHub fetch cached 1h; degrades to "couldn't check" offline — never a 5xx). Reuses the existing update mechanisms; no new updater.
+- **Docs.** New `configuration.md` subsections: "Profiles & the relay" (the two axes + the `profiles` commands) and "Keeping the relay plugin updated" (update-check + the two update commands).
+
+**Verification.** `python -m unittest plugin.tests.test_profiles plugin.tests.test_update_check plugin.dashboard.test_plugin_api` — 39 pass. Dashboard bundle rebuilt (esbuild). App-side version display + soft "relay outdated" banner deferred (needs an app build + a relay-side update-check route).
+
+## 2026-06-30 — Connections restructure + animated, dismissible status banner
+
+**Why.** Two pain points in the connection manager: (1) the reconnect/handoff status
+read as static — the non-error path used `ConnectionStatusBanner`, which capped at
+two flat text lines, while the richer animated per-step stepper (spinner → green ✓ →
+red ✕) existed only in `ConnectionStatusToast`, shown for Error tone only; and (2)
+the Connections settings screen was overloaded — the active connection's entire deep
+body (Features / Routes / Advanced / Security + a 5-button action row + stacked route
+nudges) was crammed into one card inside the list, so the list wasn't scannable.
+
+**Animated, take-space, dismissible banner (`ui/components/ConnectionHandoffBanner.kt`,
+`ui/RelayApp.kt`).** `ConnectionStatusBanner` now renders the same `ConnectionStepRow`/
+`StepGlyph` animated stepper the toast uses (capped at the last 3 entries, up from 2
+flat lines); per-step state already comes stamped from `buildGlobalConnectionProbeEntries`,
+so "checking → green dot → red ✕" tracks real health. The non-error banner moved out of
+the floating overlay into the persistent take-space stack above the Scaffold (expand/
+shrinkVertically + the surface's `animateContentSize` keep the push-down smooth, not a
+hard snap; the error toast still floats). The banner gained an explicit close (×) control
+and a swipe-up gesture, both wired to the existing `dismissedStatusKey` so a dismissed
+status stays hidden until its content identity changes.
+
+**No misleading "Connection changed" on resume (`viewmodel/ConnectionViewModel.kt`).**
+The `Reconnecting` handoff was renamed from "Connection changed" (which implied a
+different connection) to a neutral "Reconnecting"; change-implying copy is reserved for
+the genuine route-switch branch. A foreground-resume timestamp (from `AppForegroundTracker`)
+now suppresses the transient reconnect banner within `RELAY_RECONNECT_GRACE_MS` — a quick
+same-connection re-handshake after returning to the app shows nothing (and its
+"Connection restored" pair stays silent too); only a reconnect still down past the grace
+window surfaces "Reconnecting".
+
+**Connections list + tabbed detail (`ui/screens/ConnectionsSettingsScreen.kt`,
+`ui/screens/ConnectionDetailScreen.kt`, `ui/components/ActiveConnectionSections.kt`,
+`ui/RelayApp.kt`).** `ConnectionsSettingsScreen` is now a scannable list — each card is
+label + an `Active` badge (active connection) + a one-line status + the capability
+timeline summary (the dot/label/value rows users liked), and tapping drills into a new
+`ConnectionDetailScreen`. The detail is a 4-tab screen (Overview / Routes / Advanced /
+Security) with a `⋮` overflow menu for rename / re-pair / revoke / remove. Overview leads
+with the steps/timeline (`ActiveCardFeaturesSection`); Routes hosts the relocated ADR-24
+route block (extracted verbatim into `ActiveCardRoutesSection`, reusing `EndpointsCard` +
+`RouteEditorDialog`); Advanced/Security reuse the existing section composables. A new
+`Screen.ConnectionDetail` route (`settings/connections/{connectionId}`) is wired in the
+NavHost. Non-active connections show an Overview-only "Switch to this connection" preview.
+Relay sessions are surfaced in the Security tab (`ActiveCardSecurityPosture` already shows
+the active-session count). The `Active` badge is preserved on both the list card and the
+detail's top bar.
+
+**Verification.** `:app:compileSideloadDebugKotlin` BUILD SUCCESSFUL; `:app:lintSideloadDebug`
+run locally. Store screenshot mock (`StoreScreenshotTest.ConnectionsScene`) updated to the
+new list design (Active badge kept). On-device verification (banner animation/dismissal,
+resume copy, the tabbed flow) is owner-driven from Android Studio.
+
+## 2026-06-30 — Phone home channel: auto-config + dashboard name (silence upstream /sethome nudge)
+
+**Why.** Sending into a phone Thread surfaced an upstream onboarding notice on every new Thread's first message — "📬 No home channel is set for Phone … /sethome". Upstream's nudge (`gateway/run.py`) checks the `PHONE_HOME_CHANNEL` *env var* directly, not the adapter's seeded config, and a single paired phone has exactly one logical home — so the prompt is friction with no decision behind it (unlike Telegram/Discord, where `/sethome` picks among many chats).
+
+**What.**
+- **Auto-default (`plugin/phone_platform.py`).** `register_phone_platform` now pre-fills `PHONE_HOME_CHANNEL=phone` (the only sensible value — what `/sethome` would persist) when the platform is enabled and the env var is unset/blank, respecting an explicit operator override. Presence of that env var is exactly what the upstream notice checks, so it no longer fires.
+- **Dashboard name field (`plugin/dashboard/*`).** A "Home channel" card on the Relay → Management tab shows the effective home-channel name + (read-only) channel id and saves a display name via the host `PUT /api/env` (`PHONE_HOME_CHANNEL_NAME`), mirroring the existing Agent-context toggle pattern. Backed by a new loopback `GET /api/plugins/hermes-relay/phone/config` that reads the adapter's env resolution. Rebuilt `dist/index.js`.
+- **Docs.** A brief "Phone Threads (proactive messaging) — Beta" subsection in `user-docs/reference/configuration.md`: the opt-in (`PHONE_ENABLED`), the auto-home-channel (no `/sethome`), and how to rename it.
+
+**Verification.** `python -m unittest plugin.tests.test_phone_platform plugin.dashboard.test_plugin_api` — 54 pass (new: 4 home-channel-default cases + 2 `/phone/config` cases). Dashboard bundle rebuilt via `npm run build` (esbuild OK; "Home channel" + "phone/config" present in `dist/index.js`). The auto-default applies on the next gateway restart; the name field also applies on gateway restart (env read at adapter construction). Host confirmation that the notice is gone — pending a gateway restart.
+
+## 2026-06-30 — Settings/nav refresh + remote reconnect fix
+
+**Why.** A UX/robustness pass across five threads: (1) the background keep-alive read as "chat"-only in its notification + settings copy, underselling what it actually holds open; (2) it lived buried in Chat settings though it's a connection-level control flipped often; (3) the Chat/Manage/Bridge mode strip spent a chrome band on every screen, including the chat home; (4) the non-error connection-status banner popped in/out and hard-reflowed the UI; (5) a remote (Tailscale) connection looped — repeatedly reconnecting before it settled.
+
+**Reconnect loop — root cause + fix (`network/relay/ConnectionManager.kt`, `network/upstream/GatewayChatClient.kt`, `ui/RelayApp.kt`).** One shared `EndpointResolver` publishes `_activeEndpoint` for the relay socket AND every HTTP/chat surface; `effectiveApiServerUrl`/`effectiveDashboardUrl` fall back to the saved (priority-0, home-LAN) host when it is null. On a transient cold-route probe miss the AUTOMATIC paths nulled `_activeEndpoint`, flipping chat/dashboard onto the dead home address and rebuilding the gateway chat client — a self-sustaining flap until Tailscale warmed. The pre-existing hysteresis guard keyed on the relay socket being `Connected`, which the default no-relay chat path never reaches, so it protected nobody there. Fix: extend the `sustainedLossDeclared` hysteresis to the two AUTOMATIC null-sinks (`scheduleNetworkReResolve`, `scheduleReconnect`) only — the MANUAL paths (`refreshActiveEndpoint`, `probeAndReconnectNow`) still publish null on a genuinely dead route, which `ConnectionManagerRouteTest` asserts. Plus: an explicit 20s `connectTimeout` on the relay + gateway OkHttp clients (DERP cold starts exceed the 10s default); a 2-consecutive-failure threshold before `markActiveEndpointUnreachable` poisons the shared cache; `clearCache` moved into the debounced re-resolve so VPN-tun-interface churn coalesces into one probe; and the `sustainedLossDeclared` latch reset on every resolve-success edge. A 750ms debounce on the gateway-client re-acquisition (`RelayApp.kt`) is belt-and-suspenders on top, leaving first-connect latency unaffected (only a genuine route change waits).
+
+**Keep-alive reframe + Quick Controls (`network/upstream/GatewayKeepAliveService.kt`, `data/GatewayKeepAlivePrefs.kt`, `AndroidManifest.xml`, `ui/screens/SettingsScreen.kt`, `ui/screens/ChatSettingsScreen.kt`).** Notification, channel, settings, and manifest `specialUse` subtype copy reframed off "chat" to an honest "Persistent connection": it holds the app's connection to Hermes open in the background (for relay-paired setups this also keeps device control + notification mirroring reachable) — it does NOT warm Manage (stateless HTTP) or voice (per-turn sockets), and nothing survives swipe-away. Stop action "Disconnect" → "Turn off". The toggle moved out of Chat settings into a new **Quick Controls** card at the top of the top-level Settings landing (beside Active Agent / Profile lock), since it is connection-level and frequently toggled; the card also hosts a **Turn-complete alerts** toggle. Both wire to existing `ConnectionViewModel` flows (`gatewayKeepAlive` / `notifyTurnComplete`) — no new pref.
+
+**Mode-strip removal (`ui/screens/ChatScreen.kt`, `DashboardManagementScreen.kt`, `BridgeScreen.kt`, `BridgeCoreScreen.kt`).** The triplicated `RelayModeStrip` is removed from all four screens. Chat is the full-height home; Manage and Bridge are reached from Settings (the "Hermes management" / "Bridge" entries already existed), each now with a TopAppBar Up→Chat back arrow (Material Up semantics; system Back still pops to Settings). `RelayModeStrip`/`RelayPrimaryMode` stay defined in `ui/components/RelayCockpitChrome.kt` because the store-screenshot harness renders them. This also corrects a stale CLAUDE.md note ("Main scaffold — bottom nav"): there was never a bottom `NavigationBar`; the `bottomBar` slot is a status pill, and primary nav had been this per-screen top strip.
+
+**Toast overlay (`ui/RelayApp.kt`).** The non-error connection-status banner moved from the take-space `Column` (fade-only `AnimatedVisibility` → instant height pop + Scaffold reflow) into the existing floating-overlay `Column` alongside the error toast, reusing the house `slideInVertically+fadeIn` / `slideOutVertically+fadeOut` spec. An overlay occupies zero layout space, so content no longer reflows on appear/disappear, and it drops out of the Scaffold status-bar inset accounting (matching a comment that already described it as a floating overlay). Refines the take-space banner introduced in 1.2.6.
+
+**Verification.** `:app:compileSideloadDebugKotlin` / `:app:assembleSideloadDebug` — BUILD SUCCESSFUL at each step (no new warnings in changed files); installed sideload debug to the test device. The 6 existing `ConnectionManagerRouteTest` cases hold by inspection (the manual-path null-publish contracts are untouched). An independent adversarial review of the reconnect diff confirmed the hysteresis is correct, dead-route recovery is preserved (onLost still poisons after the grace window), and no existing test breaks; it surfaced one latch-reset gap, which was fixed. On-device proof of the loop fix is a logcat signature ("network onAvailable" + "re-resolve miss … keeping route" with no gateway client rebuild during a tun blip) — pending. Commits landed scoped (pathspec) on `dev` alongside a concurrent session's Threads/phone work.
+
+## 2026-06-29 — Phone platform: unified-session "Threads" surface (slices 1–5 + 7)
+
+**Why.** The proactive agent→phone conversation surfaced only as a flat notification inbox. The decision (ADR 12, refined) is to make it a **Thread**: a `source=phone` gateway session rendered as a first-class conversation *inside the one Chat surface* (sessions tagged by source), not a separate tab — the agent lane is just a chat the agent can start. Distinguishers are session properties (agent-can-initiate, relay `proactive` transport/gating, standing DM), not a separate UI.
+
+**What.**
+- **Drawer source tags (slice 1).** `ChatSession` gained `source` (carried from upstream `sessions.source` at the one wire→UI mapping in `ChatHandler`); the drawer renders a "Thread" chip + a custom `ThreadSpoolGlyph` (a clean Canvas thread-spool, not a phone icon) on `source=phone` rows, plus a Threads filter + a header affordance gated on `threadsCapabilityActive` (relay-paired + "Let Hermes message me") or the presence of a Thread.
+- **Open + reply (slices 2, 4).** Selecting a Thread loads its server history via the existing `loadSessionHistory` path (free). A composer send while a `source=phone` session is active branches in `sendMessageInternal` to route over `proactive.reply` (continues the gateway phone session) instead of the normal chat transport; the user bubble carries a `MessageDeliveryStatus` (SENDING → DELIVERED on the relay ack / FAILED), rendered as a quiet caption.
+- **Relay ack + cancel (slice 7).** `ProactiveChannel` emits a new server→app `proactive.reply.ack {client_msg_id, status, ts}` when it buffers a reply, and accepts an app→server `proactive.cancel {message_id}` (WS twin of `DELETE /phone/outbound`, reusing `cancel_outbound`). The app stamps its bubble id as the reply's `message_id` so the ack settles the exact bubble. `proactive.reply.ack` is also handled client-side (`ProactiveMessageHandler.onReplyAck` → `ChatViewModel.onProactiveReplyAck`).
+- **Capability surfacing (slice 5).** A "Threads" capability row joins Live thinking / Media / Terminal / Voice in `SessionPathCard` (`ConnectionInfoSheet`).
+- **Create a Thread (slice 8, user-initiated — Discord-style).** A "+ New Thread" affordance in the drawer's Threads view names a thread; `ChatViewModel.startNewThread` mints a fresh `chat_id`, and the first composer message opens it over `proactive.reply` (the gateway creates the `source=phone` session keyed by that id). `switchToCreatedThread` polls the session list, switches to the real session, and applies the name. Existing-thread replies now route by the `chat_id` parsed from the session id (`…:dm:<chat_id>`), so multiple threads each reach their own conversation (home thread → `phone`; opaque id → home fallback).
+
+**Verification.** `python -m unittest plugin.tests.test_proactive_channel plugin.tests.test_phone_platform` — 55 pass (new: reply-ack on `handle`, no-ack on empty, `proactive.cancel` drops queued one/all). `:app:assembleSideloadDebug` — **BUILD SUCCESSFUL** (clean compile, no new warnings in changed files); installed sideload debug to the test device. An independent adversarial review of the diff found no compile/logic defects (imports resolve, defaulted params break no call sites, both `when`s exhaustive, ack id passes through unchanged). On-device behavior pending. **"Delivered" requires the relay running the updated `proactive.py`** (the reply itself works on the old relay; only the ack is new).
+
+**On-device verifies for the Thread create-flow.** Three things the build can't confirm: (1) a fresh-`chat_id` inbound with no `reply_to` creates a new `source=phone` gateway session (architecturally yes — `handle_message` → `get_or_create`); (2) the phone session's id carries the `…:dm:<chat_id>` form the client parses for reply routing + the post-create switch (defensive: an opaque id falls back to the home channel, so the single home thread stays safe); (3) `renameSession` titles a phone-platform session. If (2) differs on-device, the fix is a one-line parse change once a real phone session id is observed.
+
+**Follow-on — replies render in-thread + inbox retired (2026-06-29).** On-device, an agent reply to a Thread only surfaced as a notification + the legacy inbox, never in the open conversation. `ProactiveMessageHandler.dispatch` now routes an inbound `phone.message` whose `chat_id` matches the open Thread (or a pending "+ New Thread" draft) inline as an ASSISTANT bubble (`ChatHandler.addAgentThreadMessage` — `clientOnly`, idempotent on `message_id`) and **suppresses the notification + inbox entry** when shown there; non-matching / no-thread-open messages still notify + inbox. With the conversation now living in the Thread, the redundant `HermesInboxScreen` is **retired**: deleted, its route + nav entry removed, the notification tap + Settings "View messages" re-pointed to Chat, and the surface renamed **"Hermes messages" → "Threads"** (`ProactiveSettingsScreen` / `SettingsScreen` / notification channel). `ProactiveInboxStore` is now a viewer-less write-only log (fully retireable — TODO).
+
+**Deferred (see TODO).** Per-session unread badge; outbound reply outbox/retry (needs multiplexer connection-state); **exact-Thread deep-link** from the notification (opens Chat today, not the specific Thread — needs a select-session-on-entry signal); remove the now-orphaned `ProactiveInboxStore`; **agent-initiated** named Threads (the upstream `send_message` thread/chat_id param — user-initiated create now ships).
+
+## 2026-06-29 — Phone platform (Phase 2c: two-way reply — device round-trip + fixes)
+
+**Why.** The Phase 2c inbound reply leg shipped off-device (unit tests + lint), pending a live round-trip. The first on-device test surfaced that a reply never produced an agent answer: the agent→phone push worked and the reply reached the relay (buffered), but nothing drained it — the gateway's `PhoneAdapter` never connected, so its inbound `/phone/replies` poll loop never ran. Two distinct faults, one masking the other.
+
+**Fix 1 — `PhoneAdapter.connect()` signature (`plugin/phone_platform.py`).** The gateway's platform supervisor calls `adapter.connect(is_reconnect=…)` (the `BasePlatformAdapter.connect` contract). `PhoneAdapter.connect(self)` didn't accept the keyword, so every connect raised `TypeError` and the adapter — and its reply loop — never came up. Added `*, is_reconnect: bool = False` to match the base + the ntfy template it was modeled on (behavior otherwise unchanged). Added a `ConnectContractTests` regression guard asserting the signature via `inspect`, since the live adapter binds to the gateway base class that's absent in CI — the exact blind spot that let this ship.
+
+**Fix 2 — operational: a stale duplicate plugin masked every deploy.** Even after Fix 1 the adapter still didn't connect. Root cause: a prior plugin-clone rebuild had left a full backup copy of the old plugin *inside the user-plugins directory* (`hermes-relay.copy-backup-…`). The plugin loader dedups discovered plugins by manifest name; both the live symlink and the backup carry `name: hermes-relay`, and the backup sorted last, so it *won* the dedup — the gateway loaded old code and silently ignored the deployed clone. Removing the backup from the plugins directory let the real plugin load, register the `phone` platform, connect the adapter, and drain the buffered reply. Follow-up filed (TODO): the installer should purge old backup copies out of the plugins directory so this can't recur.
+
+**Also.** The previously-silent `except Exception` around phone-platform registration now logs at `warning` (was `debug`) — a real registration failure (e.g. an upstream `PlatformEntry` signature drift) should be visible, not lost.
+
+**Verification.** `python -m unittest plugin.tests.test_phone_platform plugin.tests.test_proactive_channel` — 49 pass (incl. the new connect-contract guard). Two-way reply round-trip confirmed end-to-end on-device: agent → phone notification → inline reply → drained through `/phone/replies` → `handle_message` → agent answer back in the *same* thread. One observed gap: when the phone has dropped its (connection-scoped) proactive subscription, the agent's answer `503`s and is lost — tracked as **outbound buffering** in TODO.
+
+**Follow-on — outbound buffering (`plugin/relay/channels/proactive.py`, `server.py`).** Closes that gap. When no phone is subscribed, `ProactiveChannel.push()` now *queues* the message in a bounded deque (drop-oldest, 24 h staleness TTL) and returns `{delivered: false, queued: true, …}` instead of raising 503; `_flush_outbound` delivers the backlog FIFO on the next `proactive.subscribe` (stale entries pruned, socket-died-mid-flush re-buffers the remainder). Queued messages are inspectable + cancelable before they flush via `peek_outbound`/`cancel_outbound` and new loopback routes `GET /phone/outbound` (count + summaries) and `DELETE /phone/outbound[?message_id=…]` (cancel all / one). The adapter's `send()` is unchanged — a 200 queued reads as success. 54 proactive + phone tests pass (new: flush-on-subscribe FIFO, bounded drop-oldest, stale-drop, cancel one/all, close clears). UI surfacing of the queued state (host-side `relay` view + per-message status in the threaded surface) is specced in TODO.
+
+## 2026-06-28 — Phone platform (Phase 2c: two-way reply — the inbound leg)
+
+**Why.** Proactive messaging was push-only: the agent could message the phone, but the user couldn't answer. The phone was registered as a Hermes *platform* but only the outbound half (`send()`) was wired; its inbound path was a no-op, so a reply never reached the agent. Phase 2c wires the inbound leg so a reply becomes an inbound platform message the agent processes on the `phone` channel and answers over the existing `send()` — closing the loop into a conversation.
+
+**What (three legs across relay, plugin, app).**
+- **Relay — receive + buffer (`plugin/relay/channels/proactive.py`, `server.py`).** `ProactiveChannel.handle` learns a new inbound `proactive.reply` envelope (`{text, chat_id, reply_to, message_id, ts}`), added to the frozen wire-envelope docstring. Replies are buffered in a bounded `deque` (drop-oldest) + `asyncio.Event`; `take_replies(timeout)` is the long-poll drain. New loopback-only `GET /phone/replies` route mirrors the outbound `POST /phone/message` hop — the relay and the gateway adapter are different processes, so a reply is parked and polled rather than handed over in-process.
+- **Plugin — inbound loop (`plugin/phone_platform.py`).** `PhoneAdapter.connect()` now also spawns a `self._running`-guarded long-poll loop (mirror of the bundled adapters' receive loops, e.g. ntfy `_run_stream`) against `/phone/replies`, with backoff. Each reply → `build_source(chat_id=…, role_authorized=True)` + `MessageEvent(reply_to_message_id=…)` → `await self.handle_message()`. `disconnect()` cancels the loop. The reply continues the originating conversation: `chat_id` keys the session, `reply_to` anchors it.
+- **App — capture the reply (`notifications/`, `ui/screens/HermesInboxScreen.kt`, `viewmodel/ConnectionViewModel.kt`).** `ProactiveMessageNotifier` gains an inline Reply action via `RemoteInput` + a **mutable** broadcast `PendingIntent` (FLAG_MUTABLE guarded for API < 31) carrying `chat_id`/`message_id`. New `ProactiveReplyReceiver` reads the typed text and sends a `proactive.reply` over the relay WS via a static `ChannelMultiplexer` slot (mirror of `HermesNotificationCompanion`), then re-posts a confirmation. The Hermes inbox gets a per-card reply box. `ProactiveInboxEntry` gains `chatId` (back-compat default) so an inbox reply threads correctly; `ConnectionViewModel.sendProactiveReply()` is the in-app send path.
+
+**Key design decision — authorization.** The gateway's `_is_user_authorized` (`gateway/authz_mixin.py`) is **default-deny** for plugin platforms, so a reply would silently vanish unless authorized. The adapter builds the inbound source `role_authorized=True`: the relay's pairing/session-token layer already authenticated the device before the reply reached `/phone/replies`, so the adapter legitimately vouches for it. This makes replies work with zero extra config — no need to weaken the allowlist with `PHONE_ALLOW_ALL_USERS`.
+
+**Scope guardrails.** No chat *visuals* touched (inbox renders its own cards; `MessageBubble`/theme untouched). Upstream-or-plugin only — no fork: the reply rides our plugin's relay routes + the upstream `handle_message`/`build_source` platform API. Offline replies drop best-effort (same semantics as the notification companion); a persistent send-when-reconnected queue is left to Phase 3.
+
+**Verification.** `python -m unittest plugin.tests.test_proactive_channel plugin.tests.test_phone_platform` — 48 tests pass (new: reply buffer/drain, empty-text drop, late-reply wake, timeout→[], bounded drop-oldest, close clears; reply-URL + `_normalize_reply` helpers). `./gradlew :app:lintSideloadDebug` — BUILD SUCCESSFUL (no new findings in the changed files; the mutable-PendingIntent is guarded so no `UnspecifiedImmutableFlag`). **Maintainer (off-device):** on-device pairing + reply round-trip from both the notification and the inbox; a live gateway discovering the plugin and the adapter's poll loop reaching `/phone/replies`; confirming a reply continues the correct session. See TODO.md.
+
+## 2026-06-28 — Phone platform: advertise the capability to the agent
+
+**Why.** The `phone` platform worked and was discoverable via `send_message action=list` (the channel directory includes plugin-registered platforms), but it was not *proactively* advertised: `platform_hint` only injects for the **inbound** platform of a turn (`system_prompt.py`), which never fires for a push-only platform, and the `send_message` schema's `target` examples (upstream core, no-fork) don't list `phone`. So the agent wouldn't reach for it on its own.
+
+**What.** Added a relay-owned system-prompt context block via the existing `RELAY_AGENT_CONTEXT_ENABLED` seam (`plugin/enhancements/context_injection.py`, which wraps `AIAgent._build_system_prompt`):
+- New `phone-platform` block telling the agent it can `send_message target=phone` (delivered as a notification + inbox), gated on **`phone_platform_enabled()` (PHONE_ENABLED)** AND a per-block opt-out **`RELAY_CONTEXT_PHONE_PLATFORM`** (default ON) — `plugin/config.py`. The block only appears when the platform is actually enabled, so the prompt never advertises a disabled capability.
+- Auditable/removable like the media-sensitivity block (surfaces in `GET /context/injected`).
+
+**Verification.** `python -m unittest plugin.tests.test_enhancements plugin.tests.test_phone_platform plugin.tests.test_proactive_channel` — 56 tests pass (new: phone-helper defaults, block present/absent by platform gate, per-block suppression, context-layer-off, labeled-fence in prompt, audit payload). Existing context-injection tests unchanged (new block defaults off). On the live box (RELAY_AGENT_CONTEXT_ENABLED + PHONE_ENABLED both on) the block activates on the next gateway plugin reload.
+
+## 2026-06-28 — Phone platform (Phase 2: inbox surface + session injection)
+
+**Why.** Phase 1 surfaced proactive messages as a transient notification only. Phase 2 adds the other two config-driven surfacings from the brief: a dedicated always-present Hermes inbox, and injection into the active chat session — selected per-message by the `surfacing` hint.
+
+**What.**
+- **Always-present inbox is the durable log.** `ProactiveMessageHandler.dispatch` now records *every* received message to the inbox, then adds the surface its `surfacing` hint selects: `null`/`"default"`/`"notification"` → also notify; `"inbox"` → silent (inbox only); `"session"` → also inject into the active chat (falls back to a notification when no session sink/active chat). Centralized in one `when`.
+- **`data/ProactiveInboxStore.kt`** (new). `ProactiveInboxRepository` — DataStore-backed, newest-first, deduped by id, capped at 100, survives restart. Separate `ProactiveInboxEntry` model so on-disk shape doesn't track the wire protocol.
+- **`ui/screens/HermesInboxScreen.kt`** (new). A flat newest-first list (self-contained cards — deliberately NOT reusing the chat-ux-owned `MessageBubble`), empty state, relative timestamps, clear-all action. Reached from the notification tap (route now `hermes_inbox`) and a "View messages" button on `ProactiveSettingsScreen`.
+- **Session injection (Phase 2b).** `ChatHandler.addProactiveMessage` appends a **SYSTEM-role `clientOnly`** bubble — SYSTEM keeps it out of the voice TTS stream observer (which only voices ASSISTANT messages), so injection can't trigger uncontrolled speech (Phase 3 owns TTS-on-voice); `clientOnly` preserves it across the history reconcile. `ChatViewModel.injectProactiveMessage` is the small localized entry point; `ProactiveMessageHandler.toSession` is wired once at the RelayApp root (where both ViewModels exist) since ChatViewModel isn't available when the handler is built.
+- **Wiring.** `ConnectionViewModel` gains `proactiveInbox` + `inboxMessages` + `clearProactiveInbox()` and feeds the handler's `toInbox` sink. `Screen.HermesInbox` route + NavHost entry added.
+
+**Scope guardrails.** No chat *visuals* touched (`MessageBubble`/theme untouched — inbox renders its own cards). No voice internals touched — the SYSTEM-role choice avoids the TTS observer entirely; Phase 3's TTS-on-voice will call the existing voice player API explicitly.
+
+**Verification.** `./gradlew :app:lintSideloadDebug` over the combined Phase 2 changes — see commit. On-device end-to-end (surfacing=inbox/session/default) is a maintainer step.
+
+## 2026-06-28 — Phone platform (Phase 1d: off-by-default enablement surface)
+
+**Why.** Phase 1c wired the receive path but gated it behind a flag with no UI. Phase 1d adds the user-facing opt-in ("Let Hermes message me") and the notification-permission prompt, completing the end-to-end Phase 1 spine: `send_message target=phone` → phone notification, only when both server and phone have opted in and the phone is paired.
+
+**What.**
+- **`ui/screens/ProactiveSettingsScreen.kt`** (new). A dedicated "Hermes messages" screen: the enablement switch (bound to `proactiveEnabled` / `setProactiveEnabled`), a POST_NOTIFICATIONS request fired on enable (API 33+), a not-paired hint, and an About section that documents the server-side `PHONE_ENABLED` requirement. This is the permanent home Phase 3 expands (quiet hours, per-profile, rate limiting).
+- **`viewmodel/ConnectionViewModel.kt`.** `setProactiveEnabled(enabled)` persists the flag; subscribe/unsubscribe is already driven reactively by the `proactiveEnabled` collector from Phase 1c.
+- **`ui/screens/SettingsScreen.kt`.** New "Hermes messages" category row in the Hermes section + `onNavigateToProactiveSettings` param.
+- **`ui/RelayApp.kt`.** `Screen.ProactiveSettings` route + NavHost entry + nav wiring at the Settings call site.
+- **Server side.** The `PHONE_ENABLED` gate already lives in the adapter (Phase 1a); documented in-app on the new screen.
+
+**Verification.** `POST_NOTIFICATIONS` is already declared in the manifest; `rememberLauncherForActivityResult` is used across existing screens (dependency present). `./gradlew :app:lintSideloadDebug` run over the combined Phase 1c+1d app spine (same compilation unit) — see commit. On-device end-to-end (enable → server `send_message target=phone` → notification) is a maintainer step.
+
+## 2026-06-28 — Phone platform (Phase 1c: app receive + system notification)
+
+**Why.** The relay now pushes `phone.message` envelopes over the phone WSS (Phase 1b); the app needs to receive them and surface the agent's message. Phase 1c lands the receive path + a system notification, gated off by default.
+
+**What.**
+- **`network/relay/ProactiveMessageHandler.kt`.** Sibling of `BridgeCommandHandler`. Parses `phone.message` payloads into a `ProactiveMessage` and dispatches them. `dispatch()` centralizes surfacing so Phase 2 (inbox / session injection) extends one place; Phase 1c always raises a notification. Drops malformed payloads; logs the `proactive.subscribed` ack.
+- **`notifications/ProactiveMessageNotifier.kt`.** Twin of `TurnCompleteNotifier` (channel-ensure → permission-gate → tap PendingIntent) with two differences: it **stacks per message** (slot derived from `message_id` so re-delivery replaces but distinct messages stack) and uses an `IMPORTANCE_HIGH` "Hermes messages" channel (a proactive ping the user opted into). Tap opens Chat for now (inbox route arrives in Phase 2a).
+- **`network/relay/ChannelMultiplexer.kt`.** Adds the `"proactive"` route branch.
+- **`data/ProactivePrefs.kt`.** `KEY_PROACTIVE_ENABLED` ("Let Hermes message me") + setter + reactive read, default **off**. The app half of the two-sided gate.
+- **`auth/AuthManager.kt`.** Adds an additive `authOkEvents` SharedFlow (mirrors the existing `profilesUpdatedEvents`), emitted on every `auth.ok` — the per-connection signal needed to re-subscribe after reconnects.
+- **`viewmodel/ConnectionViewModel.kt`.** Registers the proactive handler; exposes `proactiveEnabled`; sends `proactive.subscribe` on each `auth.ok` when enabled (sourced via `_authManagerFlow.flatMapLatest` so it survives connection switches), and subscribe/unsubscribe when the toggle flips. The subscribe rides *after* the auth handshake, so it never races the `auth` envelope.
+
+**Verification.** New files are self-contained; the receive path is gated by `proactiveEnabled` (default off) and the relay's per-socket subscribe latch, so nothing surfaces until the user opts in (Phase 1d adds the Settings switch + notification-permission prompt). `./gradlew :app:lint` is run once over the app spine after Phase 1d (same compilation unit). On-device end-to-end is a maintainer step.
+
+## 2026-06-28 — Phone platform (Phase 1b: relay forward route)
+
+**Why.** The phone platform adapter (Phase 1a) POSTs proactive messages to the relay; the relay needs a route to receive them and a channel to push them over the live phone WSS. This is the server→app push counterpart to the existing bridge channel.
+
+**What.**
+- **`plugin/relay/channels/proactive.py`.** `ProactiveChannel` — the mirror of the bridge handler, reversed. It latches the phone's WebSocket on a `proactive.subscribe` envelope (acked with `proactive.subscribed`), exposes `push(payload)` that sends a `phone.message` envelope over that socket, and releases on `proactive.unsubscribe` / disconnect. No awaited reply — push is best-effort (notification semantics). `phone.message` from a phone is rejected (server→app only).
+- **`plugin/relay/server.py`.** Wires `self.proactive = ProactiveChannel()` onto `RelayServer`; adds the `channel == "proactive"` dispatch branch; releases the subscriber on client disconnect; closes it on shutdown; and registers `POST /phone/message` (`handle_phone_message`) — **loopback-only** (the adapter runs in the gateway process on the same host; an outbound push could spam notifications, so it is not exposed to the LAN). Returns 503 when no phone is subscribed, 502 on socket-write failure, 400 on empty/invalid body.
+- **Opt-in is structural.** The relay can only push when it holds a latched `phone_ws`, which it only gets when the app subscribes — which the app does only when the user enables "Let Hermes message me." Combined with the server-side `PHONE_ENABLED` adapter gate, both sides must opt in.
+
+**Verification.** `python -m py_compile` clean. `python -m unittest plugin.tests.test_proactive_channel` — 11 tests pass (subscribe/ack, take-over, unsubscribe/detach, push envelope shape + supplied-id passthrough, no-subscriber/closed/failed-send raises, spoofed-inbound + unknown-type ignored). `import plugin.relay.server` succeeds and the route registers; bridge + proactive + phone suites pass together (40 tests). End-to-end with a live phone and the app-side receive handler is Phase 1c.
+
+## 2026-06-28 — Phone as a first-class Hermes platform (Phase 1a: plugin adapter)
+
+**Why.** The paired phone could receive agent output only by being on the chat screen. Making it a registered Hermes *platform* — a peer of Discord/Telegram/ntfy — lets the agent push to it proactively (`send_message target=phone`, cron `deliver=phone`). This is delivered additively through the upstream platform-plugin API (`ctx.register_platform`); no fork, no upstream core change.
+
+**What.**
+- **`plugin/phone_platform.py`.** A push-only `BasePlatformAdapter` subclass (`PhoneAdapter`) modeled on the bundled ntfy adapter. `send()` POSTs loopback to the relay (`/phone/message`, reusing `android_tool.py`'s relay-URL convention) rather than opening a socket — the relay forwards over the live phone WSS. `connect()` only marks the platform ready (the phone's inbound path is chat, so no inbound stream); `get_chat_info()` returns the device identity. Ships the full registry surface: `check_fn`/`validate_config`/`is_connected` (all gated on `PHONE_ENABLED`), `env_enablement_fn`, `cron_deliver_env_var=PHONE_HOME_CHANNEL`, and a `standalone_sender_fn` so out-of-process cron / `send_message` delivery works (without it, `deliver=phone` cron fails with "No live adapter"). `gateway.*` imports are guarded so the module (and its pure helpers) import without hermes-agent present.
+- **`plugin/__init__.py`.** Wires `register_phone_platform(ctx)` into `register()`, guarded like the existing slash/hook blocks so an older host (no `register_platform`) can't block tool/CLI registration.
+- **`plugin/plugin.yaml`.** Adds a `provides_platforms: [phone]` documentation key. The plugin stays `kind: standalone` (multi-capability) — it is not a dedicated `kind: platform` plugin; registration is programmatic.
+- **Off by default.** Nothing is advertised or pushed unless `PHONE_ENABLED` is truthy.
+
+**Verification.** `python -m py_compile` clean on the new + edited files. `python -m unittest plugin.tests.test_phone_platform` — 22 tests pass (env gating, relay-URL precedence, payload construction/truncation/surfacing-lift, `_env_enablement`, and the standalone sender over a fake httpx client: success / 503-no-phone / disabled / unreachable). Relay route, end-to-end routing, and the live-gateway plugin-discovery check are Phase 1b+ and a maintainer on-box step.
+## 2026-06-28 — Standard (no-relay) voice parity with hermes-desktop
+
+**Why.** The Standard (vanilla-Hermes, no-plugin) voice path lagged the official hermes-desktop voice experience on three fronts. (1) Server-side voice config (tts/stt provider, voice, model) was unreachable from the app: the Manage "Config" tab fetches `/api/config/schema` and renders it read-only via `summarizeKeyValueOrList`, which only ever surfaced the schema's two top-level keys (`fields`, `category_order`) — never the `tts.*`/`stt.*` values — and `DashboardApiClient` had no `PUT /api/config` path. (2) Audio capture/playback had no echo-cancellation / noise-suppression and a cold-start silent-first-turn window. (3) Listen timing and two dead controls drifted from desktop. (Endpoint + streaming parity were already met — `StandardHermesVoiceClient` matches the dashboard `/api/audio/*` base64 contract, and `VoiceViewModel` already sentence-chunks SSE the way desktop's `use-voice-conversation.ts` does.)
+
+**What.**
+- **Server voice config editor (Standard path).** New `DashboardApiClient` methods — `getConfig()`, `getConfigSchema()`, `updateConfig(config, profile)` (`PUT /api/config`), and `getElevenLabsVoices()` (`GET /api/audio/elevenlabs/voices`) — plus pure, unit-tested helpers in `DashboardConfigEditing.kt` (schema parse, `tts.*`/`stt.*` dot-path filter, immutable dot-path read/merge). A new **Server voice config** card in Voice settings loads the schema + values, renders provider-scoped `tts.*`/`stt.*` controls, and saves via GET → merge → PUT-whole (upstream `save_config` overwrites the document, so a partial PUT would drop keys). Includes the **ElevenLabs voice picker** (`tts.elevenlabs.voice_id` → dropdown sourced from the server's key; graceful when `available:false`). Standard voice is host-global, so writes target the launch profile config (`profile = null`).
+- **Audio quality.** `VoicePlayer.defaultExoPlayer()` now sets `USAGE_MEDIA` / `CONTENT_TYPE_SPEECH` audio attributes with `handleAudioFocus=true`, warming the output path before the first clip (the standard-path twin of the relay PCM deep-buffer cold-start fix). `VoiceRecorder` attaches `AcousticEchoCanceler` + `NoiseSuppressor` on the capture session when the device exposes them (desktop's `getUserMedia({echoCancellation, noiseSuppression})`); both best-effort, released with the recorder.
+- **VAD parity.** `VoiceViewModel`'s silence watchdog now matches desktop `voice_mode`: end-of-speech default 1250 ms (was 3000; slider re-ranged to 0.75–5 s in 250 ms steps), idle/no-speech auto-close at 12 s (cancels without transcribing), and a 60 s hard turn cap. The existing 0.08 amplitude floor already aligns with desktop's 0.075 `silenceLevel`.
+- **Cleanup.** Removed the disabled "Auto-TTS" toggle and dead "STT language" picker (the "Coming soon" card) plus their prefs / keys / setters — desktop has no read-every-typed-message feature, and STT language is a server-side `stt.*.language` key now editable in the new card.
+- **Boundary.** The Relay voice path (`RelayVoiceClient`, streaming PCM, realtime-agent) was not touched.
+
+**Verification.** `:app:lint` green (BUILD SUCCESSFUL). `:app:testGooglePlayDebugUnitTest` compiles and the new suites pass — `DashboardApiClientTest` (31/31, incl. 6 new) and `DashboardConfigEditingTest` (8/8); the only failures are three pre-existing DataStore "multiple instances" Windows flakes (`BargeInPreferencesTest`, `ProfileSelectionStoreTest`, `ProfileSessionStoreTest`), all in untouched files. Static read confirmed the Config-tab finding (no editable `tts.*`/`stt.*`). On-device render of the new card and a live save/round-trip against a dashboard are flagged for the maintainer (no dashboard available in this environment). Branch `Codename-11/voice-standard-parity` off `dev`; not pushed.
+## 2026-06-28 — Chat UI refresh: "Blend" bubbles + assistant avatar + selectable font system
+
+**Why.** Move the chat surface toward a polished blend of Telegram bubbles and Discord density, and replace the single hardcoded sans with a proper user-selectable font system (Inter default). Chat-UI + theme lane only — audio/voice/network untouched (a separate worktree owns voice).
+
+**What.**
+- **Font system.** New `AppFont` registry (Inter / Nunito / System) backing a DataStore pref (`ConnectionViewModel.appFont` / `setAppFont`, key `app_font`). `Type.kt` typography is now built per body family via `appTypography(body)`; `HermesRelayTheme` gains `appFontId` and rebuilds the Material `Typography` from the selected face so the whole app re-themes live (no restart), keeping `Monospace` for code/metadata. Inter + Nunito ship as SIL OFL variable TTFs in `app/src/main/res/font` (weight-instanced 400/500/600/700 via `FontVariation`, `@OptIn(ExperimentalTextApi)`); license texts in `licenses/`. A Font picker in `AppearanceSettingsScreen` previews each option in its own face and persists on tap.
+- **Bubbles + avatar.** Assistant turns get a Hermes brand-mark avatar (reusing `splash_icon`) in a reserved left gutter, drawn once per group like the name label; `MessageBubble`'s content column is wrapped in that gutter Row. Compact-phone bubble cap 300→340dp, chat-list inset 16→12dp, and denser bubble padding (h14/v9) for Discord-like rhythm. The grouped flat-edge shape system is preserved.
+- **Code blocks.** Streaming fence rebuilt Discord-style: a contrasting inset surface with a thin header (language label + copy-to-clipboard affordance that flips to a check) over a horizontally-scrollable monospace body. Markdown code/inline-code backgrounds switched to contrasting container steps (`surfaceContainerLowest` / `surfaceContainerHighest`) so code no longer blends into the surfaceVariant assistant bubble.
+
+**Verification.** Host-side Roborazzi (`StoreScreenshotTest`): added `s09_blend_chat` (Hermes dark + Nous-blue light) and `s10_font_picker`. Renders confirm the avatar/grouping/width/density, the code-block + inline-code contrast in both dark and light, and that Inter and Nunito load as visibly distinct faces in the picker. `./gradlew :app:lint` run clean. On-device typeface crispness and feel (avatar size, width, density on a real device) remain a maintainer gate.
+
 ## 2026-06-28 — Dev-loop polish after the live smoke test
 
 **Why.** End-to-end testing the triage workflow on `main` (issue #150 through open → `triage:deep` → reply, plus a dispatch against #146) surfaced three things to tidy.

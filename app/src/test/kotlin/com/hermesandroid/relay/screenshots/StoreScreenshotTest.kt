@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Link
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,8 +64,6 @@ import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
-import com.hermesandroid.relay.ui.components.RelayModeStrip
-import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
@@ -125,6 +125,11 @@ class StoreScreenshotTest {
     @Test fun s01_landing_cyberpunk() = capture("01_landing_cyberpunk", "cyberpunk") { LandingScene() }
 
     @Test fun s02_chat_brand() = capture("02_chat", "hermes-relay") { ChatScene() }
+    // "Blend" chat surface — wider bubbles + assistant avatar + grouped turns +
+    // a code block, in the Inter default. The self-verification frame for the
+    // chat UI refresh. Rendered in two themes to check dark + light contrast.
+    @Test fun s09_blend_chat() = capture("09_blend_chat", "hermes-relay") { BlendChatScene() }
+    @Test fun s09_blend_chat_light() = capture("09_blend_chat_nous-blue", "nous-blue") { BlendChatScene() }
     @Test fun s03_voice() = capture("03_voice", "hermes-relay") { VoiceScene() }
     // Real screen (1:1, auto-updates on layout changes). ConnectionViewModel
     // takes only an Application; Robolectric provides it. Renders every section
@@ -139,6 +144,21 @@ class StoreScreenshotTest {
     @Test fun s06_manage() = capture("06_manage", "hermes-relay") { ManageScene() }
     @Test fun s04_sessions() = capture("04_sessions", "hermes-relay") { SessionsScene() }
     @Test fun s07_connections() = capture("07_connections", "hermes-relay") { ConnectionsScene() }
+    // Real Appearance screen scrolled to the new Font picker — proves the
+    // bundled Inter/Nunito faces load as visibly distinct previews (vs System).
+    @Test fun s10_font_picker() {
+        val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
+                    AppearanceSettingsScreen(connectionViewModel = vm, onBack = {})
+                }
+            }
+        }
+        compose.onNodeWithText("Nunito").performScrollTo()
+        compose.onRoot().captureRoboImage("build/store-shots/10_font_picker.png")
+    }
+
     // Same real Appearance screen, scrolled to the avatar + sphere-skin sections.
     @Test fun s08_appearance() {
         val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
@@ -207,9 +227,34 @@ private fun ChatScene() = StoreCockpit(contextUsage = 0.04f) {
     }
 }
 
+// "Blend" chat — a real grouped thread so the refresh is visible: the assistant
+// group shows the avatar once (first message), the second assistant message
+// flat-tops under it with no avatar, a fenced code block exercises the code
+// surface, and the compact 340dp cap + tightened density match production.
+@Composable
+private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
+    val thread = MockChat.blendThread
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        thread.forEachIndexed { i, m ->
+            val first = i == 0 || thread[i - 1].role != m.role
+            val last = i == thread.lastIndex || thread[i + 1].role != m.role
+            MessageBubble(
+                message = m,
+                modifier = Modifier.padding(top = if (first) 6.dp else 1.dp),
+                maxBubbleWidth = 340.dp,
+                isFirstInGroup = first,
+                isLastInGroup = last,
+            )
+        }
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
-//  Real-chrome cockpit — TopAppBar + ContextMeterBar + RelayModeStrip wrap the
-//  content, with ChatInputBar + RelayStatusStrip at the foot. Shared by scenes.
+//  Real-chrome cockpit — TopAppBar + ContextMeterBar wrap the content, with
+//  ChatInputBar + RelayStatusStrip at the foot. Shared by chat-context scenes.
 // ════════════════════════════════════════════════════════════════════════════
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -217,7 +262,6 @@ private fun ChatScene() = StoreCockpit(contextUsage = 0.04f) {
 private fun StoreCockpit(
     contextUsage: Float? = null,
     showInput: Boolean = true,
-    selectedMode: RelayPrimaryMode = RelayPrimaryMode.Chat,
     content: @Composable () -> Unit
 ) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -251,7 +295,6 @@ private fun StoreCockpit(
             colors = TopAppBarDefaults.topAppBarColors(containerColor = RelayRefresh.Background.copy(alpha = 0.96f))
         )
         ContextMeterBar(usedFraction = contextUsage, usedTokens = 37_000, maxTokens = 1_050_000)
-        RelayModeStrip(selected = selectedMode, onModeSelected = {})
         Box(Modifier.weight(1f).fillMaxWidth()) { content() }
         if (showInput) {
             ChatInputBar(
@@ -334,25 +377,47 @@ private fun VoiceScene() {
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun ManageScene() = StoreCockpit(showInput = false, selectedMode = RelayPrimaryMode.Manage) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        com.hermesandroid.relay.ui.components.RelayHeroPanel(title = "Relay Hub", subtitle = "Dashboard · skills · profiles · models")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            com.hermesandroid.relay.ui.components.RelayMetricCard("123", "skills", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
-            com.hermesandroid.relay.ui.components.RelayMetricCard("ready", "dashboard", Modifier.weight(1f), valueColor = RelayRefresh.Green)
-            com.hermesandroid.relay.ui.components.RelayMetricCard("0.17.0", "server", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
+private fun ManageScene() {
+    // Manage's own chrome (matches DashboardManagementScreen): a back arrow to
+    // Chat + Terminal/Settings/Refresh actions — no hamburger, no context meter,
+    // and no mode strip (removed app-wide; Manage is reached from Settings now).
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        TopAppBar(
+            navigationIcon = {
+                RelayChromeIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back to chat", onClick = {}, modifier = Modifier.padding(start = 4.dp))
+            },
+            title = { Text("Manage", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) },
+            actions = {
+                RelayChromeIconButton(Icons.Filled.Code, "Terminal", onClick = {}, modifier = Modifier.padding(end = 4.dp))
+                RelayChromeIconButton(Icons.Filled.Tune, "Settings", onClick = {}, modifier = Modifier.padding(end = 4.dp))
+                IconButton(onClick = {}) { Icon(Icons.Filled.Refresh, "Refresh", tint = RelayRefresh.Paper) }
+            },
+            windowInsets = WindowInsets(0, 0, 0, 0),
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = RelayRefresh.Background.copy(alpha = 0.96f)),
+        )
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                com.hermesandroid.relay.ui.components.RelayHeroPanel(title = "Relay Hub", subtitle = "Dashboard · skills · profiles · models")
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    com.hermesandroid.relay.ui.components.RelayMetricCard("123", "skills", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
+                    com.hermesandroid.relay.ui.components.RelayMetricCard("ready", "dashboard", Modifier.weight(1f), valueColor = RelayRefresh.Green)
+                    com.hermesandroid.relay.ui.components.RelayMetricCard("0.17.0", "server", Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onSurface)
+                }
+                val ic = androidx.compose.material.icons.Icons.Filled
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Link, "Connections", "Pair, switch, verify routes", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Person, "Profiles", "SOUL, memory, skills, sessions", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.AutoAwesome, "Skills + Tools", "Browse, enable, configure", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Schedule, "Automations", "Cron, background runs, delivery", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Code, "MCP Servers", "Servers, status, tools", {})
+                com.hermesandroid.relay.ui.components.RelayNavTile(ic.Tune, "Models", "Pick provider + default model", {})
+            }
         }
-        val ic = androidx.compose.material.icons.Icons.Filled
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Link, "Connections", "Pair, switch, verify routes", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Person, "Profiles", "SOUL, memory, skills, sessions", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.AutoAwesome, "Skills + Tools", "Browse, enable, configure", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Schedule, "Automations", "Cron, background runs, delivery", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Code, "MCP Servers", "Servers, status, tools", {})
-        com.hermesandroid.relay.ui.components.RelayNavTile(ic.Tune, "Models", "Pick provider + default model", {})
+        RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.5 / profile: default")
     }
 }
 
@@ -384,6 +449,47 @@ private object MockChat {
         badges = listOf("Voice"),
         inputTokens = 137_200,
         outputTokens = 206
+    )
+
+    // A grouped thread for the "Blend" capture: user → two-message assistant
+    // group (avatar once, code block in the first) → user follow-up.
+    val blendThread = listOf(
+        ChatMessage(
+            id = "bu1",
+            role = MessageRole.USER,
+            content = "How do I deploy to prod? Walk me through it.",
+            timestamp = 0L,
+        ),
+        ChatMessage(
+            id = "ba1",
+            role = MessageRole.ASSISTANT,
+            content = """
+                Run the deploy script — it stages the build, applies migrations, then ships. It's idempotent, so re-running after a failure is safe:
+
+                ```bash
+                ./scripts/deploy.sh prod --yes
+                ```
+
+                Use `--dry-run` first if you want to preview the migration plan.
+            """.trimIndent(),
+            timestamp = 0L,
+            agentName = "Hermes",
+            badges = listOf("Gateway"),
+        ),
+        ChatMessage(
+            id = "ba2",
+            role = MessageRole.ASSISTANT,
+            content = "Want me to tail the logs once it's live and ping you if anything errors?",
+            timestamp = 0L,
+            inputTokens = 138_010,
+            outputTokens = 212,
+        ),
+        ChatMessage(
+            id = "bu2",
+            role = MessageRole.USER,
+            content = "Yes please — keep an eye on the error rate.",
+            timestamp = 0L,
+        ),
     )
 }
 
@@ -447,40 +553,67 @@ private fun SessionRow(title: String, active: String, msgs: String) {
 
 @Composable
 private fun ConnectionsScene() = StoreSettings("Connections") {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // Level-1 list: scannable connection cards, the active one badged, each
+    // with the capability timeline. Tapping opens the tabbed detail.
+    ConnCard(label = "Hermes", active = true, status = "Connected · Tailscale") {
+        FeatureRow("API", "Ready", true)
+        FeatureRow("Dashboard", "Signed in", true)
+        FeatureRow("Voice", "Ready", true)
+        FeatureRow("Relay", "Connected", true)
+    }
+    ConnCard(label = "Lab NAS", active = false, status = "Paired 2 days ago") {
+        FeatureRow("API", "Configured", false)
+        FeatureRow("Dashboard", "Unchecked", false)
+        FeatureRow("Voice", "Optional", false)
+        FeatureRow("Relay", "Paired", true)
+    }
+}
+
+@Composable
+private fun ConnCard(
+    label: String,
+    active: Boolean,
+    status: String,
+    rows: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Surface(
+        color = if (active) {
+            RelayRefresh.ElectricMuted.copy(alpha = 0.42f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Hermes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-                com.hermesandroid.relay.ui.components.RelayStatusPill("Active", active = true)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                if (active) com.hermesandroid.relay.ui.components.RelayStatusPill("Active", active = true)
+                Icon(
+                    androidx.compose.material.icons.Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
             }
-            Text("Connected  ·  Active: LAN  ·  LAN + Tailscale", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                Text("Rename", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                Text("Re-pair", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                Text("Revoke", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                Text("Remove", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
+            Text(
+                status,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(vertical = 4.dp), content = rows)
             }
-        }
-    }
-    Text("Features", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-    Text("What this connection can do. Routes only choose how the phone reaches Hermes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(vertical = 4.dp)) {
-            FeatureRow("Vanilla Hermes API", "Ready", true)
-            FeatureRow("Dashboard", "Signed in", true)
-            FeatureRow("Vanilla Hermes voice", "Ready", true)
-            FeatureRow("Relay tools", "Ready", true)
-            FeatureRow("Terminal", "Ready", true)
-            FeatureRow("Secure proxy", "Not advertised", false)
-        }
-    }
-    Text("Route", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Current: LAN", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-            Text("192.168.1.50:8642", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Re-check", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }

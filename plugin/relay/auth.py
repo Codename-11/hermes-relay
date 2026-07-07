@@ -653,7 +653,20 @@ class SessionManager:
         phone sees a clean list after relay restart.
         """
         path = self._persistence_path
-        if path is None or not path.is_file():
+        if path is None:
+            return
+        if not path.is_file():
+            # Visibility: a missing/empty session file after a relay UPDATE is
+            # the one thing that forces every device to re-pair (no sessions AND
+            # no trusted-device refresh records to recover from). Log it so an
+            # update that lost the file is diagnosable instead of failing
+            # silently. A normal first run also lands here — that's fine.
+            logger.info(
+                "SessionManager: no session file at %s — starting with no "
+                "paired devices; existing devices recover via refresh token "
+                "or re-pair on first connect",
+                path,
+            )
             return
 
         try:
@@ -682,6 +695,26 @@ class SessionManager:
                 path,
             )
             return
+
+        # Version-aware, drop-averse load. A relay update should never force a
+        # mass re-pair just because the on-disk format moved. Older files are
+        # read through the same field-by-field parsers below (which already
+        # tolerate missing optional fields); a future breaking change would add
+        # an explicit migration here keyed on `file_version`. A NEWER file
+        # (e.g. after a relay downgrade) is loaded best-effort rather than
+        # discarded — only records that genuinely fail to parse are skipped.
+        file_version = data.get("version")
+        if isinstance(file_version, bool):
+            file_version = None  # bool is an int subclass — treat as absent
+        if isinstance(file_version, int) and file_version > _SESSIONS_FILE_VERSION:
+            logger.warning(
+                "SessionManager: %s is version %s but this relay understands "
+                "%s — loading best-effort (a relay update should not force a "
+                "re-pair on its own)",
+                path,
+                file_version,
+                _SESSIONS_FILE_VERSION,
+            )
 
         sessions_blob = data.get("sessions")
         if not isinstance(sessions_blob, list):
@@ -731,10 +764,12 @@ class SessionManager:
 
         logger.info(
             "SessionManager: loaded %d session(s), %d trusted device(s) from %s "
-            "(skipped sessions: %d expired, %d invalid; devices: %d expired, %d invalid)",
+            "(file v%s; skipped sessions: %d expired, %d invalid; "
+            "devices: %d expired, %d invalid)",
             loaded,
             loaded_devices,
             path,
+            file_version if file_version is not None else "?",
             skipped_expired,
             skipped_invalid,
             skipped_devices_expired,

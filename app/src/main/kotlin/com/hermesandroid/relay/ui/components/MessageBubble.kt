@@ -6,7 +6,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
@@ -45,9 +47,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,10 +60,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
+import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import kotlinx.coroutines.delay
@@ -114,6 +121,14 @@ fun MessageBubble(
      * conversation). Null hides the entry.
      */
     onEditMessage: ((ChatMessage) -> Unit)? = null,
+    /**
+     * True while the ViewModel is recovering a dropped stream's answer by
+     * polling the session transcript (issue #166) — the streaming
+     * placeholder's slow-turn label reads "Reconnecting to your answer…"
+     * instead of "Still working…" so the wait is honest about what's
+     * happening.
+     */
+    recoveringAnswer: Boolean = false,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -192,8 +207,15 @@ fun MessageBubble(
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
     CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
-    Column(
+    // Identity (the active profile avatar) is shown once in the top bar, so
+    // message bubbles no longer reserve a per-group avatar gutter — that width
+    // is reclaimed for wider bubbles. Outer alignment keeps user bubbles right.
+    Row(
         modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+    ) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
         // Agent name label (above assistant bubbles, only first in group), with
@@ -300,6 +322,7 @@ fun MessageBubble(
         // wired; with copy as the only action it stays a direct copy so the
         // one-action case doesn't pay a menu tap.
         var showMessageActions by remember { mutableStateOf(false) }
+        val haptic = LocalHapticFeedback.current
         val showEditAction = onEditMessage != null && isUser
         if (onQuoteMessage != null || showEditAction) {
             DropdownMenu(
@@ -349,6 +372,10 @@ fun MessageBubble(
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
+                        // Buzz the instant the long-press registers — opening the
+                        // action menu is the discoverability moment, so it gets the
+                        // same tactile confirm every chat app fires.
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (onQuoteMessage != null || showEditAction) {
                             showMessageActions = true
                         } else {
@@ -358,7 +385,7 @@ fun MessageBubble(
                 )
                 .semantics { contentDescription = a11yDescription }
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
                 SelectionContainer {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
@@ -445,8 +472,12 @@ fun MessageBubble(
                     }
                 }
 
-                // Streaming indicator
-                if (message.isStreaming) {
+                // Streaming indicator — only while awaiting the first token. Once
+                // text starts flowing, the growing reply is itself the progress
+                // signal, so the pulsing dots stop (Messenger/Telegram drop the
+                // typing bubble the moment content appears) instead of throbbing
+                // under the text for the whole turn.
+                if (message.isStreaming && message.content.isBlank()) {
                     // After a few seconds with no content yet, escalate the bare
                     // dots to a labeled "Still working…" so a slow first token
                     // never reads as a hang on the SSE / sessions paths.
@@ -459,15 +490,34 @@ fun MessageBubble(
                             showStillWorking = true
                         }
                     }
+                    val thinkingIndicator = LocalThinkingIndicator.current
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        StreamingDots(
-                            color = textColor.copy(alpha = 0.6f),
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                        if (showStillWorking && awaitingFirstToken) {
+                        when (thinkingIndicator.style) {
+                            ThinkingIndicatorStyle.Matrix -> DotMatrixIndicator(
+                                // Auto follows the bubble text color; accents
+                                // come from the brand palette. The grid modulates
+                                // its own alpha (idle dots ≈0.18, lit dots 1.0).
+                                color = thinkingIndicator.color.toColor(autoColor = textColor),
+                                pattern = thinkingIndicator.pattern,
+                                animated = thinkingIndicator.animated,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            ThinkingIndicatorStyle.Dots -> StreamingDots(
+                                color = textColor.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                        // During dropped-stream answer recovery the label shows
+                        // immediately (the 4s escalation is for a slow first
+                        // token; a recovery is already known to be slow).
+                        if ((showStillWorking || recoveringAnswer) && awaitingFirstToken) {
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Still working…",
+                                text = if (recoveringAnswer) {
+                                    "Reconnecting to your answer…"
+                                } else {
+                                    "Still working…"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = textColor.copy(alpha = 0.6f),
                                 modifier = Modifier.padding(top = 4.dp),
@@ -476,13 +526,35 @@ fun MessageBubble(
                     }
                 }
 
-                // Timestamp
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = timeFormat.format(Date(message.timestamp)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = textColor.copy(alpha = 0.5f)
-                )
+                // Timestamp — only on the LAST bubble of a same-author run so a
+                // burst of fragments doesn't stack three near-touching time labels.
+                // Grouping breaks on a >5min gap (ChatScreen), so every pause still
+                // surfaces its own time. Alpha floored at 0.6 for 11sp contrast.
+                if (isLastInGroup) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = timeFormat.format(Date(message.timestamp)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = 0.6f)
+                    )
+                }
+
+                // Delivery status — only on agent-Thread reply bubbles (a user
+                // message routed over the relay proactive channel). Null on every
+                // ordinary chat message, which render nothing here.
+                message.deliveryStatus?.takeIf { isUser }?.let { status ->
+                    val (label, alpha) = when (status) {
+                        MessageDeliveryStatus.SENDING -> "Sending…" to 0.5f
+                        MessageDeliveryStatus.DELIVERED -> "Delivered" to 0.5f
+                        MessageDeliveryStatus.FAILED -> "Not sent" to 0.7f
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = alpha),
+                    )
+                }
 
                 // Token display (assistant messages only)
                 if (!isUser && (message.inputTokens != null || message.outputTokens != null)) {
@@ -496,7 +568,8 @@ fun MessageBubble(
         }
         } // end Row (bubble + optional leading accent bar)
         } // end if (showBubble)
-    }
+    } // end content Column
+    } // end Row (avatar gutter + content)
     } // end CompositionLocalProvider(LocalMediaBlurMode)
 }
 

@@ -116,6 +116,11 @@ class ConnectionManager(
 
     private fun buildClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
+            // OkHttp's 10s default connectTimeout is LAN-tuned; a Tailscale
+            // DERP-relayed cold-start handshake can exceed it, and a failed
+            // connect feeds the onFailure → markUnreachable → route-flap loop.
+            // Give the remote first-handshake room to complete.
+            .connectTimeout(20, TimeUnit.SECONDS)
             .pingInterval(30, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
         // Swap in the current pin snapshot on every connect. We DON'T hold a
@@ -148,6 +153,23 @@ class ConnectionManager(
     // we don't re-fill the ban bucket and brick our own auth window.
     @Volatile
     private var lastUpgradeResponseCode: Int? = null
+
+    // Consecutive relay socket failures (response == null) since the last
+    // successful onOpen. One slow Tailscale/DERP cold-start handshake must not
+    // immediately evict the active route from the SHARED resolver cache (chat +
+    // dashboard ride the same resolver), so we only poison the route after a
+    // couple of consecutive transport-level failures.
+    @Volatile
+    private var consecutiveSocketFailures = 0
+
+    // The relay requires the FIRST frame on a socket to be `system/auth` and
+    // rejects the whole connection otherwise ("expected system/auth, got
+    // <channel>/<type>"). `authenticated` gates [send] so nothing (notably the
+    // periodic bridge.status reporter) can race the auth handshake on a fresh
+    // or reconnecting socket. False from the start of every connect until the
+    // server confirms `auth.ok`; reset on close/failure/disconnect.
+    @Volatile
+    private var authenticated = false
 
     private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -224,6 +246,10 @@ class ConnectionManager(
         private const val TAG = "ConnectionManager"
         private const val MAX_BACKOFF_MS = 30_000L
         private const val BASE_BACKOFF_MS = 1_000L
+        // How many consecutive relay socket failures before we mark the active
+        // endpoint unreachable in the shared resolver cache. Tolerates a single
+        // cold-start blip on a slow remote (Tailscale DERP) link.
+        private const val MARK_UNREACHABLE_AFTER_FAILURES = 2
         // Settle window before re-resolving after a network event. Long
         // enough to coalesce the onAvailable burst of a handoff, short
         // enough that a route swap still feels immediate.
@@ -243,6 +269,17 @@ class ConnectionManager(
         // banned forever. Waiting at least as long as the server's block
         // duration lets the ban expire naturally.
         private const val RATE_LIMIT_BACKOFF_MS = 300_000L
+
+        // Slow-poll tier. Against a paired-but-genuinely-dead server the
+        // exponential backoff otherwise caps at ~16s and retries forever, which
+        // is steady battery + log noise for no benefit. After this many
+        // consecutive failed attempts (~5 min of continuous failure at the cap)
+        // we drop to a 5-min poll until the server recovers. A network change
+        // re-resolves + reconnects immediately regardless of this delay (see the
+        // onAvailable callback), and reconnectAttempt resets to 0 on a
+        // successful onOpen, so recovery is never gated on the slow interval.
+        private const val SLOW_POLL_AFTER_ATTEMPTS = 20
+        private const val SLOW_POLL_BACKOFF_MS = 300_000L
     }
 
     fun setInsecureMode(enabled: Boolean) {
@@ -547,19 +584,34 @@ class ConnectionManager(
      * reconnects a disconnected socket on the same winner — preserving the
      * pre-refactor relay-path behavior.
      */
-    private fun scheduleNetworkReResolve(closeReason: String) {
+    private fun scheduleNetworkReResolve(closeReason: String, wipeCache: Boolean) {
         if (endpointResolver == null) return
         networkResolveJob?.cancel()
         networkResolveJob = scope.launch {
             delay(NETWORK_RESOLVE_DEBOUNCE_MS)
+            // Wipe the probe cache INSIDE the debounced job (not synchronously in
+            // onAvailable) so a burst of network/VPN-interface callbacks —
+            // Tailscale's tun churns onAvailable repeatedly — coalesces into a
+            // single cache wipe + re-probe instead of one per event. onLost
+            // manages its own cache (clear + markUnreachable) and passes false.
+            if (wipeCache) endpointResolver?.clearCache()
             val current = serverUrl
             val resolved = resolveBestEndpointSafe()
             if (resolved == null) {
-                // Don't clear a live socket's endpoint on a transient probe
-                // miss — only drop the published route when nothing is
-                // actually connected.
-                if (_connectionState.value != ConnectionState.Connected) {
+                // Hysteresis for the AUTOMATIC (network-callback) path. A
+                // transient cold-route probe miss must NOT null the published
+                // endpoint: effectiveApiServerUrl/effectiveDashboardUrl then fall
+                // back to the saved (home-LAN) host — dead for a remote device —
+                // and rebuild the chat client against it. That is the Tailscale
+                // reconnect loop. The old guard keyed on the relay socket being
+                // Connected, which the standard (no-relay) chat path never
+                // reaches, so it protected nobody there. Keep the last-known
+                // route unless a sustained loss was actually declared (onLost
+                // grace elapsed) or there was never a route to keep.
+                if (sustainedLossDeclared || _activeEndpoint.value == null) {
                     _activeEndpoint.value = null
+                } else {
+                    Log.i(TAG, "re-resolve miss but ${_activeEndpoint.value?.role} was live and loss not sustained — keeping route")
                 }
                 return@launch
             }
@@ -615,8 +667,9 @@ class ConnectionManager(
                 // route (usually the same one); the rebuild only fires if the
                 // URL actually moved.
                 networkLossJob?.cancel()
-                endpointResolver?.clearCache()
-                scheduleNetworkReResolve("Network change — switching endpoint")
+                // Cache wipe happens inside the debounced re-resolve so a burst
+                // of onAvailable (VPN tun churn) coalesces into one wipe+probe.
+                scheduleNetworkReResolve("Network change — switching endpoint", wipeCache = true)
             }
 
             override fun onLost(network: Network) {
@@ -634,7 +687,10 @@ class ConnectionManager(
                     sustainedLossDeclared = true
                     endpointResolver?.clearCache()
                     markActiveEndpointUnreachable("network lost (sustained)")
-                    scheduleNetworkReResolve("Network lost — switching endpoint")
+                    // wipeCache=false: we just cleared + poisoned the dead route
+                    // above; re-wiping inside the job would drop that negative
+                    // entry and let the dead route win the resolve again.
+                    scheduleNetworkReResolve("Network lost — switching endpoint", wipeCache = false)
                 }
             }
         }
@@ -692,6 +748,7 @@ class ConnectionManager(
         )
         webSocket?.close(1000, "Client disconnect")
         webSocket = null
+        authenticated = false
         _connectionState.value = ConnectionState.Disconnected
         _isInsecureConnection.value = false
         // ADR 24: clear manual override on explicit disconnect — a "Use
@@ -715,6 +772,17 @@ class ConnectionManager(
     }
 
     fun send(envelope: Envelope) {
+        // Hold every non-auth frame until the server has accepted our
+        // `system/auth` envelope. Otherwise a sender that fires on its own
+        // cadence — e.g. BridgeStatusReporter's 30s/immediate tick — can beat
+        // the auth handshake on a fresh socket, and the relay rejects the
+        // whole connection (forcing a reconnect). Dropping a periodic frame is
+        // harmless: the next tick re-sends once authenticated.
+        val isAuthFrame = envelope.channel == "system" && envelope.type == "auth"
+        if (!authenticated && !isAuthFrame) {
+            Log.d(TAG, "send: holding ${envelope.channel}/${envelope.type} until auth.ok")
+            return
+        }
         val text = json.encodeToString(envelope)
         webSocket?.send(text)
     }
@@ -755,6 +823,9 @@ class ConnectionManager(
         // pin store snapshot — crucial right after applyServerIssuedCodeAndReset
         // wipes a pin for re-pair. buildClient() does a tiny DataStore read
         // via runBlocking, so it runs on the IO dispatcher inside [scope].
+        // Every new socket starts unauthenticated — the send-gate stays closed
+        // (auth frame excepted) until this socket's own auth.ok arrives.
+        authenticated = false
         client = buildClient()
 
         val request = Request.Builder()
@@ -772,6 +843,7 @@ class ConnectionManager(
                 }
                 reconnectAttempt = 0
                 lastUpgradeResponseCode = null
+                consecutiveSocketFailures = 0
                 _connectionState.value = ConnectionState.Connected
                 Log.i(TAG, "onOpen: WSS handshake complete ($url)")
                 DiagnosticsLog.record(
@@ -808,6 +880,15 @@ class ConnectionManager(
                 }
                 try {
                     val envelope = json.decodeFromString<Envelope>(text)
+                    // Open the send-gate the instant the server confirms auth,
+                    // BEFORE routing — so anything handleAuthOk triggers
+                    // (e.g. proactive.subscribe) is allowed through.
+                    if (envelope.channel == "system") {
+                        when (envelope.type) {
+                            "auth.ok" -> authenticated = true
+                            "auth.fail" -> authenticated = false
+                        }
+                    }
                     multiplexer.route(envelope)
                 } catch (e: Exception) {
                     Log.w(TAG, "Malformed relay envelope: ${e.message}")
@@ -832,6 +913,7 @@ class ConnectionManager(
                     detail = "code=$code reason=$reason",
                     url = url,
                 )
+                authenticated = false
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
@@ -856,8 +938,19 @@ class ConnectionManager(
                 )
                 lastUpgradeResponseCode = code
                 if (response == null) {
-                    markActiveEndpointUnreachable("socket failure")
+                    // Transport-level failure (no HTTP upgrade response): on a
+                    // remote (Tailscale) link the first handshake can fail cold.
+                    // Don't evict the only working route from the shared resolver
+                    // on a single blip — wait for it to repeat. A genuinely
+                    // sustained network loss is handled separately by onLost.
+                    consecutiveSocketFailures++
+                    if (consecutiveSocketFailures >= MARK_UNREACHABLE_AFTER_FAILURES) {
+                        markActiveEndpointUnreachable("socket failure x$consecutiveSocketFailures")
+                    } else {
+                        Log.i(TAG, "relay socket failure $consecutiveSocketFailures/$MARK_UNREACHABLE_AFTER_FAILURES — not yet poisoning route")
+                    }
                 }
+                authenticated = false
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
@@ -899,28 +992,46 @@ class ConnectionManager(
         // normal exponential cadence and we'll re-fill the ban bucket on
         // every attempt, extending the ban indefinitely. Wait out the
         // server's full block window instead.
-        val backoffMs = if (lastUpgradeResponseCode == 429) {
-            Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Relay,
-                severity = DiagnosticSeverity.Warning,
-                title = "Relay reconnect delayed",
-                detail = "Rate limited; retrying in ${RATE_LIMIT_BACKOFF_MS / 1000}s",
-                url = url,
-            )
-            RATE_LIMIT_BACKOFF_MS
-        } else {
-            (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
-                .coerceAtMost(MAX_BACKOFF_MS)
-        }
-        if (lastUpgradeResponseCode != 429) {
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Relay,
-                severity = DiagnosticSeverity.Info,
-                title = "Relay reconnect scheduled",
-                detail = "Retrying in ${backoffMs / 1000}s",
-                url = url,
-            )
+        val backoffMs = when {
+            // Server-issued 429 means we're IP-banned — wait out the full
+            // block window instead of re-filling the ban bucket at our normal
+            // cadence.
+            lastUpgradeResponseCode == 429 -> {
+                Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Relay reconnect delayed",
+                    detail = "Rate limited; retrying in ${RATE_LIMIT_BACKOFF_MS / 1000}s",
+                    url = url,
+                )
+                RATE_LIMIT_BACKOFF_MS
+            }
+            // Sustained failure against a paired-but-dead server: stop hammering
+            // every ~16s forever; drop to a slow poll until it recovers.
+            reconnectAttempt >= SLOW_POLL_AFTER_ATTEMPTS -> {
+                Log.i(TAG, "scheduleReconnect: sustained failure (attempt $reconnectAttempt) — slow-polling every ${SLOW_POLL_BACKOFF_MS / 1000}s")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Relay reconnect slow-polling",
+                    detail = "Server unreachable for a while; retrying every ${SLOW_POLL_BACKOFF_MS / 1000}s until it recovers (a network change reconnects immediately)",
+                    url = url,
+                )
+                SLOW_POLL_BACKOFF_MS
+            }
+            else -> {
+                val ms = (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
+                    .coerceAtMost(MAX_BACKOFF_MS)
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Relay reconnect scheduled",
+                    detail = "Retrying in ${ms / 1000}s",
+                    url = url,
+                )
+                ms
+            }
         }
 
         scope.launch {
@@ -932,8 +1043,18 @@ class ConnectionManager(
                 val resolved = resolveBestEndpointSafe()
                 val targetUrl = resolved?.relay?.url
                 if (resolved != null) {
+                    // Mirror scheduleNetworkReResolve: clear the sustained-loss
+                    // latch on a successful resolve so a later transient miss
+                    // doesn't null a route we just reconnected. (The latch is set
+                    // in onLost's grace job but can be cleared on EITHER success
+                    // edge — network-callback or relay-timer.)
+                    sustainedLossDeclared = false
                     _activeEndpoint.value = resolved
-                } else {
+                } else if (sustainedLossDeclared || _activeEndpoint.value == null) {
+                    // Same hysteresis as scheduleNetworkReResolve: a transient
+                    // miss during a relay reconnect must not flip every effective
+                    // URL back to the dead saved host. Keep the last-known route;
+                    // we fall through to doConnect(url) and retry it with backoff.
                     _activeEndpoint.value = null
                 }
                 if (targetUrl != null && normalizeRelayUrl(targetUrl) != url) {

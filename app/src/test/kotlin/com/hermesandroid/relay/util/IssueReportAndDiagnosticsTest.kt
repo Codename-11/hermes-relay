@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.util
 
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticLogEntry
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import java.io.IOException
@@ -90,6 +91,95 @@ class IssueReportAndDiagnosticsTest {
         classifyError(null, context = "send_message")
 
         assertTrue(DiagnosticsLog.recent().isEmpty())
+    }
+
+    // --- DiagnosticIssuePrefill: severity-dependent title / labels / body ---
+
+    private fun sampleEntry(
+        severity: DiagnosticSeverity,
+        title: String = "Testing API connection",
+        endpointRole: String? = null,
+        url: String? = null,
+        detail: String? = null,
+    ) = DiagnosticLogEntry(
+        timestampMs = 0L,
+        category = DiagnosticCategory.Api,
+        severity = severity,
+        title = title,
+        detail = detail,
+        endpointRole = endpointRole,
+        url = url,
+    )
+
+    @Test
+    fun errorEntriesKeepBugTitleAndLabel() {
+        val entry = sampleEntry(DiagnosticSeverity.Error, title = "API key rejected")
+        assertEquals("[Bug]: API key rejected", DiagnosticIssuePrefill.issueTitle(entry))
+        assertEquals("bug", DiagnosticIssuePrefill.issueLabels(entry))
+    }
+
+    @Test
+    fun infoAndWarningEntriesRetitleAsDiagnosticWithQuestionLabel() {
+        for (severity in listOf(DiagnosticSeverity.Info, DiagnosticSeverity.Warning)) {
+            val entry = sampleEntry(severity)
+            assertEquals("[Diagnostic]: Testing API connection", DiagnosticIssuePrefill.issueTitle(entry))
+            // "question" already exists on the repo — the prefill must not invent labels.
+            assertEquals("question", DiagnosticIssuePrefill.issueLabels(entry))
+        }
+    }
+
+    @Test
+    fun bodyUsesTheExpectationAnswerAsWhatHappened() {
+        val body = DiagnosticIssuePrefill.issueBody(
+            sampleEntry(DiagnosticSeverity.Info),
+            expectation = "I expected the app to connect to my server",
+        )
+        assertTrue(body.contains("### What happened?\nI expected the app to connect to my server\n"))
+        assertFalse(body.contains("Captured diagnostic from the in-app activity log."))
+    }
+
+    @Test
+    fun bodyFallsBackToBoilerplateWithoutAnExpectation() {
+        val body = DiagnosticIssuePrefill.issueBody(sampleEntry(DiagnosticSeverity.Error))
+        assertTrue(body.contains("### What happened?\nCaptured diagnostic from the in-app activity log.\n"))
+    }
+
+    @Test
+    fun expectationAnswerIsSecretRedactedBeforeEmbedding() {
+        val body = DiagnosticIssuePrefill.issueBody(
+            sampleEntry(DiagnosticSeverity.Info),
+            expectation = "it failed with token=super-secret-value somehow",
+        )
+        assertFalse(body.contains("super-secret-value"))
+        assertTrue(body.contains("token=[hidden]"))
+    }
+
+    @Test
+    fun connectionModeUsesTheEntryRoleWhenPresent() {
+        val body = DiagnosticIssuePrefill.issueBody(
+            sampleEntry(DiagnosticSeverity.Error, endpointRole = "tailscale", url = "http://10.0.0.5:8642"),
+        )
+        assertTrue(body.contains("- Connection mode: tailscale"))
+        assertFalse(body.contains("LAN / Tailscale / public TLS / other"))
+    }
+
+    @Test
+    fun connectionModeIsInferredFromTheEntryUrl() {
+        val lan = DiagnosticIssuePrefill.issueBody(
+            sampleEntry(DiagnosticSeverity.Info, url = "http://localhost:8642"),
+        )
+        assertTrue(lan.contains("- Connection mode: lan"))
+
+        val tailscale = DiagnosticIssuePrefill.issueBody(
+            sampleEntry(DiagnosticSeverity.Info, url = "http://100.75.1.2:8642"),
+        )
+        assertTrue(tailscale.contains("- Connection mode: tailscale"))
+    }
+
+    @Test
+    fun connectionModeIsUnknownWithoutRouteOrUrl() {
+        val body = DiagnosticIssuePrefill.issueBody(sampleEntry(DiagnosticSeverity.Warning))
+        assertTrue(body.contains("- Connection mode: unknown"))
     }
 
     @Test

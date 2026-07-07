@@ -6,16 +6,21 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -55,9 +61,15 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.components.ChatTransportStatus
+import com.hermesandroid.relay.ui.components.DotMatrixIndicator
+import com.hermesandroid.relay.ui.components.StreamingDots
+import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
+import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
+import com.hermesandroid.relay.ui.components.toColor
 import com.hermesandroid.relay.ui.components.ChatTransportTier
 import com.hermesandroid.relay.ui.components.ChatTransportTone
 import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
+import com.hermesandroid.relay.ui.components.sourceBadge
 import com.hermesandroid.relay.ui.components.textColor
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -115,6 +127,10 @@ fun ChatSettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // (Quick Controls — Persistent connection etc. — moved to the
+            // top-level Settings landing, since they're connection-level controls
+            // flipped frequently, not chat-specific. See SettingsScreen's
+            // QuickControlsCard.)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -156,6 +172,156 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
+                    // Thinking indicator style — the in-bubble "working"
+                    // animation shown while a reply streams. Live preview on the
+                    // right reflects the current choice.
+                    val thinkingIndicatorStyle by
+                        connectionViewModel.thinkingIndicatorStyle.collectAsState()
+                    val thinkingMatrixPattern by
+                        connectionViewModel.thinkingMatrixPattern.collectAsState()
+                    val thinkingMatrixColor by
+                        connectionViewModel.thinkingMatrixColor.collectAsState()
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Thinking indicator",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "The animation shown in a reply bubble while Hermes is working.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Box(
+                                modifier = Modifier.padding(start = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (thinkingIndicatorStyle == "matrix") {
+                                    DotMatrixIndicator(
+                                        color = ThinkingMatrixColor.fromKey(thinkingMatrixColor)
+                                            .toColor(autoColor = MaterialTheme.colorScheme.onSurface),
+                                        pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
+                                    )
+                                } else {
+                                    StreamingDots(color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                        val styleOptions = listOf("dots", "matrix")
+                        val styleLabels = listOf("Dots", "Matrix")
+                        val selectedStyleIndex =
+                            styleOptions.indexOf(thinkingIndicatorStyle).coerceAtLeast(0)
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            styleOptions.forEachIndexed { index, option ->
+                                SegmentedButton(
+                                    shape = SegmentedButtonDefaults.itemShape(
+                                        index = index,
+                                        count = styleOptions.size
+                                    ),
+                                    onClick = { connectionViewModel.setThinkingIndicatorStyle(option) },
+                                    selected = index == selectedStyleIndex
+                                ) {
+                                    Text(
+                                        text = styleLabels[index],
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
+                            }
+                        }
+
+                        // Matrix-only: which authored motion the grid plays.
+                        AnimatedVisibility(visible = thinkingIndicatorStyle == "matrix") {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "Pattern",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                val patternOptions = ThinkingMatrixPattern.entries
+                                val selectedPatternIndex = patternOptions
+                                    .indexOfFirst { it.key == thinkingMatrixPattern }
+                                    .coerceAtLeast(0)
+                                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                    patternOptions.forEachIndexed { index, p ->
+                                        SegmentedButton(
+                                            shape = SegmentedButtonDefaults.itemShape(
+                                                index = index,
+                                                count = patternOptions.size
+                                            ),
+                                            onClick = {
+                                                connectionViewModel.setThinkingMatrixPattern(p.key)
+                                            },
+                                            selected = index == selectedPatternIndex,
+                                            // Drop the check icon — with 4 segments its
+                                            // reserved width crunches the labels.
+                                            icon = {},
+                                        ) {
+                                            Text(
+                                                text = p.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Color — Auto (match text) + brand-accent swatches.
+                                // Accents come from the active theme, so the same
+                                // choice re-themes (e.g. Amber → bronze in Ember).
+                                Text(
+                                    text = "Color",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    ThinkingMatrixColor.entries.forEach { choice ->
+                                        val swatch = choice.toColor(
+                                            autoColor = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        val selected = choice.key == thinkingMatrixColor
+                                        Box(
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .background(swatch)
+                                                .border(
+                                                    width = if (selected) 2.dp else 1.dp,
+                                                    color = if (selected) {
+                                                        MaterialTheme.colorScheme.primary
+                                                    } else {
+                                                        MaterialTheme.colorScheme.outlineVariant
+                                                    },
+                                                    shape = CircleShape
+                                                )
+                                                .clickable {
+                                                    connectionViewModel.setThinkingMatrixColor(choice.key)
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            // Mark Auto so it doesn't read as a literal color swatch.
+                                            if (choice == ThinkingMatrixColor.Auto) {
+                                                Text(
+                                                    text = "A",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.surface
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
                     val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -177,6 +343,46 @@ fun ChatSettingsScreen(
                             checked = closeDrawerOnSend,
                             onCheckedChange = { connectionViewModel.setCloseDrawerOnSend(it) }
                         )
+                    }
+
+                    HorizontalDivider()
+
+                    // Session sources — hide noisy gateway lanes from the drawer.
+                    // Edits the same persisted set the drawer source filter uses;
+                    // lists the common externals so you can hide one even before
+                    // it appears in the list.
+                    val hiddenSources by connectionViewModel.hiddenSources.collectAsState()
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Session sources",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = "Hide a gateway's sessions from the drawer (cron and webhook are hidden by default). Your chats and Threads always show.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        listOf("discord", "telegram", "cron", "webhook", "web").forEach { src ->
+                            val badge = sourceBadge(src)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = badge?.label ?: src.replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = badge?.color ?: MaterialTheme.colorScheme.onSurface,
+                                )
+                                Switch(
+                                    checked = src !in hiddenSources,
+                                    onCheckedChange = { show ->
+                                        connectionViewModel.setSourceHidden(src, !show)
+                                    },
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider()
@@ -648,36 +854,6 @@ fun ChatSettingsScreen(
                     }
 
                     HorizontalDivider()
-
-                    // Keep connected in background — opt-in, both flavors.
-                    run {
-                        val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Keep connected in background",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    text = "Hold the chat connection open while the app is in the " +
-                                        "background via a persistent notification, so replies stay " +
-                                        "instant. Uses more battery; off by default.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = gatewayKeepAlive,
-                                onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) }
-                            )
-                        }
-
-                        HorizontalDivider()
-                    }
 
                     // Limits — expandable
                     var limitsExpanded by remember { mutableStateOf(false) }

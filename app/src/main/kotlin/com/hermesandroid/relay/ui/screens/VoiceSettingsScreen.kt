@@ -31,6 +31,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -45,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -74,9 +76,24 @@ import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.relay.VoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import com.hermesandroid.relay.network.relay.VoiceProviderValidationResponse
+import com.hermesandroid.relay.network.upstream.ConfigFieldType
+import com.hermesandroid.relay.network.upstream.ConfigSchemaField
+import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardCookieStore
+import com.hermesandroid.relay.network.upstream.ElevenLabsVoices
+import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
+import com.hermesandroid.relay.network.upstream.applyConfigEdits
+import com.hermesandroid.relay.network.upstream.configValueAt
+import com.hermesandroid.relay.network.upstream.parseConfigSchema
+import com.hermesandroid.relay.network.upstream.voiceConfigFields
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.VoiceConfigUiState
@@ -101,8 +118,9 @@ import kotlinx.coroutines.launch
  *   6. Global voice controls     — interaction mode + silence threshold.
  *   7. Barge-in                  — interrupt TTS by speaking.
  *   8. Speech-to-Text            — provider/model labels.
- *   9. Test current engine       — voice-output / realtime sample playback.
- *  10. Coming soon               — not-yet-wired controls (Auto-TTS, STT lang).
+ *   9. Server voice config        — edit host tts/stt config (Standard path)
+ *                                  plus the ElevenLabs voice picker.
+ *  10. Test current engine       — voice-output / realtime sample playback.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,6 +142,13 @@ fun VoiceSettingsScreen(
      * Passed from RelayApp; null degrades to profile-only namespacing.
      */
     connectionId: String? = null,
+    /**
+     * Dashboard base URL + per-connection cookie store provider for the
+     * standard-path server voice-config editor (`/api/config`, cookie auth).
+     * Null on connections with no dashboard — the editor card is then hidden.
+     */
+    dashboardUrl: String? = null,
+    dashboardCookieStoreProvider: (() -> DashboardCookieStore?)? = null,
     onOpenManage: (() -> Unit)? = null,
     onBack: () -> Unit,
     settingsViewModel: VoiceSettingsViewModel = viewModel(),
@@ -142,9 +167,26 @@ fun VoiceSettingsScreen(
     // just observes it; the editor cards push saves back through the VM.
     val configState by settingsViewModel.configState.collectAsState()
 
+    // Standard-path server voice-config editor client (dashboard cookie auth).
+    // Built once per (dashboardUrl, connection); shut down on dispose. Null when
+    // the connection has no dashboard, which hides the card entirely.
+    val dashboardConfigClient = remember(dashboardUrl, connectionId) {
+        val url = dashboardUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@remember null
+        DashboardApiClient(
+            baseUrl = url,
+            okHttpClient = DashboardApiClient.defaultClient(
+                cookieStore = dashboardCookieStoreProvider?.invoke() ?: InMemoryDashboardCookieStore(),
+            ),
+        )
+    }
+    DisposableEffect(dashboardConfigClient) {
+        onDispose { dashboardConfigClient?.shutdown() }
+    }
+
     // Global snackbar host — voice/config errors routed through the classifier
     // are shown here as well as the inline "unavailable" labels.
     val snackbarHost = LocalSnackbarHost.current
+    val scope = rememberCoroutineScope()
 
     // WP-V2/V3: point the screen's prefs repo at the active (connection,
     // profile) scope so the per-profile engine/route/enhanced toggles read and
@@ -274,6 +316,17 @@ fun VoiceSettingsScreen(
                 configState = configState,
             )
 
+            // --- Server voice config (standard path: edit tts.*/stt.* on the host) ---
+            if (dashboardConfigClient != null) {
+                StandardVoiceServerConfigCard(
+                    client = dashboardConfigClient,
+                    onOpenManage = onOpenManage,
+                    onMessage = { message ->
+                        scope.launch { snackbarHost.showSnackbar(message) }
+                    },
+                )
+            }
+
             // --- Test Current Engine ---
             TestCurrentEngineCard(
                 currentEngine = currentEngine,
@@ -281,12 +334,6 @@ fun VoiceSettingsScreen(
                 configState = configState,
                 selectedProfile = selectedProfile,
                 voiceViewModel = voiceViewModel,
-            )
-
-            // --- Coming soon (not-yet-wired controls) ---
-            ComingSoonCard(
-                voiceSettings = voiceSettings,
-                prefsRepo = prefsRepo,
             )
         }
     }
@@ -1880,21 +1927,26 @@ private fun GlobalVoiceControlsCard(
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
         Text(
-            text = "Silence threshold: ${voiceSettings.silenceThresholdMs / 1000}s",
+            text = "Silence threshold: " +
+                "%.2fs".format(voiceSettings.silenceThresholdMs / 1000f),
             style = MaterialTheme.typography.labelLarge,
         )
         Text(
-            text = "Auto-stop listening after this much silence",
+            text = "End-of-speech: auto-stop after this much silence once you've " +
+                "spoken (desktop default 1.25s).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // 750 ms..5 s in 250 ms steps (18 stops) so the desktop-matching 1.25s
+        // default lands on a stop. Idle/no-speech (12 s) and the 60 s hard turn
+        // cap are fixed in VoiceViewModel, not exposed here.
         Slider(
             value = voiceSettings.silenceThresholdMs.toFloat(),
             onValueChange = { newValue ->
                 scope.launch { prefsRepo.setSilenceThresholdMs(newValue.toLong()) }
             },
-            valueRange = 1000f..10000f,
-            steps = 8,
+            valueRange = 750f..5000f,
+            steps = 16,
         )
     }
 }
@@ -2196,95 +2248,252 @@ private fun TestCurrentEngineCard(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Coming soon — not-yet-wired controls, collapsed by default so they don't
-// read as broken (WP-V3 item 3).
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Standard-path server voice config editor.
+//
+// Edits the host's tts.*/stt.* config via the dashboard /api/config surface —
+// the same config.yaml the dashboard's own Audio settings write, and the same
+// values the standard (no-Relay) /api/audio/* voice path reads. Standard voice
+// is host-global (see VoiceScopeBanner), so writes target the launch profile's
+// config (profile = null). Schema (/api/config/schema) drives field rendering;
+// values (/api/config) seed current state; PUT writes the whole tree back with
+// the edited leaves merged in. Includes the ElevenLabs voice picker — the one
+// genuine desktop voice feature the app previously lacked.
+// ===========================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ComingSoonCard(
-    voiceSettings: VoiceSettings,
-    prefsRepo: VoicePreferencesRepository,
+private fun StandardVoiceServerConfigCard(
+    client: DashboardApiClient,
+    onOpenManage: (() -> Unit)?,
+    onMessage: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var expanded by remember { mutableStateOf(false) }
-    SectionCard(title = "Coming soon", badge = "Not wired yet") {
+    var loading by remember { mutableStateOf(false) }
+    var values by remember { mutableStateOf<JsonObject?>(null) }
+    var fields by remember { mutableStateOf<List<ConfigSchemaField>>(emptyList()) }
+    var elevenVoices by remember { mutableStateOf<ElevenLabsVoices?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var signInRequired by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    var edits by remember { mutableStateOf<Map<String, JsonElement>>(emptyMap()) }
+    var reloadNonce by remember { mutableStateOf(0) }
+
+    LaunchedEffect(client, reloadNonce) {
+        loading = true
+        error = null
+        signInRequired = false
+        val cfg = client.getConfig()
+        val sch = client.getConfigSchema()
+        if (cfg.isSuccess && sch.isSuccess) {
+            values = cfg.getOrNull()
+            fields = voiceConfigFields(parseConfigSchema(sch.getOrNull() ?: JsonObject(emptyMap())))
+            edits = emptyMap()
+            // Best-effort; only consulted when the TTS provider is elevenlabs.
+            elevenVoices = client.getElevenLabsVoices().getOrNull()
+        } else {
+            val ex = cfg.exceptionOrNull() ?: sch.exceptionOrNull()
+            val msg = ex?.message.orEmpty()
+            signInRequired = msg.contains("401") || msg.contains("403") ||
+                msg.contains("sign-in", ignoreCase = true)
+            error = if (signInRequired) {
+                "Sign in to Manage to edit the server's voice config."
+            } else {
+                ex?.message ?: "Could not load server voice config"
+            }
+        }
+        loading = false
+    }
+
+    SectionCard(title = "Server voice config", badge = "Standard") {
         Text(
-            text = "Controls that are saved but not yet wired end-to-end. Shown for " +
-                "reference; they don't change voice behaviour today.",
+            text = "Edit the host's text-to-speech and speech-to-text settings " +
+                "(config.yaml tts.* / stt.*) — the same values the dashboard's " +
+                "Audio settings write. Applies to new voice turns.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(onClick = { expanded = !expanded }) {
-            Text(if (expanded) "Hide" else "Show")
+
+        val tree = values
+        if (tree != null) {
+            // current = pending edit, else the loaded value at the dot-path.
+            fun current(key: String): JsonElement? = edits[key] ?: configValueAt(tree, key)
+            fun currentString(key: String): String =
+                (current(key) as? JsonPrimitive)?.contentOrNull.orEmpty()
+            fun setEdit(key: String, value: JsonElement) { edits = edits + (key to value) }
+
+            val ttsProvider = currentString("tts.provider")
+            val sttProvider = currentString("stt.provider")
+
+            Spacer(Modifier.height(4.dp))
+            Text("Text-to-Speech", style = MaterialTheme.typography.labelLarge)
+
+            fields.firstOrNull { it.key == "tts.provider" }?.let { field ->
+                ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
+            }
+            if (ttsProvider.isNotBlank()) {
+                fields.filter { it.key.startsWith("tts.$ttsProvider.") }.forEach { field ->
+                    val isElevenVoice = field.key == "tts.elevenlabs.voice_id" &&
+                        elevenVoices?.available == true
+                    ConfigFieldRow(
+                        field = field,
+                        current = current(field.key),
+                        overrideChoices = if (isElevenVoice) {
+                            elevenVoices?.voices?.map { VoiceChoice(value = it.voiceId, label = it.label) }
+                        } else {
+                            null
+                        },
+                        onEdit = { setEdit(field.key, it) },
+                    )
+                }
+                if (ttsProvider == "elevenlabs" && elevenVoices?.available == false) {
+                    Text(
+                        text = "No ElevenLabs API key on the server — set ELEVENLABS_API_KEY " +
+                            "in Manage → Keys to pick a voice from a list.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Text("Speech-to-Text", style = MaterialTheme.typography.labelLarge)
+
+            fields.firstOrNull { it.key == "stt.enabled" }?.let { field ->
+                ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
+            }
+            fields.firstOrNull { it.key == "stt.provider" }?.let { field ->
+                ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
+            }
+            if (sttProvider.isNotBlank()) {
+                fields.filter { it.key.startsWith("stt.$sttProvider.") }.forEach { field ->
+                    ConfigFieldRow(field, current(field.key), null) { setEdit(field.key, it) }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilledTonalButton(
+                    onClick = {
+                        val pending = edits
+                        saving = true
+                        scope.launch {
+                            // GET-merged tree -> PUT whole document (upstream
+                            // save_config overwrites; a partial PUT would drop keys).
+                            val merged = applyConfigEdits(tree, pending)
+                            val result = client.updateConfig(merged, profile = null)
+                            saving = false
+                            result.fold(
+                                onSuccess = {
+                                    values = merged
+                                    edits = emptyMap()
+                                    onMessage("Voice config saved")
+                                },
+                                onFailure = { onMessage(it.message ?: "Save failed") },
+                            )
+                        }
+                    },
+                    enabled = edits.isNotEmpty() && !saving,
+                ) { Text(if (saving) "Saving…" else "Save") }
+
+                if (edits.isNotEmpty() && !saving) {
+                    TextButton(onClick = { edits = emptyMap() }) { Text("Discard") }
+                }
+            }
+        } else if (loading) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else if (signInRequired) {
+            Text(
+                text = error ?: "Sign in required.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            onOpenManage?.let { open ->
+                TextButton(onClick = open) { Text("Open Manage to sign in") }
+            }
+        } else {
+            Text(
+                text = error ?: "Could not load server voice config.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = { reloadNonce++ }) { Text("Retry") }
         }
-        if (expanded) {
+    }
+}
+
+/**
+ * One editable row for a [ConfigSchemaField]. [overrideChoices] forces a
+ * dropdown regardless of the field's declared type — used for the ElevenLabs
+ * voice picker, where a plain `string` schema field is upgraded to a list when
+ * voices are available. [onEdit] receives the new value as a [JsonElement] for
+ * direct merge into the config tree.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConfigFieldRow(
+    field: ConfigSchemaField,
+    current: JsonElement?,
+    overrideChoices: List<VoiceChoice>?,
+    onEdit: (JsonElement) -> Unit,
+) {
+    val label = field.description?.takeIf { it.isNotBlank() } ?: field.key
+    val str = (current as? JsonPrimitive)?.contentOrNull.orEmpty()
+    when {
+        overrideChoices != null -> VoiceChoiceDropdown(
+            label = label,
+            value = str,
+            choices = overrideChoices,
+            onValueChange = { onEdit(JsonPrimitive(it)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        field.type == ConfigFieldType.Select -> VoiceChoiceDropdown(
+            label = label,
+            value = str,
+            choices = field.options.map { VoiceChoice(value = it) },
+            onValueChange = { onEdit(JsonPrimitive(it)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        field.type == ConfigFieldType.Boolean -> {
+            val checked = (current as? JsonPrimitive)?.booleanOrNull ?: false
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Auto-TTS", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        text = "Read aloud non-voice assistant messages (coming soon)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    // Disabled while Auto-TTS is unimplemented — a live toggle
-                    // that does nothing reads as broken. Re-enable when wired.
-                    enabled = false,
-                    checked = voiceSettings.autoTts,
-                    onCheckedChange = { enabled ->
-                        scope.launch { prefsRepo.setAutoTts(enabled) }
-                    },
-                )
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-            Text(
-                text = "STT language",
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(
-                text = "Stored only — the relay uses its own auto-detect for now",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            val languages = listOf(
-                "" to "Auto",
-                "en" to "English",
-                "es" to "Spanish",
-                "fr" to "French",
-                "de" to "German",
-                "ja" to "Japanese",
-                "zh" to "Chinese",
-            )
-            languages.forEach { (code, label) ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(
-                            selected = voiceSettings.language == code,
-                            onClick = {
-                                scope.launch { prefsRepo.setLanguage(code) }
-                            },
-                        )
-                        .padding(vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = voiceSettings.language == code,
-                        onClick = null,
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    Text(label, style = MaterialTheme.typography.bodyMedium)
-                }
+                Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = checked, onCheckedChange = { onEdit(JsonPrimitive(it)) })
             }
         }
+
+        field.type == ConfigFieldType.Number -> OutlinedTextField(
+            value = str,
+            onValueChange = { input ->
+                val parsed = input.toLongOrNull()?.let { JsonPrimitive(it) }
+                    ?: input.toDoubleOrNull()?.let { JsonPrimitive(it) }
+                    ?: JsonPrimitive(input)
+                onEdit(parsed)
+            },
+            label = { Text(label) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        else -> OutlinedTextField(
+            value = str,
+            onValueChange = { onEdit(JsonPrimitive(it)) },
+            label = { Text(label) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

@@ -170,9 +170,12 @@ import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import java.io.File
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
-import com.hermesandroid.relay.ui.components.RelayModeStrip
-import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.LocalThinkingIndicator
+import com.hermesandroid.relay.ui.components.ThinkingIndicatorConfig
+import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
+import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
+import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.SubagentLane
@@ -200,6 +203,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
+
+/**
+ * A same-author run breaks into a new visual group once the gap to the
+ * neighboring message exceeds this — so a conversation resumed after a pause
+ * reads as a fresh beat (its own agent-name label, its own timestamp, more air)
+ * instead of one unbroken monologue. Matches the iMessage/Discord convention of
+ * resetting grouping after a short idle.
+ */
+private const val GROUP_GAP_MS = 5 * 60_000L
 
 /**
  * Snapshot of the streaming-state fields the auto-scroll effect watches.
@@ -450,6 +462,7 @@ fun ChatScreen(
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     val turnStatus by chatViewModel.turnStatus.collectAsState()
+    val recoveringAnswer by chatViewModel.recoveringAnswer.collectAsState()
     val voiceStats by voiceViewModel.voiceStats.collectAsState()
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
@@ -573,6 +586,9 @@ fun ChatScreen(
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+    val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
+    val thinkingMatrixPattern by connectionViewModel.thinkingMatrixPattern.collectAsState()
+    val thinkingMatrixColor by connectionViewModel.thinkingMatrixColor.collectAsState()
     var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
     // Clean-mode discoverability hint: a persistent pill shown ONLY on the
     // empty / new-chat view (no messages) — it teaches the long-press entry
@@ -1324,6 +1340,16 @@ fun ChatScreen(
                     "Connection: ${activeConnection?.label}"
                 else -> "Active connection"
             }
+            val threadsProactiveEnabled by connectionViewModel.proactiveEnabled.collectAsState()
+            val threadsAuthState by connectionViewModel.authState.collectAsState()
+            // Threads capability = "Let Hermes message me" on + relay paired.
+            // Shows the drawer's Threads affordance even before the first Thread
+            // arrives (the drawer also self-shows it when a source=phone session
+            // is already present).
+            val threadsCapabilityActive = threadsProactiveEnabled &&
+                threadsAuthState is com.hermesandroid.relay.auth.AuthState.Paired
+            val hiddenSources by connectionViewModel.hiddenSources.collectAsState()
+
             SessionDrawerContent(
                 sessions = sessions,
                 currentSessionId = currentSessionId,
@@ -1346,7 +1372,16 @@ fun ChatScreen(
                 },
                 onRenameSession = { sessionId, title ->
                     chatViewModel.renameSession(sessionId, title)
-                }
+                },
+                threadsCapabilityActive = threadsCapabilityActive,
+                onNewThread = { name ->
+                    chatViewModel.startNewThread(name)
+                    scope.launch { drawerState.close() }
+                },
+                hiddenSources = hiddenSources,
+                onToggleSourceHidden = { source, hidden ->
+                    connectionViewModel.setSourceHidden(source, hidden)
+                },
             )
         }
     ) {
@@ -1372,9 +1407,15 @@ fun ChatScreen(
                     val headerApiReachable = apiReachable || isStreaming
                     val isConnecting = isChatConnecting ||
                         (!headerApiReachable && chatMode != ChatMode.DISCONNECTED)
+                    // Once we've been connected this session, a later drop reads as
+                    // "Reconnecting…" (we had it, we're getting it back) rather than
+                    // a first-time "Connecting…". Honest wording for the WhatsApp-
+                    // style subtitle status.
+                    var everConnected by remember { mutableStateOf(false) }
+                    if (headerApiReachable) everConnected = true
                     val statusText = when {
                         headerApiReachable -> if (isStreaming) "Streaming" else "Connected"
-                        isConnecting -> "Connecting..."
+                        isConnecting -> if (everConnected) "Reconnecting…" else "Connecting…"
                         else -> "Disconnected"
                     }
                     val statusColor = when {
@@ -1669,16 +1710,10 @@ fun ChatScreen(
                     onDismiss = { showContextSheet = false },
                 )
             }
-            RelayModeStrip(
-                selected = RelayPrimaryMode.Chat,
-                onModeSelected = { mode ->
-                    when (mode) {
-                        RelayPrimaryMode.Chat -> Unit
-                        RelayPrimaryMode.Manage -> onNavigateToManage()
-                        RelayPrimaryMode.Bridge -> onNavigateToBridge()
-                    }
-                },
-            )
+            // Chat is the home: the Chat/Manage/Bridge mode strip was removed here
+            // (it spent a chrome band on the most-used screen). Manage and Bridge
+            // are reached from Settings (Settings → Hermes management / Bridge);
+            // Terminal + Settings remain quick icons in the top app bar above.
 
             // Error banner with retry
             AnimatedVisibility(visible = error != null) {
@@ -1966,14 +2001,32 @@ fun ChatScreen(
                     val relayServerImageResolver = remember(chatViewModel) {
                         RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
                     }
+                    val thinkingIndicatorConfig = remember(
+                        thinkingIndicatorStyle,
+                        thinkingMatrixPattern,
+                        thinkingMatrixColor,
+                        animationEnabled,
+                    ) {
+                        ThinkingIndicatorConfig(
+                            style = if (thinkingIndicatorStyle == "matrix") {
+                                ThinkingIndicatorStyle.Matrix
+                            } else {
+                                ThinkingIndicatorStyle.Dots
+                            },
+                            pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
+                            color = ThinkingMatrixColor.fromKey(thinkingMatrixColor),
+                            animated = animationEnabled,
+                        )
+                    }
                     CompositionLocalProvider(
                         LocalRelayServerImageResolver provides relayServerImageResolver,
+                        LocalThinkingIndicator provides thinkingIndicatorConfig,
                     ) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 16.dp),
+                            .padding(horizontal = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
@@ -1991,8 +2044,16 @@ fun ChatScreen(
                                 !message.isStreaming
                             ) return@items
 
-                            val isFirstInGroup = index == 0 || messages[index - 1].role != message.role
-                            val isLastInGroup = index == messages.size - 1 || messages[index + 1].role != message.role
+                            // Break a same-author run on a role change OR a >5min
+                            // gap to the neighbor, so a resumed conversation gets a
+                            // fresh agent-name label + its own timestamp instead of
+                            // silently merging into the previous burst.
+                            val isFirstInGroup = index == 0 ||
+                                messages[index - 1].role != message.role ||
+                                message.timestamp - messages[index - 1].timestamp > GROUP_GAP_MS
+                            val isLastInGroup = index == messages.size - 1 ||
+                                messages[index + 1].role != message.role ||
+                                messages[index + 1].timestamp - message.timestamp > GROUP_GAP_MS
 
                             // Date separator
                             if (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp)) {
@@ -2008,6 +2069,7 @@ fun ChatScreen(
                                 showThinking = showThinking,
                                 isFirstInGroup = isFirstInGroup,
                                 isLastInGroup = isLastInGroup,
+                                recoveringAnswer = recoveringAnswer,
                                 onAttachmentRetry = { msgId, idx ->
                                     chatViewModel.manualFetchAttachment(msgId, idx)
                                 },
@@ -2771,6 +2833,7 @@ fun ChatScreen(
                 onDismiss = { voiceViewModel.exitVoiceMode() },
                 onModeChange = { voiceViewModel.setInteractionMode(it) },
                 onClearError = { voiceViewModel.clearError() },
+                onBackgroundRunCancel = { voiceViewModel.cancelBackgroundRun() },
                 // Agent B's overlay collects this flow and renders classified
                 // voice errors (mic capture, STT/TTS failures, relay drops).
                 errorEvents = voiceViewModel.errorEvents,
