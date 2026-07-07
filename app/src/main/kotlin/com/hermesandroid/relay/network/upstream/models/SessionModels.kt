@@ -179,6 +179,58 @@ data class RenameSessionRequest(
     val title: String
 )
 
+// --- Server-backed bulk cleanup (dashboard POST /api/sessions/prune) ---
+
+/**
+ * Client-side subset of upstream's `SessionPrune` body. Nulls are omitted from
+ * the request; a fully-bare filter set is a "bare prune", where upstream
+ * applies its own implicit ended-more-than-90-days-ago cutoff.
+ */
+data class SessionPruneFilters(
+    val olderThanDays: Double? = null,
+    val source: String? = null,
+    val profile: String? = null,
+    val includeArchived: Boolean = false,
+)
+
+/** One row of the dry-run preview (`sessions` in the prune response). */
+@Serializable
+data class SessionPruneCandidate(
+    @Serializable(with = FlexibleIdNonNullSerializer::class)
+    val id: String = "",
+    val source: String? = null,
+    val title: String? = null,
+    val model: String? = null,
+    @SerialName("started_at")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val startedAt: Double? = null,
+    @SerialName("message_count") val messageCount: Int? = null,
+)
+
+/**
+ * Dry-run response: what a prune WOULD delete — count, started-at span, and
+ * the candidate rows — without deleting anything. Upstream orders candidates
+ * oldest-first.
+ */
+@Serializable
+data class SessionPrunePreview(
+    val matched: Int = 0,
+    @SerialName("oldest_started_at")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val oldestStartedAt: Double? = null,
+    @SerialName("newest_started_at")
+    @Serializable(with = FlexibleTimestampSerializer::class)
+    val newestStartedAt: Double? = null,
+    val sessions: List<SessionPruneCandidate> = emptyList(),
+)
+
+/** Apply response — how many sessions the server actually removed. */
+@Serializable
+data class SessionPruneResult(
+    val ok: Boolean = true,
+    val removed: Int = 0,
+)
+
 // --- Messages ---
 
 @Serializable

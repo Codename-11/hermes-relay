@@ -6,16 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android model pickers can refresh the server catalog.** Chat's model sheet and Manage's main/profile model dialogs now expose upstream's explicit **Refresh Models** action, so dynamic/custom provider model lists can be reloaded on demand without making every picker open probe providers.
+- **Server-backed session cleanup plumbing.** The dashboard client now supports single-session export, the upstream `/api/sessions/prune` route with a mandatory dry-run preview before destructive apply, plus soft archive/restore helpers and an `archived` session-list filter for the Manage surface.
+
 ### Fixed
 
 - **Relay plugin works under the native `hermes plugins install` path.** The plugin's runtime imports assumed the repo's editable layout, so upstream's native installer (which loads plugins under its own package namespace) broke `hermes relay start` and `hermes pair` with `ModuleNotFoundError: No module named 'plugin'`. All runtime imports are now package-relative, the dashboard module boots correctly when the upstream web server loads it standalone, and `hermes relay doctor` now exercises the real import chain so this class of breakage can't pass doctor again. (#165)
 - **Installer handles modern venv layouts.** `install.sh` now autodetects the classic venv, uv-managed `.venv`, and containerized layouts — and everything it generates (the systemd unit and all four command shims) points at the interpreter it actually detected instead of a hardcoded classic path. On immutable container images it steers to the native install path with a clear message instead of dying mid-run. (#165)
+- **Doctor catches dashboard URLs pointed at the wrong Hermes surface.** `hermes relay doctor` now distinguishes the dashboard/Manage surface from an API-server/headless backend URL and tells operators to use `hermes dashboard` when a configured dashboard URL is actually pointing at `hermes serve` / the API server.
 
 ## [1.3.0] - 2026-07-06
 
 ### Added
 
-- **Android model pickers can refresh the server catalog.** Chat's model sheet and Manage's main/profile model dialogs now expose upstream's explicit **Refresh Models** action, so dynamic/custom provider model lists can be reloaded on demand without making every picker open probe providers.
 - **Voice settings: edit your server's voice engine.** Voice settings now has a **Server voice config** section that reads and writes the host's text-to-speech and speech-to-text settings — provider, voice, model, language, and per-provider options — over the dashboard, the same config the official desktop app edits. It includes an **ElevenLabs voice picker** that lists the voices available on your server's ElevenLabs key (and tells you when no key is set). Works on the no-plugin (Standard) path; sign in to Manage to use it.
 - **Desktop CLI: `hermes-relay audit`.** Shows what the remote agent has actually run on this machine through the desktop tools — tool, status, and a short detail per call — read from a local log, no network or auth. Answers "what did the agent just do?" at a glance.
 - **Desktop CLI: `hermes-relay relay`.** Inspect the relay server itself: `relay info` (version, uptime, sessions — on the relay host), `relay security` (runtime auth toggles), `relay context` (audit the system-prompt context the relay injects into the agent, which works from a remote machine with your session), and `relay queue` (list — or `--clear` / `--cancel <id>` — the messages your agent queued for an offline phone; on the relay host).

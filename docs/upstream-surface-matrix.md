@@ -22,7 +22,7 @@ Verified upstream source snapshot:
 | `/v1/capabilities` | Upstream API server | No | Capability probe | Source of truth for API-server features; current upstream advertises no audio API. |
 | `/v1/chat/completions` | Upstream API server | No | Chat fallback | OpenAI-compatible streaming. Tool events may degrade to inline annotations. |
 | `/v1/runs`, `/v1/runs/{id}/events` | Upstream API server | No | Chat fallback | Structured run events and stop/approval support. |
-| `/api/sessions/*` | Upstream API server | No | Session CRUD and SSE chat | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Bootstrap is old-build fallback only. |
+| `/api/sessions/*` | Upstream API server/dashboard | No | Session CRUD, SSE chat, export, archive, and bulk cleanup | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Newer hosts also expose single-session JSON export via `GET /api/sessions/{id}/export`, soft archive via `PATCH /api/sessions/{id}`, and guarded bulk cleanup via `POST /api/sessions/prune`; Android must dry-run prune first and show the matched count/span before destructive apply. Bootstrap is old-build fallback only. |
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Read-only API-server skill/toolset inventory. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. |
