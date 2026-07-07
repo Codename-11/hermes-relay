@@ -62,6 +62,9 @@ _PLUGIN_PKG_ALIAS = "_hermes_relay_plugin_pkg"
 def _plugin_module(name: str) -> types.ModuleType:
     """Import ``<plugin package>.<name>`` in whatever layout we're running."""
     if __package__ and "." in __package__:
+        # Assumes our parent package IS the plugin package — true for both real
+        # layouts: ``plugin.dashboard`` → ``plugin`` and
+        # ``hermes_plugins.hermes_relay.dashboard`` → ``hermes_plugins.hermes_relay``.
         parent = __package__.rsplit(".", 1)[0]  # strip trailing ".dashboard"
         return importlib.import_module(f"{parent}.{name}")
     pkg = sys.modules.get(_PLUGIN_PKG_ALIAS)
