@@ -13,6 +13,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -153,7 +154,10 @@ class RelayHttpClient(
             .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
             .trimEnd('/')
 
-        val url = "$httpBase/media/$token"
+        val url = "$httpBase/media/$token".toHttpUrlOrNull()
+            ?: return@withContext Result.failure(
+                IllegalArgumentException("Invalid relay URL: $httpBase")
+            )
 
         val request = Request.Builder()
             .url(url)
@@ -597,7 +601,10 @@ class RelayHttpClient(
             .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
             .trimEnd('/')
 
-        val url = "$httpBase/sessions"
+        val url = "$httpBase/sessions".toHttpUrlOrNull()
+            ?: return@withContext Result.failure(
+                IllegalArgumentException("Invalid relay URL: $httpBase")
+            )
         val request = Request.Builder()
             .url(url)
             .get()

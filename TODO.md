@@ -6,6 +6,14 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Voice — on-device findings (2026-07-07 realtime test)
+
+Surfaced during a live realtime-voice test with a long, many-tool-call background run:
+
+- **DONE — duplicate error toast + no dismiss.** A failed/timed-out voice turn showed the error twice — `VoiceModeOverlay`'s inline top banner (`uiState.error`) AND the app-wide bottom snackbar, which the overlay piped `errorEvents` into — and offered only Retry, trapping the user. Fixed: the overlay no longer pipes `errorEvents` to the snackbar while it's up; `clearError()` now resets `Error`→`Idle`; the banner gained a **Dismiss** beside Retry. (`errorEvents` param on the overlay is now unused — minor cleanup.)
+- **Tool-call animation runs indefinitely / no result (NEEDS a repro-with-logs before fixing).** Root cause found: the relay forwards `hermes.tool.completed` / `hermes.tool.failed` (`broker.py:2873–2904`, carrying a status `message`), but **`VoiceViewModel` has no handler** for them — only `tool.started` / `tool.delta` / `run.progress` — so a started tool's spinner is never marked done. Complication: there are TWO tool-tracking paths (the background-run chip via `hermes.tool.*` + `run.progress` count, and per-tool rows via `message.toolCalls.isComplete`); capture live events to confirm which animation hangs. The "no details/result" half is the already-deferred tool-output-surfacing item (the relay would need to add a truncated output field to `hermes.tool.*`). **Next:** add a `hermes.tool.completed`/`failed` handler that stops the matching tool's spinner + records completion status.
+- **Tap/static click between sentences (realtime PCM playback) — NEEDS on-device audio investigation.** Suspected discontinuity at TTS chunk/sentence boundaries in `RealtimePcmPlayer` (a buffer underrun between segments, or a pop when a new segment's `AudioTrack` write starts). Capture head-position / underrun logs during a multi-sentence reply to confirm before touching the buffer sizing or adding a boundary crossfade/fade. Related to the existing "Realtime-PCM waveform output gating" note.
+
 ## Voice background-run v2 (2026-07-06 roadmap — post plugin-v1.3.0)
 
 The v1 shape shipped in plugin-v1.3.0 (single durable run, free floor during
@@ -357,7 +365,7 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 - **Audit remaining throwing URL-build sites for the "Invalid URL host" class (#131).** The #131 fix guarded the two clients that take a user-entered base URL on the Manage/voice path (`DashboardApiClient`, `StandardHermesVoiceClient`) and validates input at entry, but two lower-risk site groups still call okhttp's throwing `url(String)` / `.toHttpUrl()`:
   - `HermesApiClient` streaming methods (`sendChatStream` / `sendCompletionsStream` / `sendRunStream`) build `authRequest("$baseUrl/…")` *outside* the surrounding `try`. Latent only — the non-streaming methods (incl. `checkHealth`) already `try/catch`, so a bad `apiServerUrl` is caught and marks the connection unreachable before streaming is reached. Consider a non-throwing `authRequestOrNull()` chokepoint → `onError`.
   - **`ConnectionManager` WSS connect — FIXED 2026-07-07** (this was the confirmed crasher: Play 1.2.6 on a Galaxy S25 Ultra / Android 16, `IllegalArgumentException` from `HttpUrl$Builder.parse` via `doConnectInternal` → `Request.Builder.url()` on the IO coroutine). Now routed through `buildRelayRequestOrNull()` → graceful Disconnected + diagnostic instead of a throw. `ConnectionManagerUrlGuardTest` covers it.
-  - Remaining relay HTTP clients (`RelayHttpClient`, `RelayProfileInspectorClient`, `RelayVoiceClient`) still use throwing `.toHttpUrl()` / `url(String)` on `$httpBase/…`. These ride post-pairing relay URLs (from a signed QR / pairing payload), not free-text fields, so the input-validation layer doesn't cover them — route them through `ServerAddress`/`toHttpUrlOrNull` for defense-in-depth. Lower-risk than the socket path (called from suspend fns with surrounding error handling) but not yet audited.
+  - **Remaining relay HTTP clients — DONE 2026-07-07 (defense-in-depth).** `RelayVoiceClient` now validates its base in `resolveHttpBase()` (returns null on a malformed URL → the existing `Result.failure` guards fire), and `RelayHttpClient`'s two string-URL sites (`fetchMedia`, `listSessions`) use `toHttpUrlOrNull()` → `Result.failure`. `RelayProfileInspectorClient` was already fully guarded (every `.toHttpUrl()` wrapped in `catch (IllegalArgumentException)`). The whole #131 relay class is now covered; `HermesApiClient` streaming (the other lower-risk group above) remains the only open item.
 
 ## Session titles (#133) — follow-ups beyond the client fixes
 

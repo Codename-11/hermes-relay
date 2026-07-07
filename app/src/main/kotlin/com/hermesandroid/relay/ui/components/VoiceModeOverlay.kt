@@ -174,14 +174,12 @@ fun VoiceModeOverlay(
         }
     }
 
-    // Pipe classified voice errors to the app-wide snackbar host. The inline
-    // error banner stays as a belt-and-suspenders for longer-lived messages.
-    val snackbarHost = LocalSnackbarHost.current
-    LaunchedEffect(errorEvents) {
-        errorEvents?.collect { err ->
-            snackbarHost.showHumanError(err)
-        }
-    }
+    // Voice errors surface ONLY on the overlay's own inline top banner
+    // (uiState.error) while the overlay is up — we deliberately do NOT also pipe
+    // them to the app-wide bottom snackbar. Doing both duplicated the message
+    // and left a retry-only, un-dismissable toast at the bottom during long /
+    // timed-out background runs. (errorEvents is still used by the chat + voice
+    // settings surfaces when the overlay isn't the active surface.)
 
     Box(
         modifier = modifier
@@ -470,8 +468,14 @@ fun VoiceModeOverlay(
                         text = uiState.error.orEmpty(),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                     )
+                    // Dismiss clears the error and returns to Idle without
+                    // retrying, so a failed/timed-out turn never traps the user
+                    // on a retry-only banner.
+                    TextButton(onClick = { onClearError() }) {
+                        Text("Dismiss")
+                    }
                     TextButton(
                         onClick = {
                             onClearError()

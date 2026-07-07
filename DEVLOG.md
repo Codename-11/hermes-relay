@@ -1,5 +1,31 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-07 — Relay URL-guard sweep + voice error-recovery UX
+
+**Relay URL guards (finishing the #131 relay class).** Extended the malformed-URL
+guard from the WSS socket to the relay HTTP clients: `RelayVoiceClient` validates
+its base in `resolveHttpBase()` (returns null on a malformed URL → the existing
+`Result.failure` guards fire, covering all 7 voice endpoints centrally), and
+`RelayHttpClient`'s two string-URL sites (`fetchMedia`, `listSessions`) now use
+`toHttpUrlOrNull()` → `Result.failure`. `RelayProfileInspectorClient` was already
+guarded (every `.toHttpUrl()` in a `catch (IllegalArgumentException)`).
+
+**Voice error-recovery UX (on-device realtime test).** A failed/timed-out voice
+turn showed the error twice — `VoiceModeOverlay`'s inline top banner
+(`uiState.error`) AND the app-wide bottom snackbar the overlay piped `errorEvents`
+into — and offered only Retry, trapping the user. The overlay no longer pipes
+`errorEvents` to the snackbar while it's up (the inline banner is the surface);
+`clearError()` now resets `Error`→`Idle`; the banner gained a **Dismiss** beside
+Retry.
+
+**Also diagnosed (not yet fixed — need a repro-with-logs; see TODO):** realtime
+tool-call spinners run indefinitely because `VoiceViewModel` has no
+`hermes.tool.completed`/`failed` handler (the relay forwards them, `broker.py`
+2873–2904); and a tap/static click between sentences in the realtime PCM playback.
+
+**Verification.** `CI — Android` green on the direct-to-dev push; APK rebuilt +
+installed + launched clean on device for the manual voice re-test.
+
 ## 2026-07-07 — Relay socket: guard a malformed URL (relay half of #131)
 
 **Why.** A Play crash on 1.2.6 (Galaxy S25 Ultra / Android 16):

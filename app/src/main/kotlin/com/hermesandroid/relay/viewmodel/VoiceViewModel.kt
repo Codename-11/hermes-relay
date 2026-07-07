@@ -1781,7 +1781,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearError() {
-        _uiState.update { it.copy(error = null) }
+        // Clear the message and, if we were parked in Error, return to Idle so a
+        // dismissed (or retried) failure lands in a usable state rather than a
+        // banner-less Error limbo.
+        _uiState.update {
+            it.copy(
+                error = null,
+                state = if (it.state == VoiceState.Error) VoiceState.Idle else it.state,
+            )
+        }
     }
 
     // === PHASE3-voice-intents: voice→bridge intent routing ===

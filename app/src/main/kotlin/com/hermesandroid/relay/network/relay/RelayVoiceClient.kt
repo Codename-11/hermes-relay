@@ -29,6 +29,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -2010,10 +2011,13 @@ class RelayVoiceClient(
     private fun resolveHttpBase(): String? {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) return null
-        return relayUrl
+        val normalized = relayUrl
             .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
             .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
             .trimEnd('/')
+        // Reject a malformed base up front so callers' url("$base/…") can't throw
+        // IllegalArgumentException on the IO dispatcher (relay half of #131).
+        return if (normalized.toHttpUrlOrNull() != null) normalized else null
     }
 
     private fun resolveWebSocketBase(): String? {
