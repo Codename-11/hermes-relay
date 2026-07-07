@@ -574,9 +574,18 @@ cat > "$SHIM_PATH" <<SHIM
 #
 # Also available: /hermes-relay-pair slash command in any Hermes chat session.
 #
-# Override the venv python path with \$HERMES_VENV_PY if needed.
+# Override the venv python path with \$HERMES_VENV_PY if needed. When unset,
+# the install-time detected interpreter is tried first, then classic + uv layouts.
 
-HERMES_VENV_PY="\${HERMES_VENV_PY:-\$HOME/.hermes/hermes-agent/venv/bin/python}"
+HERMES_VENV_PY="\${HERMES_VENV_PY:-}"
+if [ -z "\$HERMES_VENV_PY" ]; then
+    for candidate in "$VENV_PY" "\$HOME/.hermes/hermes-agent/.venv/bin/python" "\$HOME/.hermes/hermes-agent/venv/bin/python"; do
+        if [ -x "\$candidate" ]; then
+            HERMES_VENV_PY="\$candidate"
+            break
+        fi
+    done
+fi
 if [ ! -x "\$HERMES_VENV_PY" ]; then
     echo "hermes-pair: cannot find hermes venv python at \$HERMES_VENV_PY" >&2
     echo "hermes-pair: set HERMES_VENV_PY or reinstall hermes-agent" >&2
@@ -594,9 +603,18 @@ cat > "$STATUS_SHIM_PATH" <<SHIM
 #
 # Also available: /hermes-relay-status slash command in any Hermes chat session.
 #
-# Override the venv python path with \$HERMES_VENV_PY if needed.
+# Override the venv python path with \$HERMES_VENV_PY if needed. When unset,
+# the install-time detected interpreter is tried first, then classic + uv layouts.
 
-HERMES_VENV_PY="\${HERMES_VENV_PY:-\$HOME/.hermes/hermes-agent/venv/bin/python}"
+HERMES_VENV_PY="\${HERMES_VENV_PY:-}"
+if [ -z "\$HERMES_VENV_PY" ]; then
+    for candidate in "$VENV_PY" "\$HOME/.hermes/hermes-agent/.venv/bin/python" "\$HOME/.hermes/hermes-agent/venv/bin/python"; do
+        if [ -x "\$candidate" ]; then
+            HERMES_VENV_PY="\$candidate"
+            break
+        fi
+    done
+fi
 if [ ! -x "\$HERMES_VENV_PY" ]; then
     echo "hermes-status: cannot find hermes venv python at \$HERMES_VENV_PY" >&2
     echo "hermes-status: set HERMES_VENV_PY or reinstall hermes-agent" >&2
@@ -622,7 +640,7 @@ set -eu
 HERMES_RELAY_HOME="\${HERMES_RELAY_HOME:-\$HOME/.hermes/hermes-relay}"
 HERMES_VENV_PY="\${HERMES_VENV_PY:-}"
 if [ -z "\$HERMES_VENV_PY" ]; then
-    for candidate in "\$HOME/.hermes/hermes-agent/.venv/bin/python" "\$HOME/.hermes/hermes-agent/venv/bin/python"; do
+    for candidate in "$VENV_PY" "\$HOME/.hermes/hermes-agent/.venv/bin/python" "\$HOME/.hermes/hermes-agent/venv/bin/python"; do
         if [ -x "\$candidate" ]; then
             HERMES_VENV_PY="\$candidate"
             break
@@ -700,9 +718,18 @@ cat > "$TS_SHIM_PATH" <<SHIM
 #   hermes-relay-tailscale enable [--port N] [--api-port N] [--relay-only]
 #   hermes-relay-tailscale disable [--port N] [--api-port N] [--relay-only]
 #
-# Override the venv python path with \$HERMES_VENV_PY if needed.
+# Override the venv python path with \$HERMES_VENV_PY if needed. When unset,
+# the install-time detected interpreter is tried first, then classic + uv layouts.
 set -eu
-HERMES_VENV_PY="\${HERMES_VENV_PY:-\$HOME/.hermes/hermes-agent/venv/bin/python}"
+HERMES_VENV_PY="\${HERMES_VENV_PY:-}"
+if [ -z "\$HERMES_VENV_PY" ]; then
+    for candidate in "$VENV_PY" "\$HOME/.hermes/hermes-agent/.venv/bin/python" "\$HOME/.hermes/hermes-agent/venv/bin/python"; do
+        if [ -x "\$candidate" ]; then
+            HERMES_VENV_PY="\$candidate"
+            break
+        fi
+    done
+fi
 if [ ! -x "\$HERMES_VENV_PY" ]; then
     echo "hermes-relay-tailscale: cannot find hermes venv python at \$HERMES_VENV_PY" >&2
     echo "hermes-relay-tailscale: set HERMES_VENV_PY or reinstall hermes-agent" >&2
@@ -736,8 +763,18 @@ elif [ ! -f "$SERVICE_SRC" ]; then
     info "  Service template not found at $SERVICE_SRC — skipping"
 else
     mkdir -p "$SYSTEMD_USER_DIR"
-    cp "$SERVICE_SRC" "$SERVICE_DST"
-    ok "Wrote $SERVICE_DST"
+    # The committed template hardcodes the classic %h/.hermes/hermes-agent/venv
+    # layout. Rewrite that prefix to the venv we actually detected (uv-managed
+    # .venv, a HERMES_VENV_PY override, etc.) so ExecStart / PATH / VIRTUAL_ENV
+    # point at a real interpreter instead of dying with 203/EXEC on non-classic
+    # hosts. $VENV_PY is ".../<venv>/bin/python"; strip "/bin/python" for the dir.
+    # A `|` delimiter avoids clashing with the `/` path separators. We assume the
+    # venv path has no sed metacharacters (& | \) — true for the standard
+    # ~/.hermes/hermes-agent/{venv,.venv} layouts and any sane HERMES_VENV_PY.
+    _venv_bin_dir="${VENV_PY%/*}"           # .../<venv>/bin
+    _venv_root_dir="${_venv_bin_dir%/*}"    # .../<venv>
+    sed "s|%h/.hermes/hermes-agent/venv|$_venv_root_dir|g" "$SERVICE_SRC" > "$SERVICE_DST"
+    ok "Wrote $SERVICE_DST (venv → $_venv_root_dir)"
 
     systemctl --user daemon-reload >/dev/null 2>&1 || true
 
