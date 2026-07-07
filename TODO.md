@@ -6,11 +6,24 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Active — next up (2026-07-07)
+
+Compaction-safe snapshot of where we are; details in the linked sections below.
+
+- **Cut android-v1.4.0 + plugin-v1.4.0 (release act — owner-driven).** Prepped on `dev`: versions bumped (Android **1.4.0 / versionCode 22**, plugin **1.4.0**), `CHANGELOG [Unreleased]` → `[1.4.0]`, and all of this session's work landed + `CI — Android`/`CI — Plugin` green + deployed to the device (1.4.0 sideload debug). **Pending:**
+  1. **On-device sign-off:** the Tink `EncryptedSharedPreferences` check (pair → force-stop → relaunch → session persists, no startup crash — see Crash-class follow-ups) + a voice manual re-test.
+  2. **Write the release notes** the bump script listed: `RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `app/src/main/assets/changelog.json`, `app/src/googlePlay/play/release-notes/en-US/default.txt`.
+  3. **Merge `dev`→`main` `--no-ff`** + tag `android-v1.4.0` and `plugin-v1.4.0`. Plugin is a **MINOR** (it carries #165 native-loader + installer-venv, #170 doctor guardrails, #171 multi-device bridge, #178 dedup guard — not the 1.3.1 patch originally queued).
+  4. **Discard the 1.3.0 Play Console draft** and upload the 1.4.0 AAB.
+- **Two voice bugs to fix — capture a `logcat` repro first** (see "Voice — on-device findings" below): the realtime tool-call spinner that never completes (missing `hermes.tool.completed`/`failed` handler in `VoiceViewModel`), and the tap/static click between sentences (`RealtimePcmPlayer` boundary). Repro the voice background task while capturing `adb logcat`, then apply the scoped fixes.
+- **Owner / Mizu — GitHub triage.** Close #64 as superseded, plus the queued open-issue comment/close/label batch (see "Open-issue resolution batch" below).
+
+---
+
 ## Voice — on-device findings (2026-07-07 realtime test)
 
-Surfaced during a live realtime-voice test with a long, many-tool-call background run:
+Surfaced during a live realtime-voice test with a long, many-tool-call background run. (The duplicate-error-toast + no-dismiss issue from the same test shipped this session — see DEVLOG 2026-07-07.) Still open:
 
-- **DONE — duplicate error toast + no dismiss.** A failed/timed-out voice turn showed the error twice — `VoiceModeOverlay`'s inline top banner (`uiState.error`) AND the app-wide bottom snackbar, which the overlay piped `errorEvents` into — and offered only Retry, trapping the user. Fixed: the overlay no longer pipes `errorEvents` to the snackbar while it's up; `clearError()` now resets `Error`→`Idle`; the banner gained a **Dismiss** beside Retry. (`errorEvents` param on the overlay is now unused — minor cleanup.)
 - **Tool-call animation runs indefinitely / no result (NEEDS a repro-with-logs before fixing).** Root cause found: the relay forwards `hermes.tool.completed` / `hermes.tool.failed` (`broker.py:2873–2904`, carrying a status `message`), but **`VoiceViewModel` has no handler** for them — only `tool.started` / `tool.delta` / `run.progress` — so a started tool's spinner is never marked done. Complication: there are TWO tool-tracking paths (the background-run chip via `hermes.tool.*` + `run.progress` count, and per-tool rows via `message.toolCalls.isComplete`); capture live events to confirm which animation hangs. The "no details/result" half is the already-deferred tool-output-surfacing item (the relay would need to add a truncated output field to `hermes.tool.*`). **Next:** add a `hermes.tool.completed`/`failed` handler that stops the matching tool's spinner + records completion status.
 - **Tap/static click between sentences (realtime PCM playback) — NEEDS on-device audio investigation.** Suspected discontinuity at TTS chunk/sentence boundaries in `RealtimePcmPlayer` (a buffer underrun between segments, or a pop when a new segment's `AudioTrack` write starts). Capture head-position / underrun logs during a multi-sentence reply to confirm before touching the buffer sizing or adding a boundary crossfade/fade. Related to the existing "Realtime-PCM waveform output gating" note.
 
