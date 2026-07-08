@@ -1655,8 +1655,9 @@ override:
   promotion vs. silent + visual only.
 - `progress_spoken_after_ms` / `progress_repeat_ms` - reuse existing
   `_HERMES_SPOKEN_PROGRESS_*` knobs, now configurable.
-- `result_delivery` - `speak_verbatim` (default direct relay TTS) vs.
-  `speak_when_idle` (provider/model summary), `notify_then_speak`
+- `result_delivery` - `speak_verbatim` (default; the realtime provider reads
+  the authoritative answer word for word, with relay TTS as the validator's
+  fallback) vs. `speak_when_idle` (provider/model summary), `notify_then_speak`
   (chime/visual, speak on user re-engage), or `visual_only`.
 - `max_background_runs` - concurrent background runs per session (default 1 for
   the MVP; the existing single-`hermes_task` field assumes 1).

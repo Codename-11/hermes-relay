@@ -715,8 +715,11 @@ of blocking on the run:
 - When the background run finishes, the relay emits
   `hermes.run.background_completed`, waits for the audio **floor** to be idle,
   then delivers the answer exactly once. `result_delivery` selects
-  `speak_verbatim` (default direct relay TTS), `speak_when_idle`
-  (provider/model summary), `notify_then_speak`, or `visual_only`.
+  `speak_verbatim` (default: the realtime provider reads the authoritative
+  answer word for word — relay TTS speaks it only as the validator's
+  fallback), `speak_when_idle` (provider/model summary), `notify_then_speak`,
+  or `visual_only`. All spoken modes keep the session's realtime voice; the
+  forced-summary validator + relay-TTS fallback backstop off-script responses.
 - `hermes_run_task(mode="background")` skips the grace window and detaches
   immediately (`tier:"durable"`), even when grace-period promotion is disabled.
 - `hermes.run.progress` carries two extra fields while a run is in flight:

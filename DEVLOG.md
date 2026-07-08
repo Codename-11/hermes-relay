@@ -1,5 +1,38 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Provider-voiced exact result delivery
+
+`result_delivery: "speak_verbatim"` no longer renders through relay TTS
+directly. Every spoken delivery mode now delivers through the realtime
+provider so background/foreground Hermes answers keep the session's voice and
+tone; the modes differ only in per-response instructions. Exact asks for a
+word-for-word reading of the authoritative answer
+(`_forced_hermes_exact_prompt`), Summary keeps the concise-natural-summary
+prompt, and both are backstopped by the forced-summary validator (whole-word
+overlap, early-commit bar, queue-speak blocklist), the relay-TTS fallback, and
+the delivery-confirm alarm. `_speak_result_verbatim` and the
+`voice.response.verbatim_delivery` event are removed — foreground, background,
+and deferred-resume verbatim paths all ride the shared injection pipeline. An
+exact reading trivially clears the overlap validator; an off-script response
+falls back to relay TTS speaking the same authoritative text, so the worst
+case equals the previous TTS-direct default one failed provider response
+later.
+
+Verification: realtime suites green (96 tests across summary-validation /
+promotion / routes / fast-lane / keepalive / floor), including new
+exact-prompt selection units and an integration test pinning the exact-reading
+injection. Live signoff pending: grok-voice failed the summarize instruction
+4/4 in earlier live rounds — whether it complies with the stricter
+read-as-written instruction is the key open question (TODO tracks it).
+
+## 2026-07-08 — Voice settings delivery-mode help
+
+Voice Settings now explains realtime answer-delivery modes behind a compact
+info icon next to "When the answer is ready": Exact is the recommended
+provider-voiced word-for-word path (relay TTS only as fallback), Summary is
+the provider rephrase path, Notify delays speech until re-engage, and Show
+keeps the result visual only.
+
 ## 2026-07-08 — Realtime voice idle recovery and verbatim delivery default
 
 Follow-up batch after the A-E on-device rounds and relay-host idle probes.

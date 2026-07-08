@@ -110,11 +110,20 @@ green. Needs relay deploy + APK install + live verify.
   answer extraction now strips `Source:` / `Sources:` / citation lines and
   source-list path lines before relay TTS.
 - **grok-voice fails the delivery instruction ~always (4/4 live rounds) —
-  DEFAULT CHANGED.** Every observed forced summary was deferral filler; the
-  validator+fallback carried every delivery. `result_delivery:
-  "speak_verbatim"` is now the default: relay TTS speaks the authoritative
-  Hermes answer directly, while provider/model summarization remains the
-  `speak_when_idle` opt-in mode.
+  DEFAULT CHANGED, then REWORKED same-day.** Every observed forced summary
+  was deferral filler; the validator+fallback carried every delivery.
+  `speak_verbatim` was first made a direct relay-TTS default, then reworked
+  to provider-voiced exact delivery (below) to keep voice continuity.
+- **Provider-voiced exact delivery — needs live verification.**
+  `speak_verbatim` now delivers through the realtime provider with a
+  word-for-word reading instruction (`_forced_hermes_exact_prompt`); relay
+  TTS speaks only as the validator fallback. Key live question: does
+  grok-voice comply with the stricter read-as-written instruction where it
+  failed the summarize instruction 4/4? Success bar: repeated live
+  background deliveries spoken in the provider voice with no deferral
+  filler and no fallback. If it still defers every time, delivery degrades
+  to fallback TTS with one failed provider response of added latency per
+  result (i.e., the previous default behavior).
 
 ## Voice — on-device findings (2026-07-08 e2e realtime test)
 

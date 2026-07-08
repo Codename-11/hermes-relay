@@ -2362,16 +2362,10 @@ class RealtimeAgentHandler:
                 )
                 return
 
-            if session.result_delivery == "speak_verbatim":
-                await self._speak_result_verbatim(
-                    ws,
-                    session,
-                    result,
-                    delivery="speak_verbatim",
-                    reason="foreground_hermes_result",
-                )
-                return
-
+            # Every spoken mode delivers through the provider so the answer
+            # keeps the realtime voice; speak_verbatim differs only in the
+            # instructions (read the answer as written vs. natural summary).
+            # The forced-summary validator + relay-TTS fallback backstop both.
             session.native_forced_summary_active = True
             session.native_forced_summary_done = False
             session.native_forced_summary_response_id = None
@@ -2382,7 +2376,9 @@ class RealtimeAgentHandler:
             with contextlib.suppress(Exception):
                 await connection.cancel_response()
             await connection.request_response(
-                instructions=_forced_hermes_summary_prompt(transcript, result)
+                instructions=_result_delivery_prompt(
+                    session.result_delivery, transcript, result
+                )
             )
         finally:
             session.native_forced_hermes_turn_active = False
@@ -2995,7 +2991,9 @@ class RealtimeAgentHandler:
             return
 
         # speak_verbatim / speak_when_idle / notify_then_speak: wait for the
-        # floor to clear, then deliver exactly once.
+        # floor to clear, then deliver exactly once through the provider
+        # (exact reading vs. natural summary chosen by mode); the validator's
+        # relay-TTS fallback and the delivery-confirm alarm backstop it.
         session.floor.note_result_ready()
         floor_idle = await self._await_floor_idle_for_result(session)
         # If the phone is detached, don't speak into the void: the provider's
@@ -3014,16 +3012,6 @@ class RealtimeAgentHandler:
                     "run_id": session.hermes_run_id,
                     "reason": "websocket_detached",
                 },
-            )
-            session.hermes_run_tier = "foreground"
-            return
-        if session.result_delivery == "speak_verbatim":
-            await self._speak_result_verbatim(
-                ws,
-                session,
-                result,
-                delivery="speak_verbatim",
-                reason="background_result",
             )
             session.hermes_run_tier = "foreground"
             return
@@ -3166,15 +3154,6 @@ class RealtimeAgentHandler:
             return
         session.floor.note_result_ready()
         floor_idle = await self._await_floor_idle_for_result(session)
-        if session.result_delivery == "speak_verbatim":
-            await self._speak_result_verbatim(
-                ws,
-                session,
-                result,
-                delivery="speak_verbatim",
-                reason="pending_background_result",
-            )
-            return
         await self._inject_background_summary(
             ws, session, connection, result, cancel_current=not floor_idle
         )
@@ -3202,81 +3181,6 @@ class RealtimeAgentHandler:
         session.floor.clear_result()
         return False
 
-    async def _speak_result_verbatim(
-        self,
-        ws: web.WebSocketResponse,
-        session: RealtimeAgentSession,
-        result: dict[str, Any],
-        *,
-        delivery: str,
-        reason: str,
-    ) -> None:
-        """Deliver the authoritative Hermes answer through relay TTS directly."""
-        text = _forced_summary_fallback_text(result)
-        if not text:
-            text = "Hermes completed the request but did not return a spoken summary."
-        session.native_pending_delivery_note = _delivery_note(text)
-        session.native_forced_summary_active = True
-        session.native_forced_summary_done = False
-        session.native_forced_summary_response_id = None
-        session.native_forced_summary_result = dict(result)
-        session.native_forced_summary_buffer.clear()
-        session.native_forced_summary_committed = False
-        session.native_forced_summary_text_parts.clear()
-        response_id = f"verbatim-{session.event_seq + 1}"
-        self._log(
-            session,
-            "voice.response.verbatim_delivery",
-            {
-                "type": "voice.response.verbatim_delivery",
-                "response_id": response_id,
-                "reason": reason,
-                "chars": len(text),
-            },
-        )
-        try:
-            await self._send(
-                ws,
-                session,
-                {
-                    "type": SERVER_EVT_RESPONSE_STARTED,
-                    "provider": session.provider,
-                    "model": session.model,
-                    "voice": session.voice,
-                    "session_id": session.session_id,
-                    "chat_session_id": session.chat_session_id,
-                    "response_id": response_id,
-                    "source": "hermes",
-                    "delivery": delivery,
-                },
-            )
-            await self._send(
-                ws,
-                session,
-                {
-                    "type": SERVER_EVT_RESPONSE_DELTA,
-                    "source": "hermes",
-                    "delta": text,
-                    "response_id": response_id,
-                    "delivery": delivery,
-                },
-            )
-            await self._render_provider_audio(
-                ws,
-                session,
-                text,
-                {},
-                response_id=response_id,
-            )
-        finally:
-            session.native_forced_summary_active = False
-            session.native_forced_summary_done = True
-            session.native_forced_summary_response_id = response_id
-            session.native_forced_summary_result = None
-            session.native_forced_summary_buffer.clear()
-            session.native_forced_summary_committed = False
-            session.native_forced_summary_text_parts.clear()
-
     async def _inject_background_summary(
         self,
         ws: web.WebSocketResponse,
@@ -3302,7 +3206,9 @@ class RealtimeAgentHandler:
                 await connection.cancel_response()
         try:
             await connection.request_response(
-                instructions=_forced_hermes_summary_prompt(transcript, result)
+                instructions=_result_delivery_prompt(
+                    session.result_delivery, transcript, result
+                )
             )
         except Exception as exc:  # noqa: BLE001
             # The background_completed event + result are already recorded in the
@@ -5010,6 +4916,47 @@ def _forced_hermes_summary_prompt(transcript: str, result: dict[str, Any]) -> st
         f"Hermes result: {summary}\n"
         f"Metadata: {json.dumps(metadata, sort_keys=True)}"
     )
+
+
+def _forced_hermes_exact_prompt(transcript: str, result: dict[str, Any]) -> str:
+    answer = str(
+        result.get("answer")
+        or result.get("text")
+        or result.get("summary")
+        or result.get("error")
+        or ""
+    ).strip()
+    if not answer:
+        answer = "Hermes completed the request but did not return a spoken summary."
+    speech = _provider_safe_answer_for_speech(answer, max_chars=1400)
+    # Same no-identifier rule as the summary prompt: anything present in
+    # these instructions can be spoken aloud, so ids never appear here.
+    return (
+        "Hermes has already handled the user's previous voice request. "
+        "This is the final spoken answer step. Read the answer below aloud "
+        "NOW, word for word as written. Do not paraphrase, shorten, reorder, "
+        "or add anything before or after it; only smooth over symbols or "
+        "formatting that cannot be spoken. Do not call any tools and do not "
+        "say you will check or report back later.\n\n"
+        f"User request: {transcript.strip()[:1000]}\n"
+        f"Answer to read: {speech}"
+    )
+
+
+def _result_delivery_prompt(
+    result_delivery: str, transcript: str, result: dict[str, Any]
+) -> str:
+    """Per-response instructions for a provider-spoken result delivery.
+
+    Every spoken mode delivers through the realtime provider so the answer
+    keeps the session's voice and tone. ``speak_verbatim`` asks for an exact
+    reading of the authoritative Hermes answer; the other spoken modes ask
+    for a concise natural summary. The forced-summary validator falls back
+    to relay TTS either way when the provider goes off-script.
+    """
+    if result_delivery == "speak_verbatim":
+        return _forced_hermes_exact_prompt(transcript, result)
+    return _forced_hermes_summary_prompt(transcript, result)
 
 
 def _forced_summary_tool_result(result: dict[str, Any]) -> dict[str, Any]:

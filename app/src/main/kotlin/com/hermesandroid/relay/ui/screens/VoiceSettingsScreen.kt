@@ -18,8 +18,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -1435,6 +1437,7 @@ private fun RealtimeAgentCard(
     var realtimeSampleRate by remember { mutableStateOf("24000") }
     var realtimeSaving by remember { mutableStateOf(false) }
     var realtimeManualOpen by remember { mutableStateOf(false) }
+    var showDeliveryInfo by remember { mutableStateOf(false) }
 
     val config = configState.realtimeConfig
     LaunchedEffect(
@@ -1610,10 +1613,26 @@ private fun RealtimeAgentCard(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "When the answer is ready",
-                    style = MaterialTheme.typography.labelMedium,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "When the answer is ready",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    IconButton(
+                        onClick = { showDeliveryInfo = true },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = "Delivery mode details",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 val deliveryOptions = listOf(
                     "speak_verbatim",
@@ -1648,6 +1667,10 @@ private fun RealtimeAgentCard(
                     }
                 }
             }
+        }
+
+        if (showDeliveryInfo) {
+            DeliveryModeInfoDialog(onDismiss = { showDeliveryInfo = false })
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -1864,6 +1887,51 @@ private fun RealtimeAgentCard(
                 color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+@Composable
+private fun DeliveryModeInfoDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Answer delivery") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                DeliveryModeInfoRow(
+                    label = "Exact",
+                    body = "Recommended. The realtime voice reads the Hermes answer word for word, falling back to standard TTS only if it goes off-script.",
+                )
+                DeliveryModeInfoRow(
+                    label = "Summary",
+                    body = "The realtime voice rephrases the result in its own words. More conversational, less faithful to the exact answer.",
+                )
+                DeliveryModeInfoRow(
+                    label = "Notify",
+                    body = "Shows that the answer is ready first, then speaks when you re-engage.",
+                )
+                DeliveryModeInfoRow(
+                    label = "Show",
+                    body = "Keeps the completed answer visual only.",
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Got it")
+            }
+        },
+    )
+}
+
+@Composable
+private fun DeliveryModeInfoRow(label: String, body: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

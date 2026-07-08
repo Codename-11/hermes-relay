@@ -21,6 +21,8 @@ from plugin.relay.realtime_agent.broker import (
     RealtimeAgentSession,
     _answer_evidence_tokens,
     _bad_forced_summary_reason,
+    _forced_hermes_exact_prompt,
+    _result_delivery_prompt,
     _summary_overlaps_answer,
 )
 
@@ -210,6 +212,41 @@ class EarlyCommitTest(unittest.IsolatedAsyncioTestCase):
         self._buffer("It's fine — this one will start automatically in Tokyo, ")
         await self.handler._maybe_commit_forced_summary_early(None, self.session)
         self.assertFalse(self.session.native_forced_summary_committed)
+
+
+class ResultDeliveryPromptTest(unittest.TestCase):
+    """Prompt selection for provider-spoken result delivery.
+
+    ``speak_verbatim`` delivers through the provider too (voice continuity)
+    but instructs an exact reading of the authoritative answer; only the
+    other spoken modes ask for a natural summary.
+    """
+
+    RESULT = {"answer": "Your dog's name is Biscuit and the vet visit is Friday."}
+
+    def test_speak_verbatim_selects_exact_reading_prompt(self) -> None:
+        prompt = _result_delivery_prompt("speak_verbatim", "what's my dog's name", self.RESULT)
+        self.assertIn("word for word as written", prompt)
+        self.assertIn("Your dog's name is Biscuit", prompt)
+        self.assertNotIn("concise natural summary", prompt)
+
+    def test_summary_modes_select_summary_prompt(self) -> None:
+        for mode in ("speak_when_idle", "notify_then_speak"):
+            prompt = _result_delivery_prompt(mode, "what's my dog's name", self.RESULT)
+            self.assertIn("concise natural summary", prompt, mode)
+            self.assertNotIn("word for word as written", prompt, mode)
+
+    def test_exact_prompt_strips_source_lines(self) -> None:
+        prompt = _forced_hermes_exact_prompt(
+            "where is the config",
+            {"answer": "The config lives under the home directory.\nSource: /home/user/.hermes/config.yaml"},
+        )
+        self.assertIn("The config lives under the home directory.", prompt)
+        self.assertNotIn("/home/user/.hermes/config.yaml", prompt)
+
+    def test_exact_prompt_placeholder_when_answer_missing(self) -> None:
+        prompt = _forced_hermes_exact_prompt("do the thing", {})
+        self.assertIn("did not return a spoken summary", prompt)
 
 
 if __name__ == "__main__":

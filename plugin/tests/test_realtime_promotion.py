@@ -357,6 +357,36 @@ class RealtimePromotionTests(AioHTTPTestCase):
             broker.release.set()
             await ws.close()
 
+    async def test_verbatim_delivery_injects_exact_provider_reading(self) -> None:
+        """speak_verbatim rides the provider injection path (voice continuity):
+        the result is delivered as an exact-reading response request carrying
+        the authoritative answer, not a direct relay-TTS render."""
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        self._server().realtime_agent.sessions[body["session_id"]].result_delivery = (
+            "speak_verbatim"
+        )
+        try:
+            await self._emit_tool_call(provider)
+            await self._read_until(ws, "hermes.run.promoted")
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            exact: list[str] = []
+            for _ in range(50):
+                exact = [
+                    t
+                    for t in provider.connection.text_inputs
+                    if "word for word as written" in t
+                ]
+                if exact:
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(len(exact), 1)
+            self.assertIn("Background answer ready.", exact[0])
+        finally:
+            broker.release.set()
+            await ws.close()
+
     async def test_short_run_is_not_promoted(self) -> None:
         broker = FastHermesToolBroker()
         ws, provider, body = await self._open(broker=broker)
