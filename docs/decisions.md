@@ -1683,6 +1683,20 @@ rather than holding an open response, so the socket only sees the normal
 between-turns idle gap — no provider needs the `must-reopen` fallback today, and
 default-on is unblocked.
 
+**Phase 0 revision (2026-07-08).** The xAI verdict was scoped to between-turn
+idle and broke at the 15-minute scale: a live event log showed xAI closing a
+quiet conversation with "timed out after 900.0 seconds due to inactivity"
+(~896s of zero events after a background-run summary finished speaking). xAI is
+**`needs-keepalive`** beyond ~900s of true silence. Fix shipped in the broker:
+a per-connection keepalive task appends ~100ms of silent, never-committed PCM
+whenever the provider socket has been quiet for
+`RELAY_VOICE_PROVIDER_KEEPALIVE_MS` (default 240s; `0` disables), and a
+residual idle-close is surfaced as a human-readable session-expired error
+instead of the raw provider text. Full findings + the remaining empirical
+check (does an uncommitted append reset xAI's timer — probe with
+`--keepalive-ms` on the relay host) live in `docs/realtime-voice-poc.md` →
+"Idle tolerance" → "Revision (2026-07-08)".
+
 **Rules.**
 
 - Hermes remains the only path for tools, memory, current data, research, side

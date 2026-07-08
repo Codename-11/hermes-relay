@@ -1168,7 +1168,8 @@ speaking and the next `response.create`, across the resume TTL).
 | Provider | Date | Basis | Windows | Post-idle turn | Verdict |
 |---|---|---|---|---|---|
 | OpenAI (`gpt-realtime-2`) | 2026-05-24 | empirical (probe) | 10s, 20s, 30s | audio returned, no error | **`hold-floor-ok`** |
-| xAI (`grok-voice-latest`) | 2026-05-24 | existing production behavior + protocol parity | between-turn idle in daily use | clean (no idle-close reports) | **`hold-floor-ok`** |
+| xAI (`grok-voice-latest`) | 2026-05-24 | existing production behavior + protocol parity | between-turn idle in daily use | clean (no idle-close reports) | ~~`hold-floor-ok`~~ (revised below) |
+| xAI (`grok-voice-latest`) | 2026-07-08 | empirical (live relay event log) | 900s continuous silence | conversation closed server-side: "timed out after 900.0 seconds due to inactivity" | **`needs-keepalive`** |
 
 **OpenAI — empirical.** Ran `realtime-provider-idle-probe.py --provider openai
 --windows 10,20,30` against the live API. The session stayed open across all
@@ -1194,3 +1195,40 @@ surface already supports it.
 
 **Conclusion.** Both verdicts are `hold-floor-ok`, so `promotion_enabled`
 defaults **on**. Phase 0's gate is satisfied; default-on is no longer blocked.
+
+### Revision (2026-07-08) — xAI is `needs-keepalive` beyond ~900s
+
+The regression case the 2026-05-24 xAI verdict reserved for has occurred. A
+live relay event log showed a session dying while quiet: after a background-run
+summary finished speaking, a complete gap of zero events for ~896s ended in
+`voice.error` — "xAI Realtime error: Conversation timed out after 900.0
+seconds due to inactivity". The 2026-05-24 verdict was scoped to *between-turn*
+idle in normal use (tens of seconds); it never probed the 15-minute scale,
+because "daily use" never leaves a session silent that long. The client's
+manual turn-taking (`turn_detection: None`, mic streamed only while the user
+talks) means nothing on the provider socket resets xAI's inactivity timer
+during a background wait or an open-but-silent session.
+
+**Fix (shipped in the broker).** `_provider_keepalive_loop` — a per-connection
+task that appends ~100ms of silent PCM (`input_audio_buffer.append`, never
+committed, never cleared) whenever the provider connection has seen no sends
+or events for `RELAY_VOICE_PROVIDER_KEEPALIVE_MS` (default 240s ⇒ three pings
+per 900s window; `0` disables). Append-only by design: a buffer `clear` could
+race a user utterance that starts streaming between the check and the send,
+while uncommitted silence merely prefixes the next real utterance by a sliver.
+Belt-and-braces: an idle-close that still slips through is classified by
+`_is_provider_idle_timeout` and surfaced as a human-readable "voice session
+expired" instead of the raw provider error.
+
+**Verification.** The probe now takes `--keepalive-ms`; on the relay host run
+the repro (`--provider xai --windows 960`, expect idle-close at ~900s) and the
+fix (`--provider xai --windows 960 --keepalive-ms 240000`, expect survival +
+clean post-idle turn). Whether an uncommitted buffer append actually resets
+xAI's inactivity timer is the one remaining empirical unknown — the probe run
+confirms or refutes it before the keepalive is trusted; if appends do NOT
+count as activity, the fallback is a periodic no-op protocol message or a
+scheduled reopen, and this section gets a further revision.
+
+OpenAI's tolerance at the 900s scale remains unprobed (2026-05-24 ran only
+10/20/30s); the keepalive runs for both providers, so the question is moot
+unless OpenAI objects to silent appends — no such behavior observed.

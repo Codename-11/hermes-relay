@@ -129,6 +129,20 @@ _BACKGROUND_RUN_MAX_SECONDS = 300.0
 _LONG_TOOL_QUICK_FINISH_SECONDS = 1.5
 # Poll cadence for the detached-session keep-alive loop.
 _BACKGROUND_DETACHED_POLL_SECONDS = 2.0
+# Provider-facing conversation keepalive. xAI ends a realtime conversation
+# after 900s of inactivity (observed live 2026-07-08: "Conversation timed out
+# after 900.0 seconds due to inactivity"). This app manages turn-taking
+# manually (turn_detection: None) and the phone only streams mic audio while
+# the user is actually talking, so any quiet stretch — a background-run wait,
+# or simply an open-but-silent voice session — starves the provider socket.
+# When the provider connection has been quiet for the interval below, the
+# broker appends a short chunk of silent PCM to the provider input buffer.
+# Append-only by design (never committed, never cleared): a clear here could
+# race a user utterance that starts streaming between the check and the send,
+# while uncommitted silence merely prefixes the next real utterance with
+# ~100ms per ping. 240s gives three pings inside every 900s window.
+_PROVIDER_KEEPALIVE_SECONDS = 240.0
+_PROVIDER_KEEPALIVE_CHUNK_MS = 100
 _PROFILE_SOUL_PROMPT_MAX_CHARS = 6000
 _PROFILE_MEMORY_PROMPT_MAX_FILES = 4
 _PROFILE_MEMORY_PROMPT_MAX_CHARS = 6000
@@ -178,6 +192,10 @@ class RealtimeAgentSession:
     native_provider_task: asyncio.Task[None] | None = None
     native_playback_drained: asyncio.Event | None = None
     native_close_task: asyncio.Task[None] | None = None
+    native_keepalive_task: asyncio.Task[None] | None = None
+    # time.monotonic() of the last provider-bound client audio send or
+    # provider event; the keepalive loop pings only when this goes stale.
+    native_last_provider_activity: float = 0.0
     native_input_audio_bytes: int = 0
     native_response_requested_for_input: bool = False
     native_forced_preamble_active: bool = False
@@ -605,6 +623,7 @@ class RealtimeAgentHandler:
                 return ws
             session.native_connection = connection
             session.native_playback_drained = asyncio.Event()
+            session.native_last_provider_activity = time.monotonic()
             session.native_provider_task = asyncio.create_task(
                 self._pump_provider_events(
                     ws,
@@ -612,6 +631,12 @@ class RealtimeAgentHandler:
                     connection,
                     session.native_playback_drained,
                 )
+            )
+            session.native_keepalive_task = asyncio.create_task(
+                self._provider_keepalive_loop(session, connection)
+            )
+            session.native_keepalive_task.add_done_callback(
+                _log_task_failure(session, "provider_keepalive_task")
             )
 
         if not was_detached:
@@ -662,6 +687,7 @@ class RealtimeAgentHandler:
                         )
                         continue
                     await connection.send_audio(chunk, sample_rate)
+                    session.native_last_provider_activity = time.monotonic()
                     session.native_input_audio_bytes += len(chunk)
                     session.input_chunk_seq = max(session.input_chunk_seq, chunk_id)
                     await self._send(
@@ -857,6 +883,10 @@ class RealtimeAgentHandler:
         provider_task = session.native_provider_task
         if provider_task is not None and not provider_task.done():
             provider_task.cancel()
+        keepalive_task = session.native_keepalive_task
+        if keepalive_task is not None and not keepalive_task.done():
+            keepalive_task.cancel()
+        session.native_keepalive_task = None
         delivery_task = session.background_delivery_task
         if delivery_task is not None and not delivery_task.done():
             delivery_task.cancel()
@@ -1320,6 +1350,60 @@ class RealtimeAgentHandler:
             speak_pre_status=not audio_seen,
         )
 
+    async def _provider_keepalive_loop(
+        self,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+    ) -> None:
+        """Keep the provider conversation alive across long client silence.
+
+        Runs for the lifetime of the provider connection — including detached
+        (background-run / resume-TTL) periods, which are exactly when the
+        client is guaranteed silent. Appends a short silent PCM chunk whenever
+        the connection has seen no sends or events for the configured quiet
+        interval. The chunk is never committed, so with manual turn-taking it
+        only prefixes the next real utterance with a sliver of silence. See
+        the _PROVIDER_KEEPALIVE_SECONDS comment for why append-only.
+        """
+        interval = _provider_keepalive_seconds()
+        if interval <= 0:
+            return
+        # 16-bit mono PCM at the session rate.
+        chunk = b"\x00" * max(2, int(session.sample_rate * 2 * _PROVIDER_KEEPALIVE_CHUNK_MS / 1000))
+        try:
+            while not session.closed and session.native_connection is connection:
+                elapsed = time.monotonic() - session.native_last_provider_activity
+                if elapsed < interval:
+                    await asyncio.sleep(interval - elapsed)
+                    continue
+                try:
+                    await connection.send_audio(chunk, session.sample_rate)
+                except Exception as exc:
+                    # The event pump owns surfacing real socket failures; the
+                    # keepalive just stops pinging a dead connection.
+                    self._log(
+                        session,
+                        "voice.realtime_agent.provider_keepalive_failed",
+                        {
+                            "type": "voice.realtime_agent.provider_keepalive_failed",
+                            "error": f"{exc.__class__.__name__}: {exc}",
+                            "provider": session.provider,
+                        },
+                    )
+                    return
+                session.native_last_provider_activity = time.monotonic()
+                self._log(
+                    session,
+                    "voice.realtime_agent.provider_keepalive",
+                    {
+                        "type": "voice.realtime_agent.provider_keepalive",
+                        "quiet_seconds": round(elapsed, 1),
+                        "provider": session.provider,
+                    },
+                )
+        except asyncio.CancelledError:
+            return
+
     async def _pump_provider_events(
         self,
         ws: web.WebSocketResponse,
@@ -1328,6 +1412,11 @@ class RealtimeAgentHandler:
         playback_drained: asyncio.Event,
     ) -> None:
         async for event in connection.events():
+            # Any provider event counts as conversation activity for the
+            # keepalive loop — this covers the response side of every
+            # broker-initiated send (text, tool results, forced summaries)
+            # without stamping each call site individually.
+            session.native_last_provider_activity = time.monotonic()
             if event.kind == ProviderEventKind.READY:
                 continue
             if event.kind == ProviderEventKind.INPUT_TRANSCRIPT_DELTA:
@@ -1644,7 +1733,28 @@ class RealtimeAgentHandler:
                     )
                     continue
                 error_message = str(event.payload.get("message") or "provider error")
-                if _is_benign_provider_error(error_message):
+                if _is_provider_idle_timeout(error_message):
+                    # The provider ended the conversation after prolonged
+                    # silence (xAI: 900s inactivity). The keepalive loop
+                    # should prevent this; if it fires anyway (keepalive
+                    # disabled, or the ping raced the deadline), surface a
+                    # human-readable expiry instead of the raw provider text.
+                    self._log(
+                        session,
+                        "voice.realtime_agent.provider_idle_close",
+                        {
+                            "type": "voice.realtime_agent.provider_idle_close",
+                            "message": error_message,
+                            "provider": session.provider,
+                        },
+                    )
+                    await self._send_error(
+                        ws,
+                        session,
+                        "Voice session expired after a long silence — start a new voice session to continue.",
+                        provider=session.provider,
+                    )
+                elif _is_benign_provider_error(error_message):
                     # A non-fatal provider notice (e.g. cancelling when no
                     # response is active) must NOT be surfaced as a fatal
                     # voice.error — the client closes the session on that, which
@@ -4280,6 +4390,14 @@ def _background_run_max_seconds() -> float:
     return _BACKGROUND_RUN_MAX_SECONDS
 
 
+def _provider_keepalive_seconds() -> float:
+    """Quiet time before the provider-facing keepalive pings; <= 0 disables."""
+    value = _int_value(os.getenv("RELAY_VOICE_PROVIDER_KEEPALIVE_MS"))
+    if value is not None:
+        return value / 1000.0
+    return _PROVIDER_KEEPALIVE_SECONDS
+
+
 _DEFAULT_LONG_TOOL_HINTS = (
     "cron",
     "desktop_",
@@ -4345,6 +4463,16 @@ def _is_benign_provider_error(message: str) -> bool:
     """
     lowered = message.lower()
     return "no active response" in lowered or "cancellation failed" in lowered
+
+
+def _is_provider_idle_timeout(message: str) -> bool:
+    """Match provider conversation-inactivity closures.
+
+    Observed live (xAI, 2026-07-08): "xAI Realtime error: Conversation timed
+    out after 900.0 seconds due to inactivity".
+    """
+    lowered = message.lower()
+    return "timed out" in lowered and "inactivity" in lowered
 
 
 def _token_hash(token: str) -> str:
