@@ -67,6 +67,18 @@ test.**
   progress event carried the PREVIOUS run's run_id + completed_tool_count
   (fires before the per-run reset). Now sends null/zero identity when no run
   is in flight; keeps the active run's identity during a fast-lane attempt.
+- **Background-run chip vanished the instant the waveform came back — FIXED
+  (client, second finding same day).** The chip was nulled at the first
+  summary-audio byte ("the DELIVERING chip has done its job"), so it
+  disappeared exactly when speech started — reading as the task being lost.
+  New `BackgroundRunPhase.DONE`: on first summary audio (or the 20s
+  no-audio watchdog) the chip settles to "Background task finished." — solid
+  dot, frozen ticker — lingers 10s (`DONE_CHIP_LINGER_MS`), then
+  auto-dismisses; ✕ on a DONE chip is a local dismiss (never a cancel); a
+  new promoted run replaces a lingering DONE chip and cancels its timer;
+  progress/tool/reconnect handlers can't reanimate a settled chip. Verify:
+  chip visibly settles + lingers while the answer is being spoken, ✕ during
+  DONE doesn't emit a relay cancel.
 
 ## Voice — on-device findings (2026-07-07 realtime test)
 

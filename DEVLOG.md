@@ -42,6 +42,16 @@ new no-active-run contract, realtime batch 69/69 green;
 `:app:compileSideloadDebugKotlin` green. Needs a repeat of the same live
 test after relay redeploy + app rebuild.
 
+**Sixth fix (second finding, same re-test): background-run chip vanished the
+instant the waveform returned.** The chip was nulled at the first
+summary-audio byte, i.e. exactly when the answer began playing — reading as
+the task being lost. New `BackgroundRunPhase.DONE`: on first summary audio
+(or the 20s no-audio delivery watchdog) the chip settles to "Background task
+finished." (solid dot, ticker frozen), lingers 10s, then auto-dismisses. ✕
+on a settled chip is a local dismiss, never a relay cancel; a newly promoted
+run replaces a lingering DONE chip and cancels its timer; progress/tool/
+reconnect events cannot reanimate a settled chip.
+
 ## 2026-07-08 — Background-run fast lane; stale voice-prefs TODO closed; dev deployed to device
 
 **Fast lane (background-run v2 §1).** While a detached (promoted/durable)
