@@ -549,6 +549,9 @@ class HermesApiClient(
      *   blank the `model` field is omitted entirely and the server falls
      *   back to its session default. Used by the agent-profile picker so
      *   an explicit user choice wins over implicit session/server defaults.
+     *   Best-effort hint: current native upstream does not parse `model`
+     *   on this route (legacy fork builds honor it) — see the contract
+     *   notes in `HermesChatPayloads.kt`.
      */
     fun sendChatStream(
         sessionId: String,
@@ -556,23 +559,25 @@ class HermesApiClient(
         systemMessage: String? = null,
         attachments: List<com.hermesandroid.relay.data.Attachment>? = null,
         /**
-         * Pre-built OpenAI-format synthetic messages to splice into the
-         * payload alongside the live `message`. Produced by
+         * Pre-built OpenAI-format synthetic messages carrying phone-local
+         * context (voice intents, card dispatches, realtime voice turns).
+         * Produced by
          * [com.hermesandroid.relay.voice.VoiceIntentSyncBuilder.buildSyntheticMessages]
-         * for the v0.4.1 voice-intent → server session sync feature.
+         * and its twin builders; the param name is historical — it accepts
+         * any synthetic-message array.
          *
-         * When non-empty, the request body grows a top-level `messages`
-         * array containing the synthetic `assistant` (with `tool_calls`)
-         * + `tool` (with `tool_call_id`) pairs. The server-side session
-         * absorbs them into its conversation history so the LLM sees
-         * prior phone-local voice actions in its session memory.
+         * Upstream's session-chat handler consumes only `message` and
+         * `system_message` — a top-level `messages` array is NOT parsed
+         * (verified in `gateway/platforms/api_server.py`,
+         * `_handle_session_chat_stream`), so these can't ride the request
+         * as real history entries. Instead [buildSessionChatStreamPayload]
+         * renders them as a plain-text digest folded into this turn's
+         * ephemeral `system_message`. The model sees the context for THIS
+         * turn only; it is not persisted server-side. See the mapping notes
+         * in `HermesChatPayloads.kt`.
          *
-         * Null / empty on every send that has no unsynced voice intents
-         * to communicate, which is the common case after the first sync.
-         * The Hermes API server treats unrecognised body fields
-         * permissively (matches OpenAI Chat Completions semantics), so
-         * this stays a safe additive change against any conformant
-         * upstream.
+         * Null / empty on every send that has no unsynced traces to
+         * communicate, which is the common case after the first sync.
          */
         voiceIntentMessages: JsonArray? = null,
         onSessionId: (String) -> Unit,
@@ -595,7 +600,7 @@ class HermesApiClient(
         AgentDisplay.profileRequestName(profileName)?.let {
             Log.d(TAG, "sendChatStream: profile=$it")
         }
-        val requestPayload = buildSessionChatStreamPayload(
+        val built = buildSessionChatStreamPayload(
             message = message,
             systemMessage = systemMessage,
             attachments = attachments,
@@ -603,7 +608,8 @@ class HermesApiClient(
             modelOverride = modelOverride,
             profileName = profileName,
         )
-        val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
+        logDroppedAttachments("sessions chat/stream", built.droppedAttachments)
+        val requestBody = json.encodeToString(JsonObject.serializer(), built.payload)
 
         val request = authRequestOrNull("$baseUrl/api/sessions/$sessionId/chat/stream")
             ?.header("Accept", "text/event-stream")
@@ -846,7 +852,7 @@ class HermesApiClient(
         AgentDisplay.profileRequestName(profileName)?.let {
             Log.d(TAG, "sendChatCompletionsStream: profile=$it")
         }
-        val requestPayload = buildChatCompletionsStreamPayload(
+        val built = buildChatCompletionsStreamPayload(
             message = message,
             model = model,
             systemMessage = systemMessage,
@@ -855,7 +861,8 @@ class HermesApiClient(
             modelOverride = modelOverride,
             profileName = profileName,
         )
-        val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
+        logDroppedAttachments("chat completions", built.droppedAttachments)
+        val requestBody = json.encodeToString(JsonObject.serializer(), built.payload)
 
         val request = authRequestOrNull("$baseUrl/v1/chat/completions")
             ?.header("Accept", "text/event-stream")
@@ -1012,7 +1019,13 @@ class HermesApiClient(
         model: String? = null,
         systemMessage: String? = null,
         attachments: List<com.hermesandroid.relay.data.Attachment>? = null,
-        /** See [sendChatStream]'s `voiceIntentMessages` doc — same semantics. */
+        /**
+         * See [sendChatStream]'s `voiceIntentMessages` doc. On the runs
+         * path the mapping differs slightly: plain user/assistant text
+         * turns ride the upstream-parsed `conversation_history` field,
+         * while tool-call pairs fold into the `instructions` digest —
+         * see [buildRunStreamPayload].
+         */
         voiceIntentMessages: JsonArray? = null,
         onSessionId: (String) -> Unit,
         onMessageStarted: (String) -> Unit,
@@ -1034,7 +1047,7 @@ class HermesApiClient(
         AgentDisplay.profileRequestName(profileName)?.let {
             Log.d(TAG, "sendRunStream: profile=$it")
         }
-        val requestPayload = buildRunStreamPayload(
+        val built = buildRunStreamPayload(
             message = message,
             model = model,
             systemMessage = systemMessage,
@@ -1043,7 +1056,8 @@ class HermesApiClient(
             modelOverride = modelOverride,
             profileName = profileName,
         )
-        val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
+        logDroppedAttachments("runs", built.droppedAttachments)
+        val requestBody = json.encodeToString(JsonObject.serializer(), built.payload)
 
         val request = authRequestOrNull("$baseUrl/v1/runs")
             ?.header("Accept", "text/event-stream")
@@ -1424,6 +1438,29 @@ class HermesApiClient(
     /** Human message for a base URL that fails to parse (#131). */
     private fun invalidBaseUrlMessage(): String =
         "Invalid server address ($baseUrl) — edit the connection's API URL or re-pair."
+
+    /**
+     * Make attachment drops on the SSE fallback transports explicit
+     * (HRUI-001): the payload builders return attachments that have no
+     * upstream-supported channel on the target endpoint instead of
+     * silently omitting them. The user-visible notice lives in
+     * ChatViewModel (`warnIfAttachmentsDropped`) — this log line is the
+     * network-layer audit trail that the bytes never left the device.
+     */
+    private fun logDroppedAttachments(
+        endpoint: String,
+        dropped: List<com.hermesandroid.relay.data.Attachment>,
+    ) {
+        if (dropped.isEmpty()) return
+        val names = dropped.joinToString(", ") {
+            it.fileName ?: if (it.isImage) "image" else "file"
+        }
+        Log.w(
+            TAG,
+            "Dropped ${dropped.size} attachment(s) with no supported channel " +
+                "on the $endpoint endpoint (not sent): $names",
+        )
+    }
 
     private fun apiFailure(response: Response, operation: String): IOException {
         val detail = response.message.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()

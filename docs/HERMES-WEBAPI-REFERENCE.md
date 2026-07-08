@@ -134,21 +134,25 @@ clients should continue accepting those as compatibility shapes.
 POST /api/sessions/{session_id}/chat
 Content-Type: application/json
 Body: {
-  "message": "Hello",
-  "model": "claude-opus-4-6",        // optional override
-  "system_message": "...",            // optional ephemeral system prompt
-  "enabled_toolsets": ["hermes-cli"], // optional
-  "disabled_toolsets": [],            // optional
-  "skip_context_files": false,        // optional
-  "skip_memory": false,               // optional
-  "attachments": [                    // optional image attachments
-    {
-      "contentType": "image/png",
-      "content": "<base64-data>"
-    }
-  ]
+  "message": "Hello",       // required (alias: "input") — plain string, or
+                            // OpenAI-style content parts (text + image_url,
+                            // including data:image/... URLs)
+  "system_message": "..."   // optional ephemeral per-turn system prompt
+                            // (alias: "instructions"; string only)
 }
+```
 
+`message`/`input` and `system_message`/`instructions` are the ONLY body
+fields current native upstream parses on the session chat endpoints
+(`_handle_session_chat` / `_handle_session_chat_stream` in
+`gateway/platforms/api_server.py`). Legacy fork builds additionally honored
+`model`, `attachments` (`{contentType, content}` base64 objects),
+`enabled_toolsets`, `disabled_toolsets`, `skip_context_files`, and
+`skip_memory` — native upstream ignores all of them. The Android client
+still sends `model` + `profile` as best-effort hints for those builds but
+nothing else (HRUI-001).
+
+```
 -> {
   "session_id": "sess_...",
   "run_id": "run_...",
