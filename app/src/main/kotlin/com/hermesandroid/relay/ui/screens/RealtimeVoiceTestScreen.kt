@@ -106,9 +106,10 @@ fun RealtimeVoiceTestScreen(
     val statusAgentFailed = stringResource(R.string.voice_test_status_agent_failed)
     val transcriptSpokenFmt = stringResource(R.string.voice_test_transcript_spoken)
     val transcriptYouSaidFmt = stringResource(R.string.voice_test_transcript_you_said)
+    val defaultPromptText = stringResource(R.string.voice_test_default_prompt)
 
     var prompt by remember {
-        mutableStateOf(stringResource(R.string.voice_test_default_prompt))
+        mutableStateOf(defaultPromptText)
     }
     var config by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     var status by remember { mutableStateOf(statusIdle) }

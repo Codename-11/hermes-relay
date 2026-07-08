@@ -2035,16 +2035,21 @@ private fun LoadedBody(
                 ActionMessageCard(message)
             }
         }
+        // Pre-resolve action labels before constructing the sectionActions list (non-Composable when block)
+        val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
+        val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
+        val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
+        val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
         val sectionActions: List<Pair<DashboardSectionAction, String>> = when (section) {
             DashboardManagementSection.Models -> listOf(
-                DashboardSectionAction.ChangeMainModel to stringResource(R.string.dashboard_section_action_change_main_model),
+                DashboardSectionAction.ChangeMainModel to actionLabelChangeMainModel,
             )
             DashboardManagementSection.Profiles -> listOf(
-                DashboardSectionAction.CreateProfile to stringResource(R.string.dashboard_section_action_new_profile),
+                DashboardSectionAction.CreateProfile to actionLabelNewProfile,
             )
             DashboardManagementSection.Skills -> listOf(
-                DashboardSectionAction.BrowseSkillsHub to stringResource(R.string.dashboard_section_action_browse_hub),
-                DashboardSectionAction.UpdateSkillsHub to stringResource(R.string.dashboard_section_action_update_installed),
+                DashboardSectionAction.BrowseSkillsHub to actionLabelBrowseHub,
+                DashboardSectionAction.UpdateSkillsHub to actionLabelUpdateInstalled,
             )
             else -> emptyList()
         }
@@ -3135,8 +3140,6 @@ private fun summarize(
         DashboardManagementSection.Models -> summarizeKeyValueOrList(root, "Model")
         DashboardManagementSection.Keys -> summarizeEnvVars(root)
         DashboardManagementSection.Config -> summarizeKeyValueOrList(root, "Config")
-    }
-}
     }
 }
 

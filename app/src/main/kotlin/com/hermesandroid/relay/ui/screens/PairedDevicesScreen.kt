@@ -787,7 +787,6 @@ private fun grantSortKey(channel: String): Int = when (channel.lowercase()) {
 }
 
 @Composable
-@Composable
 private fun grantDisplayName(channel: String): String = when (channel.lowercase()) {
     "chat" -> stringResource(R.string.paired_devices_grant_chat)
     "bridge" -> stringResource(R.string.paired_devices_grant_bridge)
