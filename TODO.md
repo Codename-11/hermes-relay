@@ -77,14 +77,17 @@ green. Needs relay deploy + APK install + live verify.
   fallback delivery + audibility (user's own follow-up confirmed), and two
   new gaps found + fixed same-day (see DEVLOG: whole-word/2-hit validation,
   next-turn delivery note).
-- **KEEPALIVE VERDICT — silent appends DON'T work on xAI (empirical
-  2026-07-08).** Both probe runs died at exactly 900.0s (with and without
-  240s silent-PCM pings): uncommitted `input_audio_buffer.append` does not
-  reset the conversation-inactivity timer. The shipped keepalive stays as
-  harmless scaffolding. **Open:** `session.update` re-send candidate
-  (`--keepalive-mode session_update`, probe run launched); if it fails, a
-  scheduled provider-socket reopen before the 900s deadline (needs context
-  reseed design). Update `_provider_keepalive_loop` to whichever works.
+- **KEEPALIVE FINAL VERDICT — no protocol message resets xAI's 900s timer
+  (empirical 2026-07-08, 4 probe runs).** Repro died at 900.0s; silent-PCM
+  pings died at 900.0s; server-ACKNOWLEDGED `session.update` pings
+  (240/480/720s) died at 900.0s. The timer counts only real conversation
+  items. **Design decision needed (POC doc recommends (b)):** (a) scheduled
+  provider-socket reopen before the deadline during quiet stretches, or
+  (b) treat idle-close as routine — silently auto-reopen the provider
+  socket on the next user turn (upgrade the existing "session expired"
+  classification to silent recovery), reseeding context from the synced
+  Hermes session. Either way, retire/repurpose `_provider_keepalive_loop`
+  (currently harmless scaffolding).
 - **Delivery input-quiet gate — SHIPPED (2026-07-08 PM, round-5 finding).**
   A background task finishing while the user was mid-utterance delivered
   over them and ended their recording. The relay now knows the user is

@@ -1236,10 +1236,22 @@ pings, confirmed sent) **also died at exactly 900.0s**. xAI's
 conversation-inactivity timer counts conversation-level activity
 (responses/commits/transcripts), not input-buffer appends — the shipped
 silent-append keepalive is ineffective for xAI and remains in place only as
-harmless scaffolding until a working ping lands. Next candidate under test:
-a periodic `session.update` re-send (`--keepalive-mode session_update`,
-probe run pending); if that also fails, the remaining option is a scheduled
-provider-socket reopen before the 900s deadline (with context reseed).
+harmless scaffolding until a working ping lands.
+
+**Final verdict (2026-07-08 PM, probe run 4) — protocol-message keepalives
+are dead as a category.** A valid `session.update` run (three pings at
+240s/480s/720s, each ACKNOWLEDGED by the server with a session event)
+still timed out at exactly 900.0s. xAI's timer counts only real
+conversation items — no side-channel message resets it. Remaining designs:
+**(a) scheduled provider-socket reopen** shortly before the 900s deadline
+during quiet stretches (needs conversation-context reseed — the provider's
+history is lost on reopen), or **(b) accept the timeout** and treat the
+idle-close as routine: auto-reopen on the next user turn instead of
+surfacing an error (the client-facing "session expired" classification
+already ships; this would upgrade it to silent recovery). (b) is simpler
+and loses only provider-side conversation memory the reopen loses anyway;
+(a) preserves nothing extra. Recommendation: (b), plus reseed context from
+the synced Hermes session on reopen.
 
 OpenAI's tolerance at the 900s scale remains unprobed (2026-05-24 ran only
 10/20/30s).
