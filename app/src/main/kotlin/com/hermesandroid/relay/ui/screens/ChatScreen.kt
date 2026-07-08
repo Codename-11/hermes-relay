@@ -99,6 +99,7 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -675,6 +676,7 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
         if (closeDrawerOnSend && drawerState.isOpen) {
@@ -735,7 +737,7 @@ fun ChatScreen(
             }
             scope.launch {
                 snackbarHostState.showSnackbar(
-                    message = "Enable Display over other apps, then return to start Voice Overlay.",
+                    message = context.getString(R.string.chat_overlay_perm_enable),
                     duration = SnackbarDuration.Short,
                 )
             }
@@ -771,7 +773,7 @@ fun ChatScreen(
             if (!shown) {
                 scope.launch {
                     snackbarHostState.showSnackbar(
-                        message = "Voice Overlay could not be started.",
+                        message = context.getString(R.string.chat_overlay_start_failed),
                         duration = SnackbarDuration.Short,
                     )
                 }
@@ -805,7 +807,7 @@ fun ChatScreen(
                         pendingVoiceOverlayPermission = false
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                message = "Voice Overlay permission was not granted.",
+                                message = context.getString(R.string.chat_overlay_perm_denied),
                                 duration = SnackbarDuration.Short,
                             )
                         }
@@ -876,7 +878,7 @@ fun ChatScreen(
             cameraLauncher.launch(uri)
         }.onFailure {
             pendingCameraUri = null
-            Toast.makeText(context, "Couldn't open the camera", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.chat_camera_open_failed), Toast.LENGTH_SHORT).show()
         }
     }
     var pendingCameraAfterPermission by remember { mutableStateOf(false) }
@@ -890,7 +892,7 @@ fun ChatScreen(
         } else if (!granted) {
             Toast.makeText(
                 context,
-                "Camera permission needed to take a photo",
+                context.getString(R.string.chat_camera_perm_needed),
                 Toast.LENGTH_SHORT,
             ).show()
         }
@@ -919,7 +921,7 @@ fun ChatScreen(
             }
             if (!handled) {
                 snackbarHostState.showSnackbar(
-                    message = "No image on the clipboard",
+                    message = context.getString(R.string.chat_no_clipboard_image),
                     duration = SnackbarDuration.Short,
                 )
             }
@@ -1400,7 +1402,7 @@ fun ChatScreen(
             TopAppBar(
                 navigationIcon = {
                     IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                        Icon(Icons.Filled.Menu, contentDescription = "Sessions")
+                        Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.cd_sessions))
                     }
                 },
                 title = {
@@ -1619,7 +1621,7 @@ fun ChatScreen(
                     if (yoloEnabled == true) {
                         RelayChromeIconButton(
                             icon = Icons.Filled.Bolt,
-                            contentDescription = "Approvals off — tap for details",
+                            contentDescription = stringResource(R.string.cd_approvals_off),
                             onClick = { showAgentInfo = true },
                             tint = RelayRefresh.Amber,
                             borderColor = RelayRefresh.Amber.copy(alpha = 0.5f),
@@ -1665,7 +1667,7 @@ fun ChatScreen(
                                 onDismissRequest = { showOverflowMenu = false },
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Share conversation") },
+                                    text = { Text(stringResource(R.string.chat_share_conversation)) },
                                     leadingIcon = {
                                         Icon(
                                             imageVector = Icons.Filled.Share,
@@ -1733,10 +1735,10 @@ fun ChatScreen(
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     TextButton(onClick = { chatViewModel.retryLastMessage() }) {
-                        Text("Retry")
+                        Text(stringResource(R.string.chat_retry))
                     }
                     TextButton(onClick = { chatViewModel.clearError() }) {
-                        Text("Dismiss")
+                        Text(stringResource(R.string.chat_dismiss))
                     }
                 }
             }
@@ -1757,7 +1759,7 @@ fun ChatScreen(
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(modifier = Modifier.size(8.dp))
                     Text(
-                        text = "Loading messages...",
+                        text = stringResource(R.string.chat_loading_messages),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1893,7 +1895,7 @@ fun ChatScreen(
                                             verticalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
                                             Text(
-                                                text = "Connect your Hermes server to start chatting — or explore a quick demo first. You can connect anytime.",
+                                                text = stringResource(R.string.chat_empty_state_body),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -1901,14 +1903,14 @@ fun ChatScreen(
                                                 onClick = onNavigateToConnect,
                                                 modifier = Modifier.fillMaxWidth(),
                                             ) {
-                                                Text("Connect Hermes")
+                                                Text(stringResource(R.string.chat_connect_hermes))
                                             }
                                             if (onTryDemo != null) {
                                                 TextButton(
                                                     onClick = onTryDemo,
                                                     modifier = Modifier.fillMaxWidth(),
                                                 ) {
-                                                    Text("Try the demo")
+                                                    Text(stringResource(R.string.chat_try_demo))
                                                 }
                                             }
                                         }
@@ -2136,7 +2138,7 @@ fun ChatScreen(
                                             )
                                         )
                                         snackbarHostState.showSnackbar(
-                                            message = "Copied to clipboard",
+                                            message = copiedToClipboardMsg,
                                             duration = SnackbarDuration.Short
                                         )
                                     }
@@ -2449,7 +2451,7 @@ fun ChatScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Editing — will rewind the conversation",
+                        text = stringResource(R.string.chat_editing_notice),
                         style = relayMetadataStyle(),
                         color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f),
                         modifier = Modifier.weight(1f),
@@ -2491,11 +2493,14 @@ fun ChatScreen(
                 else -> null
             }
             val inputPlaceholder = when {
-                editingMessage != null -> "Edit your message…"
-                isStreaming && steerableTurn -> "Steer the response…"
-                isStreaming -> "Queue a message..."
-                else -> "Message..."
+                editingMessage != null -> stringResource(R.string.chat_placeholder_edit)
+                isStreaming && steerableTurn -> stringResource(R.string.chat_placeholder_steer)
+                isStreaming -> stringResource(R.string.chat_placeholder_queue)
+                else -> stringResource(R.string.chat_placeholder_message)
             }
+            val editBusyMessage = stringResource(R.string.chat_edit_busy_snackbar)
+            val stoppedMessage = stringResource(R.string.chat_stopped_snackbar)
+            val attachmentPlaceholder = stringResource(R.string.chat_attachment_placeholder)
             val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
                 (availableModels.mapNotNull(AgentDisplay::displayModelName) +
                     agentProfiles.mapNotNull { AgentDisplay.displayModelName(it.model) } +
@@ -2610,7 +2615,7 @@ fun ChatScreen(
             val effortControl = if (chatGatewayAvailability != GatewayAvailability.Unreachable) {
                 ChatInputPickerControl(
                     value = reasoningEffortChipLabel(normalizedEffort),
-                    contentDescription = "Select reasoning effort",
+                    contentDescription = stringResource(R.string.chat_select_reasoning_effort),
                     options = effortPickerOptions,
                     enabled = isGatewayTransport && chatReady && !isStreaming,
                 )
@@ -2633,15 +2638,16 @@ fun ChatScreen(
                             inputText = ""
                             finishSuccessfulSend()
                         } else {
+                            val editBusyMsg = editBusyMessage
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    message = "Can't edit right now — wait for the current turn to finish",
+                                    message = editBusyMsg,
                                     duration = SnackbarDuration.Short,
                                 )
                             }
                         }
                     } else {
-                        chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
+                        chatViewModel.sendMessage(inputText.ifBlank { attachmentPlaceholder })
                         inputText = ""
                         finishSuccessfulSend()
                     }
@@ -2655,12 +2661,12 @@ fun ChatScreen(
                             when (standardVoiceAvailability) {
                                 com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
                                     standardVoiceSignInRouteHint?.let { route ->
-                                        "Voice needs a one-time sign-in on the $route route — open Manage"
-                                    } ?: "Voice needs dashboard sign-in — open Manage to sign in"
+                                        context.getString(R.string.voice_toast_signin_route, route)
+                                    } ?: context.getString(R.string.voice_toast_signin_default)
                                 com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
-                                    "This Hermes build has no voice routes — update hermes-agent or pair Relay"
+                                    context.getString(R.string.voice_toast_unsupported)
                                 else ->
-                                    "Voice needs a reachable Hermes dashboard or Relay voice route"
+                                    context.getString(R.string.voice_toast_unreachable)
                             },
                             android.widget.Toast.LENGTH_SHORT,
                         ).show()
@@ -2673,9 +2679,10 @@ fun ChatScreen(
                     // (see ChatViewModel.cancelStream) so the cancel is
                     // unmistakable, not just a transient toast.
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    val stoppedMsg = stoppedMessage
                     scope.launch {
                         snackbarHostState.showSnackbar(
-                            message = "Stopped",
+                            message = stoppedMsg,
                             duration = SnackbarDuration.Short,
                         )
                     }
@@ -2738,12 +2745,12 @@ fun ChatScreen(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
                     Text(
-                        text = "Microphone permission needed",
+                        text = stringResource(R.string.chat_mic_perm_needed),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
                     Text(
-                        text = "Tap Open Settings and grant Microphone access to use voice mode.",
+                        text = stringResource(R.string.chat_mic_perm_body),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
@@ -2752,7 +2759,7 @@ fun ChatScreen(
                         horizontalArrangement = Arrangement.End,
                     ) {
                         TextButton(onClick = { micPermissionDenied = false }) {
-                            Text("Dismiss")
+                            Text(stringResource(R.string.chat_dismiss))
                         }
                         TextButton(onClick = {
                             val intent = Intent(
@@ -2762,7 +2769,7 @@ fun ChatScreen(
                             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             context.startActivity(intent)
                         }) {
-                            Text("Open Settings")
+                            Text(stringResource(R.string.chat_open_settings))
                         }
                     }
                 }
@@ -2782,7 +2789,7 @@ fun ChatScreen(
                 .padding(bottom = 96.dp),
         ) {
             Text(
-                text = "Hold the chat for a clean, focused view",
+                text = stringResource(R.string.chat_clean_view_hint),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -3128,7 +3135,7 @@ private fun ChatLoadingCommandPanel(
             }
         }
         TextButton(onClick = onNavigateToConnections) {
-            Text("Manage connections")
+            Text(stringResource(R.string.chat_manage_connections))
         }
     }
 }

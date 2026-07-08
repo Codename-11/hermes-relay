@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hermes-Relay</string>
+    <string name="app_title">Hermes-Relay</string>
+    <string name="agent_interface">代理界面</string>
+    <string name="notification_companion_label">Hermes-Relay 通知助手</string>
+
+    <string name="onboarding_skip_setup_title">跳过设置？</string>
+    <string name="onboarding_skip_setup_text">没问题，你可以先体验演示，看看 Hermes-Relay 的工作方式；以后也可以随时到“设置 → 连接”里接入自己的 Hermes 服务器。高级工具所需的 Relay 配对也可以稍后再添加。</string>
+    <string name="onboarding_skip_for_now">暂时跳过</string>
+    <string name="onboarding_go_back">返回</string>
+    <string name="onboarding_skip">跳过</string>
+    <string name="onboarding_back">上一步</string>
+    <string name="onboarding_next">下一步</string>
+    <string name="onboarding_connect">连接</string>
+
+    <string name="onboarding_welcome_title">Hermes-Relay Android 版</string>
+    <string name="onboarding_welcome_description">在手机上和 Hermes 对话，并管理你的仪表盘。</string>
+    <string name="onboarding_welcome_badge">欢迎</string>
+    <string name="onboarding_hermes_logo">Hermes 标志</string>
+    <string name="onboarding_chat_manage_label">聊天与管理</string>
+    <string name="onboarding_chat_manage_description">连接正在运行的 Hermes 仪表盘和 API。无需安装 Relay，也无需配对。</string>
+    <string name="onboarding_power_tools_label">高级工具</string>
+    <string name="onboarding_power_tools_description">需要终端、Bridge、Relay 会话或频道授权时，再添加 Hermes-Relay。</string>
+    <string name="onboarding_setup_guide_hint">设置指南里提供了复制即用的命令，方便你在电脑或服务器上启动 Hermes。</string>
+    <string name="onboarding_setup_guide">安装指南</string>
+    <string name="onboarding_hermes_docs">Hermes 文档</string>
+    <string name="onboarding_api_server_docs">Hermes API 服务文档</string>
+
+    <string name="onboarding_chat_title">聊天</string>
+    <string name="onboarding_chat_description">你的 Hermes 代理，实时流式响应。</string>
+    <string name="onboarding_streaming_label">流式响应</string>
+    <string name="onboarding_streaming_description">代理工作时，会实时显示工具进度、Markdown 和富卡片回复。</string>
+    <string name="onboarding_profiles_label">配置文件</string>
+    <string name="onboarding_profiles_description">在流程中切换代理配置；每个配置都保留自己的会话、模型和人格。</string>
+    <string name="onboarding_voice_label">语音</string>
+    <string name="onboarding_voice_description">点麦克风就能说话。语音通过你的 Hermes 服务器运行，不需要额外安装。</string>
+
+    <string name="onboarding_manage_title">管理</string>
+    <string name="onboarding_manage_description">你的 Hermes 仪表盘，随身携带。</string>
+    <string name="onboarding_control_label">控制</string>
+    <string name="onboarding_control_description">配置文件、技能、自动化、MCP 服务器、模型和提供商密钥。</string>
+    <string name="onboarding_skills_hub_label">技能中心</string>
+    <string name="onboarding_skills_hub_description">搜索技能中心、安装前先阅读技能，并可直接从手机安装。</string>
+    <string name="onboarding_one_sign_in_label">一次登录</string>
+    <string name="onboarding_one_sign_in_description">登录仪表盘一次后，这个连接也会解锁语音。</string>
+
+    <string name="onboarding_power_title">高级工具</string>
+    <string name="onboarding_power_description">想要比标准能力更多时，再配对可选 Relay。</string>
+    <string name="onboarding_terminal_label">终端</string>
+    <string name="onboarding_terminal_description">把服务器上的真实 tmux 会话装进口袋里。</string>
+    <string name="onboarding_bridge_label">Bridge</string>
+    <string name="onboarding_bridge_description">让代理操作这台手机，同时保留安全护栏（适用于 sideload 版本）。</string>
+    <string name="onboarding_realtime_label">实时语音</string>
+    <string name="onboarding_realtime_description">提供商原生的实时语音代理，以及按配置文件区分的语音提供商。</string>
+    <string name="onboarding_review_permissions">查看权限</string>
+
+    <!-- 聊天输入栏 -->
+    <string name="chat_input_live_voice_hint">实时语音对话</string>
+    <string name="chat_input_add_attachment">添加附件</string>
+    <string name="chat_input_browse_commands">浏览命令</string>
+    <string name="chat_input_add_attachment_hold">添加附件；长按查看命令</string>
+    <string name="chat_input_photos">照片</string>
+    <string name="chat_input_files">文件</string>
+    <string name="chat_input_camera">相机</string>
+    <string name="chat_input_paste_image">粘贴图片</string>
+    <string name="chat_input_send_message">发送消息</string>
+    <string name="chat_input_start_voice">开始语音对话</string>
+    <string name="chat_input_voice_setup_needed">语音对话——需要先设置</string>
+    <string name="chat_input_stop_streaming">停止流式响应</string>
+    <string name="chat_input_steer_response">引导回复方向</string>
+    <string name="chat_input_queue_message">排队发送消息</string>
+
+    <!-- Bridge 返回标签 -->
+    <string name="bridge_return_chat_label">聊天</string>
+    <string name="bridge_return_manage_label">管理</string>
+    <string name="bridge_return_default_label">返回</string>
+    <string name="bridge_return_title_format">返回到 %1$s</string>
+    <string name="bridge_return_chat_subtitle">回到对话</string>
+    <string name="bridge_return_manage_subtitle">回到管理</string>
+    <string name="bridge_return_default_subtitle">回到上一个标签页</string>
+
+    <!-- 高级功能门禁 -->
+    <string name="power_gate_terminal_title">终端</string>
+    <string name="power_gate_terminal_summary">通过已配对的 Relay 会话打开服务器 shell。</string>
+    <string name="power_gate_bridge_title">Bridge</string>
+    <string name="power_gate_bridge_summary">让 Hermes 向这台手机发送已授权的 Bridge 命令。</string>
+
+    <!-- 状态栏占位符 -->
+    <string name="status_no_route">无路由</string>
+    <string name="status_model_pending">模型加载中</string>
+    <string name="status_safety_on">安全：开启</string>
+    <string name="status_safety_unattended">安全：无人值守</string>
+    <string name="status_profile_default">默认</string>
+    <string name="status_profile_format">配置文件：%1$s</string>
+
+    <!-- 演示模式 -->
+    <string name="demo_feature_manage">管理</string>
+
+    <!-- 聊天界面占位符 -->
+    <string name="chat_placeholder_edit">编辑你的消息…</string>
+    <string name="chat_placeholder_steer">引导回复方向…</string>
+    <string name="chat_placeholder_queue">排队发送消息…</string>
+    <string name="chat_placeholder_message">输入消息…</string>
+    <string name="chat_edit_busy_snackbar">暂时无法编辑——请等当前这一轮结束</string>
+    <string name="chat_select_reasoning_effort">选择推理强度</string>
+
+    <!-- 语音提示 -->
+    <string name="voice_toast_signin_route">语音需要在 %1$s 路由上登录一次——打开管理</string>
+    <string name="voice_toast_signin_default">语音需要仪表盘登录——打开管理以登录</string>
+    <string name="voice_toast_unsupported">这个 Hermes 版本没有语音路由——请更新 hermes-agent 或配对 Relay</string>
+    <string name="voice_toast_unreachable">语音需要可达的 Hermes 仪表盘或 Relay 语音路由</string>
+
+    <!-- 聊天界面其他 -->
+    <string name="chat_stopped_snackbar">已停止</string>
+    <string name="chat_attachment_placeholder">[附件]</string>
+
+    <!-- 聊天界面 UI 外壳 -->
+    <string name="chat_share_conversation">分享对话</string>
+    <string name="chat_retry">重试</string>
+    <string name="chat_dismiss">关闭</string>
+    <string name="chat_open_settings">打开设置</string>
+    <string name="chat_connect_hermes">连接 Hermes</string>
+    <string name="chat_try_demo">体验演示</string>
+    <string name="chat_loading_messages">正在加载消息…</string>
+    <string name="chat_empty_state_body">连接你的 Hermes 服务器开始聊天——也可以先快速体验一下演示。你可以随时连接。</string>
+    <string name="chat_editing_notice">编辑中——将回退对话</string>
+    <string name="chat_mic_perm_needed">需要麦克风权限</string>
+    <string name="chat_mic_perm_body">点击“打开设置”并授予麦克风权限以使用语音模式。</string>
+    <string name="chat_clean_view_hint">长按聊天进入清爽专注视图</string>
+    <string name="chat_manage_connections">管理连接</string>
+    <string name="chat_no_clipboard_image">剪贴板中没有图片</string>
+    <string name="chat_copied_to_clipboard">已复制到剪贴板</string>
+    <string name="chat_camera_open_failed">无法打开相机</string>
+    <string name="chat_file_read_failed">读取文件失败</string>
+    <string name="chat_overlay_perm_enable">请开启“显示在其他应用上层”权限，然后返回以启动语音浮窗。</string>
+    <string name="chat_overlay_start_failed">语音浮窗无法启动。</string>
+    <string name="chat_overlay_perm_denied">未授予语音浮窗权限。</string>
+
+    <!-- 聊天内容描述 -->
+    <string name="cd_sessions">会话</string>
+    <string name="cd_approvals_off">审批已关闭——点击查看详情</string>
+    <string name="cd_terminal">终端</string>
+    <string name="cd_settings">设置</string>
+    <string name="cd_more_actions">更多操作</string>
+    <string name="cd_scroll_to_bottom">滚动到底部</string>
+    <string name="cd_remove">移除</string>
+    <string name="cd_cancel_editing">取消编辑</string>
+    <string name="cd_select_model">选择模型</string>
+    <string name="chat_camera_perm_needed">需要相机权限才能拍照</string>
+</resources>

@@ -1,0 +1,64 @@
+# 自定义工作流：push 时自动编译中文版 debug APK 并上传为 artifact
+# 用法：
+#   1. 把本仓库推到你自己的 GitHub fork
+#   2. 在 GitHub 仓库的 Actions 标签页手动触发 "Build CN Debug APK"，或推送代码到任何分支自动触发
+#   3. 构建完成后在 Actions → 对应 run → Artifacts 下载 debug-apk.zip
+name: Build CN Debug APK
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/build-cn-debug-apk.yml"
+  workflow_dispatch:
+
+# 同一分支后一次推送取消前一次运行
+concurrency:
+  group: build-cn-debug-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build debug APK (both flavors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Build debug APK (both flavors)
+        run: ./gradlew assembleDebug --console=plain
+
+      - name: Upload debug APK (sideload)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cn-debug-apk-sideload
+          path: app/build/outputs/apk/sideload/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload debug APK (googlePlay)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cn-debug-apk-googleplay
+          path: app/build/outputs/apk/googlePlay/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30

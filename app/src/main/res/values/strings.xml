@@ -1,7 +1,151 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Hermes-Relay</string>
-    <!-- === PHASE3-notif-listener: notification companion service label === -->
+    <string name="app_title">Hermes-Relay</string>
+    <string name="agent_interface">agent interface</string>
     <string name="notification_companion_label">Hermes-Relay notification companion</string>
-    <!-- === END PHASE3-notif-listener === -->
+
+    <string name="onboarding_skip_setup_title">Skip setup?</string>
+    <string name="onboarding_skip_setup_text">No problem — you can explore the demo to see how Hermes-Relay works, and connect your own Hermes server anytime from Settings → Connections. Relay pairing for power tools can be added later too.</string>
+    <string name="onboarding_skip_for_now">Skip for now</string>
+    <string name="onboarding_go_back">Go back</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_back">Back</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_connect">Connect</string>
+
+    <string name="onboarding_welcome_title">Hermes-Relay for Android</string>
+    <string name="onboarding_welcome_description">Chat with Hermes and manage your dashboard from your phone.</string>
+    <string name="onboarding_welcome_badge">Welcome</string>
+    <string name="onboarding_hermes_logo">Hermes logo</string>
+    <string name="onboarding_chat_manage_label">Chat &amp; Manage</string>
+    <string name="onboarding_chat_manage_description">Connect to your running Hermes dashboard and API. No Relay install or pairing required.</string>
+    <string name="onboarding_power_tools_label">Power tools</string>
+    <string name="onboarding_power_tools_description">Add Hermes-Relay for Terminal, Bridge, relay sessions, and channel grants.</string>
+    <string name="onboarding_setup_guide_hint">The setup guide has copy/paste commands when you need to start Hermes on a computer or server.</string>
+    <string name="onboarding_setup_guide">Setup Guide</string>
+    <string name="onboarding_hermes_docs">Hermes Docs</string>
+    <string name="onboarding_api_server_docs">Hermes API server docs</string>
+
+    <string name="onboarding_chat_title">Chat</string>
+    <string name="onboarding_chat_description">Your Hermes agent, streaming in real time.</string>
+    <string name="onboarding_streaming_label">Streaming</string>
+    <string name="onboarding_streaming_description">Live responses with tool progress, markdown, and rich cards as the agent works.</string>
+    <string name="onboarding_profiles_label">Profiles</string>
+    <string name="onboarding_profiles_description">Switch agent profiles mid-flow — each keeps its own sessions, model, and persona.</string>
+    <string name="onboarding_voice_label">Voice</string>
+    <string name="onboarding_voice_description">Tap the mic to talk. Speech runs through your Hermes server — no extra install.</string>
+
+    <string name="onboarding_manage_title">Manage</string>
+    <string name="onboarding_manage_description">Your Hermes dashboard, pocket-sized.</string>
+    <string name="onboarding_control_label">Control</string>
+    <string name="onboarding_control_description">Profiles, skills, automations, MCP servers, models, and provider keys.</string>
+    <string name="onboarding_skills_hub_label">Skills hub</string>
+    <string name="onboarding_skills_hub_description">Search the hub, read a skill before installing, and install from your phone.</string>
+    <string name="onboarding_one_sign_in_label">One sign-in</string>
+    <string name="onboarding_one_sign_in_description">Signing into the dashboard once also unlocks voice for this connection.</string>
+
+    <string name="onboarding_power_title">Power tools</string>
+    <string name="onboarding_power_description">Pair the optional Relay when you want more than standard.</string>
+    <string name="onboarding_terminal_label">Terminal</string>
+    <string name="onboarding_terminal_description">A real tmux session on your server, in your pocket.</string>
+    <string name="onboarding_bridge_label">Bridge</string>
+    <string name="onboarding_bridge_description">Let the agent operate this phone — with safety rails (sideload builds).</string>
+    <string name="onboarding_realtime_label">Realtime</string>
+    <string name="onboarding_realtime_description">Provider-native realtime voice agent and profile-aware voice providers.</string>
+    <string name="onboarding_review_permissions">Review permissions</string>
+
+    <!-- Chat input bar -->
+    <string name="chat_input_live_voice_hint">Live voice conversation</string>
+    <string name="chat_input_add_attachment">Add attachment</string>
+    <string name="chat_input_browse_commands">Browse commands</string>
+    <string name="chat_input_add_attachment_hold">Add attachment; hold for commands</string>
+    <string name="chat_input_photos">Photos</string>
+    <string name="chat_input_files">Files</string>
+    <string name="chat_input_camera">Camera</string>
+    <string name="chat_input_paste_image">Paste image</string>
+    <string name="chat_input_send_message">Send message</string>
+    <string name="chat_input_start_voice">Start voice conversation</string>
+    <string name="chat_input_voice_setup_needed">Voice conversation — setup needed</string>
+    <string name="chat_input_stop_streaming">Stop streaming</string>
+    <string name="chat_input_steer_response">Steer the response</string>
+    <string name="chat_input_queue_message">Queue message</string>
+
+    <!-- Bridge return labels -->
+    <string name="bridge_return_chat_label">Chat</string>
+    <string name="bridge_return_manage_label">Manage</string>
+    <string name="bridge_return_default_label">Back</string>
+    <string name="bridge_return_title_format">Return to %1$s</string>
+    <string name="bridge_return_chat_subtitle">Back to conversation</string>
+    <string name="bridge_return_manage_subtitle">Back to management</string>
+    <string name="bridge_return_default_subtitle">Back to previous tab</string>
+
+    <!-- Power feature gates -->
+    <string name="power_gate_terminal_title">Terminal</string>
+    <string name="power_gate_terminal_summary">Open a server shell through your paired relay session.</string>
+    <string name="power_gate_bridge_title">Bridge</string>
+    <string name="power_gate_bridge_summary">Let Hermes send approved bridge commands to this phone.</string>
+
+    <!-- Status strip placeholders -->
+    <string name="status_no_route">no route</string>
+    <string name="status_model_pending">model pending</string>
+    <string name="status_safety_on">safety: on</string>
+    <string name="status_safety_unattended">safety: unattended</string>
+    <string name="status_profile_default">default</string>
+    <string name="status_profile_format">profile: %1$s</string>
+
+    <!-- Demo mode -->
+    <string name="demo_feature_manage">Manage</string>
+
+    <!-- Chat screen placeholders -->
+    <string name="chat_placeholder_edit">Edit your message…</string>
+    <string name="chat_placeholder_steer">Steer the response…</string>
+    <string name="chat_placeholder_queue">Queue a message…</string>
+    <string name="chat_placeholder_message">Message…</string>
+    <string name="chat_edit_busy_snackbar">Can\'t edit right now — wait for the current turn to finish</string>
+    <string name="chat_select_reasoning_effort">Select reasoning effort</string>
+
+    <!-- Voice toasts -->
+    <string name="voice_toast_signin_route">Voice needs a one-time sign-in on the %1$s route — open Manage</string>
+    <string name="voice_toast_signin_default">Voice needs dashboard sign-in — open Manage to sign in</string>
+    <string name="voice_toast_unsupported">This Hermes build has no voice routes — update hermes-agent or pair Relay</string>
+    <string name="voice_toast_unreachable">Voice needs a reachable Hermes dashboard or Relay voice route</string>
+
+    <!-- Misc chat screen -->
+    <string name="chat_stopped_snackbar">Stopped</string>
+    <string name="chat_attachment_placeholder">[attachment]</string>
+
+    <!-- Chat screen UI chrome -->
+    <string name="chat_share_conversation">Share conversation</string>
+    <string name="chat_retry">Retry</string>
+    <string name="chat_dismiss">Dismiss</string>
+    <string name="chat_open_settings">Open Settings</string>
+    <string name="chat_connect_hermes">Connect Hermes</string>
+    <string name="chat_try_demo">Try the demo</string>
+    <string name="chat_loading_messages">Loading messages…</string>
+    <string name="chat_empty_state_body">Connect your Hermes server to start chatting — or explore a quick demo first. You can connect anytime.</string>
+    <string name="chat_editing_notice">Editing — will rewind the conversation</string>
+    <string name="chat_mic_perm_needed">Microphone permission needed</string>
+    <string name="chat_mic_perm_body">Tap Open Settings and grant Microphone access to use voice mode.</string>
+    <string name="chat_clean_view_hint">Hold the chat for a clean, focused view</string>
+    <string name="chat_manage_connections">Manage connections</string>
+    <string name="chat_no_clipboard_image">No image on the clipboard</string>
+    <string name="chat_copied_to_clipboard">Copied to clipboard</string>
+    <string name="chat_camera_open_failed">Couldn\'t open the camera</string>
+    <string name="chat_file_read_failed">Failed to read file</string>
+    <string name="chat_overlay_perm_enable">Enable Display over other apps, then return to start Voice Overlay.</string>
+    <string name="chat_overlay_start_failed">Voice Overlay could not be started.</string>
+    <string name="chat_overlay_perm_denied">Voice Overlay permission was not granted.</string>
+
+    <!-- Chat content descriptions -->
+    <string name="cd_sessions">Sessions</string>
+    <string name="cd_approvals_off">Approvals off — tap for details</string>
+    <string name="cd_terminal">Terminal</string>
+    <string name="cd_settings">Settings</string>
+    <string name="cd_more_actions">More actions</string>
+    <string name="cd_scroll_to_bottom">Scroll to bottom</string>
+    <string name="cd_remove">Remove</string>
+    <string name="cd_cancel_editing">Cancel editing</string>
+    <string name="cd_select_model">Select model</string>
+    <string name="chat_camera_perm_needed">Camera permission needed to take a photo</string>
 </resources>
