@@ -1350,6 +1350,106 @@ class ChatHandlerTest {
         assertEquals("boom", handler.error.value)
     }
 
+    // --- loadMessageHistory: synced realtime-turn provenance (marker → badge) ---
+
+    @Test
+    fun loadMessageHistory_stripsRealtimeProvenanceMarkerIntoBadge() {
+        // A provider-answered realtime turn synced by RealtimeTurnSyncBuilder
+        // comes back in server history with a trailing provenance marker. The
+        // reload must strip the bracket noise and restore the same quiet
+        // "Realtime Agent" badge a live turn gets.
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "1",
+                    role = "assistant",
+                    content = JsonPrimitive(
+                        "It syncs vault metadata.\n\n" +
+                            "[Realtime Agent provider-native voice turn: " +
+                            "provider=xai_realtime, model=grok-voice-latest]",
+                    ),
+                ),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals("It syncs vault metadata.", msg.content)
+        assertTrue(msg.badges.contains("Realtime Agent"))
+    }
+
+    @Test
+    fun loadMessageHistory_noBadgeWithoutProvenanceMarker() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "1", role = "assistant", content = JsonPrimitive("Plain reply")),
+            ),
+        )
+
+        val msg = handler.messages.value.single()
+        assertEquals("Plain reply", msg.content)
+        assertFalse(msg.badges.contains("Realtime Agent"))
+    }
+
+    @Test
+    fun loadMessageHistory_dropsSyncedRealtimeOrphanSupersededByServerCopy() {
+        // Once a provider-answered turn's synced copy exists in the server
+        // transcript, the pre-sync local clientOnly bubble is redundant —
+        // preserving both would render the exchange twice.
+        handler.onTextDelta("realtime-agent-1", "It syncs vault metadata.")
+        handler.attachRealtimeTurnTrace(
+            "realtime-agent-1",
+            RealtimeTurnTrace(
+                userText = "What does it do?",
+                assistantText = "It syncs vault metadata.",
+                provider = "xai_realtime",
+            ),
+        )
+        handler.markRealtimeTurnsSynced()
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "10", role = "user", content = JsonPrimitive("What does it do?")),
+                MessageItem(
+                    id = "11",
+                    role = "assistant",
+                    content = JsonPrimitive(
+                        "It syncs vault metadata.\n\n" +
+                            "[Realtime Agent provider-native voice turn: provider=xai_realtime]",
+                    ),
+                ),
+            ),
+        )
+
+        val msgs = handler.messages.value
+        // Only the server pair remains — the local orphan was dropped.
+        assertEquals(2, msgs.size)
+        assertTrue(msgs.none { it.id == "realtime-agent-1" })
+        val serverCopy = msgs.single { it.id == "11" }
+        assertEquals("It syncs vault metadata.", serverCopy.content)
+        assertTrue(serverCopy.badges.contains("Realtime Agent"))
+    }
+
+    @Test
+    fun loadMessageHistory_preservesUnsyncedRealtimeOrphan() {
+        // An UNSYNCED trace is still the only record of the turn — it must
+        // survive the reload even though it has no server row.
+        handler.onTextDelta("realtime-agent-1", "spoken answer")
+        handler.attachRealtimeTurnTrace(
+            "realtime-agent-1",
+            RealtimeTurnTrace(userText = "hi", assistantText = "spoken answer"),
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "10", role = "user", content = JsonPrimitive("unrelated")),
+            ),
+        )
+
+        val orphan = handler.messages.value.single { it.id == "realtime-agent-1" }
+        assertEquals("spoken answer", orphan.content)
+        assertFalse(orphan.realtimeTurn!!.syncedToServer)
+    }
+
     // --- Helper ---
 
     private fun createUserMessage(id: String, content: String) = ChatMessage(

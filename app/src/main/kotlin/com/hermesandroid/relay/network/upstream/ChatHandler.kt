@@ -15,6 +15,7 @@ import com.hermesandroid.relay.network.upstream.GatewaySubagentEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1027,6 +1028,11 @@ class ChatHandler {
             }
         }
 
+        // Trimmed assistant texts of synced provider-answered realtime turns
+        // found in this reload — used below to drop their superseded local
+        // clientOnly bubbles (same exchange, pre-sync copy).
+        val syncedRealtimeTurnContents = mutableSetOf<String>()
+
         val loaded = items.mapNotNull { item ->
             val role = when (item.role) {
                 "user" -> MessageRole.USER
@@ -1076,13 +1082,30 @@ class ChatHandler {
             // straight onto the reconstructed ChatMessage and strip their
             // lines from the displayed content in the same pass. No
             // post-assignment dispatch needed.
-            val (cleanedContent, extractedCards) = if (
+            val (cardCleanedContent, extractedCards) = if (
                 role == MessageRole.ASSISTANT && afterMedia.isNotEmpty()
             ) {
                 extractCardsFromContent(afterMedia)
             } else {
                 afterMedia to emptyList()
             }
+
+            // A provider-answered realtime voice turn synced into the session
+            // (RealtimeTurnSyncBuilder) carries a trailing provenance marker —
+            // "[Realtime Agent provider-native voice turn: provider=…]" — in
+            // its assistant text. Render it as the quiet "Realtime Agent"
+            // badge (same chip live turns get) instead of raw bracket noise,
+            // and remember the stripped text so the superseded local
+            // clientOnly bubble can be dropped below instead of duplicating
+            // the exchange.
+            val strippedRealtimeContent = if (role == MessageRole.ASSISTANT) {
+                RealtimeTurnSyncBuilder.stripProvenanceMarker(cardCleanedContent)
+            } else {
+                null
+            }
+            val isSyncedRealtimeTurn = strippedRealtimeContent != null
+            val cleanedContent = strippedRealtimeContent ?: cardCleanedContent
+            if (isSyncedRealtimeTurn) syncedRealtimeTurnContents.add(cleanedContent.trim())
 
             val prior = priorById[messageId]
             // Outbound attachments: prefer an id-match (covers any future
@@ -1135,6 +1158,11 @@ class ChatHandler {
                     } else {
                         ""
                     },
+                    badges = if (isSyncedRealtimeTurn && "Realtime Agent" !in prior.badges) {
+                        prior.badges + "Realtime Agent"
+                    } else {
+                        prior.badges
+                    },
                 )
             } else {
                 // INSERT — a server message with no local row yet. Built from
@@ -1153,6 +1181,7 @@ class ChatHandler {
                     // Server persists per-message reasoning — restore it so the
                     // Thought-process block survives returning to the chat.
                     thinkingContent = if (role == MessageRole.ASSISTANT) serverThinking ?: "" else "",
+                    badges = if (isSyncedRealtimeTurn) listOf("Realtime Agent") else emptyList(),
                 )
             }
         }
@@ -1180,7 +1209,19 @@ class ChatHandler {
         // but IS in the transcript, so it reconciles normally; only clientOnly +
         // absent-from-transcript marks a preservable orphan.
         val loadedIds = loaded.mapTo(HashSet()) { it.id }
-        val preservedLocal = _messages.value.filter { it.clientOnly && it.id !in loadedIds }
+        val preservedLocal = _messages.value.filter { msg ->
+            if (!msg.clientOnly || msg.id in loadedIds) return@filter false
+            // Drop a provider-answered realtime bubble whose SYNCED copy just
+            // loaded from the server transcript (matched on the synced
+            // assistant text) — keeping both would render the exchange twice.
+            // Unsynced traces are always preserved: they are still the only
+            // record of the turn.
+            val trace = msg.realtimeTurn
+            !(
+                trace != null && trace.syncedToServer &&
+                    trace.assistantText.trim() in syncedRealtimeTurnContents
+                )
+        }
         val merged = if (preservedLocal.isEmpty()) {
             loaded
         } else {

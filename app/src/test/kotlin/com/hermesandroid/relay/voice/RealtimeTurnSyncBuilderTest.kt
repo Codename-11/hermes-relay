@@ -61,6 +61,58 @@ class RealtimeTurnSyncBuilderTest {
         assertFalse(RealtimeTurnSyncBuilder.hasUnsynced(history))
     }
 
+    // --- stripProvenanceMarker ---
+
+    @Test
+    fun stripProvenanceMarker_roundTripsBuilderOutput() {
+        val history = listOf(
+            chatMessage(
+                id = "rt-1",
+                role = MessageRole.ASSISTANT,
+                realtimeTurn = RealtimeTurnTrace(
+                    userText = "What does the Bitwarden integration do?",
+                    assistantText = "It syncs vault metadata.",
+                    provider = "xai_realtime",
+                    model = "grok-voice-latest",
+                    voice = "leo",
+                ),
+            ),
+        )
+
+        val assistantContent = RealtimeTurnSyncBuilder.buildSyntheticMessages(history)[1]
+            .jsonObject["content"]?.jsonPrimitive?.content.orEmpty()
+
+        assertEquals(
+            "It syncs vault metadata.",
+            RealtimeTurnSyncBuilder.stripProvenanceMarker(assistantContent),
+        )
+    }
+
+    @Test
+    fun stripProvenanceMarker_returnsNullWithoutMarker() {
+        assertEquals(null, RealtimeTurnSyncBuilder.stripProvenanceMarker("Just a normal reply."))
+        assertEquals(null, RealtimeTurnSyncBuilder.stripProvenanceMarker(""))
+    }
+
+    @Test
+    fun stripProvenanceMarker_ignoresMarkerPhraseMidText() {
+        // The phrase appears but is NOT a final bracket block — prose that
+        // mentions it (or a marker followed by more text) must not be stripped.
+        val midText = "The [Realtime Agent provider-native voice turn: provider=x] " +
+            "marker is how sync works."
+        assertEquals(null, RealtimeTurnSyncBuilder.stripProvenanceMarker(midText))
+
+        val markerThenMore = "Answer.\n\n[Realtime Agent provider-native voice turn: " +
+            "provider=x]\n\nMore prose after."
+        assertEquals(null, RealtimeTurnSyncBuilder.stripProvenanceMarker(markerThenMore))
+    }
+
+    @Test
+    fun stripProvenanceMarker_toleratesTrailingWhitespace() {
+        val content = "Answer.\n\n[Realtime Agent provider-native voice turn: provider=x]\n  "
+        assertEquals("Answer.", RealtimeTurnSyncBuilder.stripProvenanceMarker(content))
+    }
+
     private fun chatMessage(
         id: String,
         role: MessageRole,

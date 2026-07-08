@@ -4185,9 +4185,33 @@ class ChatViewModel : ViewModel() {
         // instead, so force any turn that has a per-turn interface context
         // (set only by sendVoiceMessage) onto SSE. resolveSseFallback picks the
         // best available SSE route.
+        //
+        // Synthetic sync messages (voice intents / card dispatches / provider-
+        // answered realtime turns) have the same gateway limitation — prompt.submit
+        // can't carry them — but on a gateway-primary phone "leave them for the
+        // next SSE turn" means *never*: the default transport is the gateway, so
+        // unsynced traces would defer forever and the agent never learns what
+        // happened in realtime voice. Drain them by forcing this one turn onto
+        // the sessions SSE route, but ONLY when that is strictly safe:
+        //  - an existing session id + the sessions fallback route (a stateless
+        //    completions/runs detour would drop THIS turn from the transcript
+        //    to save a trace — worse than deferring), and
+        //  - the default profile (a non-default profile's gateway session lives
+        //    in that profile's own state.db, which the shared api_server surface
+        //    can't see — the sessions POST would 404 and fail the user's turn).
+        // Cost when it fires: one turn without live gateway thinking. The synced
+        // traces persist server-side, so this happens at most once per batch.
+        val sseDrainEndpoint = resolveSseFallback(handler)
+        val forceSseForTraceDrain =
+            voiceIntentMessages != null &&
+                streamingEndpoint == "gateway" &&
+                profileName == null &&
+                sseDrainEndpoint == "sessions"
         val effectiveEndpoint =
-            if (interfaceContextPrompt != null && streamingEndpoint == "gateway") {
-                resolveSseFallback(handler)
+            if ((interfaceContextPrompt != null || forceSseForTraceDrain) &&
+                streamingEndpoint == "gateway"
+            ) {
+                sseDrainEndpoint
             } else {
                 streamingEndpoint
             }
@@ -4303,8 +4327,15 @@ class ChatViewModel : ViewModel() {
         // point. Guarded per-stream so we only do the work when the
         // corresponding synthetic messages were actually sent.
         // Gateway turns can't carry synthetic messages (prompt.submit is
-        // bare text) — leave traces unsynced so the next SSE turn sends them.
-        if (voiceIntentMessages != null && streamingEndpoint != "gateway") {
+        // bare text) — leave traces unsynced so a later SSE turn (or the
+        // forced trace-drain above) sends them. Checked against the route
+        // this turn actually DISPATCHED on (effectiveEndpoint), not the
+        // configured transport: a gateway-configured turn forced onto SSE
+        // (voice interface context, trace drain) did carry the synthetic
+        // messages, and skipping the mark there re-sent them every turn.
+        // The async gateway preflight-failure fallback stays conservative:
+        // its traces are marked on the NEXT turn (at-least-once delivery).
+        if (voiceIntentMessages != null && effectiveEndpoint != "gateway") {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
             if (hasRealtimeTurns) handler.markRealtimeTurnsSynced()
