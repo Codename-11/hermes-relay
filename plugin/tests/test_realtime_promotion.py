@@ -625,11 +625,14 @@ class RealtimePromotionTests(AioHTTPTestCase):
                     break
                 await asyncio.sleep(0.02)
             self.assertTrue(busy)
-            self.assertEqual(busy[0][1].get("status"), "already_running")
+            # Queue contract (background-run v2 §2): the long second ask is
+            # QUEUED behind the running task instead of refused.
+            self.assertEqual(busy[0][1].get("status"), "queued")
+            self.assertEqual(busy[0][1].get("queue_position"), 1)
             # First run untouched: ITS stream (call index 0) was never
             # cancelled, so it stays deliverable. The fast-lane attempt for
             # call-2 (index 1) is expected to be opened and abandoned —
-            # that cancellation is the designed fall-through to busy.
+            # that cancellation is the designed fall-through to the queue.
             self.assertNotIn(0, broker.cancelled_indices)
 
             broker.release.set()
@@ -637,6 +640,71 @@ class RealtimePromotionTests(AioHTTPTestCase):
             self.assertTrue(
                 any(e["type"] == "hermes.run.background_completed" for e in done)
             )
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_filler_summary_triggers_fallback_delivery(self) -> None:
+        # E2E misbehaving provider: the background run completes with a real
+        # answer, but the provider responds to the forced-summary request with
+        # deferral filler instead of delivering it. The validator must catch
+        # it and the fallback must carry the actual answer — the class of
+        # failure where a completed result was silently lost behind "one
+        # moment while I look that up".
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        try:
+            await self._emit_tool_call(provider, call_id="call-1")
+            await self._read_until(ws, "hermes.run.promoted")
+            await broker.started.wait()
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+
+            # Wait for the delivery to inject the forced-summary request.
+            for _ in range(100):
+                if any(
+                    "final spoken answer step" in t
+                    for t in provider.connection.text_inputs
+                ):
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                self.fail("forced-summary injection never reached the provider")
+
+            # Provider misbehaves: speaks filler instead of the answer.
+            await provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_STARTED, response_id="sum-1")
+            )
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.OUTPUT_TEXT_DELTA,
+                    response_id="sum-1",
+                    payload={"delta": "One moment while I look that up."},
+                )
+            )
+            await provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_DONE, response_id="sum-1")
+            )
+
+            # The validator flags the filler and the fallback delta carries
+            # the real answer over the ws (the fallback marker itself is a
+            # session-log event, not a ws event).
+            events = await self._read_until(ws, "voice.response.delta")
+            fallback_delta = next(
+                e for e in events if e["type"] == "voice.response.delta"
+            )
+            self.assertEqual("hermes", fallback_delta.get("source"))
+            self.assertIn("Background answer ready", str(fallback_delta.get("delta")))
+            # The buffered filler was dropped — it never reached the client.
+            filler_deltas = [
+                e for e in events
+                if "One moment" in str(e.get("delta") or "")
+            ]
+            self.assertEqual([], filler_deltas)
+            log_text = session.event_log_path.read_text(encoding="utf-8")
+            self.assertIn("voice.response.forced_summary_fallback", log_text)
+            self.assertIn("acknowledgement_not_summary", log_text)
         finally:
             broker.release.set()
             await ws.close()

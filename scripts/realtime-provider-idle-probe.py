@@ -61,6 +61,37 @@ _PROVIDERS = {
 }
 
 
+def _probe_provider_options(provider_id: str) -> dict:
+    """Replicate the broker's credential injection (_provider_options).
+
+    The provider adapters resolve auth from provider_options first; the live
+    relay injects the Hermes xAI OAuth token there. Without this the probe
+    only works where raw env keys exist — which is exactly not the relay host.
+    """
+    options: dict = {}
+    if provider_id != "xai":
+        return options
+    try:
+        from plugin.relay.config import RelayConfig  # noqa: E402
+        from plugin.relay.realtime_voice import (  # noqa: E402
+            _read_relay_xai_oauth_token,
+        )
+        from plugin.relay.realtime_agent.providers.xai import (  # noqa: E402
+            _websocket_url_from_base,
+        )
+
+        token = _read_relay_xai_oauth_token(RelayConfig.from_env())
+        if token is not None:
+            options["oauth_access_token"] = token.access_token
+            ws_url = _websocket_url_from_base(token.base_url)
+            if ws_url:
+                options["url"] = ws_url
+            print(f"[probe] using relay xAI OAuth token (source: {token.source})")
+    except Exception as exc:  # noqa: BLE001 - probe reports and falls through
+        print(f"[probe] relay xAI OAuth lookup failed (env fallback): {exc!r}")
+    return options
+
+
 def _session_config(provider_id: str) -> RealtimeAgentSessionConfig:
     _, model, voice, rate = _PROVIDERS[provider_id]
     return RealtimeAgentSessionConfig(
@@ -71,7 +102,7 @@ def _session_config(provider_id: str) -> RealtimeAgentSessionConfig:
         profile=None,
         hermes_session_id=None,
         instructions="You are an idle-tolerance probe. Do not speak unless asked.",
-        provider_options={},
+        provider_options=_probe_provider_options(provider_id),
         tools=HERMES_TOOL_SCHEMAS,
     )
 

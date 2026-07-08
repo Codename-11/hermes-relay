@@ -173,7 +173,7 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
             except asyncio.CancelledError:
                 pass
 
-    async def test_slow_second_task_falls_back_to_busy(self) -> None:
+    async def test_slow_second_task_falls_back_to_queued(self) -> None:
         broker = SlowHermesBroker()
         self.handler.hermes = broker  # type: ignore[assignment]
         self.session.promote_after_ms = 100  # tiny grace for the test
@@ -182,8 +182,13 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
             self.handler._run_brokered_tool(None, self.session, _run_task_call())
         )
 
-        self.assertEqual("already_running", result["status"])
-        self.assertEqual("run-main", result["run_id"])
+        self.assertEqual("queued", result["status"])
+        self.assertEqual(1, result["queue_position"])
+        self.assertEqual(1, len(self.session.background_queue))
+        self.assertEqual(
+            "What time is it in Tokyo?",
+            self.session.background_queue[0]["text"],
+        )
         # The abandoned fast-lane stream was cancelled client-side.
         await asyncio.wait_for(broker.cancelled.wait(), timeout=2.0)
         log_text = self.session.event_log_path.read_text(encoding="utf-8")
@@ -197,7 +202,7 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
             self.handler._run_brokered_tool(None, self.session, _run_task_call())
         )
 
-        self.assertEqual("already_running", result["status"])
+        self.assertEqual("queued", result["status"])
         log_text = self.session.event_log_path.read_text(encoding="utf-8")
         self.assertIn("long_tool_started", log_text)
         self.assertIn("terminal_execute", log_text)
@@ -212,8 +217,8 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual("already_running", result["status"])
-        self.assertEqual([], broker.requests)  # never even dispatched
+        self.assertEqual("queued", result["status"])
+        self.assertEqual([], broker.requests)  # fast lane never dispatched
 
     async def test_promotion_disabled_skips_fast_lane(self) -> None:
         broker = FastHermesBroker()
@@ -224,7 +229,7 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
             self.handler._run_brokered_tool(None, self.session, _run_task_call())
         )
 
-        self.assertEqual("already_running", result["status"])
+        self.assertEqual("queued", result["status"])
         self.assertEqual([], broker.requests)
 
     async def test_foreground_inflight_run_never_takes_fast_lane(self) -> None:
@@ -238,7 +243,7 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
             self.handler._run_brokered_tool(None, self.session, _run_task_call())
         )
 
-        self.assertEqual("already_running", result["status"])
+        self.assertEqual("queued", result["status"])
         self.assertEqual([], broker.requests)
 
     async def test_fast_lane_hermes_error_is_reported_not_busy(self) -> None:
@@ -250,6 +255,76 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual("gateway unreachable", result["error"])
+
+    # --- Queue (background-run v2 §2) ---
+
+    async def test_full_queue_answers_busy(self) -> None:
+        broker = FastHermesBroker()
+        self.handler.hermes = broker  # type: ignore[assignment]
+        self.session.hermes_run_tier = "foreground"  # skip fast lane
+        for i in range(3):  # _BACKGROUND_QUEUE_MAX
+            self.session.background_queue.append({"text": f"task {i}", "profile": None})
+
+        result = await self._with_inflight_run(
+            self.handler._run_brokered_tool(None, self.session, _run_task_call())
+        )
+
+        self.assertEqual("already_running", result["status"])
+        self.assertEqual(3, len(self.session.background_queue))
+
+    async def test_cancel_clears_queue(self) -> None:
+        self.session.background_queue.append({"text": "queued thing", "profile": None})
+        self.handler._cancel_active_hermes(self.session)
+        self.assertEqual(0, len(self.session.background_queue))
+
+    async def test_fast_lane_reuses_side_session(self) -> None:
+        broker = FastHermesBroker()
+        self.handler.hermes = broker  # type: ignore[assignment]
+
+        await self._with_inflight_run(
+            self.handler._run_brokered_tool(None, self.session, _run_task_call())
+        )
+        # First ask created + bound the side session ...
+        self.assertEqual("ephemeral-1", self.session.fast_lane_session_id)
+
+        await self._with_inflight_run(
+            self.handler._run_brokered_tool(None, self.session, _run_task_call())
+        )
+        # ... and the second ask reused it instead of creating another.
+        self.assertIsNone(broker.requests[0].session_id)
+        self.assertEqual("ephemeral-1", broker.requests[1].session_id)
+
+    async def test_start_next_queued_run_starts_and_delivers(self) -> None:
+        broker = FastHermesBroker()
+        self.handler.hermes = broker  # type: ignore[assignment]
+        self.session.background_queue.append(
+            {"text": "queued follow-up", "profile": None}
+        )
+        # Slot free, no forced summary in flight.
+        self.session.hermes_task = None
+        self.session.native_forced_summary_active = False
+
+        class NoopConnection:
+            async def request_response(self, *, instructions=None):
+                self.instructions = instructions
+
+        connection = NoopConnection()
+        await self.handler._start_next_queued_run(None, self.session, connection)  # type: ignore[arg-type]
+
+        self.assertEqual(0, len(self.session.background_queue))
+        self.assertEqual("durable", self.session.hermes_run_tier)
+        self.assertIsNotNone(self.session.hermes_task)
+        # Let the spawned run settle, then assert what it dispatched.
+        await asyncio.wait_for(self.session.hermes_task, timeout=5.0)
+        self.assertEqual("queued follow-up", broker.requests[0].text)
+        log_text = self.session.event_log_path.read_text(encoding="utf-8")
+        self.assertIn("voice.hermes_run.queued_started", log_text)
+        if self.session.background_delivery_task is not None:
+            self.session.background_delivery_task.cancel()
+            try:
+                await self.session.background_delivery_task
+            except asyncio.CancelledError:
+                pass
 
 
 if __name__ == "__main__":
