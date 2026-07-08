@@ -148,4 +148,63 @@
     <string name="cd_cancel_editing">Cancel editing</string>
     <string name="cd_select_model">Select model</string>
     <string name="chat_camera_perm_needed">Camera permission needed to take a photo</string>
-</resources>
+
+    <!-- Connection wizard — Connect page essentials -->
+    <string name="cw_connect_to_hermes">Connect to Hermes</string>
+    <string name="cw_connect_description">Start the Hermes API/dashboard on your host, then connect this app. Relay pairing is optional and only needed for Terminal, Bridge, relay sessions, and channel grants.</string>
+    <string name="cw_try_demo">Try the demo</string>
+    <string name="cw_try_demo_subtitle">Explore offline — no server needed.</string>
+    <string name="cw_setup_guide">Setup Guide</string>
+    <string name="cw_hermes_api">Hermes API</string>
+    <string name="cw_advanced_relay_pairing">Advanced: Relay pairing</string>
+    <string name="cw_advanced_relay_pairing_desc">Terminal, Bridge, Relay sessions, and grants require the Relay plugin.</string>
+    <string name="cw_relay_docs">Relay docs</string>
+    <string name="cw_skip_for_now">Skip for now — set up later in Settings</string>
+    <string name="cw_back">Back</string>
+    <string name="cw_connect_button">Connect</string>
+    <string name="cw_hermes_label">Hermes</string>
+    <string name="cw_hermes_label_desc">Use this for Chat and Manage. Pair Relay later only when you enable Terminal, Bridge, Relay sessions, or grants. Dashboard sign-in is the preferred upstream auth path; the API key remains the Android Chat fallback.</string>
+    <string name="cw_api_url_label">API server URL or host</string>
+    <string name="cw_api_key_label">API key</string>
+    <string name="cw_api_key_placeholder">Value from API_SERVER_KEY</string>
+    <string name="cw_api_key_hint">Needed for Android Chat until the dashboard gateway transport is enabled.</string>
+    <string name="cw_tailscale_label">Remote access — Tailscale URL (optional)</string>
+    <string name="cw_dashboard">Dashboard</string>
+    <string name="cw_dashboard_routes_hint">Routes: default first, Tailscale fallback when reachable.</string>
+    <string name="cw_dashboard_url_override">Dashboard URL override (optional)</string>
+    <string name="cw_api_port">API port</string>
+    <string name="cw_dashboard_port">Dashboard port</string>
+    <string name="cw_port_scan_hint">The scan uses these ports. The API server URL above can also use any custom port.</string>
+    <string name="cw_update_existing_title">Update existing connection?</string>
+    <string name="cw_update_existing_body">You already have a connection to this server:</string>
+    <string name="cw_update_existing_hint">Update this connection instead of creating another card. Only one connection per server is kept.</string>
+    <string name="cw_update_button">Update</string>
+    <string name="cw_cancel">Cancel</string>
+
+    <!-- Method tiles -->
+    <string name="cw_method_hermes_title">Hermes</string>
+    <string name="cw_method_hermes_subtitle">API/dashboard setup for Chat, Manage, Skills, Cron, MCP, Profiles, Models, and Settings</string>
+    <string name="cw_method_scan_title">Scan setup QR</string>
+    <string name="cw_method_scan_subtitle">Scan a QR with API URL/key for Hermes; Relay QR details require the Relay plugin</string>
+    <string name="cw_method_pair_code_title">Pair Relay by code</string>
+    <string name="cw_method_pair_code_subtitle">Power-user path for Terminal, Bridge, Relay sessions, and grants</string>
+    <string name="cw_method_show_code_title">Show Relay code</string>
+    <string name="cw_method_show_code_subtitle">No camera or QR? Register this phone\'s code on the host</string>
+
+    <!-- Standard connect form -->
+    <string name="cw_api_url_placeholder">192.168.1.10 or http://your-server:8642</string>
+    <string name="cw_api_url_supporting">Hermes API used by Chat and sessions — API port 8642 and http:// assumed for bare hosts (the dashboard\'s 9119 is derived separately)</string>
+    <string name="cw_scan_message">Scanning this LAN for Hermes dashboard/API…</string>
+    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is optional for Chat.</string>
+    <string name="cw_pair_relay_section">Pair Relay (optional)</string>
+    <string name="cw_pair_relay_section_desc">Already running the Relay plugin? Pair here to enable Terminal, Bridge, and channel grants.</string>
+    <string name="cw_pair_relay_url_label">Relay URL</string>
+    <string name="cw_pair_relay_code_label">Pairing code</string>
+    <string name="cw_pair_relay_scan_button">Scan QR</string>
+    <string name="cw_pair_relay_enter_code_button">Enter code</string>
+    <string name="cw_pairing_success">Paired — Relay features unlocked</string>
+    <string name="cw_connecting">Connecting…</string>
+    <string name="cw_sign_in_to_dashboard">Sign in to dashboard</string>
+    <string name="cw_open_dashboard">Open dashboard</string>
+    <string name="cw_sign_in_hint">Opens the dashboard web UI to complete sign-in.</string>
+

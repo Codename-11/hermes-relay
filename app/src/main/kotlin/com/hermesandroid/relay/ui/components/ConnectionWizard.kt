@@ -83,6 +83,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
@@ -819,11 +821,11 @@ private fun DuplicateConnectionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Update existing connection?") },
+        title = { Text(stringResource(R.string.cw_update_existing_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "You already have a connection to this server:",
+                    text = stringResource(R.string.cw_update_existing_body),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -839,18 +841,17 @@ private fun DuplicateConnectionDialog(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Update this connection instead of creating another card. " +
-                        "Your existing label and saved preferences will be kept.",
+                    text = stringResource(R.string.cw_update_existing_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
         confirmButton = {
-            Button(onClick = onUpdate) { Text("Update") }
+            Button(onClick = onUpdate) { Text(stringResource(R.string.cw_update_button)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cw_cancel)) }
         },
     )
 }
@@ -982,13 +983,11 @@ private fun MethodStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Connect to Hermes",
+            text = stringResource(R.string.cw_connect_to_hermes),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Start the Hermes API/dashboard on your host, then connect this app. " +
-                "Relay pairing is optional and only needed for Terminal, Bridge, relay " +
-                "sessions, and channel grants.",
+            text = stringResource(R.string.cw_connect_description),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1008,12 +1007,12 @@ private fun MethodStep(
                         .padding(vertical = 4.dp),
                 ) {
                     Text(
-                        text = "Try the demo",
+                        text = stringResource(R.string.cw_try_demo),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Explore offline — no server needed.",
+                        text = stringResource(R.string.cw_try_demo_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1040,7 +1039,7 @@ private fun MethodStep(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.size(6.dp))
-                Text("Setup Guide")
+                Text(stringResource(R.string.cw_setup_guide))
             }
             OutlinedButton(
                 onClick = { openExternalUrl(context, HermesApiDocsUrl) },
@@ -1052,22 +1051,22 @@ private fun MethodStep(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.size(6.dp))
-                Text("Hermes API")
+                Text(stringResource(R.string.cw_hermes_api))
             }
         }
 
         MethodTile(
             icon = Icons.Filled.Check,
-            title = "Hermes",
-            subtitle = "API/dashboard setup for Chat, Manage, Skills, Cron, MCP, Profiles, Models, and Settings",
+            title = stringResource(R.string.cw_method_hermes_title),
+            subtitle = stringResource(R.string.cw_method_hermes_subtitle),
             onClick = onPickStandard,
             isPrimary = true,
         )
 
         MethodTile(
             icon = Icons.Filled.QrCodeScanner,
-            title = "Scan setup QR",
-            subtitle = "Scan a QR with API URL/key for Hermes; Relay QR details require the Relay plugin",
+            title = stringResource(R.string.cw_method_scan_title),
+            subtitle = stringResource(R.string.cw_method_scan_subtitle),
             onClick = onPickScan,
         )
 
@@ -1079,12 +1078,12 @@ private fun MethodStep(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Advanced: Relay pairing",
+                    text = stringResource(R.string.cw_advanced_relay_pairing),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Terminal, Bridge, Relay sessions, and grants require the Relay plugin.",
+                    text = stringResource(R.string.cw_advanced_relay_pairing_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1096,22 +1095,22 @@ private fun MethodStep(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.size(6.dp))
-                Text("Relay docs")
+                Text(stringResource(R.string.cw_relay_docs))
             }
         }
 
         MethodTile(
             icon = Icons.Filled.Keyboard,
-            title = "Pair Relay by code",
-            subtitle = "Power-user path for Terminal, Bridge, Relay sessions, and grants",
+            title = stringResource(R.string.cw_method_pair_code_title),
+            subtitle = stringResource(R.string.cw_method_pair_code_subtitle),
             onClick = onPickEnterCode,
         )
 
         if (relayEnabled) {
             MethodTile(
                 icon = Icons.Filled.PhonelinkLock,
-                title = "Show Relay code",
-                subtitle = "No camera or QR? Register this phone's code on the host",
+                title = stringResource(R.string.cw_method_show_code_title),
+                subtitle = stringResource(R.string.cw_method_show_code_subtitle),
                 onClick = onPickShowCode,
             )
         }
@@ -1121,7 +1120,7 @@ private fun MethodStep(
                 onClick = onSkip,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Skip for now — set up later in Settings")
+                Text(stringResource(R.string.cw_skip_for_now))
             }
         }
     }
@@ -1302,13 +1301,11 @@ private fun StandardEntryStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Hermes",
+            text = stringResource(R.string.cw_hermes_label),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Use this for Chat and Manage. Pair Relay later only when you enable " +
-                "Terminal, Bridge, Relay sessions, or grants. Dashboard sign-in is the " +
-                "preferred upstream auth path; the API key remains the Android Chat fallback.",
+            text = stringResource(R.string.cw_hermes_label_desc),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1316,15 +1313,13 @@ private fun StandardEntryStep(
         OutlinedTextField(
             value = apiUrl,
             onValueChange = onApiUrlChange,
-            label = { Text("API server URL or host") },
-            placeholder = { Text("192.168.1.10 or http://your-server:8642") },
+            label = { Text(stringResource(R.string.cw_api_url_label)) },
+            placeholder = { Text(stringResource(R.string.cw_api_url_placeholder)) },
             singleLine = true,
             isError = apiError != null,
             supportingText = {
                 Text(
-                    apiError ?: "Hermes API used by Chat and sessions — " +
-                        "API port 8642 and http:// assumed for bare hosts " +
-                        "(the dashboard's 9119 is derived separately)",
+                    apiError ?: stringResource(R.string.cw_api_url_supporting),
                 )
             },
             keyboardOptions = KeyboardOptions(
@@ -1340,7 +1335,7 @@ private fun StandardEntryStep(
                 val dashboardPort = parsedScanDashboardPort ?: Connection.DEFAULT_DASHBOARD_PORT
                 scanBusy = true
                 scanResults = emptyList()
-                scanMessage = "Scanning this LAN for Hermes dashboard/API..."
+                scanMessage = context.getString(R.string.cw_scan_message)
                 scanScope.launch {
                     val results = runCatching {
                         HermesLanDiscovery.scan(
@@ -1420,11 +1415,11 @@ private fun StandardEntryStep(
         OutlinedTextField(
             value = apiKey,
             onValueChange = onApiKeyChange,
-            label = { Text("API key") },
-            placeholder = { Text("Value from API_SERVER_KEY") },
+            label = { Text(stringResource(R.string.cw_api_key_label)) },
+            placeholder = { Text(stringResource(R.string.cw_api_key_placeholder)) },
             singleLine = true,
             supportingText = {
-                Text("Needed for Android Chat until the dashboard gateway transport is enabled.")
+                Text(stringResource(R.string.cw_api_key_hint))
             },
             visualTransformation = if (apiKeyVisible) {
                 VisualTransformation.None
@@ -1459,7 +1454,7 @@ private fun StandardEntryStep(
         OutlinedTextField(
             value = tailscaleApiUrl,
             onValueChange = onTailscaleApiUrlChange,
-            label = { Text("Remote access — Tailscale URL (optional)") },
+            label = { Text(stringResource(R.string.cw_tailscale_label)) },
             placeholder = { Text("100.x.y.z or http://your-host.ts.net:8642") },
             singleLine = true,
             isError = tailscaleError != null,
@@ -1564,7 +1559,7 @@ private fun StandardEntryStep(
                 OutlinedTextField(
                     value = scanApiPort,
                     onValueChange = { scanApiPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text("API port") },
+                    label = { Text(stringResource(R.string.cw_api_port)) },
                     singleLine = true,
                     isError = parsedScanApiPort == null,
                     keyboardOptions = KeyboardOptions(
@@ -1576,7 +1571,7 @@ private fun StandardEntryStep(
                 OutlinedTextField(
                     value = scanDashboardPort,
                     onValueChange = { scanDashboardPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text("Dashboard port") },
+                    label = { Text(stringResource(R.string.cw_dashboard_port)) },
                     singleLine = true,
                     isError = parsedScanDashboardPort == null,
                     keyboardOptions = KeyboardOptions(
@@ -1587,7 +1582,7 @@ private fun StandardEntryStep(
                 )
             }
             Text(
-                text = "The scan uses these ports. The API server URL above can also use any custom port.",
+                text = stringResource(R.string.cw_port_scan_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1616,7 +1611,7 @@ private fun StandardEntryStep(
                 enabled = !isConnecting,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Back")
+                Text(stringResource(R.string.cw_back))
             }
             Button(
                 onClick = onSubmit,
@@ -1629,7 +1624,7 @@ private fun StandardEntryStep(
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    Text("Connect")
+                    Text(stringResource(R.string.cw_connect_button))
                 }
             }
         }

@@ -148,4 +148,63 @@
     <string name="cd_cancel_editing">取消编辑</string>
     <string name="cd_select_model">选择模型</string>
     <string name="chat_camera_perm_needed">需要相机权限才能拍照</string>
-</resources>
+
+    <!-- 连接向导 —— Connect 页核心文案 -->
+    <string name="cw_connect_to_hermes">连接 Hermes</string>
+    <string name="cw_connect_description">先在主机上启动 Hermes API 或仪表盘，再在此连接。Relay 配对是可选的，仅在需要终端、Bridge、Relay 会话或频道授权时才使用。</string>
+    <string name="cw_try_demo">体验演示</string>
+    <string name="cw_try_demo_subtitle">离线探索——无需服务器。</string>
+    <string name="cw_setup_guide">安装指南</string>
+    <string name="cw_hermes_api">Hermes API</string>
+    <string name="cw_advanced_relay_pairing">高级：Relay 配对</string>
+    <string name="cw_advanced_relay_pairing_desc">终端、Bridge、Relay 会话和授权需要 Relay 插件。</string>
+    <string name="cw_relay_docs">Relay 文档</string>
+    <string name="cw_skip_for_now">暂时跳过——稍后在设置中配置</string>
+    <string name="cw_back">上一步</string>
+    <string name="cw_connect_button">连接</string>
+    <string name="cw_hermes_label">Hermes</string>
+    <string name="cw_hermes_label_desc">用于聊天和管理。等启用终端、Bridge、Relay 会话或授权时再配对 Relay。仪表盘登录是首选的上游认证方式；API 密钥仍是 Android 聊天的备用方式。</string>
+    <string name="cw_api_url_label">API 服务器地址或主机名</string>
+    <string name="cw_api_key_label">API 密钥</string>
+    <string name="cw_api_key_placeholder">API_SERVER_KEY 的值</string>
+    <string name="cw_api_key_hint">在仪表盘网关传输启用前，Android 聊天需要此密钥。</string>
+    <string name="cw_tailscale_label">远程访问——Tailscale 地址（可选）</string>
+    <string name="cw_dashboard">仪表盘</string>
+    <string name="cw_dashboard_routes_hint">路由：默认优先，Tailscale 在可达时作为备用。</string>
+    <string name="cw_dashboard_url_override">仪表盘地址覆盖（可选）</string>
+    <string name="cw_api_port">API 端口</string>
+    <string name="cw_dashboard_port">仪表盘端口</string>
+    <string name="cw_port_scan_hint">扫描将使用这些端口。上面的 API 服务器地址也可使用任意自定义端口。</string>
+    <string name="cw_update_existing_title">更新现有连接？</string>
+    <string name="cw_update_existing_body">你已经有一个指向该服务器的连接：</string>
+    <string name="cw_update_existing_hint">更新该连接而不是新建一张卡片。每台服务器只保留一个连接。</string>
+    <string name="cw_update_button">更新</string>
+    <string name="cw_cancel">取消</string>
+
+    <!-- 方法卡片 -->
+    <string name="cw_method_hermes_title">Hermes</string>
+    <string name="cw_method_hermes_subtitle">API/仪表盘设置，用于聊天、管理、技能、定时任务、MCP、配置文件、模型和设置</string>
+    <string name="cw_method_scan_title">扫描设置二维码</string>
+    <string name="cw_method_scan_subtitle">扫描包含 API 地址/密钥的二维码；Relay 二维码详情需要 Relay 插件</string>
+    <string name="cw_method_pair_code_title">用配对码配对 Relay</string>
+    <string name="cw_method_pair_code_subtitle">高级用户路径，用于终端、Bridge、Relay 会话和授权</string>
+    <string name="cw_method_show_code_title">显示 Relay 配对码</string>
+    <string name="cw_method_show_code_subtitle">没有摄像头或二维码？在主机上注册本手机的配对码</string>
+
+    <!-- 标准连接表单 -->
+    <string name="cw_api_url_placeholder">192.168.1.10 或 http://你的服务器:8642</string>
+    <string name="cw_api_url_supporting">聊天和会话使用的 Hermes API——裸主机名默认使用 API 端口 8642 和 http://（仪表盘的 9119 端口单独推导）</string>
+    <string name="cw_scan_message">正在扫描本局域网寻找 Hermes 仪表盘/API…</string>
+    <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥对聊天是可选的。</string>
+    <string name="cw_pair_relay_section">配对 Relay（可选）</string>
+    <string name="cw_pair_relay_section_desc">已经在运行 Relay 插件？在此配对以启用终端、Bridge 和频道授权。</string>
+    <string name="cw_pair_relay_url_label">Relay 地址</string>
+    <string name="cw_pair_relay_code_label">配对码</string>
+    <string name="cw_pair_relay_scan_button">扫描二维码</string>
+    <string name="cw_pair_relay_enter_code_button">输入配对码</string>
+    <string name="cw_pairing_success">已配对——Relay 功能已解锁</string>
+    <string name="cw_connecting">连接中…</string>
+    <string name="cw_sign_in_to_dashboard">登录到仪表盘</string>
+    <string name="cw_open_dashboard">打开仪表盘</string>
+    <string name="cw_sign_in_hint">打开仪表盘网页以完成登录。</string>
+
