@@ -1,5 +1,47 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — E2E realtime test forensics: five chained voice fixes
+
+A live e2e realtime-voice test (phone on the 1.4.0 dev APK, relay at
+`789f32c`) surfaced a chained failure, fully reconstructed from the session
+event log: the gateway streams drafting text as a `_thinking` pseudo-tool
+(deltas only, no completion) → the client rendered it as a tool pill that
+spins "running" forever → the user cancelled a run that had ALREADY completed
+→ the unguarded cancel path marked it cancelled and the completed answer was
+never spoken. Independently, the model read the full 32-char run id aloud
+(both the interim ack payload and the forced-summary prompt metadata handed
+it the id), claimed "I'll add that to the queue" (no queue exists), and one
+delivery spoke "One moment while I look that up" filler that the
+forced-summary validator didn't recognize — the other delivery was saved
+only because reading the run id IS a recognized bad-summary reason.
+
+Fixes (client + relay):
+1. `_`-prefixed tool names are internal (upstream's hidden-tool convention) —
+   `ChatViewModel.applyRealtimeAgentEvent` no longer creates ToolCall pills
+   for them on `hermes.tool.delta` (or `.started`, defensively); their text
+   still feeds the detailed thinking trace.
+2. `response.cancel` now cancels the Hermes run only when one is actually in
+   flight — a late cancel stops current speech but can no longer flip a
+   completed run to "cancelled" or emit `hermes.run.cancelled` for it.
+3. Run/session ids removed from every model-visible payload (interim ack,
+   forced-summary metadata) + "never say run IDs, session IDs, or other
+   identifiers aloud" added to the interim-ack, handoff, and summary
+   instructions; `hermes_get_status`/`hermes_cancel` default to the active
+   run so the model never needs the id.
+4. "There is no task queue — do not offer to queue or claim to have queued
+   anything" added to the handoff/busy instructions.
+5. `_bad_forced_summary_reason` gained deferral-filler phrases (one moment /
+   report back / looking into / i'll look / as soon as i have) and the
+   summary prompt now says to speak the answer NOW; the stale pre-Hermes
+   status lead no longer carries the previous run's id/tool-count into a new
+   run's first progress event.
+
+Verification: new `plugin/tests/test_realtime_summary_validation.py` (5,
+pinning the exact observed filler string), cancel route test updated to the
+new no-active-run contract, realtime batch 69/69 green;
+`:app:compileSideloadDebugKotlin` green. Needs a repeat of the same live
+test after relay redeploy + app rebuild.
+
 ## 2026-07-08 — Background-run fast lane; stale voice-prefs TODO closed; dev deployed to device
 
 **Fast lane (background-run v2 §1).** While a detached (promoted/durable)

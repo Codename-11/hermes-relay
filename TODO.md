@@ -23,6 +23,51 @@ Compaction-safe snapshot of where we are; details in the linked sections below.
 
 ---
 
+## Voice — on-device findings (2026-07-08 e2e realtime test)
+
+Live e2e test (phone on 1.4.0 dev APK, relay at `789f32c`) surfaced a chained
+failure — full forensics from the session event log
+(`realtime-agent-20260708-122613`). **All five fixes below are in code
+(2026-07-08 PM); need relay redeploy + app rebuild + a repeat of the same
+test.**
+
+- **Stuck "Thinking" pill (root of the chain) — FIXED.** The gateway streams
+  drafting text as a `_thinking` pseudo-tool (`hermes.tool.delta` only, never
+  `tool.completed`), and `ChatViewModel.applyRealtimeAgentEvent` created a
+  ToolCall pill from the first delta of ANY tool name → a pill that spins
+  "running" forever (chat + voice overlay transcript). Fix: `_`-prefixed tool
+  names are internal (upstream's own hidden-tool convention) — never become
+  pills; their text still feeds the detailed thinking trace. Defensive same
+  guard on `hermes.tool.started`.
+- **Cancel on an already-finished run killed the delivered answer — FIXED
+  (relay).** `response.cancel` unconditionally flipped `hermes_run_status` to
+  "cancelled" and emitted `hermes.run.cancelled` even with no run in flight
+  (observed: user cancelled 10s after completion — invited by the stuck pill —
+  and the Tokyo answer was never spoken). Now the Hermes-run half of cancel
+  only fires when a run is actually active; speech-stop always happens.
+- **Model read the 32-char run ID aloud — FIXED (relay).** The interim ack
+  and the forced-summary prompt both handed the model `run_id`
+  (payload/metadata). Removed everywhere model-visible (get_status/cancel
+  default to the active run; the client gets ids via events) + explicit
+  "never say run/session IDs aloud" in all three instruction sites.
+- **Model claimed "I'll add that to the queue" — FIXED (relay, instruction).**
+  No queue exists (v2 item 2 not built). All handoff/busy instructions now
+  state "there is no task queue — do not offer to queue or claim to have
+  queued anything." True multi-task chip stacking remains the v2 queue item.
+- **Delivery spoke deferral filler instead of the answer — FIXED (relay).**
+  The forced-summary validator caught run-id speech (that saved the Minnesota
+  answer via fallback) but not "One moment while I look that up. I'll report
+  back as soon as I have the info." — Tokyo's answer was lost behind that
+  filler. Added deferral phrases (one moment / report back / looking into /
+  i'll look / as soon as i have) to `_bad_forced_summary_reason`; summary
+  prompt reworded to "speak the answer NOW". Tests:
+  `plugin/tests/test_realtime_summary_validation.py` (5) + updated cancel
+  route test; realtime batch 69/69 green.
+- **Stale pre-lead — FIXED (relay).** A new run's "I'll check Hermes"
+  progress event carried the PREVIOUS run's run_id + completed_tool_count
+  (fires before the per-run reset). Now sends null/zero identity when no run
+  is in flight; keeps the active run's identity during a fast-lane attempt.
+
 ## Voice — on-device findings (2026-07-07 realtime test)
 
 Surfaced during a live realtime-voice test with a long, many-tool-call background run. (The duplicate-error-toast + no-dismiss issue from the same test shipped this session — see DEVLOG 2026-07-07.)
