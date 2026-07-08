@@ -48,6 +48,17 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".share.ShareActivity"
+            android:exported="true"
+            android:theme="@style/Theme.HermesRelay">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+        </activity>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
