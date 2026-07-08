@@ -2616,6 +2616,45 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
+                "hermes.tool.completed", "hermes.tool.failed" -> {
+                    // A tool finished. Without this, the "Using X…" status and the
+                    // chip's tool status line stay pinned on the just-finished tool
+                    // until the next started/progress event — which read as "stuck"
+                    // in the gap before the next step or the spoken reply. The
+                    // per-message ToolCall rows advance separately in ChatViewModel.
+                    val completed = event.type == "hermes.tool.completed"
+                    Log.i(
+                        TAG,
+                        "Realtime tool ${if (completed) "completed" else "failed"} " +
+                            "tool=${event.toolName ?: event.toolCallId ?: "?"} " +
+                            "backgroundRun=${_uiState.value.backgroundRun != null} " +
+                            "run=${event.runId ?: "?"}",
+                    )
+                    if (_uiState.value.backgroundRun == null) {
+                        _uiState.update {
+                            it.copy(
+                                state = VoiceState.Thinking,
+                                // Drop the stale "Using X…" back to the real streamed
+                                // answer so far (blank until the reply starts).
+                                responseText = responseText.toString(),
+                            )
+                        }
+                    }
+                    updateBackgroundRun { run ->
+                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        else run.copy(
+                            // Clear the finished tool's line rather than leave
+                            // RUNNING pinned on a tool that is no longer live.
+                            statusLine = null,
+                            completedToolCount = if (completed) {
+                                event.completedToolCount ?: (run.completedToolCount + 1)
+                            } else {
+                                event.completedToolCount ?: run.completedToolCount
+                            },
+                            phase = BackgroundRunPhase.RUNNING,
+                        )
+                    }
+                }
                 "hermes.run.progress" -> {
                     val line = realtimeHermesProgressLine(event.message)
                     Log.i(

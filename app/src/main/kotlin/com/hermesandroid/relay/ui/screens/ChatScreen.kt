@@ -154,6 +154,7 @@ import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
+import com.hermesandroid.relay.ui.components.KeepScreenOnWhile
 import com.hermesandroid.relay.ui.components.ModelPickerSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
@@ -461,6 +462,14 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    // Keep the screen on for the two "actively engaged, hands-off-keyboard"
+    // cases: voice mode is a call-like continuous session (mirrors Assistant/
+    // phone-call UIs, held the whole time the overlay is up), and an
+    // in-flight chat reply is closer to video playback (held only while
+    // isStreaming — reading/scrolling an idle transcript uses the OS default,
+    // matching WhatsApp/Telegram/Signal norms). Single call site: the window
+    // flag isn't ref-counted, see KeepScreenOnWhile's doc comment.
+    KeepScreenOnWhile(enabled = voiceUiState.voiceMode || isStreaming)
     val turnStatus by chatViewModel.turnStatus.collectAsState()
     val recoveringAnswer by chatViewModel.recoveringAnswer.collectAsState()
     val voiceStats by voiceViewModel.voiceStats.collectAsState()

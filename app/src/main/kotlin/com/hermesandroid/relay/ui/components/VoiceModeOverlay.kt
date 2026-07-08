@@ -1243,6 +1243,18 @@ private fun CompactTranscriptRow(
             )
         }
         val hasText = message.content.isNotBlank()
+        // Tools run before the agent's reply, so render the tool rows above the
+        // reply text — the bubble then reads in chronological order (tool calls
+        // ran → answer) instead of showing the answer above the tools that
+        // preceded it.
+        if (message.toolCalls.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                message.toolCalls.forEach { toolCall ->
+                    VoiceToolStatusRow(toolCall)
+                }
+            }
+            if (hasText) Spacer(Modifier.height(6.dp))
+        }
         when {
             isVoiceActionBubble && hasText -> MarkdownContent(
                 content = message.content,
@@ -1262,14 +1274,6 @@ private fun CompactTranscriptRow(
                 maxLines = if (expanded) Int.MAX_VALUE else 6,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
-        if (message.toolCalls.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                message.toolCalls.forEach { toolCall ->
-                    VoiceToolStatusRow(toolCall)
-                }
-            }
         }
     }
 }
