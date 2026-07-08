@@ -1,5 +1,45 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Live rounds 3–4: validation hardening, delivery note, keepalive verdict
+
+Three live-monitored voice test rounds against the A–E batch surfaced (and
+fixed) two validator gaps and answered the keepalive unknown:
+
+**Round 3 — a queue acknowledgement streamed as the answer.** The summary
+response for a completed result was ANOTHER queue-ack ("It's queued and
+will start automatically once the Minnesota check finishes. I'll let you
+know…"), and early-commit approved it at 45 chars: substring matching let
+"will START automatically" count as evidence for an answer containing
+"starting". Fixes: whole-word evidence matching (`_summary_overlap_hits`),
+a 2-hit bar for the irreversible early commit (end validation keeps 1),
+queue/deferral phrases a final answer must never contain ("i'll let you
+know", "it's queued", "queued and will", …), an explicit phase-1
+wait-for-injection in `_start_next_queued_run` (ordering previously held by
+scheduling luck), and a floor-idle wait before the queued-start transition.
+
+**Round 4 — fallback delivered, model claimed the task was still running.**
+The validator caught the provider's deferral response and the fallback
+spoke the real answer (confirmed conversationally by the user's own
+follow-up) — but fallback/text-only deliveries bypass the provider's
+conversation, so its history still read "running in background". Fix:
+out-of-band deliveries set a pending delivery note attached to the next
+user turn's per-response instructions (composed with the session
+instructions) — task already completed, answer already spoken, don't
+re-deliver.
+
+**Keepalive verdict (empirical, live xAI on the relay host).** The 960s
+repro died at exactly 900.0s; the silent-PCM keepalive run ALSO died at
+exactly 900.0s — uncommitted buffer appends do not reset xAI's
+conversation-inactivity timer. POC doc revised; a `session.update`
+re-send is the next candidate (probe mode added; run pending), with a
+scheduled provider-socket reopen as the remaining fallback.
+
+Round-4 session also confirmed live: filler flagged
+(`acknowledgement_not_summary`) → fallback spoke "Your dog's name is
+Luna." → user's next utterance ("How did you know that so quick?") proved
+audibility; the earlier queue flow (queued ack → auto-start → both
+answers) and chip +1-queued/finished states verified on device.
+
 ## 2026-07-08 — Background-run A–E batch: streaming delivery, queue, respeak, chip presence
 
 Owner-approved full enhancement batch from the gap review (same day as the

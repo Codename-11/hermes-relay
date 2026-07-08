@@ -72,6 +72,26 @@ green. Needs relay deploy + APK install + live verify.
   "queued" spoken + "+1 queued" on chip → auto-starts with spoken
   transition; DONE-chip tap respeaks; compact-mode chip visible; exit
   leaves the chat breadcrumb; probe run completes (repro + keepalive).
+- **VERIFIED LIVE (rounds 3–4, 2026-07-08 PM):** queue flow end-to-end
+  (queued ack → auto-start → both answers), chip +1-queued/finished states,
+  fallback delivery + audibility (user's own follow-up confirmed), and two
+  new gaps found + fixed same-day (see DEVLOG: whole-word/2-hit validation,
+  next-turn delivery note).
+- **KEEPALIVE VERDICT — silent appends DON'T work on xAI (empirical
+  2026-07-08).** Both probe runs died at exactly 900.0s (with and without
+  240s silent-PCM pings): uncommitted `input_audio_buffer.append` does not
+  reset the conversation-inactivity timer. The shipped keepalive stays as
+  harmless scaffolding. **Open:** `session.update` re-send candidate
+  (`--keepalive-mode session_update`, probe run launched); if it fails, a
+  scheduled provider-socket reopen before the 900s deadline (needs context
+  reseed design). Update `_provider_keepalive_loop` to whichever works.
+- **NEW IDEA (from live rounds — consider next): verbatim delivery mode.**
+  grok-voice answered the final-delivery instruction with deferral chatter
+  in BOTH live rounds — the relay-TTS fallback is carrying real delivery
+  traffic already. Consider a `result_delivery: "speak_verbatim"` option
+  (skip the model round-trip entirely; relay TTS speaks the answer
+  immediately — instant, deterministic, always correct), with the
+  model-summarized version as the opt-in nicety instead of the default.
 
 ## Voice — on-device findings (2026-07-08 e2e realtime test)
 
