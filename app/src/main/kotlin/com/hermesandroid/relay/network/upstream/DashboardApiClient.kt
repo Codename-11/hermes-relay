@@ -276,12 +276,24 @@ class DashboardApiClient(
     /**
      * Full provider/model universe — REST twin of the TUI's `model.options` RPC.
      *
-     * [refresh] maps to upstream's explicit `GET /api/model/options?refresh=1`
-     * path, which refreshes dynamic/custom-provider catalogs on demand without
-     * probing every provider during normal picker opens.
+     * Always opts into `include_unconfigured=1`: newer upstream defaults this
+     * route to configured-providers-only, which would silently drop the
+     * unauthenticated skeleton rows Manage renders as its Keys-setup
+     * affordance. Older upstream returned the full universe by default and
+     * ignores the extra param, so both generations serve the same catalog.
+     *
+     * [refresh] maps to upstream's explicit `refresh=1` path, which refreshes
+     * dynamic/custom-provider catalogs on demand without probing every
+     * provider during normal picker opens.
      */
     suspend fun getModelOptions(refresh: Boolean = false): Result<JsonObject> =
-        getJsonObject(if (refresh) "/api/model/options?refresh=1" else "/api/model/options")
+        getJsonObject(
+            if (refresh) {
+                "/api/model/options?refresh=1&include_unconfigured=1"
+            } else {
+                "/api/model/options?include_unconfigured=1"
+            },
+        )
 
     /**
      * Assign the main model in `~/.hermes/config.yaml` (new sessions only).
