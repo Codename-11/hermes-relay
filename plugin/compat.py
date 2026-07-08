@@ -1,4 +1,14 @@
-"""Plugin-owned lifecycle for the legacy Hermes-Relay compatibility hook."""
+"""Plugin-owned lifecycle for the legacy Hermes-Relay compatibility hook.
+
+The hook (`hermes_relay_bootstrap.pth`) loads the plugin-owned bootstrap
+package at interpreter startup. The bootstrap now injects compatibility-only
+API surfaces — session search, memory, legacy skill detail/toggle, config,
+available-models — plus the slash-command middleware. It no longer provides
+sessions CRUD/messages/fork or read-only skill/toolset lists; those are
+native upstream (hermes-agent PR #33134 / #33016) and were retired from the
+bootstrap. Vanilla Hermes chat, Manage, and dashboard voice never need this
+hook.
+"""
 
 from __future__ import annotations
 
@@ -150,8 +160,11 @@ def collect_compat_status(
         "standard_path_requires_compat": False,
         "plugin_bootstrap_init": str(_plugin_bootstrap_init(plugin_dir)),
         "recommendation": (
-            "Leave compat uninstalled on modern Hermes unless an older server "
-            "still needs compatibility-only API routes or slash middleware."
+            "Leave compat uninstalled unless the server still needs the "
+            "compatibility-only API routes (session search, memory, legacy "
+            "skill detail/toggle, config, available-models) or slash "
+            "middleware. Sessions and skill/toolset lists are native "
+            "upstream and no longer bootstrap-provided."
         ),
     }
 
@@ -266,6 +279,11 @@ def render_compat_text(data: dict[str, Any]) -> str:
         lines.append(f"  {item['path']}")
     lines.append("")
     lines.append("Standard chat, Manage, and dashboard voice do not require compat.")
+    lines.append(
+        "Compat covers only session search, memory, legacy skill "
+        "detail/toggle, config, available-models, and slash middleware; "
+        "sessions and skill/toolset lists are native upstream."
+    )
     return "\n".join(lines)
 
 

@@ -38,8 +38,9 @@ relay-token voice fallback use relay pairing.
 When in doubt, start with Tailscale. It meets the `tailscale serve`
 contract PR #9295 will eventually land upstream — when that happens, our
 helper detects the canonical flag and no-ops with a log line, same
-auto-retire pattern `hermes_relay_bootstrap/` uses for session-API
-endpoints.
+auto-retire pattern `hermes_relay_bootstrap/` uses for its remaining
+compatibility endpoints (its session-API endpoints have since been fully
+retired in favor of native upstream).
 
 ## Setup
 
