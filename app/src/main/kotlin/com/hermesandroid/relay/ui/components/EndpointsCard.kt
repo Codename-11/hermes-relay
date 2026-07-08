@@ -44,8 +44,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.SurfaceSecurityKind
@@ -114,19 +116,25 @@ fun EndpointsCard(
     onEditRoute: ((EndpointCandidate) -> Unit)? = null,
     onRemoveRoute: ((EndpointCandidate) -> Unit)? = null,
 ) {
+    // Pre-resolve strings
+    val noRoutesStoredText = stringResource(R.string.endpoints_no_routes_stored)
+    val addRouteText = stringResource(R.string.endpoints_add_route)
+    val resolvingText = stringResource(R.string.endpoints_resolving)
+    val manualUntilDisconnectText = stringResource(R.string.endpoints_manual_until_disconnect)
+    val preferredText = stringResource(R.string.endpoints_preferred)
+    val automaticText = stringResource(R.string.endpoints_automatic)
+    val currentRouteText = stringResource(R.string.endpoints_current_route)
+
     if (endpoints.isEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = "No route candidates stored for this connection yet. " +
-                    "Add a remote route (Tailscale, public URL) for automatic " +
-                    "switching when the phone leaves this network — or scan a " +
-                    "v3 pairing QR (Hermes 0.4.2+) if you use Relay.",
+                text = noRoutesStoredText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (onAddRoute != null) {
                 TextButton(onClick = onAddRoute) {
-                    Text("Add route")
+                    Text(addRouteText)
                 }
             }
         }
@@ -139,13 +147,20 @@ fun EndpointsCard(
     val manualSwitchActive = manualOverrideRole != null &&
         !manualOverrideRole.equals(preferredRole, ignoreCase = true)
 
+    // Pre-resolve cancel manual switch string (needs preferredRole which may be null)
+    val cancelManualSwitchText = stringResource(R.string.endpoints_cancel_manual_switch)
+    val stopPreferringText = stringResource(R.string.endpoints_stop_preferring)
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Current: ${activeEndpoint?.displayLabel() ?: "Resolving"}" + when {
-                manualSwitchActive -> " · manual (until disconnect)"
-                manualOverrideRole != null -> " · preferred"
-                else -> " · automatic"
-            },
+            text = currentRouteText.format(
+                activeEndpoint?.displayLabel() ?: resolvingText,
+                when {
+                    manualSwitchActive -> manualUntilDisconnectText
+                    manualOverrideRole != null -> preferredText
+                    else -> automaticText
+                }
+            ),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -175,22 +190,20 @@ fun EndpointsCard(
         if (onAddRoute != null) {
             HorizontalDivider()
             TextButton(onClick = onAddRoute, modifier = Modifier.fillMaxWidth()) {
-                Text("Add route")
+                Text(addRouteText)
             }
         }
 
         if (manualSwitchActive) {
             HorizontalDivider()
             TextButton(onClick = onCancelUseNow, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "Cancel manual switch (back to ${preferredRole ?: "automatic"})",
-                )
+                Text(cancelManualSwitchText.format(preferredRole ?: automaticText))
             }
         }
         if (preferredRole != null) {
             HorizontalDivider()
             TextButton(onClick = onClearPreferred, modifier = Modifier.fillMaxWidth()) {
-                Text("Stop preferring $preferredRole (back to automatic)")
+                Text(stopPreferringText.format(preferredRole))
             }
         }
     }

@@ -2022,6 +2022,11 @@ private fun LoadedBody(
     onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
     onSectionAction: (DashboardSectionAction) -> Unit = {},
 ) {
+    // Pre-resolve action labels outside LazyColumn's non-Composable lambda
+    val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
+    val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
+    val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
+    val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -2035,11 +2040,6 @@ private fun LoadedBody(
                 ActionMessageCard(message)
             }
         }
-        // Pre-resolve action labels before constructing the sectionActions list (non-Composable when block)
-        val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
-        val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
-        val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
-        val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
         val sectionActions: List<Pair<DashboardSectionAction, String>> = when (section) {
             DashboardManagementSection.Models -> listOf(
                 DashboardSectionAction.ChangeMainModel to actionLabelChangeMainModel,

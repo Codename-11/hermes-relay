@@ -62,9 +62,11 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import com.hermesandroid.relay.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -147,22 +149,22 @@ private fun ChipRow(label: String, chip: @Composable () -> Unit) {
 private fun connectionChip(state: ConnectionState) {
     val (label, bg, fg) = when (state) {
         ConnectionState.Connected -> Triple(
-            "Connected",
+            stringResource(R.string.conn_info_connected),
             MaterialTheme.colorScheme.primaryContainer,
             MaterialTheme.colorScheme.onPrimaryContainer
         )
         ConnectionState.Connecting -> Triple(
-            "Connecting\u2026",
+            stringResource(R.string.conn_info_connecting),
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer
         )
         ConnectionState.Reconnecting -> Triple(
-            "Reconnecting\u2026",
+            stringResource(R.string.conn_info_reconnecting),
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer
         )
         ConnectionState.Disconnected -> Triple(
-            "Disconnected",
+            stringResource(R.string.conn_info_disconnected),
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -174,22 +176,22 @@ private fun connectionChip(state: ConnectionState) {
 private fun authStateChip(state: AuthState) {
     val (label, bg, fg) = when (state) {
         is AuthState.Unpaired -> Triple(
-            "Unpaired",
+            stringResource(R.string.conn_info_unpaired),
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant
         )
         is AuthState.Pairing -> Triple(
-            "Pairing\u2026",
+            stringResource(R.string.conn_info_pairing),
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer
         )
         is AuthState.Paired -> Triple(
-            "Paired",
+            stringResource(R.string.conn_info_paired),
             MaterialTheme.colorScheme.primaryContainer,
             MaterialTheme.colorScheme.onPrimaryContainer
         )
         is AuthState.Failed -> Triple(
-            "Failed: ${state.reason}",
+            stringResource(R.string.conn_info_failed_reason, state.reason),
             MaterialTheme.colorScheme.errorContainer,
             MaterialTheme.colorScheme.onErrorContainer
         )
@@ -235,31 +237,29 @@ fun SessionInfoSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Session",
+                text = stringResource(R.string.conn_info_session_title),
                 style = MaterialTheme.typography.titleLarge
             )
             Text(
-                text = "Session authenticates the app with the relay server. " +
-                    "The pairing code is consumed once, then the server issues a " +
-                    "long-lived token stored locally.",
+                text = stringResource(R.string.conn_info_session_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             HorizontalDivider()
 
-            ChipRow(label = "State") { authStateChip(authState) }
+            ChipRow(label = stringResource(R.string.conn_info_state)) { authStateChip(authState) }
 
-            InfoRow(label = "Relay URL", value = relayUrl, monospace = true)
+            InfoRow(label = stringResource(R.string.conn_info_relay_url), value = relayUrl, monospace = true)
 
-            ChipRow(label = "Connection") { connectionChip(relayConnectionState) }
+            ChipRow(label = stringResource(R.string.conn_info_connection)) { connectionChip(relayConnectionState) }
 
             HorizontalDivider()
 
             // Pairing code — big monospace + copy
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Pairing code",
+                    text = stringResource(R.string.conn_info_pairing_code),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -278,14 +278,14 @@ fun SessionInfoSheet(
                         scope.launch {
                             clipboard.setClipEntry(
                                 ClipEntry(
-                                    ClipData.newPlainText("Pairing code", pairingCode)
+                                    ClipData.newPlainText(stringResource(R.string.conn_info_pairing_code), pairingCode)
                                 )
                             )
                         }
                     }) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy pairing code"
+                            contentDescription = stringResource(R.string.conn_info_copy_pairing_code)
                         )
                     }
                 }
@@ -294,19 +294,19 @@ fun SessionInfoSheet(
             HorizontalDivider()
 
             InfoRow(
-                label = "Device",
+                label = stringResource(R.string.conn_info_device),
                 value = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
             )
 
             InfoRow(
-                label = "Session token present",
-                value = if (authState is AuthState.Paired) "Yes" else "No"
+                label = stringResource(R.string.conn_info_session_token_present),
+                value = if (authState is AuthState.Paired) stringResource(R.string.conn_info_yes) else stringResource(R.string.conn_info_no)
             )
 
             InfoRow(
-                label = "Agent profiles",
+                label = stringResource(R.string.conn_info_agent_profiles),
                 value = if (agentProfiles.isEmpty()) {
-                    "(none)"
+                    stringResource(R.string.conn_info_none)
                 } else {
                     agentProfiles.joinToString(", ") { it.name }
                 }
@@ -316,26 +316,26 @@ fun SessionInfoSheet(
             pairedSession?.let { paired ->
                 HorizontalDivider()
                 val expiryLabel = when {
-                    paired.expiresAt == null -> "Never"
+                    paired.expiresAt == null -> stringResource(R.string.conn_info_never)
                     else -> java.text.DateFormat
                         .getDateInstance(java.text.DateFormat.MEDIUM)
                         .format(java.util.Date(paired.expiresAt * 1000L))
                 }
-                InfoRow(label = "Expires", value = expiryLabel)
+                InfoRow(label = stringResource(R.string.conn_info_expires), value = expiryLabel)
 
                 if (paired.grants.isNotEmpty()) {
                     val grantsLabel = paired.grants.entries.joinToString(", ") { (k, v) ->
-                        if (v == null) "$k: never" else k
+                        if (v == null) stringResource(R.string.conn_info_grant_never, k) else k
                     }
-                    InfoRow(label = "Channel grants", value = grantsLabel)
+                    InfoRow(label = stringResource(R.string.conn_info_channel_grants), value = grantsLabel)
                 }
 
                 val transportLabel = paired.transportHint?.uppercase() ?: "—"
-                InfoRow(label = "Transport", value = transportLabel)
+                InfoRow(label = stringResource(R.string.conn_info_transport), value = transportLabel)
 
                 InfoRow(
-                    label = "Key storage",
-                    value = if (paired.hasHardwareStorage) "Hardware (StrongBox)" else "Hardware (TEE)"
+                    label = stringResource(R.string.conn_info_key_storage),
+                    value = if (paired.hasHardwareStorage) stringResource(R.string.conn_info_hardware_strongbox) else stringResource(R.string.conn_info_hardware_tee)
                 )
             }
 
@@ -352,13 +352,13 @@ fun SessionInfoSheet(
                     },
                     modifier = Modifier.fillMaxWidth(0.5f)
                 ) {
-                    Text("Clear Session")
+                    Text(stringResource(R.string.conn_info_clear_session))
                 }
                 OutlinedButton(
                     onClick = { connectionViewModel.regeneratePairingCode() },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Regenerate Code")
+                    Text(stringResource(R.string.conn_info_regenerate_code))
                 }
             }
 
@@ -412,31 +412,29 @@ fun ApiServerInfoSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "API server",
+                text = stringResource(R.string.conn_info_api_server_title),
                 style = MaterialTheme.typography.titleLarge
             )
             Text(
-                text = "Chat traffic goes directly from the app to the Hermes " +
-                    "API server over HTTP/SSE. The relay is only involved for " +
-                    "terminal and bridge channels.",
+                text = stringResource(R.string.conn_info_api_server_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             HorizontalDivider()
 
-            InfoRow(label = "URL", value = apiServerUrl, monospace = true)
+            InfoRow(label = stringResource(R.string.conn_info_url), value = apiServerUrl, monospace = true)
 
-            ChipRow(label = "Reachable") {
+            ChipRow(label = stringResource(R.string.conn_info_reachable)) {
                 val (label, bg, fg) = if (apiServerReachable) {
                     Triple(
-                        "Yes",
+                        stringResource(R.string.conn_info_yes),
                         MaterialTheme.colorScheme.primaryContainer,
                         MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 } else {
                     Triple(
-                        "No",
+                        stringResource(R.string.conn_info_no),
                         MaterialTheme.colorScheme.errorContainer,
                         MaterialTheme.colorScheme.onErrorContainer
                     )
@@ -444,15 +442,15 @@ fun ApiServerInfoSheet(
                 StatusChip(text = label, background = bg, contentColor = fg)
             }
 
-            InfoRow(label = "Streaming mode", value = chatMode.toString())
-            InfoRow(label = "Route preference", value = streamingEndpoint)
+            InfoRow(label = stringResource(R.string.conn_info_streaming_mode), value = chatMode.toString())
+            InfoRow(label = stringResource(R.string.conn_info_route_preference), value = streamingEndpoint)
             InfoRow(
-                label = "API key set",
-                value = if (apiKeyPresent) "Yes (hidden)" else "No"
+                label = stringResource(R.string.conn_info_api_key_set),
+                value = if (apiKeyPresent) stringResource(R.string.conn_info_yes_hidden) else stringResource(R.string.conn_info_no)
             )
             InfoRow(
-                label = "Last health check",
-                value = if (apiServerReachable) "Just now (ok)" else "Just now (failed)"
+                label = stringResource(R.string.conn_info_last_health_check),
+                value = if (apiServerReachable) stringResource(R.string.conn_info_just_now_ok) else stringResource(R.string.conn_info_just_now_failed)
             )
 
             if (testResult != null) {
@@ -468,7 +466,7 @@ fun ApiServerInfoSheet(
             OutlinedButton(
                 onClick = {
                     testing = true
-                    testResult = "Testing\u2026"
+                    testResult = stringResource(R.string.conn_info_testing)
                     connectionViewModel.testApiConnection { _success, message ->
                         testing = false
                         testResult = message
@@ -477,7 +475,7 @@ fun ApiServerInfoSheet(
                 enabled = !testing,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (testing) "Testing\u2026" else "Test connection")
+                Text(if (testing) stringResource(R.string.conn_info_testing) else stringResource(R.string.conn_info_test_connection))
             }
 
             HorizontalDivider()
@@ -526,21 +524,19 @@ fun RelayInfoSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Relay",
+                text = stringResource(R.string.conn_info_relay_title),
                 style = MaterialTheme.typography.titleLarge
             )
             Text(
-                text = "The relay is a WebSocket server that brokers terminal " +
-                    "and bridge channels between the app and the host. Connect " +
-                    "automatically after successful pairing.",
+                text = stringResource(R.string.conn_info_relay_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             HorizontalDivider()
 
-            InfoRow(label = "URL", value = relayUrl, monospace = true)
-            ChipRow(label = "Connection state") { connectionChip(relayConnectionState) }
+            InfoRow(label = stringResource(R.string.conn_info_url), value = relayUrl, monospace = true)
+            ChipRow(label = stringResource(R.string.conn_info_connection_state)) { connectionChip(relayConnectionState) }
 
             if (isInsecureConnection) {
                 Row(
@@ -558,7 +554,7 @@ fun RelayInfoSheet(
                         tint = MaterialTheme.colorScheme.onErrorContainer
                     )
                     Text(
-                        text = "ws:// \u2014 traffic not encrypted",
+                        text = stringResource(R.string.conn_info_ws_unencrypted),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
@@ -566,12 +562,12 @@ fun RelayInfoSheet(
             }
 
             InfoRow(
-                label = "Insecure mode allowed",
-                value = if (insecureMode) "Yes" else "No"
+                label = stringResource(R.string.conn_info_insecure_mode_allowed),
+                value = if (insecureMode) stringResource(R.string.conn_info_yes) else stringResource(R.string.conn_info_no)
             )
             InfoRow(
-                label = "Relay enabled (feature flag)",
-                value = if (relayEnabled) "Yes" else "No"
+                label = stringResource(R.string.conn_info_relay_enabled_flag),
+                value = if (relayEnabled) stringResource(R.string.conn_info_yes) else stringResource(R.string.conn_info_no)
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -589,14 +585,14 @@ fun RelayInfoSheet(
                     enabled = relayEnabled && !isConnected,
                     modifier = Modifier.fillMaxWidth(0.5f)
                 ) {
-                    Text("Connect")
+                    Text(stringResource(R.string.conn_info_connect))
                 }
                 OutlinedButton(
                     onClick = { connectionViewModel.disconnectRelay() },
                     enabled = relayEnabled && isConnected,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Disconnect")
+                    Text(stringResource(R.string.conn_info_disconnect))
                 }
             }
 
@@ -756,6 +752,19 @@ fun AgentInfoSheet(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
 
+    // Pre-resolve strings for non-composable contexts (toast function)
+    val usingServerDefaultToast = stringResource(R.string.conn_info_using_server_default)
+    val switchedToProfileToast = stringResource(R.string.conn_info_switched_to_profile)
+    val switchedToProfileModelToast = stringResource(R.string.conn_info_switched_to_profile_model)
+    val switchedToProfileSoulToast = stringResource(R.string.conn_info_switched_to_profile_soul)
+    val personalityClearedToast = stringResource(R.string.conn_info_personality_cleared)
+    val personalityToast = stringResource(R.string.conn_info_personality)
+    val usingServerDefaultModelToast = stringResource(R.string.conn_info_using_server_default_model)
+    val modelToast = stringResource(R.string.conn_info_model)
+    val switchedToConnectionToast = stringResource(R.string.conn_info_switched_to_connection)
+    val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
+    val pairingCodeLabel = stringResource(R.string.conn_info_pairing_code)
+
     // Transient confirmation when the user picks a different profile or
     // personality from inside the sheet. Routed to the top info-banner
     // (UiMessageBus) instead of the snackbar so these frequent tap acks slide
@@ -833,11 +842,11 @@ fun AgentInfoSheet(
                     .firstOrNull { it.gatewayRunning }
 
                 CollapsiblePickerSection(
-                    title = "Profile",
-                    hint = "Host-side Hermes contexts",
+                    title = stringResource(R.string.conn_info_profile),
+                    hint = stringResource(R.string.conn_info_profile_hint),
                     currentValue = profileDisplayAlias
                         ?: AgentDisplay.profileDisplayName(selectedProfile)
-                        ?: "Server default",
+                        ?: stringResource(R.string.conn_info_server_default),
                 ) {
 
                   if (isProfileLocked) {
@@ -847,10 +856,10 @@ fun AgentInfoSheet(
                     // other value is a profile name (resolved to its display name).
                     val lockedDisplayName = when {
                         lockedProfileName == null ->
-                            "Server default"
+                            stringResource(R.string.conn_info_server_default)
                         AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
                             lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
-                            "Server default"
+                            stringResource(R.string.conn_info_server_default)
                         else ->
                             agentProfiles
                                 .firstOrNull { it.name == lockedProfileName }
@@ -868,10 +877,10 @@ fun AgentInfoSheet(
                         }
                     }
                     val defaultDotA11y = serverDefaultProfile?.let { profile ->
-                        if (profile.gatewayRunning) "Gateway running" else "Gateway idle"
+                        if (profile.gatewayRunning) stringResource(R.string.conn_info_gateway_running) else stringResource(R.string.conn_info_gateway_idle)
                     }
                     val defaultRunning = serverDefaultProfile?.let { profile ->
-                        if (profile.gatewayRunning) " \u2022 Running" else " \u2022 Idle"
+                        if (profile.gatewayRunning) stringResource(R.string.conn_info_running_suffix) else stringResource(R.string.conn_info_idle_suffix)
                     }.orEmpty()
                     val defaultDisplay = if (selectedProfile == null && profileDisplayAlias != null) {
                         profileDisplayAlias
@@ -886,11 +895,16 @@ fun AgentInfoSheet(
                             defaultDisplay,
                             profile.model.takeIf { it.isNotBlank() }?.plus(defaultRunning),
                         ).joinToString(" \u2022 ")
-                    } ?: "Use this connection's default profile"
+                    } ?: stringResource(R.string.conn_info_use_default_profile)
                     val soulBg = MaterialTheme.colorScheme.primaryContainer
                     val soulFg = MaterialTheme.colorScheme.onPrimaryContainer
                     val skillsBg = MaterialTheme.colorScheme.surfaceVariant
                     val skillsFg = MaterialTheme.colorScheme.onSurfaceVariant
+
+                    // Pre-resolve strings for Profile section
+                    val serverDefaultPrimary = stringResource(R.string.conn_info_server_default)
+                    val usesDefaultProfileTertiary = stringResource(R.string.conn_info_uses_default_profile)
+                    val skillsBadgeText = stringResource(R.string.conn_info_skills_count)
 
                     // "Server default" is the single selectable state for
                     // the root Hermes config. If the relay advertises a
@@ -898,9 +912,9 @@ fun AgentInfoSheet(
                     // as Victor), fold its metadata into this row instead of
                     // creating a second chat/voice/session scope.
                     ProfileRadioRow(
-                        primary = "Server default",
+                        primary = serverDefaultPrimary,
                         secondary = defaultSecondary,
-                        tertiary = "Uses this connection's default profile",
+                        tertiary = usesDefaultProfileTertiary,
                         selected = selectedProfile == null,
                         enabled = !isStreaming,
                         leadingDotColor = defaultDotColor,
@@ -910,14 +924,14 @@ fun AgentInfoSheet(
                                 {
                                     if (profile.skillCount > 0) {
                                         ProfileMetadataBadge(
-                                            text = "${profile.skillCount} skills",
+                                            text = skillsBadgeText.format(profile.skillCount),
                                             background = skillsBg,
                                             contentColor = skillsFg,
                                         )
                                     }
                                     if (profile.hasSoul) {
                                         ProfileMetadataBadge(
-                                            text = "SOUL",
+                                            text = stringResource(R.string.conn_info_soul),
                                             background = soulBg,
                                             contentColor = soulFg,
                                         )
@@ -933,7 +947,7 @@ fun AgentInfoSheet(
                                 // Gateway turns carry no per-request profile —
                                 // hot-swap the live session server-side too.
                                 chatViewModel.activateGatewayProfile(null)
-                                toast("Using Server default")
+                                toast(usingServerDefaultToast)
                             }
                         },
                     )
@@ -954,14 +968,14 @@ fun AgentInfoSheet(
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                         }
                         val dotA11y = if (profile.gatewayRunning) {
-                            "Gateway running"
+                            stringResource(R.string.conn_info_gateway_running)
                         } else {
-                            "Gateway idle"
+                            stringResource(R.string.conn_info_gateway_idle)
                         }
                         val runningLabel = if (profile.gatewayRunning) {
-                            " \u2022 Running"
+                            stringResource(R.string.conn_info_running_suffix)
                         } else {
-                            " \u2022 Idle"
+                            stringResource(R.string.conn_info_idle_suffix)
                         }
                         val isApparentActive =
                             apparentActiveProfile?.name == profile.name
@@ -995,6 +1009,15 @@ fun AgentInfoSheet(
                         // "active on server" hint when this row matches
                         // the apparent default.
                         val tertiaryLine: String? = null
+
+                        // Pre-resolve strings for profile badges
+                        val activeBadgeText = stringResource(R.string.conn_info_active)
+                        val skillsBadgeTextFormat = stringResource(R.string.conn_info_skills_count)
+                        val soulBadgeText = stringResource(R.string.conn_info_soul)
+                        val profileApiActiveSuffix = stringResource(R.string.conn_info_profile_api_active_suffix)
+                        val profileModelSoulSuffix = stringResource(R.string.conn_info_profile_model_soul_suffix)
+                        val profileModelSuffix = stringResource(R.string.conn_info_profile_model_suffix)
+
                         ProfileRadioRow(
                             primary = primaryLabel,
                             secondary = secondaryLine,
@@ -1022,21 +1045,21 @@ fun AgentInfoSheet(
                                     // leading dot still reinforces it).
                                     if (profile.gatewayRunning) {
                                         ProfileMetadataBadge(
-                                            text = "Active",
+                                            text = activeBadgeText,
                                             background = MaterialTheme.colorScheme.primary,
                                             contentColor = MaterialTheme.colorScheme.onPrimary,
                                         )
                                     }
                                     if (profile.skillCount > 0) {
                                         ProfileMetadataBadge(
-                                            text = "${profile.skillCount} skills",
+                                            text = skillsBadgeTextFormat.format(profile.skillCount),
                                             background = skillsBg,
                                             contentColor = skillsFg,
                                         )
                                     }
                                     if (profile.hasSoul) {
                                         ProfileMetadataBadge(
-                                            text = "SOUL",
+                                            text = soulBadgeText,
                                             background = soulBg,
                                             contentColor = soulFg,
                                         )
@@ -1052,18 +1075,19 @@ fun AgentInfoSheet(
                                     chatViewModel.activateGatewayProfile(profile)
                                     val display = primaryLabel
                                     val suffix = if (profile.hasIsolatedApi) {
-                                        " — profile API active"
+                                        profileApiActiveSuffix
                                     } else if (profile.systemMessage?.isNotBlank() == true) {
-                                        " — model + SOUL applied"
+                                        profileModelSoulSuffix
                                     } else {
-                                        " — model applied"
+                                        profileModelSuffix
                                     }
-                                    toast("Switched to $display$suffix")
+                                    toast(switchedToProfileToast.format(display) + suffix)
                                 }
                             },
                         )
                     }
 
+                    val inspectProfileText = stringResource(R.string.conn_info_inspect_profile)
                     val inspectorTarget = selectedProfile
                         ?: serverDefaultProfile
                         ?: selectableProfiles.firstOrNull()
@@ -1075,13 +1099,13 @@ fun AgentInfoSheet(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Inspect ${AgentDisplay.profileDisplayName(profile) ?: profile.name}")
+                            Text(inspectProfileText.format(AgentDisplay.profileDisplayName(profile) ?: profile.name))
                         }
                     }
 
                     if (profileOverridesPersonality) {
                         Text(
-                            text = "This profile's system message overrides the personality below.",
+                            text = stringResource(R.string.conn_info_profile_overrides_personality),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp, start = 4.dp),
@@ -1097,11 +1121,11 @@ fun AgentInfoSheet(
                 // it doesn't feel absent; once settled with none it cleanly
                 // disappears (the user is simply on the server default).
                 CollapsiblePickerSection(
-                    title = "Profile",
-                    hint = "Host-side Hermes contexts",
-                    currentValue = "Server default",
+                    title = stringResource(R.string.conn_info_profile),
+                    hint = stringResource(R.string.conn_info_profile_hint),
+                    currentValue = stringResource(R.string.conn_info_server_default),
                 ) {
-                    PickerLoadingRow("Loading profiles…")
+                    PickerLoadingRow(stringResource(R.string.conn_info_loading_profiles))
                 }
                 HorizontalDivider()
             }
@@ -1112,11 +1136,17 @@ fun AgentInfoSheet(
             // choice for after they clear the profile. No alpha on the entire
             // Column because the section header would look broken.
             CollapsiblePickerSection(
-                title = "Personality",
-                hint = "System-prompt preset on this agent",
+                title = stringResource(R.string.conn_info_personality_title),
+                hint = stringResource(R.string.conn_info_personality_hint),
                 currentValue = AgentDisplay.personalityLabel(selectedPersonality, defaultPersonality),
                 modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
             ) {
+
+                // Pre-resolve strings for Personality section
+                val nonePrimary = stringResource(R.string.conn_info_none)
+                val noPersonalityOverlay = stringResource(R.string.conn_info_no_personality_overlay)
+                val loadingPersonalities = stringResource(R.string.conn_info_loading_personalities)
+                val defaultSuffix = stringResource(R.string.conn_info_default_suffix)
 
                 // None row — the explicit "no personality overlay" state
                 // (upstream `/personality none`). On the gateway this is
@@ -1126,15 +1156,15 @@ fun AgentInfoSheet(
                 // configured default (if any) shows below as the row tagged
                 // "(default)", highlighted whenever it's the active one.
                 ProfileRadioRow(
-                    primary = "None",
-                    secondary = "No personality overlay",
+                    primary = nonePrimary,
+                    secondary = noPersonalityOverlay,
                     selected = selectedPersonality == "none" || selectedPersonality == "neutral",
                     enabled = !isStreaming,
                     onSelect = {
                         if (selectedPersonality != "none") {
                             chatViewModel.selectPersonality("none")
                             if (!profileOverridesPersonality) {
-                                toast("Personality cleared")
+                                toast(personalityClearedToast)
                             }
                         }
                     },
@@ -1143,14 +1173,14 @@ fun AgentInfoSheet(
                 if (personalityNames.isEmpty() && pickerListsSettling) {
                     // Named personalities still loading — bounded so a server with
                     // none (common) doesn't spin forever; "None" above is always valid.
-                    PickerLoadingRow("Loading personalities…")
+                    PickerLoadingRow(loadingPersonalities)
                 }
 
                 personalityNames.forEach { name ->
                     val isServerDefault = name.equals(defaultPersonality, ignoreCase = true)
                     ProfileRadioRow(
                         primary = name.replaceFirstChar { it.uppercase() } +
-                            if (isServerDefault) " (default)" else "",
+                            if (isServerDefault) defaultSuffix else "",
                         secondary = null,
                         selected = selectedPersonality == name,
                         enabled = !isStreaming,
@@ -1159,7 +1189,7 @@ fun AgentInfoSheet(
                                 chatViewModel.selectPersonality(name)
                                 if (!profileOverridesPersonality) {
                                     val display = name.replaceFirstChar { it.uppercase() }
-                                    toast("Personality: $display")
+                                    toast(personalityToast.format(display))
                                 }
                             }
                         },
@@ -1176,7 +1206,7 @@ fun AgentInfoSheet(
                     selectedPersonality != "default" && selectedPersonality != "none"
                 ) {
                     Text(
-                        text = "Profile SOUL overrides personality while active.",
+                        text = stringResource(R.string.conn_info_soul_overrides_personality),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp, start = 4.dp),
@@ -1205,27 +1235,34 @@ fun AgentInfoSheet(
             // section (an absent section read as "no model control at all").
             run {
                 HorizontalDivider()
+
+                // Pre-resolve strings for Model section
+                val modelTitle = stringResource(R.string.conn_info_model_title)
+                val modelHint = stringResource(R.string.conn_info_model_hint)
+                val serverDefaultModel = stringResource(R.string.conn_info_server_default)
+                val loadingModels = stringResource(R.string.conn_info_loading_models)
+
                 CollapsiblePickerSection(
-                    title = "Model",
-                    hint = "Provider model for this session",
-                    currentValue = selectedModelOverride ?: "Server default",
+                    title = modelTitle,
+                    hint = modelHint,
+                    currentValue = selectedModelOverride ?: serverDefaultModel,
                 ) {
                     ProfileRadioRow(
-                        primary = "Server default",
+                        primary = serverDefaultModel,
                         secondary = AgentDisplay.displayModelName(serverModelName),
                         selected = selectedModelOverride == null,
                         enabled = !isStreaming,
                         onSelect = {
                             if (selectedModelOverride != null) {
                                 chatViewModel.selectModel(null)
-                                toast("Using server default model")
+                                toast(usingServerDefaultModelToast)
                             }
                         },
                     )
                     if (modelProviders.isEmpty() && sseModelOptions.isEmpty() && pickerListsSettling) {
                         // List still loading — honest, BOUNDED "more coming" cue
                         // (settles to nothing if the server exposes no extra models).
-                        PickerLoadingRow("Loading available models…")
+                        PickerLoadingRow(loadingModels)
                     }
                     if (modelProviders.isNotEmpty()) {
                         // Gateway: the curated provider→model groups the desktop
@@ -1249,7 +1286,7 @@ fun AgentInfoSheet(
                                         onSelect = {
                                             if (selectedModelOverride != model) {
                                                 chatViewModel.selectModel(model, provider.slug)
-                                                toast("Model: $model")
+                                                toast(modelToast.format(model))
                                             }
                                         },
                                     )
@@ -1266,7 +1303,7 @@ fun AgentInfoSheet(
                                 onSelect = {
                                     if (selectedModelOverride != model) {
                                         chatViewModel.selectModel(model)
-                                        toast("Model: $model")
+                                        toast(modelToast.format(model))
                                     }
                                 },
                             )
@@ -1283,11 +1320,19 @@ fun AgentInfoSheet(
             // loads, or cleanly disabled WITH the reason when the gateway isn't
             // reachable / needs sign-in — so the capability is always visible.
             run {
+                // Pre-resolve strings for Safety & Speed section
+                val gatewayUnavailableApiServer = stringResource(R.string.conn_info_gateway_unavailable_api_server)
+                val gatewayUnavailableSignIn = stringResource(R.string.conn_info_gateway_unavailable_sign_in)
+                val safetySpeedTitle = stringResource(R.string.conn_info_safety_speed_title)
+                val yoloModeTitle = stringResource(R.string.conn_info_yolo_mode_title)
+                val yoloModeDesc = stringResource(R.string.conn_info_yolo_mode_desc)
+                val approvalsOff = stringResource(R.string.conn_info_approvals_off)
+                val fastModeTitle = stringResource(R.string.conn_info_fast_mode_title)
+                val fastModeDesc = stringResource(R.string.conn_info_fast_mode_desc)
+
                 val gatewayUnavailableReason: String? = when (gatewayAvailability) {
-                    GatewayAvailability.Unreachable ->
-                        "Available over the gateway transport — this connection uses the API server."
-                    GatewayAvailability.SignInRequired ->
-                        "Sign in under Manage to control these."
+                    GatewayAvailability.Unreachable -> gatewayUnavailableApiServer
+                    GatewayAvailability.SignInRequired -> gatewayUnavailableSignIn
                     // Ready, or Unknown (still probing) → available / loading.
                     else -> null
                 }
@@ -1299,7 +1344,7 @@ fun AgentInfoSheet(
 
                 HorizontalDivider()
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel(title = "Safety & speed", hint = null)
+                    SectionLabel(title = safetySpeedTitle, hint = null)
                     if (gatewayUnavailableReason != null) {
                         Text(
                             text = gatewayUnavailableReason,
@@ -1316,9 +1361,9 @@ fun AgentInfoSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("YOLO mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(yoloModeTitle, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                text = "Bypasses command approvals — Hermes runs tools without asking.",
+                                text = yoloModeDesc,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (yoloEnabled == true) {
                                     MaterialTheme.colorScheme.error
@@ -1352,7 +1397,7 @@ fun AgentInfoSheet(
                                 tint = MaterialTheme.colorScheme.onErrorContainer,
                             )
                             Text(
-                                text = "Approvals are OFF for this session.",
+                                text = approvalsOff,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
@@ -1366,9 +1411,9 @@ fun AgentInfoSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Fast mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(fastModeTitle, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                text = "Priority service tier — lower latency where the model supports it.",
+                                text = fastModeDesc,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1394,31 +1439,34 @@ fun AgentInfoSheet(
             // needed — already being collected via ChatViewModel's
             // stream lifecycle hooks).
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionLabel(title = "Session", hint = null)
+                // Pre-resolve strings for Session section
+                val sessionTitle = stringResource(R.string.conn_info_session_title)
+                val sessionNameLabel = stringResource(R.string.conn_info_name)
+                val messagesLabel = stringResource(R.string.conn_info_messages)
+                val tokensLabel = stringResource(R.string.conn_info_tokens)
+                val tokensInOut = stringResource(R.string.conn_info_tokens_in_out, appStats.currentSessionTokensIn, appStats.currentSessionTokensOut)
+                val avgTtftLabel = stringResource(R.string.conn_info_avg_ttft)
+
+                SectionLabel(title = sessionTitle, hint = null)
 
                 val sessionLabel = currentSession?.let {
                     it.title?.takeIf { t -> t.isNotBlank() }
                         ?: it.sessionId.take(12)
                 } ?: "—"
-                InfoRow(label = "Name", value = sessionLabel)
-                InfoRow(label = "Messages", value = messages.size.toString())
+                InfoRow(label = sessionNameLabel, value = sessionLabel)
+                InfoRow(label = messagesLabel, value = messages.size.toString())
 
                 // Token counters only — skip internal accumulator fields.
                 // Zero values are informative here ("no usage yet this
                 // session") so we don't hide them.
                 InfoRow(
-                    label = "Tokens",
-                    value = buildString {
-                        append(appStats.currentSessionTokensIn.toString())
-                        append(" in · ")
-                        append(appStats.currentSessionTokensOut.toString())
-                        append(" out")
-                    },
+                    label = tokensLabel,
+                    value = tokensInOut,
                 )
                 if (appStats.avgResponseTimeMs > 0L) {
                     InfoRow(
-                        label = "Avg TTFT",
-                        value = "${appStats.avgResponseTimeMs} ms",
+                        label = avgTtftLabel,
+                        value = stringResource(R.string.conn_info_ttft_ms, appStats.avgResponseTimeMs),
                     )
                 }
             }
@@ -1427,9 +1475,17 @@ fun AgentInfoSheet(
 
             // ---- Connection section (condensed) ----
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Pre-resolve strings for Connection section
+                val connectionTitle = stringResource(R.string.conn_info_connection_title)
+                val switchServersHint = stringResource(R.string.conn_info_switch_servers_hint)
+                val authLabel = stringResource(R.string.conn_info_auth)
+                val apiReachableLabel = stringResource(R.string.conn_info_api_reachable)
+                val pairedLabel = stringResource(R.string.conn_info_paired)
+                val hermesLabel = stringResource(R.string.conn_info_hermes)
+
                 SectionLabel(
-                    title = "Connection",
-                    hint = if (allConnections.size >= 2) "Switch between paired servers" else null,
+                    title = connectionTitle,
+                    hint = if (allConnections.size >= 2) switchServersHint else null,
                 )
 
                 // ---- Session-path summary (always-visible, top of section) ----
@@ -1482,8 +1538,8 @@ fun AgentInfoSheet(
                             val hostname = com.hermesandroid.relay.data.Connection
                                 .extractDefaultLabel(connection.apiServerUrl)
                             val statusLine = when {
-                                connection.pairedAt == null -> "$hostname • Hermes"
-                                else -> "$hostname • Paired"
+                                connection.pairedAt == null -> stringResource(R.string.conn_info_hostname_hermes, hostname)
+                                else -> stringResource(R.string.conn_info_hostname_paired, hostname)
                             }
                             ProfileRadioRow(
                                 primary = connection.label,
@@ -1493,7 +1549,7 @@ fun AgentInfoSheet(
                                 onSelect = {
                                     if (!isActive) {
                                         connectionViewModel.switchConnection(connection.id)
-                                        toast("Switched to ${connection.label}")
+                                        toast(switchedToConnectionToast.format(connection.label))
                                     }
                                 },
                             )
@@ -1501,17 +1557,17 @@ fun AgentInfoSheet(
                     }
                 }
 
-                ChipRow(label = "Auth") { authStateChip(authState) }
-                ChipRow(label = "API reachable") {
+                ChipRow(label = authLabel) { authStateChip(authState) }
+                ChipRow(label = apiReachableLabel) {
                     val (label, bg, fg) = if (apiServerReachable) {
                         Triple(
-                            "Yes",
+                            stringResource(R.string.conn_info_yes),
                             MaterialTheme.colorScheme.primaryContainer,
                             MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                     } else {
                         Triple(
-                            "No",
+                            stringResource(R.string.conn_info_no),
                             MaterialTheme.colorScheme.errorContainer,
                             MaterialTheme.colorScheme.onErrorContainer,
                         )
@@ -1528,7 +1584,7 @@ fun AgentInfoSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Pairing code",
+                            text = pairingCodeLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1544,7 +1600,7 @@ fun AgentInfoSheet(
                                     clipboard.setClipEntry(
                                         ClipEntry(
                                             ClipData.newPlainText(
-                                                "Pairing code",
+                                                pairingCodeLabel,
                                                 pairingCode,
                                             )
                                         )
@@ -1553,7 +1609,7 @@ fun AgentInfoSheet(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy pairing code",
+                                    contentDescription = copyPairingCodeDesc,
                                 )
                             }
                         }
@@ -1593,7 +1649,7 @@ fun AgentInfoSheet(
                     contentDescription = null,
                 )
                 Spacer(modifier = Modifier.size(8.dp))
-                Text("Manage connections\u2026")
+                Text(stringResource(R.string.conn_info_manage_connections))
             }
         }
     }
@@ -1637,6 +1693,8 @@ private fun CollapsiblePickerSection(
     content: @Composable () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val collapseDesc = stringResource(R.string.conn_info_collapse, title)
+    val expandDesc = stringResource(R.string.conn_info_expand, title)
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1663,7 +1721,7 @@ private fun CollapsiblePickerSection(
             }
             Icon(
                 imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                contentDescription = if (expanded) collapseDesc else expandDesc,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -1688,15 +1746,22 @@ private fun DisplayAliasSection(
     val normalizedDraft = AgentDisplay.localDisplayAlias(draft)
     val hasChange = normalizedDraft != currentAlias
 
+    val localDisplayNameTitle = stringResource(R.string.conn_info_local_display_name)
+    val phoneLabelHint = stringResource(R.string.conn_info_phone_label)
+    val notSetValue = stringResource(R.string.conn_info_not_set)
+    val nameLabel = stringResource(R.string.conn_info_name)
+    val clearText = stringResource(R.string.conn_info_clear)
+    val saveText = stringResource(R.string.conn_info_save)
+
     CollapsiblePickerSection(
-        title = "Local display name",
-        hint = "Phone label",
-        currentValue = currentAlias ?: "Not set",
+        title = localDisplayNameTitle,
+        hint = phoneLabelHint,
+        currentValue = currentAlias ?: notSetValue,
     ) {
         OutlinedTextField(
             value = draft,
             onValueChange = { draft = it },
-            label = { Text("Name") },
+            label = { Text(nameLabel) },
             placeholder = { Text(fallbackName) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -1713,7 +1778,7 @@ private fun DisplayAliasSection(
                 },
                 enabled = currentAlias != null,
             ) {
-                Text("Clear")
+                Text(clearText)
             }
             OutlinedButton(
                 onClick = { onSave(normalizedDraft) },
@@ -1875,8 +1940,10 @@ private fun ProfileRadioRow(
                 // description is actually clipped (or already expanded), so a
                 // short description that fits gets no pointless expand link.
                 if (secondaryExpandable && enabled && (descriptionOverflows || descriptionExpanded)) {
+                    val showLessText = stringResource(R.string.conn_info_show_less)
+                    val moreText = stringResource(R.string.conn_info_more)
                     Text(
-                        text = if (descriptionExpanded) "Show less" else "More",
+                        text = if (descriptionExpanded) showLessText else moreText,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable {
@@ -1921,6 +1988,8 @@ private fun ProfileRadioRow(
  */
 @Composable
 private fun LockedProfileRow(lockedDisplayName: String) {
+    val lockedToText = stringResource(R.string.conn_info_locked_to, lockedDisplayName)
+    val manageLockHint = stringResource(R.string.conn_info_manage_lock_hint)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1936,12 +2005,12 @@ private fun LockedProfileRow(lockedDisplayName: String) {
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Locked to $lockedDisplayName",
+                text = lockedToText,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
             Text(
-                text = "Manage the lock in Settings → Profile lock",
+                text = manageLockHint,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2029,6 +2098,8 @@ private fun GatewayToggleControl(
         Switch(checked = value == true, enabled = false, onCheckedChange = {})
         return
     }
+    val confirmsOnNextMessage = stringResource(R.string.conn_info_confirms_on_next_message)
+    val checkingText = stringResource(R.string.conn_info_checking)
     LoadedFadeIn(
         value = value,
         label = label,
@@ -2038,7 +2109,7 @@ private fun GatewayToggleControl(
                 // Honest + subtle: tell the user it settles on their next turn
                 // rather than spinning forever.
                 Text(
-                    text = "Confirms on your next message",
+                    text = confirmsOnNextMessage,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2052,7 +2123,7 @@ private fun GatewayToggleControl(
                         strokeWidth = 2.dp,
                     )
                     Text(
-                        text = "Checking…",
+                        text = checkingText,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2097,10 +2168,13 @@ private fun AgentSheetHeader(
     // runs something different (the always-visible global-vs-session split).
     val serverDefaultLabel = AgentDisplay.displayModelName(serverModelName)
     val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
+    val connectedText = stringResource(R.string.conn_info_connected)
+    val connectingText = stringResource(R.string.conn_info_connecting)
+    val disconnectedText = stringResource(R.string.conn_info_disconnected)
     val statusText = when {
-        apiServerReachable -> "Connected"
-        isConnecting -> "Connecting\u2026"
-        else -> "Disconnected"
+        apiServerReachable -> connectedText
+        isConnecting -> connectingText
+        else -> disconnectedText
     }
     val statusColor = when {
         apiServerReachable -> MaterialTheme.colorScheme.primary
@@ -2170,8 +2244,9 @@ private fun AgentSheetHeader(
             if (modelLabel != null && serverDefaultLabel != null &&
                 !modelLabel.equals(serverDefaultLabel, ignoreCase = true)
             ) {
+                val serverDefaultModelText = stringResource(R.string.conn_info_server_default_model, serverDefaultLabel)
                 Text(
-                    text = "Server default: $serverDefaultLabel",
+                    text = serverDefaultModelText,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

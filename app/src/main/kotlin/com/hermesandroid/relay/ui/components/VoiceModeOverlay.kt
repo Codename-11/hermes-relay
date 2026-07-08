@@ -93,6 +93,8 @@ import com.hermesandroid.relay.viewmodel.VoiceUiState
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 
 /**
  * Full-screen voice-mode overlay. Renders the MorphingSphere in its voiceMode
@@ -484,7 +486,7 @@ fun VoiceModeOverlay(
                             modifier = Modifier.size(16.dp),
                         )
                         Spacer(Modifier.size(4.dp))
-                        Text("Retry")
+                        Text(stringResource(R.string.voice_overlay_retry))
                     }
                 }
             }
@@ -637,7 +639,7 @@ private fun VoiceMicButton(
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
-                contentDescription = "Voice mic",
+                contentDescription = stringResource(R.string.voice_overlay_mic_cd),
                 tint = Color.White,
                 modifier = Modifier.size(iconSize.dp),
             )
@@ -653,12 +655,13 @@ private fun voiceStateToSphereState(state: VoiceState): SphereState = when (stat
     VoiceState.Idle -> SphereState.Idle
 }
 
+@Composable
 private fun stateHint(state: VoiceState): String = when (state) {
-    VoiceState.Idle -> "Tap the mic to speak"
-    VoiceState.Listening -> "Listening..."
-    VoiceState.Transcribing -> "Transcribing..."
-    VoiceState.Thinking -> "Thinking..."
-    VoiceState.Speaking -> "Speaking..."
+    VoiceState.Idle -> stringResource(R.string.voice_overlay_tap_mic)
+    VoiceState.Listening -> stringResource(R.string.voice_overlay_listening)
+    VoiceState.Transcribing -> stringResource(R.string.voice_overlay_transcribing)
+    VoiceState.Thinking -> stringResource(R.string.voice_overlay_thinking)
+    VoiceState.Speaking -> stringResource(R.string.voice_overlay_speaking)
     VoiceState.Error -> ""
 }
 
@@ -688,10 +691,11 @@ internal fun pendingVoiceTranscriptText(
     return if (alreadyRendered) null else transcribed
 }
 
+@Composable
 private fun InteractionMode.label(): String = when (this) {
-    InteractionMode.TapToTalk -> "Tap to talk"
-    InteractionMode.HoldToTalk -> "Hold to talk"
-    InteractionMode.Continuous -> "Continuous"
+    InteractionMode.TapToTalk -> stringResource(R.string.voice_overlay_tap_to_talk)
+    InteractionMode.HoldToTalk -> stringResource(R.string.voice_overlay_hold_to_talk)
+    InteractionMode.Continuous -> stringResource(R.string.voice_overlay_continuous)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -722,17 +726,17 @@ private fun VoiceSessionPill(
 ) {
     val engineText = voiceEngineLabel(engineMode)
     val providerText = voiceProviderLabel(provider, model, voice, outputEnabled)
-    val profileText = profileName?.takeIf { it.isNotBlank() } ?: "default profile"
+    val profileText = profileName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.voice_overlay_default_profile)
     val scopeText = when (configScope) {
-        "profile" -> "profile voice"
-        "relay" -> "relay voice"
-        "global" -> "global voice"
+        "profile" -> stringResource(R.string.voice_overlay_profile_voice)
+        "relay" -> stringResource(R.string.voice_overlay_relay_voice)
+        "global" -> stringResource(R.string.voice_overlay_global_voice)
         else -> null
     }
     val headlineText = if (focusMode) {
         "$engineText / $profileText / $providerText"
     } else {
-        "${stateHint(uiState.state).ifBlank { "Voice ready" }} / $engineText / $providerText"
+        "${stateHint(uiState.state).ifBlank { stringResource(R.string.voice_overlay_voice_ready) }} / $engineText / $providerText"
     }
     Surface(
         modifier = modifier,
@@ -776,7 +780,7 @@ private fun VoiceSessionPill(
                     )
                 }
                 Text(
-                    text = "Voice",
+                    text = stringResource(R.string.voice_overlay_voice),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -794,7 +798,7 @@ private fun VoiceSessionPill(
                 )
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Collapse voice controls" else "Expand voice controls",
+                    contentDescription = if (expanded) stringResource(R.string.voice_overlay_collapse_cd) else stringResource(R.string.voice_overlay_expand_cd),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
@@ -804,7 +808,7 @@ private fun VoiceSessionPill(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Exit voice mode",
+                        contentDescription = stringResource(R.string.voice_overlay_exit_cd),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
@@ -886,7 +890,7 @@ private fun VoiceSessionPill(
                             modifier = Modifier.weight(1f),
                         ) {
                             Text(
-                                if (focusMode) "Compact" else "Focus",
+                                if (focusMode) stringResource(R.string.voice_overlay_compact) else stringResource(R.string.voice_overlay_focus),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -898,13 +902,13 @@ private fun VoiceSessionPill(
                             },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Overlay", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(stringResource(R.string.voice_overlay_overlay), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         TextButton(
                             onClick = onExit,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Exit", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(stringResource(R.string.voice_overlay_exit), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         // Settings link (4c): exit voice mode before navigating
                         // so the overlay isn't left floating over the Voice
@@ -917,7 +921,7 @@ private fun VoiceSessionPill(
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
-                                contentDescription = "Voice settings",
+                                contentDescription = stringResource(R.string.voice_overlay_settings_cd),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -1165,10 +1169,11 @@ private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
         .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }
 
+@Composable
 private fun InteractionMode.shortLabel(): String = when (this) {
-    InteractionMode.TapToTalk -> "Tap"
-    InteractionMode.HoldToTalk -> "Hold"
-    InteractionMode.Continuous -> "Auto"
+    InteractionMode.TapToTalk -> stringResource(R.string.voice_overlay_tap)
+    InteractionMode.HoldToTalk -> stringResource(R.string.voice_overlay_hold)
+    InteractionMode.Continuous -> stringResource(R.string.voice_overlay_auto)
 }
 
 /**
@@ -1378,9 +1383,9 @@ private fun HermesConfirmationCard(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(onClick = { onAnswer("allow") }) { Text("Allow") }
-                        TextButton(onClick = { onAnswer("deny") }) { Text("Deny") }
-                        TextButton(onClick = { onAnswer("cancel") }) { Text("Cancel") }
+                        TextButton(onClick = { onAnswer("allow") }) { Text(stringResource(R.string.voice_overlay_allow)) }
+                        TextButton(onClick = { onAnswer("deny") }) { Text(stringResource(R.string.voice_overlay_deny)) }
+                        TextButton(onClick = { onAnswer("cancel") }) { Text(stringResource(R.string.voice_overlay_cancel)) }
                     }
                 }
             }
@@ -1443,9 +1448,9 @@ private fun DestructiveCountdownRow(
         ) {
             Text(
                 text = if (label.isNotBlank()) {
-                    "$label in ${durationSec}s — say cancel to stop"
+                    stringResource(R.string.voice_overlay_confirming_format, label, durationSec)
                 } else {
-                    "Confirming…"
+                    stringResource(R.string.voice_overlay_confirming)
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.tertiary,
@@ -1514,7 +1519,7 @@ private fun BackgroundRunChip(
             else -> MaterialTheme.colorScheme.primary
         }
         val title = when (display.phase) {
-            BackgroundRunPhase.RECONNECTING -> "Reconnecting — your task is still running"
+            BackgroundRunPhase.RECONNECTING -> stringResource(R.string.voice_overlay_reconnecting_task)
             BackgroundRunPhase.DELIVERING -> display.message
             BackgroundRunPhase.RUNNING -> display.message
         }
@@ -1524,7 +1529,7 @@ private fun BackgroundRunChip(
                 ?.let { add(it.trimEnd('.', '…')) }
             if (display.completedToolCount > 0) {
                 add(
-                    "${display.completedToolCount} step" +
+                    stringResource(R.string.voice_overlay_steps_format, display.completedToolCount) +
                         if (display.completedToolCount == 1) "" else "s"
                 )
             }
@@ -1570,7 +1575,7 @@ private fun BackgroundRunChip(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Cancel background task",
+                        contentDescription = stringResource(R.string.voice_overlay_cancel_task_cd),
                         tint = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.size(16.dp),
                     )
@@ -1634,7 +1639,7 @@ private fun PermissionDeniedChip(
                         )
                     }
                     Text(
-                        text = "OPEN",
+                        text = stringResource(R.string.voice_overlay_open),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onErrorContainer,
