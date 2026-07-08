@@ -278,11 +278,63 @@ gated to pre-first-token. Deferred:
 The deliver-on-reattach / adaptive-promotion / milestone-speech / resume-retry /
 prewarm batch shipped (see DEVLOG 2026-07-01). Deferred:
 
-- **Result injection framing — FIXED in code, deployed, needs live e2e voice verify (2026-07-07).** The completed background summary, the background-handoff acknowledgement, and the forced-Hermes preamble were all injected as a synthetic *user* message (`send_text` → `conversation.item.create` role=user) — the model saw a fake turn where "the user" said things like "Hermes has already handled the user's previous voice request..." Research turned up a cleaner mechanism than the one originally guessed at: `response.create` supports a per-response `instructions` field that overrides the session system prompt for one response only, **without creating any conversation item at all** — confirmed supported by both providers (OpenAI's own docs; xAI's Voice Agent API docs explicitly show the same `response.create.response.instructions` shape). `conversation: "none"` (true out-of-band, not in history) is OpenAI-only and was deliberately NOT used — we want the spoken summary to land in real conversation history so follow-ups like "what was that again" still work; only the injection *transport* changed, not where the turn ends up. Implementation: `RealtimeAgentConnection.request_response()` (`providers/base.py`) gained an optional `instructions: str | None` kwarg; both `providers/openai.py` and `providers/xai.py` implement it identically (`{"type": "response.create", "response": {"instructions": ...}}` only when instructions are given, else the original bare `response.create`); all 4 broker-authored injection call sites (`broker.py:1244, 2113, 2352, 2560`) switched from `send_text(prompt)` to `request_response(instructions=prompt)`. The one genuine passthrough site (`broker.py:699`, real client-supplied text) is untouched. `python -m unittest discover -s plugin/tests` — 1073/1074 green (the one failure is the pre-existing, already-documented `test_reads_hermes_xai_oauth_credential_pool` fixture gap, unrelated). **Deployed to the relay (2026-07-07) — still needs a real on-device voice session** confirming the model still speaks a natural summary when driven by `instructions` alone (no preceding fake user turn); watch for a background-task delivery in particular since that's the highest-traffic call site.
+- **Result injection framing — FIXED in code, deployed, needs live e2e voice verify (2026-07-07).** The completed background summary, the background-handoff acknowledgement, and the forced-Hermes preamble were all injected as a synthetic *user* message (`send_text` → `conversation.item.create` role=user) — the model saw a fake turn where "the user" said things like "Hermes has already handled the user's previous voice request..." Research turned up a cleaner mechanism than the one originally guessed at: `response.create` supports a per-response `instructions` field that overrides the session system prompt for one response only, **without creating any conversation item at all** — confirmed supported by both providers (OpenAI's own docs; xAI's Voice Agent API docs explicitly show the same `response.create.response.instructions` shape). `conversation: "none"` (true out-of-band, not in history) is OpenAI-only and was deliberately NOT used — we want the spoken summary to land in real conversation history so follow-ups like "what was that again" still work; only the injection *transport* changed, not where the turn ends up. Implementation: `RealtimeAgentConnection.request_response()` (`providers/base.py`) gained an optional `instructions: str | None` kwarg; both `providers/openai.py` and `providers/xai.py` implement it identically (`{"type": "response.create", "response": {"instructions": ...}}` only when instructions are given, else the original bare `response.create`); all 4 broker-authored injection call sites (`broker.py:1244, 2113, 2352, 2560`) switched from `send_text(prompt)` to `request_response(instructions=prompt)`. The one genuine passthrough site (`broker.py:699`, real client-supplied text) is untouched. `python -m unittest discover -s plugin/tests` — 1073/1074 green (the one failure is the pre-existing, already-documented `test_reads_hermes_xai_oauth_credential_pool` fixture gap, unrelated). **Deployed to the relay (2026-07-07) — still needs a real on-device voice session** confirming the model still speaks a natural summary when driven by `instructions` alone (no preceding fake user turn); watch for a background-task delivery in particular since that's the highest-traffic call site. **Confirmed live-verified (2026-07-08)** via the raw event log on the relay: a background run (~4min, terminal tool ×9-10) delivered its spoken summary correctly through the new `request_response(instructions=...)` path (`voice.response.started` → `voice.output_audio.delta` ×N → `voice.response.done`, clean).
+- **NEW (2026-07-08) — xAI closes the realtime session after 900s of true silence; no provider-side keepalive exists.** Same live event log: after the background-task summary above finished speaking (`voice.response.done` at `at_ms=242226`), there is a **complete gap of zero events** until `voice.error` at `at_ms=1138277` — "xAI Realtime error: Conversation timed out after 900.0 seconds due to inactivity" (896s of nothing). This is **not a regression from the injection-framing fix** — the background task itself ran well within our own `_BACKGROUND_RUN_MAX_SECONDS` (300s) ceiling and delivered cleanly; the session simply sat idle afterward (no further speech, no client interaction) until xAI's own server-side inactivity timer fired. Root cause: the existing heartbeat (`_send_hermes_run_progress` / `_should_continue_heartbeat`) only protects the **client-facing** `ws` connection from the phone's own ~90s silence watchdog — nothing pings or otherwise generates activity on the **provider-facing** `session.native_connection` (the actual xAI/OpenAI socket) during a quiet stretch. **Researched a fix, not yet implemented:** xAI's docs mention `turn_detection.idle_timeout_ms` (server proactively re-engages the user after N ms of silence, re-arming after every response) as the *documented* idle-handling knob — but both providers explicitly set `"turn_detection": None` in `_session_update()` (this app manages turn-taking manually, not via provider VAD), so that field isn't available to us without re-architecting turn control. The more surgical option: have the broker periodically send a small silent-PCM chunk via the **already-existing** `connection.send_audio()` method (no new provider protocol needed, `input_audio_buffer.append` under the hood) whenever the realtime session has been quiet for a while — real continuous-listening voice apps keep the mic buffer flowing constantly, which is presumably why a normal (non-background-task) session doesn't usually hit this; something about the background-wait period stops that flow. **Needs before implementing:** confirm exactly when/why input audio streaming stops during a background wait (client-side — does `VoiceState` gate mic capture off during `Thinking`/background delivery?), then decide the keepalive cadence and whether it should run for the whole session or just during a background-run wait window. Flagged as touching "the most fragile code in broker.py" per ADR 33's own framing — needs deliberate design, not a rushed patch.
 - **Pre-existing test failure:** `test_realtime_voice_routes.py::
   test_reads_hermes_xai_oauth_credential_pool` fails at HEAD too (`token is None`) —
   looks like an environment/fixture dependency on a local xai oauth pool, not a code
   regression. Diagnose or gate on the fixture.
+- **Standard voice: nudge the model toward `delegate_task(background=true)` on
+  long asks (2026-07-08, standard-path, no relay).** Research concluded standard
+  (non-realtime) voice doesn't need its own relay-side background-task layer —
+  upstream's `delegate_task(background=true)` + the existing #166 SSE-recovery/
+  notify path already cover "long voice request survives and reports back," and
+  hermes-desktop's own voice loop confirms background awareness belongs in the
+  chat/notification surface, not spoken mid-turn (see the "relay-enhanced standard
+  voice" research below for the full writeup). Add a line to the voice ephemeral
+  system prompt (the `STABLE_VOICE_INTERFACE_CONTEXT` area in `VoiceViewModel`)
+  encouraging the model to background obviously-long asks and say so in the spoken
+  reply, so the behavior is discoverable without a new surface.
+- **Standard voice: speak a delegated result if the overlay is still open when it
+  lands (2026-07-08, standard-path, no relay).** Small polish task — reuse the
+  existing `ChatStreamRecovery` history-poll pattern client-side so that if the
+  user is still in voice mode when a `delegate_task` completion turn lands, it
+  gets spoken instead of only showing up silently in the transcript.
+- **VERIFY FIRST — does a `delegate_task` completion turn reach api_server-sourced
+  sessions the phone can see (2026-07-08)?** The gateway's async-delegation watcher
+  (`_async_delegation_watcher`, upstream `gateway/run.py:12543`) forges the
+  completion back into the conversation once the agent is idle
+  (`_enrich_async_delegation_routing`, `run.py:12522`), but whether that forged
+  turn is visible to a client reading via `/api/sessions/*` (what the phone's
+  standard/SSE voice path uses) is unconfirmed — hermes-desktop only sees it
+  because it stays attached to `/api/ws`. Confirm this before leaning on
+  `delegate_task` as "the" answer for the two items above; if it doesn't route
+  through api_server sessions, the phone needs a recovery-poll or reopen to see
+  it, same as any other #166-class dropped turn.
+
+## Relay-enhanced standard voice for background tasks — research (2026-07-08)
+
+**Verdict: NO — don't build it.** Full owner ask + Fable 5 agent research (cross-
+checked against hermes-desktop's actual source, found in the local upstream
+monorepo clone). Three lanes already cover "a long voice request survives and
+reports back": (1) standard voice isn't a blocking call — a long turn just keeps
+streaming, and the #166 SSE-recovery poller + `TurnCompleteNotifier` already
+recover + notify on a dropped socket, zero relay involvement; (2) upstream's own
+`delegate_task(background=true)` is the standard-path equivalent of the realtime
+broker's `hermes_run_task` promotion — the model can detach a long task itself;
+(3) hermes-desktop's own voice hook (`apps/desktop/src/app/chat/composer/hooks/
+use-voice-conversation.ts` in the upstream monorepo — verified, zero mentions of
+background/promotion) is the same thin synchronous record→transcribe→submit→speak
+loop with NO background awareness; their background-task UX lives entirely in the
+chat/composer surface (a status stack + native OS notification, never spoken) —
+convergent with Android's existing background-run chip / `SubagentLane` /
+`TurnCompleteNotifier`, not a gap to fill. Building a relay-side background layer
+for standard voice would mean proxying an upstream-only surface through the relay
+or monkey-patching deeper than the accepted `plugin/enhancements/` seam — against
+the standard-path rule — to duplicate machinery ADR 33 itself calls the most
+fragile code in `broker.py`, for an audience realtime already serves better.
+Action items from this research are above (prompt nudge, speak-on-overlay-open
+polish, the api_server-routing verify-first gate).
 - **Prewarm cost watch.** Voice-mode entry now opens the provider session before the
   first utterance. If users habitually open+close voice mode without speaking, idle
   provider sessions cost connect/teardown churn — consider a short "no utterance in
