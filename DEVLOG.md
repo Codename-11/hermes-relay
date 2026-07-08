@@ -51,13 +51,21 @@ unsynced traces remain preserved. Verification: 4 new `ChatHandlerTest` +
 `:app:testSideloadDebugUnitTest` run green. App-restart persistence of
 unsynced traces remains open (scoped in TODO).
 
-**3. Standard voice: background-delegation nudge.** The
-`STABLE_VOICE_INTERFACE_CONTEXT` ephemeral prompt now tells the model the
-user is waiting in a live voice session and to delegate clearly-long asks
-via `delegate_task(background=true)`, announcing that in the spoken reply;
-hedged so quick questions keep answering directly. Rides the per-turn SSE
-`system_message` — nothing persisted, text chat unaffected. On-device
-behavior verify pending.
+**3. Standard voice: background-delegation nudge — shipped (`5c214a2`), then
+reverted (`45c7ef4`) the same session.** A follow-up verification against
+current upstream source disproved the premise: `delegate_task(background=true)`
+never dispatches async on the api_server surface. Every api_server route binds
+`async_delivery=False` (`gateway/platforms/api_server.py`), and
+`tools/delegate_tool.py` consults
+`gateway.session_context.async_delivery_supported()` and downgrades the batch
+to synchronous execution with an explanatory note (upstream issue #10760 —
+"the adapter's send() is a no-op, so a background dispatch would silently
+never re-enter the conversation"). Since all standard voice turns are forced
+onto SSE, the nudge would have blocked the turn just as long (plus subagent
+overhead) while the spoken reply claimed the work was backgrounded. The
+related "speak a delegated result if the voice overlay is still open" TODO
+was closed on the same finding — no delayed completion turn exists on this
+surface to speak. Both TODO entries record the verified mechanism.
 
 ## 2026-07-07 — Realtime voice result-injection: drop the fake-user-message hack
 

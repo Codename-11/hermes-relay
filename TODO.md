@@ -286,34 +286,51 @@ prewarm batch shipped (see DEVLOG 2026-07-01). Deferred:
   test_reads_hermes_xai_oauth_credential_pool` fails at HEAD too (`token is None`) —
   looks like an environment/fixture dependency on a local xai oauth pool, not a code
   regression. Diagnose or gate on the fixture.
-- **Standard voice: nudge the model toward `delegate_task(background=true)` on
-  long asks — SHIPPED in code (2026-07-08, needs live voice verify).** The
-  `STABLE_VOICE_INTERFACE_CONTEXT` ephemeral prompt (`VoiceViewModel`) now tells
-  the model the user is waiting in a live voice session and to background
-  clearly-long asks via `delegate_task(background=true)`, saying so in the
-  spoken reply; deliberately hedged ("clearly more than a minute… answer quick
-  questions directly") since false-positive delegation is worse than a long
-  turn. Rides the per-turn SSE `system_message` — nothing persisted, voice
-  turns only. Verify on-device: a "research X and write it up" voice ask gets
-  backgrounded + announced; a quick factual ask does NOT. Note the still-open
-  VERIFY-FIRST item below (does the `delegate_task` completion turn reach
-  api_server-visible sessions) before leaning harder on this.
-- **Standard voice: speak a delegated result if the overlay is still open when it
-  lands (2026-07-08, standard-path, no relay).** Small polish task — reuse the
-  existing `ChatStreamRecovery` history-poll pattern client-side so that if the
-  user is still in voice mode when a `delegate_task` completion turn lands, it
-  gets spoken instead of only showing up silently in the transcript.
-- **VERIFY FIRST — does a `delegate_task` completion turn reach api_server-sourced
-  sessions the phone can see (2026-07-08)?** The gateway's async-delegation watcher
-  (`_async_delegation_watcher`, upstream `gateway/run.py:12543`) forges the
-  completion back into the conversation once the agent is idle
-  (`_enrich_async_delegation_routing`, `run.py:12522`), but whether that forged
-  turn is visible to a client reading via `/api/sessions/*` (what the phone's
-  standard/SSE voice path uses) is unconfirmed — hermes-desktop only sees it
-  because it stays attached to `/api/ws`. Confirm this before leaning on
-  `delegate_task` as "the" answer for the two items above; if it doesn't route
-  through api_server sessions, the phone needs a recovery-poll or reopen to see
-  it, same as any other #166-class dropped turn.
+- **Standard voice `delegate_task(background=true)` nudge — SHIPPED then
+  REVERTED same-day (2026-07-08); premise disproven by the VERIFY-FIRST
+  check.** The nudge (a `STABLE_VOICE_INTERFACE_CONTEXT` line telling the
+  model to background long voice asks) was implemented, then the companion
+  verify-first item below was actually checked against upstream source and
+  killed it: **`delegate_task(background=true)` never dispatches async on the
+  api_server surface at all.** Upstream downgrades it to synchronous
+  execution (issue #10760): every api_server route binds
+  `async_delivery=False` (`gateway/platforms/api_server.py` ~4000), and
+  `tools/delegate_tool.py` (~2775) checks
+  `gateway.session_context.async_delivery_supported()` and runs the batch
+  inline with a "ran SYNCHRONOUSLY" note — "the adapter's send() is a no-op,
+  so a background dispatch would silently never re-enter the conversation."
+  Since ALL standard voice turns are forced onto SSE (ephemeral prompt slot),
+  the nudge would have made the model block just as long (plus subagent
+  overhead) while claiming it backgrounded. Reverted in `45c7ef4`. If a
+  "don't hold the voice floor" behavior is ever wanted on the standard path,
+  it needs the upstream async-delivery gap fixed first (a poll/webhook
+  delivery channel for stateless sessions — upstream contribution), or the
+  Relay realtime engine, which already has real background runs (ADR 33).
+- ~~**Standard voice: speak a delegated result if the overlay is still open when
+  it lands.**~~ **CLOSED 2026-07-08 — premise gone.** There is no delayed
+  `delegate_task` completion turn on the standard voice path: the api_server
+  surface downgrades `background=true` to synchronous execution (see the
+  reverted-nudge entry above), so the "delegated result landing later" case
+  this wanted to speak cannot occur on SSE. On the gateway transport a
+  background completion does re-enter as a new turn — whether the phone's
+  gateway client renders an unsolicited idle-time turn is a separate
+  (text-chat) question, tracked nowhere yet; add it if gateway background
+  delegation becomes a used flow on phone text chat.
+- **VERIFIED 2026-07-08 — a `delegate_task` completion turn can NEVER reach an
+  api_server-sourced session, because upstream never dispatches one there.**
+  Answered by reading current upstream source (clone @ `5057f03bf`): the
+  question is moot one layer earlier than expected. Every api_server route
+  binds the session context with `async_delivery=False`
+  (`gateway/platforms/api_server.py` ~4000, "the stateless HTTP path");
+  `tools/delegate_tool.py` (~2775) consults
+  `gateway.session_context.async_delivery_supported()` and, when false, runs
+  the whole batch SYNCHRONOUSLY with an explanatory note (issue #10760) —
+  there is no detached child, no completion event, no forged turn. The
+  `_async_delegation_watcher` → `_inject_watch_notification` →
+  `adapter.handle_message()` path only ever fires for sessions whose origin
+  routes to a real push-capable platform adapter (gateway chats, Discord,
+  etc.). Consequences applied same-day: the voice delegate nudge was reverted
+  and the speak-on-overlay item closed (entries above).
 
 ## Relay-enhanced standard voice for background tasks — research (2026-07-08)
 
