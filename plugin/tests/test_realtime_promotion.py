@@ -705,6 +705,15 @@ class RealtimePromotionTests(AioHTTPTestCase):
             log_text = session.event_log_path.read_text(encoding="utf-8")
             self.assertIn("voice.response.forced_summary_fallback", log_text)
             self.assertIn("acknowledgement_not_summary", log_text)
+            # The provider never saw the fallback delivery — a next-turn
+            # correction note must be pending so the model can't claim the
+            # task is still running (observed live).
+            self.assertIsNotNone(session.native_pending_delivery_note)
+            self.assertIn(
+                "Background answer ready",
+                session.native_pending_delivery_note,
+            )
+            self.assertIn("ALREADY COMPLETED", session.native_pending_delivery_note)
         finally:
             broker.release.set()
             await ws.close()

@@ -236,6 +236,12 @@ class RealtimeAgentSession:
     # Reused Hermes side-session for fast-lane asks (created on the first
     # fast-lane run) so quick inline answers don't litter one session each.
     fast_lane_session_id: str | None = None
+    # Set when a background result was delivered OUTSIDE the provider's own
+    # conversation (fallback TTS / text-only emit) — the provider never saw
+    # that delivery, so its history still reads "running in background" and
+    # it will claim the task is unfinished (observed live). Attached to the
+    # NEXT user turn's per-response instructions, then cleared.
+    native_pending_delivery_note: str | None = None
     native_hermes_required_transcript: str | None = None
     native_hermes_required_reason: str | None = None
     hermes_run_id: str | None = None
@@ -806,6 +812,9 @@ class RealtimeAgentHandler:
                         )
                     else:
                         respeak_text = _forced_summary_fallback_text(respeak_result)
+                        # Respeak is also invisible to the provider — refresh
+                        # the next-turn correction so it stays consistent.
+                        session.native_pending_delivery_note = _delivery_note(respeak_text)
                         respeak_id = f"respeak-{session.event_seq + 1}"
                         self._log(
                             session,
@@ -1570,7 +1579,32 @@ class RealtimeAgentHandler:
                         session.native_forced_summary_text_parts.clear()
                         session.native_hermes_required_transcript = None
                         session.native_hermes_required_reason = None
-                        await connection.request_response()
+                        delivery_note = session.native_pending_delivery_note
+                        if delivery_note:
+                            # A system-side delivery (fallback TTS / text
+                            # emit) happened that the provider never saw —
+                            # its history still says "running in background".
+                            # Carry the correction on this one response
+                            # (composed WITH the session instructions, since
+                            # per-response instructions replace them).
+                            session.native_pending_delivery_note = None
+                            self._log(
+                                session,
+                                "voice.response.delivery_note_attached",
+                                {
+                                    "type": "voice.response.delivery_note_attached",
+                                    "note_preview": _compact_status_text(delivery_note),
+                                },
+                            )
+                            await connection.request_response(
+                                instructions=(
+                                    _native_instructions(session)
+                                    + "\n\n"
+                                    + delivery_note
+                                )
+                            )
+                        else:
+                            await connection.request_response()
             elif event.kind == ProviderEventKind.RESPONSE_STARTED:
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
@@ -2034,6 +2068,11 @@ class RealtimeAgentHandler:
             session.native_forced_summary_done = True
             session.native_forced_summary_response_id = response_id
             session.native_forced_summary_result = None
+            # The provider never sees this fallback delivery — leave a note
+            # for the next user turn so it can't claim the task is still
+            # running (observed live after a fallback: "the background task
+            # is still going" while the answer had already been spoken).
+            session.native_pending_delivery_note = _delivery_note(fallback_text)
             fallback_response_id = f"forced-summary-fallback-{session.event_seq + 1}"
             await self._send(
                 ws,
@@ -3243,6 +3282,10 @@ class RealtimeAgentHandler:
         result: dict[str, Any],
     ) -> None:
         text = str(result.get("text") or result.get("answer") or result.get("summary") or "").strip()
+        # Text-only delivery also bypasses the provider's conversation — same
+        # next-turn correction as the fallback path.
+        if text:
+            session.native_pending_delivery_note = _delivery_note(text)
         response_id = f"background-visual-{session.event_seq + 1}"
         await self._send(
             ws,
@@ -4784,6 +4827,17 @@ def _forced_hermes_preamble_prompt(transcript: str) -> str:
         "Speak exactly: I'll check Hermes. Do not call tools. Do not add any "
         "other words. After this acknowledgement the relay will run Hermes.\n\n"
         f"User request: {transcript.strip()[:1000]}"
+    )
+
+
+def _delivery_note(delivered_text: str) -> str:
+    """Next-turn correction after a system-side (non-provider) delivery."""
+    return (
+        "Context correction: the earlier background task has ALREADY "
+        "COMPLETED, and its answer was already delivered to the user by the "
+        f"system voice: \"{delivered_text.strip()[:400]}\". Treat that task "
+        "as finished — do not say it is still running, and do not re-deliver "
+        "the answer unless the user asks for it again."
     )
 
 
