@@ -1568,6 +1568,18 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
         the same as every other phone-facing relay channel.
       * **Path checks (always on)** — absolute path, ``realpath`` resolution,
         exists, is a regular file, under ``RELAY_MEDIA_MAX_SIZE_MB``.
+      * **Credential/system denylist (always on)** — even in permissive
+        mode, paths that resolve into credential or system locations
+        (``~/.hermes/.env``, ``auth.json``, ``config.yaml``, OAuth token
+        stores, ``pairing/``, ``mcp-tokens/``, ``~/.ssh``, ``/etc``, ...)
+        are rejected with 403. Mirrors upstream hermes-agent's native
+        media-delivery hardening (``validate_media_delivery_path``): the
+        "LLM can already exfil via plain text" rationale below does not
+        extend to files the agent itself is forbidden to read, so a
+        prompt-injected ``MEDIA:`` marker can't deliver live secrets as a
+        native attachment. Symlinks are resolved first, so a link into a
+        denied path is caught. See ``plugin/relay/media.py``
+        ``_is_denied_media_path``.
       * **Allowed-roots sandbox (opt-in)** — off by default. Set
         ``RELAY_MEDIA_STRICT_SANDBOX=1`` to re-enable the allowlist
         enforcement. Rationale: if the LLM already has filesystem-reading
@@ -1582,7 +1594,8 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
       → 200 file bytes
       → 400 missing path query param
       → 401 missing/invalid bearer
-      → 403 path not absolute / other validation failure (or outside allowlist in strict mode)
+      → 403 path not absolute / denied credential-or-system path / other
+        validation failure (or outside allowlist in strict mode)
       → 404 file does not exist or is not a regular file
       → 413 file exceeds RELAY_MEDIA_MAX_SIZE_MB
 

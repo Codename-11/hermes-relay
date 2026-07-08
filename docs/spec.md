@@ -880,7 +880,7 @@ Current Android dependency versions. Source of truth is `gradle/libs.versions.to
 | ML Kit Barcode Scanning | 17.3.0 | QR pairing scan |
 | CameraX | 1.6.0 | QR camera preview |
 | xterm.js | 5.x | Terminal emulator (WebView) |
-| aiohttp | 3.9+ | Server relay |
+| aiohttp | 3.14.1+ | Server relay |
 | libtmux | 0.37+ | tmux session management |
 | gradle-play-publisher | 4.0.0 | Automated Play Console upload (optional) |
 

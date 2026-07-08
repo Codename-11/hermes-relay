@@ -12,6 +12,11 @@ Design notes:
 * **Path sandboxing** — every registered path must be absolute, must
   ``os.path.realpath`` under at least one of the allowed roots, must exist,
   must be a regular file, and must fit under the size cap.
+* **Credential/system denylist (always on)** — regardless of sandbox mode,
+  paths that *resolve* into credential or system locations (``~/.ssh``,
+  ``~/.hermes/.env``, ``mcp-tokens/``, ``pairing/``, ``/etc``, ...) are
+  never served. Mirrors upstream hermes-agent's media-delivery hardening
+  (``gateway/platforms/base.py`` ``validate_media_delivery_path``).
 * **Allowed roots** — default to ``tempfile.gettempdir()`` plus the Hermes
   workspace (env ``HERMES_WORKSPACE`` or ``~/.hermes/workspace/``) plus any
   extra roots the operator supplies via ``RELAY_MEDIA_ALLOWED_ROOTS``
@@ -81,11 +86,12 @@ def validate_media_path(
     """Validate that ``path`` is safe to serve as media content.
 
     Performs the file-level safety checks: absolute path → ``realpath`` →
-    exists → is a regular file → under size cap. When ``allowed_roots`` is
-    non-None, *also* enforces that the resolved path lives under at least
-    one of those roots (strict sandbox mode, used by
-    :meth:`MediaRegistry.register` and by :func:`handle_media_by_path` when
-    the operator opts into ``RELAY_MEDIA_STRICT_SANDBOX``).
+    credential/system denylist → exists → is a regular file → under size
+    cap. When ``allowed_roots`` is non-None, *also* enforces that the
+    resolved path lives under at least one of those roots (strict sandbox
+    mode, used by :meth:`MediaRegistry.register` and by
+    :func:`handle_media_by_path` when the operator opts into
+    ``RELAY_MEDIA_STRICT_SANDBOX``).
 
     Passing ``allowed_roots=None`` skips the root check entirely. This is
     the default for LLM-emitted ``MEDIA:/abs/path`` markers served through
@@ -93,6 +99,13 @@ def validate_media_path(
     if the LLM can already read a file via its other tools it can already
     exfiltrate the contents via plain text — the sandbox was a
     defense-in-depth layer that cost more friction than it returned.
+
+    The credential/system denylist is **always on**, in both modes: files
+    the agent itself is forbidden to read (``~/.hermes/.env``, ``auth.json``,
+    ``mcp-tokens/``, ``~/.ssh``, ``/etc``, ...) are never served, mirroring
+    upstream hermes-agent's native media-delivery hardening. It runs against
+    the resolved real path, before the existence check, so denied locations
+    don't leak whether a file exists.
 
     Returns ``(real_path, size_bytes)`` on success.
 
@@ -105,6 +118,11 @@ def validate_media_path(
         raise MediaRegistrationError(f"path must be absolute: {path!r}")
 
     real_path = os.path.realpath(path)
+
+    if _is_denied_media_path(real_path):
+        raise MediaRegistrationError(
+            f"path is in a protected credential/system location: {path!r}"
+        )
 
     if allowed_roots is not None and not _is_under_any_root(real_path, allowed_roots):
         raise MediaRegistrationError(
@@ -142,6 +160,142 @@ def _is_under_any_root(real_path: str, allowed_roots: list[str]) -> bool:
             # treat as "not under this root" and keep checking.
             continue
         if common == root:
+            return True
+    return False
+
+
+# ── Credential / system-path denylist (always on) ───────────────────────
+#
+# Mirrors upstream hermes-agent's media-delivery hardening
+# (``gateway/platforms/base.py``: ``validate_media_delivery_path`` +
+# ``_media_delivery_denied_paths``): even in permissive mode,
+# ``/media/by-path`` must never serve credential or system files. The
+# trust-boundary argument for permissive mode ("the LLM can already read
+# files via its tools") does not extend to files the agent itself is
+# forbidden to read — a prompt-injected ``MEDIA:~/.hermes/mcp-tokens/x.json``
+# marker must not turn the relay into a credential-exfil channel. The check
+# runs AFTER ``os.path.realpath`` resolution, so symlinks that resolve into
+# a denied location are caught too.
+
+# Absolute system prefixes under which delivery is never allowed.
+_DENIED_SYSTEM_PREFIXES: tuple[str, ...] = (
+    "/etc",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/root",
+    "/boot",
+    "/var/log",
+    "/var/lib",
+    "/var/run",
+)
+
+# Credential / config directories under the running user's home.
+_DENIED_HOME_SUBPATHS: tuple[str, ...] = (
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".kube",
+    ".docker",
+    ".config",
+    ".azure",
+    ".gcloud",
+    "Library/Keychains",  # macOS
+)
+
+# Per-file credential / secret stores at the Hermes home root. Enumerated
+# explicitly per-file (NOT a whole-tree deny of ``~/.hermes``) so skills/,
+# logs/, workspace/, and ad-hoc agent-written files stay deliverable —
+# mirroring the upstream set, plus the relay's own secret stores.
+_DENIED_HERMES_FILES: tuple[str, ...] = (
+    ".env",
+    "auth.json",
+    "auth.lock",
+    "credentials",
+    "config.yaml",
+    # Anthropic PKCE / OAuth refresh credential store.
+    ".anthropic_oauth.json",
+    # Google Workspace skill OAuth token + pending-exchange verifier.
+    "google_token.json",
+    "google_oauth_pending.json",
+    os.path.join("auth", "google_oauth.json"),
+    # Webhook subscription HMAC secrets.
+    "webhook_subscriptions.json",
+    # Bitwarden Secrets Manager plaintext disk cache.
+    os.path.join("cache", "bws_cache.json"),
+    # Relay-specific secrets — QR-signing key (plugin/relay/qr_sign.py) and
+    # persisted session tokens (plugin/relay/auth.py). The sessions file
+    # holds the very bearer tokens that authorize this route.
+    "hermes-relay-qr-secret",
+    "hermes-relay-sessions.json",
+)
+
+# Directory trees under the Hermes home whose every child is credential
+# material: pairing/ (pending pairing state) and mcp-tokens/ (live MCP
+# OAuth access tokens + dynamically-registered client credentials).
+_DENIED_HERMES_DIRS: tuple[str, ...] = (
+    "pairing",
+    "mcp-tokens",
+)
+
+
+def _hermes_homes() -> list[str]:
+    """Hermes roots to protect — ``~/.hermes`` plus ``$HERMES_HOME`` if set.
+
+    Mirrors the home resolution in :mod:`plugin.relay.qr_sign` and
+    :mod:`plugin.relay.auth` so the denylist tracks wherever those modules
+    put their secrets.
+    """
+    homes = [os.path.realpath(str(Path.home() / ".hermes"))]
+    env_home = os.environ.get("HERMES_HOME")
+    if env_home:
+        resolved = os.path.realpath(env_home)
+        if resolved not in homes:
+            homes.append(resolved)
+    return homes
+
+
+def _denied_media_paths() -> list[str]:
+    """Build the resolved denylist at check time.
+
+    Recomputed per call (it's a handful of realpath calls, not hot) so
+    ``$HERMES_HOME`` / ``$HOME`` changes — including test monkeypatching —
+    are honored, matching upstream's check-time resolution.
+    """
+    denied: list[str] = [os.path.realpath(p) for p in _DENIED_SYSTEM_PREFIXES]
+    home = os.path.realpath(os.path.expanduser("~"))
+    for sub in _DENIED_HOME_SUBPATHS:
+        denied.append(os.path.join(home, *sub.split("/")))
+    for hermes_home in _hermes_homes():
+        for rel in _DENIED_HERMES_FILES:
+            denied.append(os.path.join(hermes_home, rel))
+        for rel in _DENIED_HERMES_DIRS:
+            denied.append(os.path.join(hermes_home, rel))
+    # The relay-home config may carry provider API keys (see
+    # plugin/relay/config.py — HERMES_RELAY_HOME, default ~/.hermes-relay).
+    relay_home = os.path.realpath(
+        os.environ.get("HERMES_RELAY_HOME", str(Path.home() / ".hermes-relay"))
+    )
+    denied.append(os.path.join(relay_home, "config.yaml"))
+    return denied
+
+
+def _is_denied_media_path(real_path: str) -> bool:
+    """Return True if ``real_path`` (already realpath-resolved) is denied.
+
+    One narrow exception, mirrored from upstream: when a denied system
+    prefix IS the running user's own home (``/root`` on a root-run relay),
+    the home tree itself stays deliverable — the credential subpaths inside
+    it (``~/.ssh``, ``~/.hermes/.env``, ...) have their own more-specific
+    denylist entries and stay blocked regardless.
+    """
+    rp = os.path.normcase(real_path)
+    home = os.path.normcase(os.path.realpath(os.path.expanduser("~")))
+    for denied in _denied_media_paths():
+        dn = os.path.normcase(denied)
+        if dn == home:
+            continue
+        if rp == dn or rp.startswith(dn + os.sep):
             return True
     return False
 
