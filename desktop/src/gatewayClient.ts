@@ -26,8 +26,8 @@ export class GatewayClient extends EventEmitter {
     this.transport.start()
   }
 
-  request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    return this.transport.request<T>(method, params)
+  request<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+    return this.transport.request<T>(method, params, timeoutMs)
   }
 
   drain() {

@@ -35,8 +35,13 @@ import { renderVoicePage } from './voicePage.js'
 import type { GatewayClient } from './gatewayClient.js'
 import type { GatewayEvent, PromptSubmitResponse } from './gatewayTypes.js'
 import { rpcErrorMessage } from './lib/rpc.js'
+import { PROMPT_SUBMIT_REQUEST_TIMEOUT_MS } from './transport/RelayTransport.js'
 
-const TURN_TIMEOUT_MS = 5 * 60_000
+// Idle-progress watchdog, NOT a hard turn cap: re-armed on every gateway
+// event, so a voice turn only dies after this long with NO events at all.
+// The prompt.submit ack itself is bounded separately (it can trail the turn
+// by minutes — see PROMPT_SUBMIT_REQUEST_TIMEOUT_MS).
+const TURN_IDLE_TIMEOUT_MS = 5 * 60_000
 
 export interface VoiceServerOptions {
   /** Relay bearer token. Used as `Authorization: Bearer <token>` on voice routes. */
@@ -207,12 +212,19 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse, ctx: Handle
     let completed = false
 
     const settle = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (completed) return
-        cleanup()
-        reject(new Error(`turn timeout after ${TURN_TIMEOUT_MS}ms`))
-      }, TURN_TIMEOUT_MS)
-      timer.unref?.()
+      // Idle-progress watchdog: re-armed on every gateway event so a long
+      // tool-heavy turn that keeps streaming is never wall-clock capped.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const armIdleTimer = () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          if (completed) return
+          cleanup()
+          reject(new Error(`turn idle timeout — no gateway events for ${TURN_IDLE_TIMEOUT_MS}ms`))
+        }, TURN_IDLE_TIMEOUT_MS)
+        timer.unref?.()
+      }
+      armIdleTimer()
 
       const onAbort = () => {
         if (completed) return
@@ -224,6 +236,8 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse, ctx: Handle
 
       const handler = (ev: GatewayEvent) => {
         if (completed) return
+        // Any event proves the turn is alive — push the idle deadline out.
+        armIdleTimer()
         if (ev.type === 'message.delta') {
           const t = ev.payload?.text ?? ''
           if (t) {
@@ -254,8 +268,14 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse, ctx: Handle
       ctx.opts.gateway.on('event', handler)
       abort.signal.addEventListener('abort', onAbort)
 
+      // Long-running RPC: the ack can trail the turn by minutes — liveness
+      // is the idle watchdog's job, not the ack timeout's.
       ctx.opts.gateway
-        .request<PromptSubmitResponse>('prompt.submit', { session_id: ctx.opts.sessionId, text: transcript })
+        .request<PromptSubmitResponse>(
+          'prompt.submit',
+          { session_id: ctx.opts.sessionId, text: transcript },
+          PROMPT_SUBMIT_REQUEST_TIMEOUT_MS
+        )
         .catch((e: unknown) => {
           if (completed) return
           completed = true

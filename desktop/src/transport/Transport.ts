@@ -13,8 +13,11 @@ import type { GatewayEvent } from '../gatewayTypes.js'
 export interface Transport {
   /** Drop in-flight state and start the carrier (open socket). */
   start(): void
-  /** Send a JSON-RPC request; resolves with `result` or rejects with the server's error. */
-  request<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>
+  /** Send a JSON-RPC request; resolves with `result` or rejects with the
+   * server's error. `timeoutMs` optionally overrides the transport's generic
+   * request timeout for long-running RPCs (e.g. `prompt.submit`, whose ack
+   * can legitimately trail the turn by minutes). */
+  request<T = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T>
   /** Attach event/exit listeners. */
   on(event: 'event', handler: (ev: GatewayEvent) => void): void
   on(event: 'exit', handler: (code: number | null) => void): void

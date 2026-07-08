@@ -25,6 +25,18 @@ const MAX_BUFFERED_EVENTS = 2000
 const REQUEST_TIMEOUT_MS = Math.max(30000, parseInt(process.env.HERMES_RELAY_RPC_TIMEOUT_MS ?? '120000', 10) || 120000)
 const AUTH_TIMEOUT_MS = Math.max(5000, parseInt(process.env.HERMES_RELAY_AUTH_TIMEOUT_MS ?? '15000', 10) || 15000)
 
+// `prompt.submit` ack ceiling — mirrors upstream desktop's
+// PROMPT_SUBMIT_REQUEST_TIMEOUT_MS (apps/desktop/src/hermes.ts, upstream
+// commit 164144183). The submit is effectively fire-and-forget: turn
+// completion arrives via stream events (message.complete), NOT the RPC
+// return, and MoA/deep-reasoning/tool-heavy turns can take minutes to ack.
+// Bounding the ack by the generic REQUEST_TIMEOUT_MS (120s) killed
+// legitimately long turns. Matches the backend's agent-turn ceiling
+// (agent.gateway_timeout = 1800s), so this only fires when the turn would
+// have been abandoned server-side anyway. Callers pass it as the per-call
+// `timeoutMs` on `request('prompt.submit', …)`.
+export const PROMPT_SUBMIT_REQUEST_TIMEOUT_MS = 1_800_000
+
 // Reconnect knobs — mirrored from Android ConnectionManager.kt.
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 30_000
@@ -1014,7 +1026,15 @@ export class RelayTransport extends EventEmitter implements Transport {
     return this.logs.tail(Math.max(1, limit)).join('\n')
   }
 
-  request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  /** Send one JSON-RPC request. `timeoutMs` overrides the generic
+   * env-tunable default for long-running RPCs — `prompt.submit` passes
+   * PROMPT_SUBMIT_REQUEST_TIMEOUT_MS because its ack can trail the turn by
+   * minutes; everything else should omit it. */
+  request<T = unknown>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs: number = REQUEST_TIMEOUT_MS
+  ): Promise<T> {
     if (!this.ws) {
       return Promise.reject(new Error('relay transport not connected'))
     }
@@ -1026,7 +1046,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     const id = `r${++this.reqId}`
 
     return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(this.onTimeout, REQUEST_TIMEOUT_MS, id)
+      const timeout = setTimeout(this.onTimeout, timeoutMs, id)
       timeout.unref?.()
 
       this.pending.set(id, {
