@@ -67,6 +67,42 @@ related "speak a delegated result if the voice overlay is still open" TODO
 was closed on the same finding — no delayed completion turn exists on this
 surface to speak. Both TODO entries record the verified mechanism.
 
+## 2026-07-08 — delegate_task verdict (nudge reverted), #131 closure, demo composer
+
+**delegate_task async-delivery verdict (upstream verification).** The TODO's
+VERIFY-FIRST question — does a `delegate_task` completion turn reach
+api_server-visible sessions — was answered by reading current upstream source
+(clone @ `5057f03bf`): it can't, because no async dispatch ever happens on
+that surface. Every api_server route binds `async_delivery=False`
+(`gateway/platforms/api_server.py`), and `tools/delegate_tool.py` consults
+`gateway.session_context.async_delivery_supported()` and downgrades
+`background=true` to synchronous inline execution with an explanatory note
+(upstream issue #10760). The completion-injection path
+(`_async_delegation_watcher` → `adapter.handle_message()`) only fires for
+push-capable platform origins. Consequences: the same-day voice
+background-delegation nudge was reverted (`45c7ef4`), its CHANGELOG entry
+withdrawn, and the speak-delegated-result-on-overlay follow-up closed — on
+the phone's SSE surface there is no delayed completion turn to speak.
+
+**#131 crash-class closure — HermesApiClient streaming URL guard.** The three
+streaming methods (`sendChatStream` / `sendCompletionsStream` /
+`sendRunStream`) built their Request before any try/catch, so a malformed
+base URL threw `IllegalArgumentException` out of the ViewModel. They now
+build via a non-throwing `authRequestOrNull()` chokepoint (top-level
+`buildApiRequestOrNull`, mirroring `buildRelayRequestOrNull`), fail the turn
+through the normal `onError` channel with a human message, and return an
+inert EventSource. This closes the last open group in the #131 audit list.
+
+**Demo mode: composer canned reply.** Typing + Send in the offline demo was a
+silent no-op (`sendMessage` early-returned on the null API client), reading
+as broken. `sendMessage` now intercepts while `isDemoMode`: echoes the user
+bubble and appends `DemoContent.composerReply` (honest "offline demo — tap
+Connect" notice), both clientOnly so demo-exit's `clearMessages()` wipes
+them. Wired via `setDemoModeWiring` unconditionally in RelayApp, since the
+client-gated chat init never runs in demo and ChatViewModel's own handler
+stays null there. New `DemoContentTest.composerReplyFollowsTheDemoContentContract`
+plus `buildApiRequestOrNull` guard tests in `HermesApiClientTest`.
+
 ## 2026-07-07 — Realtime voice result-injection: drop the fake-user-message hack
 
 **What changed.** The realtime voice broker (`plugin/relay/realtime_agent/broker.py`)
