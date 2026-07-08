@@ -176,6 +176,14 @@ enum class BackgroundRunPhase {
 
     /** The run finished; the spoken summary is queued behind the floor. */
     DELIVERING,
+
+    /**
+     * The answer was delivered (summary audio started, or delivery settled
+     * without audio). The chip lingers briefly showing the outcome instead of
+     * vanishing the instant the waveform/spinner returns, then
+     * auto-dismisses; its ✕ becomes a local dismiss.
+     */
+    DONE,
 }
 
 data class VoiceHandoffStatus(
@@ -308,6 +316,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "VoiceViewModel"
         private const val TTS_CACHE_CAP = 6 // keep the last N mp3s on disk
+
+        /** How long the DONE background-run chip lingers before auto-dismiss. */
+        private const val DONE_CHIP_LINGER_MS = 10_000L
         private const val MAX_BROKERED_TOOL_STATUS_PER_MESSAGE = 2
         private const val STABLE_VOICE_INTERFACE_CONTEXT =
             "Hermes Android voice interface context for this turn:\n" +
@@ -1306,15 +1317,60 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Settle the background-run chip to [BackgroundRunPhase.DONE] and schedule
+     * its auto-dismiss. Called when the spoken summary's first audio arrives,
+     * or by the delivery watchdog when no audio ever does (visual-only
+     * delivery / provider hiccup). Previously the chip was nulled outright at
+     * first summary audio — it vanished the instant the waveform came back,
+     * reading as the task being lost. Callers own cancelling any pending
+     * [deliveringChipClearJob] (the watchdog IS that job and must not cancel
+     * itself).
+     */
+    private fun settleBackgroundRunChip(reason: String) {
+        Log.i(
+            TAG,
+            "Background-run chip settled to DONE ($reason) " +
+                "run=${_uiState.value.backgroundRun?.runId ?: "?"}",
+        )
+        updateBackgroundRun { run ->
+            run.copy(
+                phase = BackgroundRunPhase.DONE,
+                message = "Background task finished.",
+                statusLine = null,
+            )
+        }
+        deliveringChipClearJob = viewModelScope.launch {
+            delay(DONE_CHIP_LINGER_MS)
+            _uiState.update { state ->
+                if (state.backgroundRun?.phase == BackgroundRunPhase.DONE) {
+                    state.copy(backgroundRun = null)
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
+    /**
      * Cancel the promoted/durable background run from the overlay chip. The
      * relay confirms with `hermes.run.cancelled`, which clears the chip; the
      * message flips immediately so the tap feels acknowledged.
      */
     fun cancelBackgroundRun() {
+        val run = _uiState.value.backgroundRun
+        if (run?.phase == BackgroundRunPhase.DONE) {
+            // The task already finished — ✕ on a settled chip is a local
+            // dismiss, never a cancel (a late cancel used to overwrite a
+            // delivered answer with "Cancelled.").
+            Log.i(TAG, "Background run chip dismissed (DONE) run=${run.runId ?: "?"}")
+            deliveringChipClearJob?.cancel()
+            _uiState.update { it.copy(backgroundRun = null) }
+            return
+        }
         Log.i(
             TAG,
             "Background run cancel requested from chip " +
-                "run=${_uiState.value.backgroundRun?.runId ?: "?"}",
+                "run=${run?.runId ?: "?"}",
         )
         updateBackgroundRun { it.copy(message = "Cancelling…", statusLine = null) }
         cancelRealtimeAgentTurn("background_run_chip")
@@ -2600,8 +2656,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     // Live chip: tool starts are the fastest-updating signal for
                     // a background run (progress events only tick every ~5s).
+                    // DELIVERING/DONE chips are settled — don't reanimate them.
                     updateBackgroundRun { run ->
-                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        if (run.phase == BackgroundRunPhase.DELIVERING ||
+                            run.phase == BackgroundRunPhase.DONE
+                        ) run
                         else run.copy(
                             statusLine = realtimeToolStatusLine(event.toolName),
                             phase = BackgroundRunPhase.RUNNING,
@@ -2642,7 +2701,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     updateBackgroundRun { run ->
-                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        if (run.phase == BackgroundRunPhase.DELIVERING ||
+                            run.phase == BackgroundRunPhase.DONE
+                        ) run
                         else run.copy(
                             // Clear the finished tool's line rather than leave
                             // RUNNING pinned on a tool that is no longer live.
@@ -2684,8 +2745,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // Live chip: active tool + completed-step count. Progress
                     // arriving at all also means the socket is healthy, so a
                     // RECONNECTING chip can flip back to RUNNING here.
+                    // DELIVERING/DONE chips are settled — don't reanimate them.
                     updateBackgroundRun { run ->
-                        if (run.phase == BackgroundRunPhase.DELIVERING) run
+                        if (run.phase == BackgroundRunPhase.DELIVERING ||
+                            run.phase == BackgroundRunPhase.DONE
+                        ) run
                         else run.copy(
                             statusLine = event.activeToolName
                                 ?.takeIf { name -> name.isNotBlank() }
@@ -2707,6 +2771,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         "Realtime run promoted to background tier=$tier " +
                             "run=${event.runId ?: "?"} session=${event.chatSessionId ?: "?"}",
                     )
+                    // A fresh run replaces any lingering DONE chip — cancel its
+                    // pending auto-dismiss so it can't clear the NEW chip's
+                    // later DONE state early.
+                    deliveringChipClearJob?.cancel()
                     _uiState.update {
                         it.copy(
                             backgroundRun = BackgroundRunState(
@@ -2742,16 +2810,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         // Watchdog: if no summary audio ever starts (visual-only
-                        // delivery, provider hiccup), don't pin a stale chip.
+                        // delivery, provider hiccup), settle the chip to DONE
+                        // instead of pinning DELIVERING forever — the run DID
+                        // finish; its result is in the transcript either way.
                         deliveringChipClearJob?.cancel()
                         deliveringChipClearJob = viewModelScope.launch {
                             delay(20_000L)
-                            _uiState.update { state ->
-                                if (state.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
-                                    state.copy(backgroundRun = null)
-                                } else {
-                                    state
-                                }
+                            if (_uiState.value.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
+                                // Re-assigns deliveringChipClearJob to the DONE
+                                // linger job; this watchdog job is completing, so
+                                // no self-cancel is needed.
+                                settleBackgroundRunChip(reason = "delivery_watchdog")
                             }
                         }
                     }
@@ -3530,10 +3599,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         audioSeen.set(true)
         audioBytes.addAndGet(audio.size)
         lastRealtimeAudioDeltaAtMs = System.currentTimeMillis()
-        // The spoken summary started — the DELIVERING chip has done its job.
+        // The spoken summary started — settle the chip to DONE so the outcome
+        // stays visible for a beat instead of vanishing the instant the
+        // waveform returns (it auto-dismisses after DONE_CHIP_LINGER_MS).
         if (_uiState.value.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
             deliveringChipClearJob?.cancel()
-            _uiState.update { it.copy(backgroundRun = null) }
+            settleBackgroundRunChip(reason = "summary_audio_started")
         }
         val sampleRate = event.sampleRate ?: 24_000
         Log.i(
@@ -4370,7 +4441,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // relay keeps the run alive across the retry window; progress events
         // (or the resumed signal) flip the chip back to RUNNING.
         _uiState.value.backgroundRun?.let { run ->
-            if (run.phase != BackgroundRunPhase.DELIVERING) {
+            if (run.phase != BackgroundRunPhase.DELIVERING &&
+                run.phase != BackgroundRunPhase.DONE
+            ) {
                 when (event.label) {
                     "Connection changed", "Waiting for route", "Trying voice route",
                     "Resume sent", "Route changed",

@@ -1517,14 +1517,19 @@ private fun BackgroundRunChip(
             animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
             label = "bgRunPulseAlpha",
         )
+        val done = display.phase == BackgroundRunPhase.DONE
         val dotColor = when (display.phase) {
             BackgroundRunPhase.RECONNECTING -> MaterialTheme.colorScheme.tertiary
             else -> MaterialTheme.colorScheme.primary
         }
+        // A settled (DONE) chip reads as an outcome, not activity: solid dot,
+        // no pulse, no live ticker.
+        val dotAlpha = if (done) 1f else pulse
         val title = when (display.phase) {
             BackgroundRunPhase.RECONNECTING -> "Reconnecting — your task is still running"
             BackgroundRunPhase.DELIVERING -> display.message
             BackgroundRunPhase.RUNNING -> display.message
+            BackgroundRunPhase.DONE -> display.message
         }
         val detail = buildList {
             display.statusLine
@@ -1536,7 +1541,7 @@ private fun BackgroundRunChip(
                         if (display.completedToolCount == 1) "" else "s"
                 )
             }
-            add(elapsedLabel)
+            if (!done) add(elapsedLabel)
         }.joinToString(" · ")
 
         Surface(
@@ -1551,7 +1556,7 @@ private fun BackgroundRunChip(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(dotColor.copy(alpha = pulse)),
+                        .background(dotColor.copy(alpha = dotAlpha)),
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -1578,7 +1583,9 @@ private fun BackgroundRunChip(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Cancel background task",
+                        // The VM treats ✕ on a DONE chip as a local dismiss,
+                        // never a cancel — label it accordingly for TalkBack.
+                        contentDescription = if (done) "Dismiss" else "Cancel background task",
                         tint = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.size(16.dp),
                     )
