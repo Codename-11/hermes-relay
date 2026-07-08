@@ -184,6 +184,9 @@ class DeltaOnlyHermesToolBroker:
 
 
 class RealtimeAgentBrokerHelperTests(unittest.TestCase):
+    def test_realtime_config_defaults_to_verbatim_delivery(self) -> None:
+        self.assertEqual(RelayConfig().realtime_voice_result_delivery, "speak_verbatim")
+
     def test_relay_xai_oauth_skips_expired_hermes_provider_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             auth_path = os.path.join(tmpdir, "auth.json")
@@ -292,11 +295,26 @@ class RealtimeAgentBrokerHelperTests(unittest.TestCase):
         self.assertLess(len(text), 900)
         self.assertNotIn('"output"', text)
 
+    def test_provider_safe_answer_strips_source_path_lines(self) -> None:
+        text = broker_module._provider_safe_answer_for_speech(
+            "Your dog's name is Luna.\n"
+            "Source: 1. Personal/Household/Household notes.md\n"
+            "Sources:\n"
+            "- C:\\Users\\Example\\notes.md\n"
+        )
+
+        self.assertEqual("Your dog's name is Luna.", text)
+
     def test_force_hermes_for_previous_tool_result_followup(self) -> None:
         self.assertTrue(
             broker_module._should_force_hermes_for_transcript(
                 "Hey, didn't get any data back from that last call?"
             )
+        )
+
+    def test_force_hermes_for_queue_status_followup(self) -> None:
+        self.assertTrue(
+            broker_module._should_force_hermes_for_transcript("What's in the queue?")
         )
 
 
@@ -438,6 +456,7 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             realtime_voice_provider="stub",
             realtime_voice_model="local-tone",
             realtime_voice_voice="sine",
+            realtime_voice_result_delivery="speak_when_idle",
             realtime_voice_config_path=os.path.join(
                 self._tmpdir.name,
                 "relay-config.yaml",

@@ -1,23 +1,19 @@
-"""Provider-facing keepalive tests for the realtime agent.
+"""Provider idle-close handling for the realtime agent.
 
-xAI closes a realtime conversation after 900s of inactivity (observed live
-2026-07-08). The broker's `_provider_keepalive_loop` appends short silent PCM
-chunks to the provider input buffer while the connection is quiet so an
-open-but-silent voice session (background-run wait, or the user simply leaving
-voice mode open) survives. These tests drive the loop directly with a fake
-connection and a sub-second interval via `RELAY_VOICE_PROVIDER_KEEPALIVE_MS`.
+xAI closes a realtime conversation after 900s of true inactivity. Live probe
+runs on 2026-07-08 proved protocol no-ops do not reset that timer, so the relay
+now treats the provider idle-close as routine: close the Android websocket
+cleanly while idle and let the next user turn open a fresh provider session.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from plugin.relay.config import RelayConfig
 from plugin.relay.realtime_agent import broker as broker_module
@@ -25,32 +21,53 @@ from plugin.relay.realtime_agent.broker import (
     RealtimeAgentHandler,
     RealtimeAgentSession,
     _is_provider_idle_timeout,
-    _provider_keepalive_seconds,
 )
+from plugin.relay.realtime_agent.models import ProviderEvent, ProviderEventKind
+
+
+class FakeWebSocket:
+    def __init__(self) -> None:
+        self.closed = False
+        self.close_code: int | None = None
+        self.close_message: bytes | None = None
+        self.sent: list[dict[str, Any]] = []
+
+    async def close(self, *, code: int = 1000, message: bytes = b"") -> None:
+        self.closed = True
+        self.close_code = code
+        self.close_message = message
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        self.sent.append(payload)
 
 
 class FakeConnection:
-    """Only what the keepalive loop touches: send_audio."""
+    def __init__(self) -> None:
+        self._events: asyncio.Queue[ProviderEvent | None] = asyncio.Queue()
 
-    def __init__(self, fail: bool = False) -> None:
-        self.audio_sends: list[tuple[bytes, int]] = []
-        self.fail = fail
+    async def emit(self, event: ProviderEvent) -> None:
+        await self._events.put(event)
 
-    async def send_audio(self, pcm: bytes, sample_rate: int) -> None:
-        if self.fail:
-            raise RuntimeError("socket closed")
-        self.audio_sends.append((pcm, sample_rate))
+    async def finish(self) -> None:
+        await self._events.put(None)
+
+    async def events(self):
+        while True:
+            event = await self._events.get()
+            if event is None:
+                return
+            yield event
 
 
 def _make_session(tmpdir: str) -> RealtimeAgentSession:
     return RealtimeAgentSession(
-        session_id="sess-keepalive",
+        session_id="sess-idle",
         provider="xai_realtime",
         model="grok-voice-latest",
         voice="ember",
         sample_rate=24000,
         profile=None,
-        chat_session_id=None,
+        chat_session_id="chat-1",
         config_scope="test",
         config_path=None,
         auth_kind="test",
@@ -61,131 +78,46 @@ def _make_session(tmpdir: str) -> RealtimeAgentSession:
     )
 
 
-class ProviderKeepaliveLoopTest(unittest.IsolatedAsyncioTestCase):
+class ProviderIdleCloseTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.handler = RealtimeAgentHandler(RelayConfig())
         self.session = _make_session(self._tmp.name)
 
-    async def _run_loop_briefly(
-        self,
-        connection: FakeConnection,
-        interval_ms: int,
-        run_for_s: float,
-    ) -> None:
-        self.session.native_connection = connection  # type: ignore[assignment]
-        with patch.dict(
-            os.environ, {"RELAY_VOICE_PROVIDER_KEEPALIVE_MS": str(interval_ms)}
-        ):
-            task = asyncio.create_task(
-                self.handler._provider_keepalive_loop(self.session, connection)
-            )
-            await asyncio.sleep(run_for_s)
-            self.session.closed = True
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-    async def test_pings_with_silence_after_quiet_interval(self) -> None:
+    async def test_idle_timeout_closes_android_socket_without_voice_error(self) -> None:
+        ws = FakeWebSocket()
         connection = FakeConnection()
-        # Stale activity stamp → first ping should fire immediately.
-        self.session.native_last_provider_activity = time.monotonic() - 999.0
-        await self._run_loop_briefly(connection, interval_ms=40, run_for_s=0.15)
+        self.session.attached_ws = ws  # type: ignore[assignment]
 
-        self.assertGreaterEqual(len(connection.audio_sends), 2)
-        pcm, sample_rate = connection.audio_sends[0]
-        self.assertEqual(sample_rate, 24000)
-        # 100ms of 16-bit mono at 24kHz.
-        self.assertEqual(len(pcm), 4800)
-        self.assertEqual(pcm, b"\x00" * len(pcm))
-        # Each ping is recorded in the session event log.
+        await connection.emit(
+            ProviderEvent(
+                ProviderEventKind.ERROR,
+                payload={
+                    "message": (
+                        "xAI Realtime error: Conversation timed out after "
+                        "900.0 seconds due to inactivity"
+                    )
+                },
+            )
+        )
+        await self.handler._pump_provider_events(  # type: ignore[arg-type]
+            ws,
+            self.session,
+            connection,  # type: ignore[arg-type]
+            asyncio.Event(),
+        )
+
+        self.assertTrue(self.session.native_provider_idle_closed)
+        self.assertTrue(ws.closed)
+        self.assertEqual(ws.close_code, 1000)
+        self.assertEqual(
+            ws.close_message,
+            broker_module._PROVIDER_IDLE_CLOSE_WS_REASON.encode("utf-8"),
+        )
+        self.assertEqual([], [event for event in ws.sent if event.get("type") == "voice.error"])
         log_text = self.session.event_log_path.read_text(encoding="utf-8")
-        self.assertIn("voice.realtime_agent.provider_keepalive", log_text)
-
-    async def test_quiet_interval_not_elapsed_means_no_ping(self) -> None:
-        connection = FakeConnection()
-        # Fresh activity: loop should sleep out the whole run without sending.
-        self.session.native_last_provider_activity = time.monotonic()
-        await self._run_loop_briefly(connection, interval_ms=5_000, run_for_s=0.1)
-
-        self.assertEqual(connection.audio_sends, [])
-
-    async def test_recent_client_activity_defers_ping(self) -> None:
-        connection = FakeConnection()
-        self.session.native_last_provider_activity = time.monotonic() - 999.0
-        self.session.native_connection = connection  # type: ignore[assignment]
-        with patch.dict(os.environ, {"RELAY_VOICE_PROVIDER_KEEPALIVE_MS": "60"}):
-            task = asyncio.create_task(
-                self.handler._provider_keepalive_loop(self.session, connection)
-            )
-            await asyncio.sleep(0.02)
-            first_burst = len(connection.audio_sends)
-            # Simulate live traffic: keep the stamp fresh for a while.
-            for _ in range(4):
-                self.session.native_last_provider_activity = time.monotonic()
-                await asyncio.sleep(0.02)
-            during_activity = len(connection.audio_sends) - first_burst
-            self.session.closed = True
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-        self.assertGreaterEqual(first_burst, 1)
-        self.assertEqual(during_activity, 0)
-
-    async def test_zero_interval_disables_keepalive(self) -> None:
-        connection = FakeConnection()
-        self.session.native_last_provider_activity = time.monotonic() - 999.0
-        await self._run_loop_briefly(connection, interval_ms=0, run_for_s=0.05)
-
-        self.assertEqual(connection.audio_sends, [])
-
-    async def test_send_failure_stops_loop_and_logs(self) -> None:
-        connection = FakeConnection(fail=True)
-        self.session.native_last_provider_activity = time.monotonic() - 999.0
-        self.session.native_connection = connection  # type: ignore[assignment]
-        with patch.dict(os.environ, {"RELAY_VOICE_PROVIDER_KEEPALIVE_MS": "10"}):
-            # Loop must return on its own (not rely on cancellation).
-            await asyncio.wait_for(
-                self.handler._provider_keepalive_loop(self.session, connection),
-                timeout=2.0,
-            )
-
-        log_text = self.session.event_log_path.read_text(encoding="utf-8")
-        self.assertIn("voice.realtime_agent.provider_keepalive_failed", log_text)
-
-    async def test_connection_swap_stops_loop(self) -> None:
-        connection = FakeConnection()
-        self.session.native_last_provider_activity = time.monotonic() - 999.0
-        self.session.native_connection = None  # replaced/torn down elsewhere
-        with patch.dict(os.environ, {"RELAY_VOICE_PROVIDER_KEEPALIVE_MS": "10"}):
-            await asyncio.wait_for(
-                self.handler._provider_keepalive_loop(self.session, connection),
-                timeout=2.0,
-            )
-
-        self.assertEqual(connection.audio_sends, [])
-
-
-class KeepaliveConfigTest(unittest.TestCase):
-    def test_default_interval(self) -> None:
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("RELAY_VOICE_PROVIDER_KEEPALIVE_MS", None)
-            self.assertEqual(
-                _provider_keepalive_seconds(),
-                broker_module._PROVIDER_KEEPALIVE_SECONDS,
-            )
-
-    def test_env_override_and_disable(self) -> None:
-        with patch.dict(os.environ, {"RELAY_VOICE_PROVIDER_KEEPALIVE_MS": "120000"}):
-            self.assertEqual(_provider_keepalive_seconds(), 120.0)
-        with patch.dict(os.environ, {"RELAY_VOICE_PROVIDER_KEEPALIVE_MS": "0"}):
-            self.assertEqual(_provider_keepalive_seconds(), 0.0)
+        self.assertIn("voice.realtime_agent.provider_idle_close", log_text)
 
 
 class IdleTimeoutClassifierTest(unittest.TestCase):
@@ -206,7 +138,7 @@ class IdleTimeoutClassifierTest(unittest.TestCase):
         for message in (
             "Cancellation failed: no active response found",
             "rate limit exceeded",
-            "request timed out",  # timeout without inactivity
+            "request timed out",
             "provider error",
         ):
             self.assertFalse(_is_provider_idle_timeout(message), message)

@@ -130,20 +130,13 @@ _BACKGROUND_RUN_MAX_SECONDS = 300.0
 _LONG_TOOL_QUICK_FINISH_SECONDS = 1.5
 # Poll cadence for the detached-session keep-alive loop.
 _BACKGROUND_DETACHED_POLL_SECONDS = 2.0
-# Provider-facing conversation keepalive. xAI ends a realtime conversation
-# after 900s of inactivity (observed live 2026-07-08: "Conversation timed out
-# after 900.0 seconds due to inactivity"). This app manages turn-taking
-# manually (turn_detection: None) and the phone only streams mic audio while
-# the user is actually talking, so any quiet stretch — a background-run wait,
-# or simply an open-but-silent voice session — starves the provider socket.
-# When the provider connection has been quiet for the interval below, the
-# broker appends a short chunk of silent PCM to the provider input buffer.
-# Append-only by design (never committed, never cleared): a clear here could
-# race a user utterance that starts streaming between the check and the send,
-# while uncommitted silence merely prefixes the next real utterance with
-# ~100ms per ping. 240s gives three pings inside every 900s window.
-_PROVIDER_KEEPALIVE_SECONDS = 240.0
-_PROVIDER_KEEPALIVE_CHUNK_MS = 100
+# xAI ends a realtime conversation after 900s of true conversation inactivity.
+# Four live probe runs on 2026-07-08 showed that neither uncommitted silent PCM
+# nor server-acknowledged session.update messages reset that timer. Treat that
+# close as routine provider-session expiry: close the Android websocket cleanly
+# while idle, and let the next user turn open a fresh provider conversation
+# seeded from the synced Hermes session.
+_PROVIDER_IDLE_CLOSE_WS_REASON = "provider idle timeout"
 # Forced-summary early commit: once the buffered summary prefix is at least
 # this long, passes the bad-phrase check, AND shows content overlap with the
 # Hermes answer, the buffer flushes and the rest streams live — the user
@@ -210,10 +203,7 @@ class RealtimeAgentSession:
     native_provider_task: asyncio.Task[None] | None = None
     native_playback_drained: asyncio.Event | None = None
     native_close_task: asyncio.Task[None] | None = None
-    native_keepalive_task: asyncio.Task[None] | None = None
-    # time.monotonic() of the last provider-bound client audio send or
-    # provider event; the keepalive loop pings only when this goes stale.
-    native_last_provider_activity: float = 0.0
+    native_provider_idle_closed: bool = False
     native_input_audio_bytes: int = 0
     native_response_requested_for_input: bool = False
     native_forced_preamble_active: bool = False
@@ -263,7 +253,7 @@ class RealtimeAgentSession:
     promotion_enabled: bool = False
     promote_after_ms: int = 6000
     spoken_handoff: bool = True
-    result_delivery: str = "speak_when_idle"
+    result_delivery: str = "speak_verbatim"
     promoted_transcript: str | None = None
     background_delivery_task: asyncio.Task[None] | None = None
     response_ids_awaiting_tool_followup: set[str] = field(default_factory=set)
@@ -443,7 +433,7 @@ class RealtimeAgentHandler:
             promotion_enabled=bool(settings.get("promotion_enabled", False)),
             promote_after_ms=int(settings.get("promote_after_ms", 6000)),
             spoken_handoff=bool(settings.get("spoken_handoff", True)),
-            result_delivery=str(settings.get("result_delivery", "speak_when_idle")),
+            result_delivery=str(settings.get("result_delivery", "speak_verbatim")),
             progress_spoken_after_seconds=(
                 max(0, int(settings.get("progress_spoken_after_ms", 0))) / 1000.0
             ),
@@ -664,7 +654,6 @@ class RealtimeAgentHandler:
                 return ws
             session.native_connection = connection
             session.native_playback_drained = asyncio.Event()
-            session.native_last_provider_activity = time.monotonic()
             session.native_provider_task = asyncio.create_task(
                 self._pump_provider_events(
                     ws,
@@ -672,12 +661,6 @@ class RealtimeAgentHandler:
                     connection,
                     session.native_playback_drained,
                 )
-            )
-            session.native_keepalive_task = asyncio.create_task(
-                self._provider_keepalive_loop(session, connection)
-            )
-            session.native_keepalive_task.add_done_callback(
-                _log_task_failure(session, "provider_keepalive_task")
             )
 
         if not was_detached:
@@ -728,7 +711,6 @@ class RealtimeAgentHandler:
                         )
                         continue
                     await connection.send_audio(chunk, sample_rate)
-                    session.native_last_provider_activity = time.monotonic()
                     session.native_last_input_audio_at = time.monotonic()
                     session.native_input_audio_bytes += len(chunk)
                     session.input_chunk_seq = max(session.input_chunk_seq, chunk_id)
@@ -996,10 +978,6 @@ class RealtimeAgentHandler:
         provider_task = session.native_provider_task
         if provider_task is not None and not provider_task.done():
             provider_task.cancel()
-        keepalive_task = session.native_keepalive_task
-        if keepalive_task is not None and not keepalive_task.done():
-            keepalive_task.cancel()
-        session.native_keepalive_task = None
         delivery_task = session.background_delivery_task
         if delivery_task is not None and not delivery_task.done():
             delivery_task.cancel()
@@ -1465,60 +1443,6 @@ class RealtimeAgentHandler:
             speak_pre_status=not audio_seen,
         )
 
-    async def _provider_keepalive_loop(
-        self,
-        session: RealtimeAgentSession,
-        connection: RealtimeAgentConnection,
-    ) -> None:
-        """Keep the provider conversation alive across long client silence.
-
-        Runs for the lifetime of the provider connection — including detached
-        (background-run / resume-TTL) periods, which are exactly when the
-        client is guaranteed silent. Appends a short silent PCM chunk whenever
-        the connection has seen no sends or events for the configured quiet
-        interval. The chunk is never committed, so with manual turn-taking it
-        only prefixes the next real utterance with a sliver of silence. See
-        the _PROVIDER_KEEPALIVE_SECONDS comment for why append-only.
-        """
-        interval = _provider_keepalive_seconds()
-        if interval <= 0:
-            return
-        # 16-bit mono PCM at the session rate.
-        chunk = b"\x00" * max(2, int(session.sample_rate * 2 * _PROVIDER_KEEPALIVE_CHUNK_MS / 1000))
-        try:
-            while not session.closed and session.native_connection is connection:
-                elapsed = time.monotonic() - session.native_last_provider_activity
-                if elapsed < interval:
-                    await asyncio.sleep(interval - elapsed)
-                    continue
-                try:
-                    await connection.send_audio(chunk, session.sample_rate)
-                except Exception as exc:
-                    # The event pump owns surfacing real socket failures; the
-                    # keepalive just stops pinging a dead connection.
-                    self._log(
-                        session,
-                        "voice.realtime_agent.provider_keepalive_failed",
-                        {
-                            "type": "voice.realtime_agent.provider_keepalive_failed",
-                            "error": f"{exc.__class__.__name__}: {exc}",
-                            "provider": session.provider,
-                        },
-                    )
-                    return
-                session.native_last_provider_activity = time.monotonic()
-                self._log(
-                    session,
-                    "voice.realtime_agent.provider_keepalive",
-                    {
-                        "type": "voice.realtime_agent.provider_keepalive",
-                        "quiet_seconds": round(elapsed, 1),
-                        "provider": session.provider,
-                    },
-                )
-        except asyncio.CancelledError:
-            return
-
     async def _pump_provider_events(
         self,
         ws: web.WebSocketResponse,
@@ -1527,11 +1451,6 @@ class RealtimeAgentHandler:
         playback_drained: asyncio.Event,
     ) -> None:
         async for event in connection.events():
-            # Any provider event counts as conversation activity for the
-            # keepalive loop — this covers the response side of every
-            # broker-initiated send (text, tool results, forced summaries)
-            # without stamping each call site individually.
-            session.native_last_provider_activity = time.monotonic()
             if event.kind == ProviderEventKind.READY:
                 continue
             if event.kind == ProviderEventKind.INPUT_TRANSCRIPT_DELTA:
@@ -1886,11 +1805,13 @@ class RealtimeAgentHandler:
                     continue
                 error_message = str(event.payload.get("message") or "provider error")
                 if _is_provider_idle_timeout(error_message):
-                    # The provider ended the conversation after prolonged
-                    # silence (xAI: 900s inactivity). The keepalive loop
-                    # should prevent this; if it fires anyway (keepalive
-                    # disabled, or the ping raced the deadline), surface a
-                    # human-readable expiry instead of the raw provider text.
+                    # The provider ended the conversation after prolonged true
+                    # silence (xAI: 900s inactivity). Keepalive probes proved
+                    # no protocol no-op resets that timer, so this is a normal
+                    # stale-provider-session close. Do not surface a user error:
+                    # the next Android turn will open a fresh provider session
+                    # seeded from the durable Hermes chat context.
+                    session.native_provider_idle_closed = True
                     self._log(
                         session,
                         "voice.realtime_agent.provider_idle_close",
@@ -1900,12 +1821,13 @@ class RealtimeAgentHandler:
                             "provider": session.provider,
                         },
                     )
-                    await self._send_error(
-                        ws,
-                        session,
-                        "Voice session expired after a long silence — start a new voice session to continue.",
-                        provider=session.provider,
-                    )
+                    attached_ws = session.attached_ws
+                    if attached_ws is not None and not attached_ws.closed:
+                        await attached_ws.close(
+                            code=1000,
+                            message=_PROVIDER_IDLE_CLOSE_WS_REASON.encode("utf-8"),
+                        )
+                    return
                 elif _is_benign_provider_error(error_message):
                     # A non-fatal provider notice (e.g. cancelling when no
                     # response is active) must NOT be surfaced as a fatal
@@ -2437,6 +2359,16 @@ class RealtimeAgentHandler:
                     session,
                     str(result.get("error") or "Hermes failed"),
                     provider=session.provider,
+                )
+                return
+
+            if session.result_delivery == "speak_verbatim":
+                await self._speak_result_verbatim(
+                    ws,
+                    session,
+                    result,
+                    delivery="speak_verbatim",
+                    reason="foreground_hermes_result",
                 )
                 return
 
@@ -3062,8 +2994,8 @@ class RealtimeAgentHandler:
             session.hermes_run_tier = "foreground"
             return
 
-        # speak_when_idle / notify_then_speak: wait for the floor to clear, then
-        # have the provider speak a natural summary via the forced-summary path.
+        # speak_verbatim / speak_when_idle / notify_then_speak: wait for the
+        # floor to clear, then deliver exactly once.
         session.floor.note_result_ready()
         floor_idle = await self._await_floor_idle_for_result(session)
         # If the phone is detached, don't speak into the void: the provider's
@@ -3082,6 +3014,16 @@ class RealtimeAgentHandler:
                     "run_id": session.hermes_run_id,
                     "reason": "websocket_detached",
                 },
+            )
+            session.hermes_run_tier = "foreground"
+            return
+        if session.result_delivery == "speak_verbatim":
+            await self._speak_result_verbatim(
+                ws,
+                session,
+                result,
+                delivery="speak_verbatim",
+                reason="background_result",
             )
             session.hermes_run_tier = "foreground"
             return
@@ -3224,6 +3166,15 @@ class RealtimeAgentHandler:
             return
         session.floor.note_result_ready()
         floor_idle = await self._await_floor_idle_for_result(session)
+        if session.result_delivery == "speak_verbatim":
+            await self._speak_result_verbatim(
+                ws,
+                session,
+                result,
+                delivery="speak_verbatim",
+                reason="pending_background_result",
+            )
+            return
         await self._inject_background_summary(
             ws, session, connection, result, cancel_current=not floor_idle
         )
@@ -3250,6 +3201,81 @@ class RealtimeAgentHandler:
         # Timed out waiting for the floor; deliver anyway.
         session.floor.clear_result()
         return False
+
+    async def _speak_result_verbatim(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        result: dict[str, Any],
+        *,
+        delivery: str,
+        reason: str,
+    ) -> None:
+        """Deliver the authoritative Hermes answer through relay TTS directly."""
+        text = _forced_summary_fallback_text(result)
+        if not text:
+            text = "Hermes completed the request but did not return a spoken summary."
+        session.native_pending_delivery_note = _delivery_note(text)
+        session.native_forced_summary_active = True
+        session.native_forced_summary_done = False
+        session.native_forced_summary_response_id = None
+        session.native_forced_summary_result = dict(result)
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_committed = False
+        session.native_forced_summary_text_parts.clear()
+        response_id = f"verbatim-{session.event_seq + 1}"
+        self._log(
+            session,
+            "voice.response.verbatim_delivery",
+            {
+                "type": "voice.response.verbatim_delivery",
+                "response_id": response_id,
+                "reason": reason,
+                "chars": len(text),
+            },
+        )
+        try:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_STARTED,
+                    "provider": session.provider,
+                    "model": session.model,
+                    "voice": session.voice,
+                    "session_id": session.session_id,
+                    "chat_session_id": session.chat_session_id,
+                    "response_id": response_id,
+                    "source": "hermes",
+                    "delivery": delivery,
+                },
+            )
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_DELTA,
+                    "source": "hermes",
+                    "delta": text,
+                    "response_id": response_id,
+                    "delivery": delivery,
+                },
+            )
+            await self._render_provider_audio(
+                ws,
+                session,
+                text,
+                {},
+                response_id=response_id,
+            )
+        finally:
+            session.native_forced_summary_active = False
+            session.native_forced_summary_done = True
+            session.native_forced_summary_response_id = response_id
+            session.native_forced_summary_result = None
+            session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_committed = False
+            session.native_forced_summary_text_parts.clear()
 
     async def _inject_background_summary(
         self,
@@ -3372,6 +3398,16 @@ class RealtimeAgentHandler:
                 "last_tool_message": session.hermes_last_tool_message,
                 "completed_tool_count": session.hermes_completed_tool_count,
                 "queued_count": len(session.background_queue),
+                "queued_items": [
+                    {
+                        "position": idx + 1,
+                        "request_preview": _compact_status_text(
+                            str(item.get("text") or "")
+                        ),
+                    }
+                    for idx, item in enumerate(session.background_queue)
+                    if str(item.get("text") or "").strip()
+                ],
                 "interface": interface_context,
             }
         if call.name == "hermes_cancel":
@@ -4181,9 +4217,17 @@ class RealtimeAgentHandler:
             updates["background_default_mode"] = mode
         if "result_delivery" in payload:
             delivery = _bounded_string(payload["result_delivery"], "result_delivery", max_len=24)
-            if delivery not in ("speak_when_idle", "notify_then_speak", "visual_only"):
+            if delivery not in (
+                "speak_verbatim",
+                "speak_when_idle",
+                "notify_then_speak",
+                "visual_only",
+            ):
                 raise web.HTTPBadRequest(
-                    text="result_delivery must be speak_when_idle, notify_then_speak, or visual_only"
+                    text=(
+                        "result_delivery must be speak_verbatim, speak_when_idle, "
+                        "notify_then_speak, or visual_only"
+                    )
                 )
             updates["result_delivery"] = delivery
         if not updates:
@@ -4320,6 +4364,10 @@ def _native_instructions(session: RealtimeAgentSession) -> str:
         "or any information not present in this prompt/session context, call "
         "hermes_run_task instead of answering directly. If Hermes cannot verify "
         "the requested information, say that briefly instead of guessing. "
+        "If the user asks what is running, what is queued, whether the earlier "
+        "background task finished, or asks for current voice-task status, call "
+        "hermes_get_status rather than hermes_run_task; do not queue a status "
+        "question behind the work it is asking about. "
         "Provider-native realtime sessions are ephemeral; Hermes is the durable "
         "conversation memory. The relay may seed recent normal chat and realtime "
         "voice turns into this provider session. Use that seeded context for "
@@ -4584,7 +4632,7 @@ def _compact_status_text(value: str) -> str:
 
 
 def _provider_safe_answer_for_speech(value: str, *, max_chars: int = 1800) -> str:
-    text = value.strip()
+    text = _strip_tts_source_lines(value).strip()
     if not text:
         return ""
     compact = " ".join(text.split())
@@ -4599,6 +4647,56 @@ def _provider_safe_answer_for_speech(value: str, *, max_chars: int = 1800) -> st
         return compact
     excerpt = compact[: max_chars - 3].rstrip()
     return f"{excerpt}..."
+
+
+def _strip_tts_source_lines(value: str) -> str:
+    """Drop source/citation/path lines that are useful on screen but poor TTS."""
+    kept: list[str] = []
+    in_source_block = False
+    for raw_line in value.splitlines():
+        stripped = raw_line.strip()
+        lowered = stripped.lower()
+        if not stripped:
+            in_source_block = False
+            kept.append(raw_line)
+            continue
+        if lowered.startswith((
+            "source:",
+            "sources:",
+            "citation:",
+            "citations:",
+            "references:",
+        )):
+            in_source_block = True
+            continue
+        if in_source_block and _looks_like_source_list_line(stripped):
+            continue
+        kept.append(raw_line)
+    return "\n".join(kept)
+
+
+def _looks_like_source_list_line(line: str) -> bool:
+    marker_stripped = line.lstrip("-*•0123456789. )\t")
+    lowered = marker_stripped.lower()
+    if lowered.startswith(("source:", "citation:", "reference:")):
+        return True
+    if "\\" in marker_stripped:
+        return True
+    if "/" in marker_stripped and any(
+        part in lowered
+        for part in (
+            "/",
+            "personal/",
+            "household/",
+            "documents/",
+            "desktop/",
+            "downloads/",
+            "users/",
+            "home/",
+        )
+    ):
+        return True
+    return False
 
 
 def _try_parse_json(value: str) -> Any | None:
@@ -4799,6 +4897,8 @@ def _force_hermes_reason_for_transcript(text: str) -> str | None:
         ("right now", "current_time"),
         ("news", "current_data"),
         ("status", "status"),
+        ("queue", "status"),
+        ("queued", "status"),
         ("version", "versioned_data"),
         ("release", "versioned_data"),
         ("logs", "logs"),
@@ -5152,14 +5252,6 @@ def _background_run_max_seconds() -> float:
     if value is not None and value > 0:
         return value / 1000.0
     return _BACKGROUND_RUN_MAX_SECONDS
-
-
-def _provider_keepalive_seconds() -> float:
-    """Quiet time before the provider-facing keepalive pings; <= 0 disables."""
-    value = _int_value(os.getenv("RELAY_VOICE_PROVIDER_KEEPALIVE_MS"))
-    if value is not None:
-        return value / 1000.0
-    return _PROVIDER_KEEPALIVE_SECONDS
 
 
 _DEFAULT_LONG_TOOL_HINTS = (

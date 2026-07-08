@@ -129,7 +129,7 @@ Relay-side `realtime_voice` config (source of truth, per-profile override via
 | `spoken_handoff` | `true` | Speak "I've started that" on promotion |
 | `progress_spoken_after_ms` | `15000` | Reuse `_HERMES_SPOKEN_PROGRESS_AFTER_SECONDS` |
 | `progress_repeat_ms` | `30000` | Reuse `_HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS` |
-| `result_delivery` | `speak_when_idle` | vs `notify_then_speak` / `visual_only` |
+| `result_delivery` | `speak_verbatim` | vs `speak_when_idle` / `notify_then_speak` / `visual_only` |
 | `max_background_runs` | `1` | Fixed at 1 this plan |
 
 ---
@@ -171,8 +171,10 @@ rather than holding it conversational. Capture that in the ADR's Phase 0 line.
 provider call with an interim ack* rather than holding an open response, so the
 "hold the floor conversational while a run completes" worst case this spike
 guarded against does not occur — the socket only sees the normal between-turns
-idle gap. Both providers are `hold-floor-ok`, so the default-on gate is satisfied
-(no provider needs the `must-reopen` fallback today).
+idle gap. Both providers were `hold-floor-ok` for the short-window Phase 0 gate,
+so default-on was satisfied. Later 2026-07-08 xAI probes revised the long-idle
+behavior to `must-reopen` after the provider's 900s conversation-inactivity
+expiry.
 
 ---
 

@@ -371,7 +371,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
          * the estimated queued duration; this final-delta guard covers device
          * output latency that is not visible from the write calls themselves.
          */
-        private const val REALTIME_OUTPUT_RESUME_TAIL_GUARD_MS = 350L
+        private const val REALTIME_OUTPUT_RESUME_TAIL_GUARD_MS = 650L
         private const val AUDIO_COMPLETION_RETRY_MS = 100L
         private const val AUDIO_COMPLETION_MAX_SLEEP_MS = 750L
         private const val OUTPUT_AUDIO_ACTIVE_THRESHOLD = 0.012f
@@ -2678,12 +2678,22 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                                 "session=${event.chatSessionId ?: "?"}",
                         )
                     }
+                    if (event.type == "voice.response.started" &&
+                        _uiState.value.state == VoiceState.Listening
+                    ) {
+                        Log.i(TAG, "Ignoring realtime response start while mic capture is active")
+                        return@runRealtimeAgent
+                    }
                     _uiState.update {
                         it.copy(state = VoiceState.Thinking, outputAudioActive = false)
                     }
                 }
                 "voice.response.delta" -> {
                     if (event.source == "hermes") return@runRealtimeAgent
+                    if (_uiState.value.state == VoiceState.Listening) {
+                        Log.i(TAG, "Ignoring realtime response text while mic capture is active")
+                        return@runRealtimeAgent
+                    }
                     event.delta?.let { responseText.append(it) }
                     _uiState.update {
                         it.copy(
@@ -2965,6 +2975,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.output_audio.delta" -> {
+                    if (_uiState.value.state == VoiceState.Listening) {
+                        Log.i(TAG, "Dropping realtime output audio while mic capture is active")
+                        return@runRealtimeAgent
+                    }
                     event.audioEventId?.let {
                         lastRealtimeAudioEventId.updateAndGet { current -> maxOf(current, it) }
                     }
@@ -2979,6 +2993,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.output_audio.done" -> {
+                    if (_uiState.value.state == VoiceState.Listening) {
+                        Log.i(TAG, "Ignoring realtime output done while mic capture is active")
+                        return@runRealtimeAgent
+                    }
                     pcmPlayer?.flushBufferedPlayback()
                     _uiState.update {
                         it.copy(outputAudioActive = it.outputAudioActive && audioSeen.get())
@@ -2998,6 +3016,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.response.done" -> {
+                    if (_uiState.value.state == VoiceState.Listening) {
+                        Log.i(TAG, "Ignoring realtime response done while mic capture is active")
+                        return@runRealtimeAgent
+                    }
                     realtimeConfirmationControl = null
                     event.text?.takeIf { it.isNotBlank() }?.let { finalText ->
                         if (responseText.isBlank()) responseText.append(finalText)

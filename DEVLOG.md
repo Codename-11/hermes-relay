@@ -1,5 +1,39 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Realtime voice idle recovery and verbatim delivery default
+
+Follow-up batch after the A-E on-device rounds and relay-host idle probes.
+
+**Provider idle recovery.** The failed keepalive path is removed from the
+realtime broker. xAI's 900s conversation-inactivity close is now treated as
+routine provider-session expiry: `_pump_provider_events` logs
+`voice.realtime_agent.provider_idle_close`, closes the attached Android
+websocket with a clean idle reason, and emits no `voice.error`. Android treats
+that idle close as a successful stale persistent session end; the next user
+turn opens a fresh provider conversation, reseeded from the durable Hermes
+session. The old provider keepalive loop and activity stamps are retired, and
+`test_realtime_keepalive.py` now pins idle-close handling instead of silent
+PCM pings.
+
+**Verbatim result delivery.** `result_delivery: "speak_verbatim"` is now the
+default in relay config, profile settings, the session model, Android config
+fallbacks, and the Voice Settings segmented control. Foreground, background,
+and pending background Hermes results use relay TTS to speak the authoritative
+Hermes answer directly; `speak_when_idle` remains the opt-in provider/model
+summary mode.
+
+**Polish from the last live round.** Relay fallback speech strips
+`Source:` / `Sources:` / citation path lines before TTS, `hermes_get_status`
+now exposes queued item previews and the provider instructions steer queue
+status questions to that tool, Android ignores realtime response/audio/done
+events while still recording, and the output tail guard is raised from 350ms
+to 650ms to reduce final-word snap.
+
+Verification: targeted realtime suite green (83 tests across
+summary-validation / fast-lane / promotion / routes / keepalive);
+`:app:compileSideloadDebugKotlin` green with existing nullable-body warnings.
+Relay deploy, APK rebuild/install, and live voice signoff remain pending.
+
 ## 2026-07-08 — Live rounds 3–4: validation hardening, delivery note, keepalive verdict
 
 Three live-monitored voice test rounds against the A–E batch surfaced (and
@@ -219,7 +253,11 @@ probed the 15-minute scale. The idle probe gained `--keepalive-ms` for the
 relay-host repro/fix check, which also settles the one remaining empirical
 unknown (does an uncommitted append reset xAI's timer). Verification:
 `plugin/tests/test_realtime_keepalive.py` 11/11 new; existing 54 realtime
-tests green. Relay deploy + probe run pending (owner).
+tests green. Relay deploy + probe run pending (owner). **Superseded later the
+same day:** relay-host probe runs proved neither silent PCM nor
+`session.update` pings reset xAI's 900s timer; the active implementation is
+now silent idle-close recovery plus next-turn provider reopen (see the
+2026-07-08 entry at the top of this file).
 
 **2. Realtime turn-sync durability — gateway drain + provenance badge.**
 Provider-answered realtime turns sync into the Hermes session as synthetic

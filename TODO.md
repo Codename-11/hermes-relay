@@ -81,13 +81,12 @@ green. Needs relay deploy + APK install + live verify.
   (empirical 2026-07-08, 4 probe runs).** Repro died at 900.0s; silent-PCM
   pings died at 900.0s; server-ACKNOWLEDGED `session.update` pings
   (240/480/720s) died at 900.0s. The timer counts only real conversation
-  items. **Design decision needed (POC doc recommends (b)):** (a) scheduled
-  provider-socket reopen before the deadline during quiet stretches, or
-  (b) treat idle-close as routine — silently auto-reopen the provider
-  socket on the next user turn (upgrade the existing "session expired"
-  classification to silent recovery), reseeding context from the synced
-  Hermes session. Either way, retire/repurpose `_provider_keepalive_loop`
-  (currently harmless scaffolding).
+  items. **SHIPPED IN CODE (2026-07-08 PM):** picked design (b): treat
+  idle-close as routine, close the Android websocket cleanly while idle,
+  and let the next user turn open a fresh provider conversation seeded
+  from the synced Hermes session. `_provider_keepalive_loop` is retired.
+  **Remaining:** relay deploy + live >15 min idle probe to verify silent
+  next-turn recovery on device.
 - **Delivery input-quiet gate — SHIPPED (2026-07-08 PM, round-5 finding).**
   A background task finishing while the user was mid-utterance delivered
   over them and ended their recording. The relay now knows the user is
@@ -97,29 +96,25 @@ green. Needs relay deploy + APK install + live verify.
   timeout). Covers summary/fallback/queued-transition. **Client half still
   open:** the app should also not END the recording when output audio
   arrives mid-capture (belt-and-braces if a delivery slips through the
-  bounded wait) — check `VoiceViewModel`'s Listening-state handling of
-  `voice.response.started`.
-- **Audio tail cut at end of response (round-5 repro).** Final word ("you?")
-  cut hard instead of finishing smoothly — end-of-response is likely
-  truncating the last buffered PCM instead of draining. Suspects:
-  `flushBufferedPlayback()` on `voice.output_audio.done` and the
-  `RealtimePcmPlayer` end-of-stream path. Merge with the existing
-  "tap/static click between sentences" investigation; consider a short
-  end-of-response fade-out once drained-not-truncated is confirmed.
-- **Fallback speech says file paths (round-5 polish).** The fallback spoke
-  "Source: 1. Personal/Household/Househol…" — `_provider_safe_answer_for_speech`
-  should trim source/path lines harder for TTS.
-- **grok-voice fails the delivery instruction ~always (4/4 live rounds).**
-  Every observed forced summary was deferral filler; the validator+fallback
-  carried every delivery. Elevates the verbatim-delivery idea below from
-  idea to likely default.
-- **NEW IDEA (from live rounds — consider next): verbatim delivery mode.**
-  grok-voice answered the final-delivery instruction with deferral chatter
-  in BOTH live rounds — the relay-TTS fallback is carrying real delivery
-  traffic already. Consider a `result_delivery: "speak_verbatim"` option
-  (skip the model round-trip entirely; relay TTS speaks the answer
-  immediately — instant, deterministic, always correct), with the
-  model-summarized version as the opt-in nicety instead of the default.
+  bounded wait). **SHIPPED IN CLIENT (2026-07-08 PM):** `VoiceViewModel`
+  now ignores realtime response/audio/done events while still in
+  `Listening`.
+- **Audio tail cut at end of response (round-5 repro) — MITIGATED IN CODE.**
+  Final word ("you?") cut hard instead of finishing smoothly. The client
+  output resume tail guard is raised from 350ms to 650ms so the final
+  buffered PCM has more time to drain before capture resumes. **Remaining:**
+  verify on device; if the final syllable still snaps, inspect
+  `RealtimePcmPlayer` drain/fade-out behavior.
+- **Fallback speech says file paths (round-5 polish) — FIXED IN CODE.**
+  The fallback spoke "Source: 1. Personal/Household/Househol…"; TTS-safe
+  answer extraction now strips `Source:` / `Sources:` / citation lines and
+  source-list path lines before relay TTS.
+- **grok-voice fails the delivery instruction ~always (4/4 live rounds) —
+  DEFAULT CHANGED.** Every observed forced summary was deferral filler; the
+  validator+fallback carried every delivery. `result_delivery:
+  "speak_verbatim"` is now the default: relay TTS speaks the authoritative
+  Hermes answer directly, while provider/model summarization remains the
+  `speak_when_idle` opt-in mode.
 
 ## Voice — on-device findings (2026-07-08 e2e realtime test)
 
@@ -449,7 +444,7 @@ The deliver-on-reattach / adaptive-promotion / milestone-speech / resume-retry /
 prewarm batch shipped (see DEVLOG 2026-07-01). Deferred:
 
 - **Result injection framing — FIXED in code, deployed, needs live e2e voice verify (2026-07-07).** The completed background summary, the background-handoff acknowledgement, and the forced-Hermes preamble were all injected as a synthetic *user* message (`send_text` → `conversation.item.create` role=user) — the model saw a fake turn where "the user" said things like "Hermes has already handled the user's previous voice request..." Research turned up a cleaner mechanism than the one originally guessed at: `response.create` supports a per-response `instructions` field that overrides the session system prompt for one response only, **without creating any conversation item at all** — confirmed supported by both providers (OpenAI's own docs; xAI's Voice Agent API docs explicitly show the same `response.create.response.instructions` shape). `conversation: "none"` (true out-of-band, not in history) is OpenAI-only and was deliberately NOT used — we want the spoken summary to land in real conversation history so follow-ups like "what was that again" still work; only the injection *transport* changed, not where the turn ends up. Implementation: `RealtimeAgentConnection.request_response()` (`providers/base.py`) gained an optional `instructions: str | None` kwarg; both `providers/openai.py` and `providers/xai.py` implement it identically (`{"type": "response.create", "response": {"instructions": ...}}` only when instructions are given, else the original bare `response.create`); all 4 broker-authored injection call sites (`broker.py:1244, 2113, 2352, 2560`) switched from `send_text(prompt)` to `request_response(instructions=prompt)`. The one genuine passthrough site (`broker.py:699`, real client-supplied text) is untouched. `python -m unittest discover -s plugin/tests` — 1073/1074 green (the one failure is the pre-existing, already-documented `test_reads_hermes_xai_oauth_credential_pool` fixture gap, unrelated). **Deployed to the relay (2026-07-07) — still needs a real on-device voice session** confirming the model still speaks a natural summary when driven by `instructions` alone (no preceding fake user turn); watch for a background-task delivery in particular since that's the highest-traffic call site. **Confirmed live-verified (2026-07-08)** via the raw event log on the relay: a background run (~4min, terminal tool ×9-10) delivered its spoken summary correctly through the new `request_response(instructions=...)` path (`voice.response.started` → `voice.output_audio.delta` ×N → `voice.response.done`, clean).
-- **NEW (2026-07-08) — xAI closes the realtime session after 900s of true silence; no provider-side keepalive exists.** Same live event log: after the background-task summary above finished speaking (`voice.response.done` at `at_ms=242226`), there is a **complete gap of zero events** until `voice.error` at `at_ms=1138277` — "xAI Realtime error: Conversation timed out after 900.0 seconds due to inactivity" (896s of nothing). This is **not a regression from the injection-framing fix** — the background task itself ran well within our own `_BACKGROUND_RUN_MAX_SECONDS` (300s) ceiling and delivered cleanly; the session simply sat idle afterward (no further speech, no client interaction) until xAI's own server-side inactivity timer fired. Root cause: the existing heartbeat (`_send_hermes_run_progress` / `_should_continue_heartbeat`) only protects the **client-facing** `ws` connection from the phone's own ~90s silence watchdog — nothing pings or otherwise generates activity on the **provider-facing** `session.native_connection` (the actual xAI/OpenAI socket) during a quiet stretch. **FIXED in code (2026-07-08) — needs relay deploy + live probe verify.** The client-side question is answered: mic capture is turn-bracketed by design (`startListening()`/`stopListening()` bracket one utterance shipped as `append×N + commit`; `turn_detection: None` means no continuous stream ever exists), so *any* quiet stretch ≥900s starves the provider socket — background waits are just the most common way to get there. It's not a client bug; the fix is relay-side. Implemented: `_provider_keepalive_loop` in `broker.py` — a per-connection task (created with the provider connection, cancelled in `_close_native_session`, runs through detached periods) that appends ~100ms of silent PCM whenever the provider socket has seen no sends/events for `RELAY_VOICE_PROVIDER_KEEPALIVE_MS` (default 240s ⇒ 3 pings per 900s window; `0` disables). Append-only deliberately — no `input_audio_buffer.clear` (could race a user utterance starting between check and send); uncommitted silence just prefixes the next utterance by a sliver. Activity is stamped in two places only: the client `input_audio.append` path and once per provider event in `_pump_provider_events`. Belt-and-braces: `_is_provider_idle_timeout` classifies a residual idle-close and surfaces "Voice session expired after a long silence" instead of the raw provider error. 11 new tests (`plugin/tests/test_realtime_keepalive.py`) green; existing 54 realtime tests green. Phase 0 docs corrected (xAI = `needs-keepalive` ≥900s; `docs/realtime-voice-poc.md` revision + ADR 33 note). **Remaining:** (1) deploy to relay, then on the relay host run the probe repro + fix check — `scripts/realtime-provider-idle-probe.py --provider xai --windows 960` (expect idle-close) and `--windows 960 --keepalive-ms 240000` (expect survival). This also answers the one open empirical unknown: whether an uncommitted buffer append resets xAI's inactivity timer — if it does NOT, fallback is a periodic no-op protocol message or scheduled reopen. (2) A live voice session left silent >15 min should stay usable.
+- **xAI closes the realtime session after 900s of true silence — SETTLED (2026-07-08).** Live logs showed the provider closing after ~900s of zero conversation activity. Four probe runs proved no keepalive works: the repro, silent-PCM appends, and acknowledged `session.update` pings all died at exactly 900.0s. **Current code path:** idle-close is routine provider-session expiry; the broker closes Android cleanly with no `voice.error`, the old keepalive loop is gone, and the next user turn opens a fresh provider conversation seeded from the durable Hermes session. **Remaining:** relay deploy + on-device >15 min idle recovery verify.
 - **Realtime voice: provider-answered turn durability — gateway drain + provenance badge SHIPPED (2026-07-08); app-restart persistence still open.** Shipped in code (needs on-device verify with the rest of the voice batch): (a) **gateway trace drain** — a gateway-configured turn with unsynced synthetic sync messages (voice intents / card dispatches / provider-answered realtime turns) now forces itself onto the sessions SSE route so the traces actually reach the server (previously "leave them for the next SSE turn" meant *never* on a gateway-primary phone). Deliberately narrow: only with an existing session id + the sessions fallback route (a stateless completions/runs detour would drop the turn itself from the transcript) and only on the default profile (a non-default profile's gateway session lives in its own state.db — the shared api_server POST would 404 and fail the user's turn; that residual defer case is accepted). The synced-mark guard now checks the route the turn actually *dispatched* on (`effectiveEndpoint`), also fixing a latent duplicate-resend for forced-SSE voice turns. (b) **provenance badge on reload** — `RealtimeTurnSyncBuilder.stripProvenanceMarker()` recognizes the synced `[Realtime Agent provider-native voice turn: …]` marker in loaded history, strips the bracket noise, restores the quiet "Realtime Agent" badge (same chip live turns get), and drops the superseded local clientOnly bubble so the exchange doesn't render twice. **Still open — app-restart loss:** unsynced traces are in-memory only; a restart before the next Hermes turn loses them. A fix needs a client-side pending-trace store (DataStore) plus answers to: which session should late traces sync into (voice binds per-session; the next turn may be a different session/profile), and restore-as-bubbles vs builder-side-only. A true flush-on-voice-exit is NOT implementable without an upstream append-messages API (every chat POST runs the agent); the drain above narrows the exposure window to "restart before the very next turn." Deliberately NOT a separate relay transcript store (forks the conversation).
 - ~~**Realtime voice: subtle "Voice" provenance chip (2026-07-08).**~~ **Done via the durability item above** — turned out message-level "Realtime Agent"/"Voice" badges already rendered for live turns (`MessageBubble.kt` VolumeUp chips); the actual gap was reloaded history showing raw bracket provenance instead of the badge, now fixed by the marker → badge restore.
 - **Pre-existing test failure:** `test_realtime_voice_routes.py::

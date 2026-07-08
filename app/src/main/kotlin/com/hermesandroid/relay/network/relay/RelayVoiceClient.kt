@@ -128,7 +128,10 @@ class RelayVoiceClient(
          */
         private fun isTransientRealtimeProviderError(message: String): Boolean {
             val m = message.lowercase()
-            return m.contains("no active response") || m.contains("cancellation failed")
+            return m.contains("no active response") ||
+                m.contains("cancellation failed") ||
+                (m.contains("timed out") && m.contains("inactivity")) ||
+                m.contains("voice session expired after a long silence")
         }
     }
 
@@ -1610,6 +1613,30 @@ class RelayVoiceClient(
                         )
                         return
                     }
+                    if (code == 1000 && persistent && !activeTurn.get()) {
+                        Log.i(
+                            TAG,
+                            "Realtime agent provider session closed while idle; next turn will reopen: $reason",
+                        )
+                        if (completed.compareAndSet(false, true)) {
+                            finished.complete(
+                                Result.success(
+                                    RealtimeVoiceSummary(
+                                        provider = session.provider,
+                                        model = session.model,
+                                        voice = session.voice,
+                                        sampleRate = session.sampleRate,
+                                        audioChunks = audioChunks,
+                                        audioBytes = audioBytes,
+                                        firstAudioMs = null,
+                                        responseDoneMs = null,
+                                        eventLogPath = session.eventLogPath,
+                                    )
+                                )
+                            )
+                        }
+                        return
+                    }
                     if (code == 1000) {
                         completeFailure("Realtime agent websocket closed before completion: $code $reason")
                         return
@@ -2504,7 +2531,7 @@ data class RealtimeVoicePromotion(
     @SerialName("progress_repeat_ms")
     val progressRepeatMs: Int = 30000,
     @SerialName("result_delivery")
-    val resultDelivery: String = "speak_when_idle",
+    val resultDelivery: String = "speak_verbatim",
     @SerialName("max_background_runs")
     val maxBackgroundRuns: Int = 1,
 )

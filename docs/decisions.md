@@ -1655,8 +1655,9 @@ override:
   promotion vs. silent + visual only.
 - `progress_spoken_after_ms` / `progress_repeat_ms` - reuse existing
   `_HERMES_SPOKEN_PROGRESS_*` knobs, now configurable.
-- `result_delivery` - `speak_when_idle` (default) vs. `notify_then_speak`
-  (chime/visual, speak on user re-engage) vs. `visual_only`.
+- `result_delivery` - `speak_verbatim` (default direct relay TTS) vs.
+  `speak_when_idle` (provider/model summary), `notify_then_speak`
+  (chime/visual, speak on user re-engage), or `visual_only`.
 - `max_background_runs` - concurrent background runs per session (default 1 for
   the MVP; the existing single-`hermes_task` field assumes 1).
 
@@ -1680,21 +1681,19 @@ idle with `turn_detection: None` + resume TTL; relay-host probe retained as a
 regression check, not a precondition). The premise was also superseded in
 implementation: Tier B closes the pending provider call with an interim ack
 rather than holding an open response, so the socket only sees the normal
-between-turns idle gap — no provider needs the `must-reopen` fallback today, and
-default-on is unblocked.
+between-turns idle gap. This unblocked default-on at the short-window scale.
+See the 2026-07-08 revision below for xAI's later 900s idle-expiry behavior.
 
 **Phase 0 revision (2026-07-08).** The xAI verdict was scoped to between-turn
 idle and broke at the 15-minute scale: a live event log showed xAI closing a
 quiet conversation with "timed out after 900.0 seconds due to inactivity"
-(~896s of zero events after a background-run summary finished speaking). xAI is
-**`needs-keepalive`** beyond ~900s of true silence. Fix shipped in the broker:
-a per-connection keepalive task appends ~100ms of silent, never-committed PCM
-whenever the provider socket has been quiet for
-`RELAY_VOICE_PROVIDER_KEEPALIVE_MS` (default 240s; `0` disables), and a
-residual idle-close is surfaced as a human-readable session-expired error
-instead of the raw provider text. Full findings + the remaining empirical
-check (does an uncommitted append reset xAI's timer — probe with
-`--keepalive-ms` on the relay host) live in `docs/realtime-voice-poc.md` →
+(~896s of zero events after a background-run summary finished speaking).
+Follow-up probe runs proved no keepalive works: neither uncommitted silent PCM
+nor acknowledged `session.update` pings reset xAI's 900s timer. The broker now
+treats an idle timeout as routine provider-session expiry: it logs the expiry,
+closes the attached Android websocket cleanly while idle, emits no `voice.error`,
+and lets the next user turn open a fresh provider conversation seeded from the
+durable Hermes session. Full findings live in `docs/realtime-voice-poc.md` →
 "Idle tolerance" → "Revision (2026-07-08)".
 
 **Rules.**

@@ -1616,11 +1616,12 @@ private fun RealtimeAgentCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 val deliveryOptions = listOf(
+                    "speak_verbatim",
                     "speak_when_idle",
                     "notify_then_speak",
                     "visual_only",
                 )
-                val deliveryLabels = listOf("Speak", "Notify", "Show only")
+                val deliveryLabels = listOf("Exact", "Summary", "Notify", "Show")
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     deliveryOptions.forEachIndexed { index, option ->
                         SegmentedButton(

@@ -124,7 +124,7 @@ class RelayConfig:
     # opt back in to periodic spoken filler.
     realtime_voice_progress_spoken_after_ms: int = 0
     realtime_voice_progress_repeat_ms: int = 30000
-    realtime_voice_result_delivery: str = "speak_when_idle"
+    realtime_voice_result_delivery: str = "speak_verbatim"
     realtime_voice_max_background_runs: int = 1
 
     @classmethod
@@ -426,7 +426,7 @@ def _apply_realtime_voice_config(
         config.realtime_voice_progress_repeat_ms = max(0, progress_repeat_ms)
 
     result_delivery = _string_value(section.get("result_delivery"))
-    if result_delivery in ("speak_when_idle", "notify_then_speak", "visual_only"):
+    if result_delivery in ("speak_verbatim", "speak_when_idle", "notify_then_speak", "visual_only"):
         config.realtime_voice_result_delivery = result_delivery
 
     max_background_runs = _optional_int(section.get("max_background_runs"))

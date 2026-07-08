@@ -219,6 +219,7 @@ class RealtimePromotionTests(AioHTTPTestCase):
             realtime_voice_voice="sine",
             realtime_voice_promotion_enabled=True,
             realtime_voice_promote_after_ms=50,
+            realtime_voice_result_delivery="speak_when_idle",
             realtime_voice_config_path=os.path.join(self._tmpdir.name, "relay-config.yaml"),
             realtime_voice_run_dir=self._tmpdir.name,
         )
