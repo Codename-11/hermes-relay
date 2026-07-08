@@ -1110,9 +1110,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * WP-V2 seam: the active connection id used to namespace per-profile voice
      * prefs (`_<connectionId>_<profile>`, mirroring `ProfileSelectionStore`).
      *
-     * Null until an integration wires `ConnectionViewModel.activeConnectionId`
-     * in via [setVoicePrefsConnection] (RelayApp owns that wiring today and
-     * passes only the profile name to [onProfileChanged]). While null,
+     * Wired from `ConnectionViewModel.activeConnectionId` by RelayApp's
+     * (connection, profile) voice effect, which calls [setVoicePrefsConnection]
+     * BEFORE [onProfileChanged] so the profile re-seed reads the
+     * correctly-scoped keys. While null (fresh VM before that effect fires),
      * per-profile keys degrade to profile-only namespacing — still enough to
      * isolate profiles within a single connection; it just can't disambiguate
      * two connections that both expose a same-named profile.
