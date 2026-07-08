@@ -1,5 +1,50 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Upstream-watch P1 batch (HRUI-001/002/014/015/016/022)
+
+Cleared every open P1 item from the upstream-impact watch ledger in one
+parallel pass: five isolated worktree branches off `dev`, disjoint file
+ownership, merged back `--no-ff` with zero conflicts.
+
+- **Media credential denylist (HRUI-014).** `/media/by-path` permissive mode
+  now runs an always-on credential/system denylist mirroring upstream's
+  `validate_media_delivery_path` — checked post-`realpath` (symlinks can't
+  launder) and pre-existence (no 403/404 oracle), covering `~/.hermes` secret
+  files, `mcp-tokens/`, `pairing/`, home credential dirs, system prefixes,
+  and the relay's own QR secret + session store.
+- **aiohttp floor (HRUI-015).** `>=3.14.1,<4` in plugin requirements, root
+  `pyproject.toml`, and `relay_server/requirements.txt`; docs updated.
+- **Bootstrap retirement (HRUI-002).** Sessions CRUD/messages/fork and the
+  legacy `GET /api/skills` list are no longer injected (native upstream owns
+  them, #33134/#33016); the compat-only survivors (session search, memory,
+  skill detail/toggle stub, config, available-models, slash middleware) are
+  documented as such in the module, doctor/compat wording, TODO, and docs.
+- **prompt.submit long-RPC semantics (HRUI-016).** Android + desktop CLI pass
+  a 30-minute `prompt.submit` ack ceiling (upstream desktop parity); a slow
+  or severed ack after turn events flow can no longer trigger the SSE
+  preflight fallback (duplicate-turn class); chat/voice hard caps became
+  idle-progress watchdogs re-armed on every gateway event.
+- **Manage model catalog (HRUI-022).** `/api/model/options` requests
+  `include_unconfigured=1` (cached + refresh) and the parser keeps
+  empty-model skeleton providers so the Keys-setup affordance survives newer
+  upstream defaults; in-chat picker unchanged.
+- **Fallback payload contract (HRUI-001).** Sessions/runs payloads no longer
+  carry top-level `messages`/`attachments` upstream never parses; synthetic
+  history maps to consumed channels (ephemeral system-prompt digest;
+  completions `messages` splice; runs `conversation_history`), and
+  undeliverable attachments surface via `ChatPayloadResult.droppedAttachments`
+  + logging instead of silent loss. Docs truth-up in
+  HERMES-WEBAPI-REFERENCE + decisions ADR note.
+
+HRUI-003 (blocked upstream) re-verified: Standard-voice "Global voice" scope
+banner copy remains honest; no change needed.
+
+Verification: merged-tree runs — 89 plugin unittests OK (1 Windows symlink
+skip), Android `:app:testGooglePlayDebugUnitTest` green across
+GatewayChatClient / HermesChatPayloads / DashboardApiClient /
+ModelOptionsParser (incl. 18 new payload tests, 4 new HRUI-016 tests,
+5-test parser fixture suite), desktop `npm run build` (strict tsc) clean.
+
 ## 2026-07-08 — Provider-voiced exact result delivery
 
 `result_delivery: "speak_verbatim"` no longer renders through relay TTS

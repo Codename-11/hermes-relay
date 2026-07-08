@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Bootstrap compatibility layer slimmed to true gaps.** The optional compatibility hook no longer injects session CRUD/messages or the legacy skills list — current Hermes serves those natively; it now covers only surfaces with no native replacement yet (session search, memory, legacy skill detail/toggle, config, available-models, and the slash-command middleware). Older pre-session-API Hermes builds degrade to the standard completions/runs chat paths.
+- **Dependency floor: aiohttp ≥ 3.14.1.** Raised from 3.9 across plugin requirements and package metadata to the patched line covering the 2026 aiohttp security advisories.
+
+### Fixed
+
+- **Relay media can no longer serve credential files.** `/media/by-path` now always blocks paths that resolve into credential or system locations (`~/.hermes/.env`, `auth.json`, `config.yaml`, OAuth/MCP token stores, `pairing/`, `~/.ssh`, and similar) even in the default permissive mode — mirroring upstream Hermes' media-delivery hardening — so a prompt-injected `MEDIA:` marker can't deliver live secrets to a paired phone. Symlinks are resolved before the check, and the relay's own QR-signing secret and session-token store are covered too.
+- **Long agent turns no longer die or duplicate at the transport.** Gateway chat (Android and the desktop CLI) now gives `prompt.submit` up to 30 minutes to acknowledge — matching upstream desktop and the server's own turn ceiling — instead of short generic RPC timeouts that could falsely fall back to SSE (duplicating the turn on Android) or kill a legitimately long deep-reasoning turn. Turn liveness is governed by idle-progress watchdogs (no events at all for a stretch), never a hard cap while output is still streaming.
+- **Manage → Models keeps providers that still need keys.** Newer Hermes hides unconfigured providers from the model catalog unless a management UI opts in; Android Manage now opts in and keeps rendering greyed provider rows with their key-setup guidance on both old and new servers. In-chat model picking is unchanged (configured providers only).
+- **Phone-local context actually reaches the server on fallback chat paths.** The sessions/runs streaming payloads carried voice-intent traces, card dispatches, and attachments in fields the server never reads — silently dropping them. That context now rides channels the server actually consumes (a per-turn context digest, real history fields where they exist, inline images on the completions path), and any attachment with no supported channel is reported instead of silently discarded.
+
 ## [1.4.0] - 2026-07-07
 
 ### Added
