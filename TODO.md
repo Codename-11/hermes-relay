@@ -23,6 +23,56 @@ Compaction-safe snapshot of where we are; details in the linked sections below.
 
 ---
 
+## Voice background-run A–E enhancement batch — SHIPPED in code (2026-07-08 PM)
+
+Owner-approved full batch from the gap review; relay 93/93 realtime tests
+green. Needs relay deploy + APK install + live verify.
+
+- **A1 — positive summary validation + early-flush streaming.** The forced
+  summary must content-overlap the Hermes answer (`_summary_overlaps_answer`;
+  vacuous for bare confirmations) — blocklists chase phrasings, overlap
+  doesn't. And the summary response now STREAMS: buffered only until the
+  prefix (≥40 chars) clears the blocklist + shows answer overlap
+  (`_maybe_commit_forced_summary_early`), then flushes and streams live —
+  kills the observed "silence, then the whole answer in one burst" delay.
+  Uncommitted responses still get full end-of-response validation.
+- **A2 — delivered-or-alarm.** `_confirm_background_delivery`: within 30s of
+  injection the summary must be done or committed-streaming, else
+  `delivery_unconfirmed` is logged and the answer is force-emitted as text.
+  A background answer can no longer be silently lost.
+- **A3 — respeak.** `hermes.result.respeak` client message → relay respeaks
+  `last_background_result` via relay TTS. Client: tapping the settled (DONE)
+  chip requests it; chip stays up while it plays.
+- **B — task queue (+N queued).** A long second ask is queued (FIFO, cap 3)
+  instead of refused (`status: "queued"`); starts automatically when the
+  current run's delivery settles (`_start_next_queued_run`, waits for the
+  summary, runs as durable, spoken transition via `_queued_start_prompt`).
+  Cancel clears the queue. `hermes.run.queued` event + `queued_count` on
+  promoted/background_completed/get_status; chip shows "+N queued". Queue
+  full → the old busy answer.
+- **C1 — chip in compact mode.** The chip previously rendered ONLY in the
+  focus layout; compact mode now shows it above the bottom controls
+  (`bottom = 120.dp` — eyeball on device).
+- **C2 — exit breadcrumb.** Exiting voice mode with a live background run
+  posts a chat system notice ("Background voice task still running (+N
+  queued) — Hermes will report back") via `VoiceViewModel.chatNoticeSink`
+  (wired in RelayApp to the shared ChatHandler).
+- **D — `_thinking` drafting signal + answer redundancy.** Relay: the
+  drafted `_thinking` text is the answer of last resort when the
+  response-delta path yields empty (`answer_from_thinking` log). Client:
+  `_thinking` deltas drive a "Drafting the answer…" chip status line.
+- **E — hygiene.** Fast lane reuses ONE side-session per voice session
+  (`fast_lane_session_id`); the idle probe now injects the relay xAI OAuth
+  token (`_probe_provider_options`) so it actually runs on the relay host;
+  new e2e test where the provider answers the summary request with filler →
+  fallback must carry the real answer
+  (`test_filler_summary_triggers_fallback_delivery`).
+- **Live verify list:** summary starts speaking promptly (streaming, no
+  burst); filler → fallback speaks the answer; queue: two long asks →
+  "queued" spoken + "+1 queued" on chip → auto-starts with spoken
+  transition; DONE-chip tap respeaks; compact-mode chip visible; exit
+  leaves the chat breadcrumb; probe run completes (repro + keepalive).
+
 ## Voice — on-device findings (2026-07-08 e2e realtime test)
 
 Live e2e test (phone on 1.4.0 dev APK, relay at `789f32c`) surfaced a chained
