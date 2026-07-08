@@ -320,7 +320,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 "for the ear, not the eye: write short, conversational sentences; " +
                 "avoid markdown (headings, bullet lists, tables, code blocks), " +
                 "emoji, and raw URLs; describe structure in prose instead of " +
-                "lists; and keep answers concise unless the user asks for detail."
+                "lists; and keep answers concise unless the user asks for detail.\n" +
+                "- The user is waiting in a live voice session, so don't hold the " +
+                "floor through a long task: if a request will clearly take more " +
+                "than a minute (builds, deploys, research, multi-step tool work), " +
+                "delegate it as a background task (delegate_task with " +
+                "background=true) and say in your spoken reply that you've " +
+                "started it in the background and will report back. Answer " +
+                "quick questions directly as usual."
 
         /**
          * Idle interval after which the chunker will force-flush whatever
