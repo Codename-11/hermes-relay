@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.content.Context
 import android.widget.Toast
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
@@ -87,12 +90,12 @@ fun MediaSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Media") },
+                title = { Text(stringResource(R.string.media_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.media_back),
                         )
                     }
                 },
@@ -126,14 +129,12 @@ fun MediaSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text(
-                        text = "Controls how the app handles files sent by tool results " +
-                            "(screenshots, PDFs, etc.) over the relay.",
+                        text = stringResource(R.string.media_intro_1),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "Relay only — these settings don't affect images you attach " +
-                            "in chat or anything on a standard (no-Relay) connection.",
+                        text = stringResource(R.string.media_intro_2),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -145,11 +146,11 @@ fun MediaSettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Max inbound attachment size",
+                                text = stringResource(R.string.media_max_inbound),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "${settings.maxInboundSizeMb} MB",
+                                text = stringResource(R.string.media_max_inbound_value, settings.maxInboundSizeMb),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -161,7 +162,7 @@ fun MediaSettingsScreen(
                             steps = 18 // (100 - 5) / 5 - 1
                         )
                         Text(
-                            text = "Files larger than this are rejected after download.",
+                            text = stringResource(R.string.media_max_inbound_desc),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -176,11 +177,11 @@ fun MediaSettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Auto-fetch threshold",
+                                text = stringResource(R.string.media_auto_fetch_threshold),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "${settings.autoFetchThresholdMb} MB",
+                                text = stringResource(R.string.media_auto_fetch_value, settings.autoFetchThresholdMb),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -192,7 +193,7 @@ fun MediaSettingsScreen(
                             steps = 49
                         )
                         Text(
-                            text = "Files at or below this size are fetched automatically on Wi-Fi.",
+                            text = stringResource(R.string.media_auto_fetch_desc),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -208,11 +209,11 @@ fun MediaSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Auto-fetch on cellular",
+                                text = stringResource(R.string.media_auto_fetch_cellular),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "When off, media over cellular shows a tap-to-download card instead of auto-downloading.",
+                                text = stringResource(R.string.media_auto_fetch_cellular_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -232,11 +233,11 @@ fun MediaSettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Cached media cap",
+                                text = stringResource(R.string.media_cache_cap),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "${settings.cachedMediaCapMb} MB",
+                                text = stringResource(R.string.media_cache_cap_value, settings.cachedMediaCapMb),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -248,7 +249,7 @@ fun MediaSettingsScreen(
                             steps = 17 // (500 - 50) / 25 - 1
                         )
                         Text(
-                            text = "Oldest files are evicted when the cache exceeds this limit.",
+                            text = stringResource(R.string.media_cache_cap_desc),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -264,11 +265,11 @@ fun MediaSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Clear cached media",
+                                text = stringResource(R.string.media_clear_cache),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Currently using ${formatBytesHuman(currentCacheBytes)}",
+                                text = stringResource(R.string.media_clear_cache_current, formatBytesHuman(context, currentCacheBytes)),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -278,15 +279,19 @@ fun MediaSettingsScreen(
                                 scope.launch {
                                     val freed = runCatching { cacheWriter.clear() }.getOrDefault(0L)
                                     currentCacheBytes = runCatching { cacheWriter.currentSizeBytes() }.getOrDefault(0L)
+                                    val freedMsg = context.getString(
+                                        R.string.media_clear_cache_freed,
+                                        formatBytesHuman(context, freed)
+                                    )
                                     Toast.makeText(
                                         context,
-                                        "Freed ${formatBytesHuman(freed)}",
+                                        freedMsg,
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }
                             }
                         ) {
-                            Text("Clear")
+                            Text(stringResource(R.string.media_clear))
                         }
                     }
                 }
@@ -311,20 +316,18 @@ fun MediaSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Sensitive media",
+                        text = stringResource(R.string.media_sensitive),
                         style = MaterialTheme.typography.titleSmall
                     )
                     Text(
-                        text = "Blur sensitive media behind a tap-to-reveal cover. " +
-                            "Works on any connection - the All images option needs " +
-                            "no server support.",
+                        text = stringResource(R.string.media_sensitive_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     val blurOptions = listOf(
-                        BlurMode.OFF to "Off",
-                        BlurMode.FLAGGED to "Flagged",
-                        BlurMode.ALL_IMAGES to "All images"
+                        BlurMode.OFF to stringResource(R.string.media_blur_off),
+                        BlurMode.FLAGGED to stringResource(R.string.media_blur_flagged),
+                        BlurMode.ALL_IMAGES to stringResource(R.string.media_blur_all)
                     )
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                         blurOptions.forEachIndexed { index, (mode, label) ->
@@ -342,11 +345,9 @@ fun MediaSettingsScreen(
                     }
                     Text(
                         text = when (settings.blurSensitive) {
-                            BlurMode.OFF -> "Media shows immediately."
-                            BlurMode.FLAGGED ->
-                                "Only media the agent marks sensitive is blurred."
-                            BlurMode.ALL_IMAGES ->
-                                "Every inbound image is blurred until you tap to reveal."
+                            BlurMode.OFF -> stringResource(R.string.media_blur_off_desc)
+                            BlurMode.FLAGGED -> stringResource(R.string.media_blur_flagged_desc)
+                            BlurMode.ALL_IMAGES -> stringResource(R.string.media_blur_all_desc)
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -361,15 +362,15 @@ fun MediaSettingsScreen(
  * Human-readable byte count for the inbound-media Settings UI. Keeps the
  * logic out of the composable so it stays cheap on recomposition.
  */
-private fun formatBytesHuman(bytes: Long): String {
-    if (bytes <= 0) return "0 B"
+private fun formatBytesHuman(context: Context, bytes: Long): String {
+    if (bytes <= 0) return context.getString(R.string.media_bytes_0)
     val kb = bytes / 1024.0
     val mb = kb / 1024.0
     val gb = mb / 1024.0
     return when {
-        gb >= 1.0 -> "%.2f GB".format(gb)
-        mb >= 1.0 -> "%.1f MB".format(mb)
-        kb >= 1.0 -> "%.0f KB".format(kb)
-        else -> "$bytes B"
+        gb >= 1.0 -> String.format(context.getString(R.string.media_bytes_gb), gb)
+        mb >= 1.0 -> String.format(context.getString(R.string.media_bytes_mb), mb)
+        kb >= 1.0 -> String.format(context.getString(R.string.media_bytes_kb), kb)
+        else -> context.getString(R.string.media_bytes_b, bytes)
     }
 }

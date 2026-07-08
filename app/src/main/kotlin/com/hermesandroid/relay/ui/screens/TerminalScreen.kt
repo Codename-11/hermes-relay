@@ -48,11 +48,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.ExtraKeysToolbar
@@ -127,12 +129,12 @@ fun TerminalScreen(
         // name if set, else "ready"; the full `hermes-<deviceId>-tabN` wire id
         // lives in the tappable info sheet, not the header.
         val statusWord = when {
-            current == null -> "starting…"
-            current.attached -> current.displayName ?: "ready"
-            current.attaching -> "attaching…"
-            !isConnected -> "disconnected"
+            current == null -> stringResource(R.string.term_status_starting)
+            current.attached -> current.displayName ?: stringResource(R.string.term_status_ready)
+            current.attaching -> stringResource(R.string.term_status_attaching)
+            !isConnected -> stringResource(R.string.term_status_disconnected)
             current.error != null -> current.error!!
-            else -> "ready"
+            else -> stringResource(R.string.term_status_ready)
         }
         Row(
             modifier = Modifier
@@ -147,7 +149,7 @@ fun TerminalScreen(
                 IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.term_back),
                     )
                 }
             } else {
@@ -167,7 +169,7 @@ fun TerminalScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "Terminal",
+                    text = stringResource(R.string.term_title),
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                 )
@@ -196,7 +198,7 @@ fun TerminalScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Add,
-                        contentDescription = "New terminal tab",
+                        contentDescription = stringResource(R.string.term_new_tab),
                     )
                 }
             }
@@ -215,7 +217,7 @@ fun TerminalScreen(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Search,
-                    contentDescription = "Search scrollback",
+                    contentDescription = stringResource(R.string.term_search),
                 )
             }
             IconButton(
@@ -231,7 +233,7 @@ fun TerminalScreen(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Reattach terminal",
+                    contentDescription = stringResource(R.string.term_reattach),
                 )
             }
         }
@@ -368,7 +370,7 @@ fun TerminalScreen(
                         .zIndex(2f),
                 ) {
                     Text(
-                        text = "↓ Jump to latest",
+                        text = stringResource(R.string.term_jump_latest),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                     )
@@ -563,20 +565,17 @@ private fun CloseTabConfirmDialog(
     val everStarted = tab.userStarted
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Close tab ${tab.tabId}?") },
+        title = { Text(stringResource(R.string.term_close_tab_title, tab.tabId)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (everStarted) {
                     Text(
-                        "Detach keeps the shell running on the relay — scrollback, " +
-                            "running commands, and working directory all survive. " +
-                            "Kill destroys the tmux session; any running commands die.",
+                        stringResource(R.string.term_close_tab_detach_body),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 } else {
                     Text(
-                        "This tab hasn't started a session yet, so there's nothing " +
-                            "to preserve on the relay. Close the tab?",
+                        stringResource(R.string.term_close_tab_fresh_body),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -589,16 +588,16 @@ private fun CloseTabConfirmDialog(
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
-                ) { Text("Kill") }
+                ) { Text(stringResource(R.string.term_kill)) }
             } else {
-                TextButton(onClick = onKill) { Text("Close") }
+                TextButton(onClick = onKill) { Text(stringResource(R.string.term_close)) }
             }
         },
         dismissButton = {
             if (everStarted) {
-                TextButton(onClick = onDetach) { Text("Detach") }
+                TextButton(onClick = onDetach) { Text(stringResource(R.string.term_detach)) }
             } else {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.term_cancel)) }
             }
         },
     )
@@ -643,13 +642,12 @@ private fun StartSessionOverlay(
             }
 
             Text(
-                text = "No session",
+                text = stringResource(R.string.term_no_session),
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White.copy(alpha = 0.92f),
             )
             Text(
-                text = "Start a shell to create a tmux-backed session on the relay. " +
-                    "The session persists across reconnects until you kill it.",
+                text = stringResource(R.string.term_start_session_body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.65f),
                 textAlign = TextAlign.Center,
@@ -674,11 +672,11 @@ private fun StartSessionOverlay(
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Start session")
+                Text(stringResource(R.string.term_start_session))
             }
             if (!isReady) {
                 Text(
-                    text = "Waiting for relay…",
+                    text = stringResource(R.string.term_waiting_relay),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.5f),
                 )
@@ -721,10 +719,10 @@ private fun TerminalOverlay(
             }
 
             val title = when {
-                error != null -> "Terminal error"
-                isConnecting -> "Connecting to relay…"
-                !isConnected -> "Relay disconnected"
-                else -> "Ready"
+                error != null -> stringResource(R.string.term_error_title)
+                isConnecting -> stringResource(R.string.term_connecting_title)
+                !isConnected -> stringResource(R.string.term_disconnected_title)
+                else -> stringResource(R.string.term_ready_title)
             }
             Text(
                 text = title,
@@ -734,7 +732,7 @@ private fun TerminalOverlay(
 
             val detail = when {
                 error != null -> error
-                !isConnected -> "Open Settings to configure your relay server. The terminal channel needs an active WSS connection."
+                !isConnected -> stringResource(R.string.term_overlay_detail)
                 else -> null
             }
             if (detail != null) {

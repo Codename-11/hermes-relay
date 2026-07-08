@@ -64,8 +64,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkin
@@ -119,16 +121,16 @@ fun AppearanceSettingsScreen(
     pendingDelete?.let { target ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Remove pet?") },
-            text = { Text("Remove “${target.label}”? You can re-import it later.") },
+            title = { Text(stringResource(R.string.appearance_remove_pet_title)) },
+            text = { Text(stringResource(R.string.appearance_remove_pet_body, target.label)) },
             confirmButton = {
                 TextButton(onClick = {
                     connectionViewModel.deleteUserAvatar(target.id, target.label)
                     pendingDelete = null
-                }) { Text("Remove") }
+                }) { Text(stringResource(R.string.appearance_remove)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.appearance_cancel)) }
             },
         )
     }
@@ -136,12 +138,12 @@ fun AppearanceSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Appearance") },
+                title = { Text(stringResource(R.string.appearance_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.appearance_back),
                         )
                     }
                 },
@@ -162,7 +164,7 @@ fun AppearanceSettingsScreen(
         ) {
             // Theme gallery section
             Text(
-                text = "Theme",
+                text = stringResource(R.string.appearance_theme),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -183,8 +185,7 @@ fun AppearanceSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Pick a look. The brand chrome, accents, and chat " +
-                            "background all follow your choice.",
+                        text = stringResource(R.string.appearance_theme_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -207,7 +208,7 @@ fun AppearanceSettingsScreen(
 
             // Appearance (mode + font) section
             Text(
-                text = "Appearance",
+                text = stringResource(R.string.appearance_appearance),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -228,13 +229,13 @@ fun AppearanceSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Light / Dark",
+                        text = stringResource(R.string.appearance_light_dark),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     val themeOptions = listOf("auto", "light", "dark")
-                    val themeLabels = listOf("Auto", "Light", "Dark")
+                    val themeLabels = listOf(stringResource(R.string.appearance_theme_auto), stringResource(R.string.appearance_theme_light), stringResource(R.string.appearance_theme_dark))
                     val selectedIndex = themeOptions.indexOf(theme).coerceAtLeast(0)
                     // The mode toggle only applies to themes that ship both a
                     // light and dark palette (Hermes Relay). Fixed-mode themes
@@ -261,10 +262,9 @@ fun AppearanceSettingsScreen(
                         Text(
                             text = when (selectedTheme.mode) {
                                 ThemeMode.LIGHT_ONLY ->
-                                    "${selectedTheme.label} is a fixed light theme."
+                                    stringResource(R.string.appearance_fixed_light, selectedTheme.label)
                                 else ->
-                                    "${selectedTheme.label} is a fixed dark theme. " +
-                                        "Switch to Hermes Relay for light/dark control."
+                                    stringResource(R.string.appearance_fixed_dark, selectedTheme.label)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -278,7 +278,7 @@ fun AppearanceSettingsScreen(
                     // window.setFontSize through TerminalWebView.
                     val fontScale by connectionViewModel.fontScale.collectAsState()
                     val fontScaleOptions = listOf(0.85f, 1.0f, 1.15f, 1.3f)
-                    val fontScaleLabels = listOf("Small", "Normal", "Large", "Larger")
+                    val fontScaleLabels = listOf(stringResource(R.string.appearance_font_small), stringResource(R.string.appearance_font_normal), stringResource(R.string.appearance_font_large), stringResource(R.string.appearance_font_larger))
                     // Match the closest stop — float equality is fragile.
                     val selectedFontScaleIndex = fontScaleOptions
                         .withIndex()
@@ -287,7 +287,7 @@ fun AppearanceSettingsScreen(
                         ?: 1
 
                     Text(
-                        text = "Font size",
+                        text = stringResource(R.string.appearance_font_size),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -314,7 +314,7 @@ fun AppearanceSettingsScreen(
                     // LocalDensity once they tap a stop.
                     val previewBase = MaterialTheme.typography.bodyMedium
                     Text(
-                        text = "Aa  —  sample text",
+                        text = stringResource(R.string.appearance_font_preview),
                         style = previewBase.copy(
                             fontSize = previewBase.fontSize * fontScaleOptions[selectedFontScaleIndex]
                         ),
@@ -327,7 +327,7 @@ fun AppearanceSettingsScreen(
             // its own label + sample line IN that font so the choice is legible
             // before tapping; the selection re-themes every screen live.
             Text(
-                text = "Font",
+                text = stringResource(R.string.appearance_font),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -351,8 +351,7 @@ fun AppearanceSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "Sets the typeface across the whole app. Code and " +
-                            "timestamps stay monospaced.",
+                        text = stringResource(R.string.appearance_font_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -369,7 +368,7 @@ fun AppearanceSettingsScreen(
 
             // Animation section
             Text(
-                text = "Animation",
+                text = stringResource(R.string.appearance_animation),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -400,11 +399,11 @@ fun AppearanceSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "ASCII sphere",
+                                text = stringResource(R.string.appearance_ascii_sphere),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Show animated sphere on empty chat screen and ambient mode",
+                                text = stringResource(R.string.appearance_ascii_sphere_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -427,11 +426,11 @@ fun AppearanceSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Behind messages",
+                                text = stringResource(R.string.appearance_behind_messages),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Show subtle sphere animation behind chat messages",
+                                text = stringResource(R.string.appearance_behind_messages_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -448,8 +447,7 @@ fun AppearanceSettingsScreen(
                     // (including for screen-reader users browsing settings).
                     if (animEnabled) {
                         Text(
-                            text = "Tip: long-press the chat background for a fullscreen " +
-                                "ambient sphere; tap anywhere to return.",
+                            text = stringResource(R.string.appearance_ambient_tip),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -461,7 +459,7 @@ fun AppearanceSettingsScreen(
             // plus any imported "pets"; add/remove pets in-app below). When the
             // sphere avatar is selected its skin chips nest below: avatar → skin.
             Text(
-                text = "Agent avatar",
+                text = stringResource(R.string.appearance_agent_avatar),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -493,8 +491,7 @@ fun AppearanceSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Pick the agent's avatar. Each shows which live " +
-                            "signals it reacts to.",
+                        text = stringResource(R.string.appearance_agent_avatar_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -539,19 +536,17 @@ fun AppearanceSettingsScreen(
                                 modifier = Modifier.size(18.dp),
                             )
                             Text(
-                                text = "Add a pet",
+                                text = stringResource(R.string.appearance_add_pet),
                                 modifier = Modifier.padding(start = 6.dp),
                             )
                         }
                         TextButton(onClick = { connectionViewModel.refreshAgentAvatars() }) {
-                            Text("Rescan")
+                            Text(stringResource(R.string.appearance_rescan))
                         }
                     }
 
                     Text(
-                        text = "Import a pet pack (.zip), or a single image to use as a " +
-                            "static avatar. Generate one with AI or hand-author it — " +
-                            "see docs/pet-spec.md.",
+                        text = stringResource(R.string.appearance_add_pet_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -559,7 +554,7 @@ fun AppearanceSettingsScreen(
                     // Installed-pet management: a labeled list with per-pet remove.
                     if (userAvatars.isNotEmpty()) {
                         Text(
-                            text = "Installed pets",
+                            text = stringResource(R.string.appearance_installed_pets),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -577,7 +572,7 @@ fun AppearanceSettingsScreen(
                                 IconButton(onClick = { pendingDelete = pet }) {
                                     Icon(
                                         imageVector = Icons.Filled.Delete,
-                                        contentDescription = "Remove ${pet.label}",
+                                        contentDescription = stringResource(R.string.appearance_remove_pet_cd, pet.label),
                                         tint = MaterialTheme.colorScheme.error,
                                     )
                                 }
@@ -592,7 +587,7 @@ fun AppearanceSettingsScreen(
 
                         val petSpeed by connectionViewModel.petSpeed.collectAsState()
                         Text(
-                            text = "Playback speed — ${"%.1f".format(java.util.Locale.US, petSpeed)}×",
+                            text = stringResource(R.string.appearance_playback_speed, "%.1f".format(java.util.Locale.US, petSpeed)),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -603,8 +598,7 @@ fun AppearanceSettingsScreen(
                             steps = 9,
                         )
                         Text(
-                            text = "Scales the selected pet's animation speed. " +
-                                "1.0× plays each clip at its authored rate.",
+                            text = stringResource(R.string.appearance_playback_speed_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -616,12 +610,11 @@ fun AppearanceSettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Stabilize frames",
+                                    text = stringResource(R.string.appearance_stabilize),
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                                 Text(
-                                    text = "Auto-centers each frame so the pet doesn't drift or jump " +
-                                        "between frames (fixes wobbly AI sheets).",
+                                    text = stringResource(R.string.appearance_stabilize_desc),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -637,22 +630,20 @@ fun AppearanceSettingsScreen(
                         // verify look/speed/stabilization without running the agent.
                         HorizontalDivider()
                         Text(
-                            text = "Preview",
+                            text = stringResource(R.string.appearance_preview),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
 
-                        val previewStates = remember {
-                            listOf(
-                                Triple("Idle", SphereState.Idle, 0f),
-                                Triple("Thinking", SphereState.Thinking, 0f),
-                                Triple("Working", SphereState.Thinking, 1f),
-                                Triple("Writing", SphereState.Streaming, 0f),
-                                Triple("Speaking", SphereState.Speaking, 0f),
-                                Triple("Listening", SphereState.Listening, 0f),
-                                Triple("Error", SphereState.Error, 0f),
-                            )
-                        }
+                        val previewStates = listOf(
+                            Triple(stringResource(R.string.appearance_state_idle), SphereState.Idle, 0f),
+                            Triple(stringResource(R.string.appearance_state_thinking), SphereState.Thinking, 0f),
+                            Triple(stringResource(R.string.appearance_state_working), SphereState.Thinking, 1f),
+                            Triple(stringResource(R.string.appearance_state_writing), SphereState.Streaming, 0f),
+                            Triple(stringResource(R.string.appearance_state_speaking), SphereState.Speaking, 0f),
+                            Triple(stringResource(R.string.appearance_state_listening), SphereState.Listening, 0f),
+                            Triple(stringResource(R.string.appearance_state_error), SphereState.Error, 0f),
+                        )
                         var previewIdx by remember { mutableIntStateOf(0) }
                         var greetKey by remember { mutableIntStateOf(0) }
                         var overrideState by remember { mutableStateOf<SphereState?>(null) }
@@ -703,7 +694,7 @@ fun AppearanceSettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            OutlinedButton(onClick = { greetKey++ }) { Text("Greet") }
+                            OutlinedButton(onClick = { greetKey++ }) { Text(stringResource(R.string.appearance_greet)) }
                             OutlinedButton(onClick = {
                                 // Replay celebrate by driving Speaking → Idle on the
                                 // live instance (the transition fires the one-shot).
@@ -714,12 +705,11 @@ fun AppearanceSettingsScreen(
                                     delay(2500)
                                     overrideState = null
                                 }
-                            }) { Text("Done") }
+                            }) { Text(stringResource(R.string.appearance_done)) }
                         }
 
                         Text(
-                            text = "Tap a state to preview it; Greet/Done replay the one-shot " +
-                                "reactions. Reflects the speed and stabilize settings above.",
+                            text = stringResource(R.string.appearance_preview_tip),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -731,7 +721,7 @@ fun AppearanceSettingsScreen(
                         HorizontalDivider()
 
                         Text(
-                            text = "Sphere skin — choose the orb's look.",
+                            text = stringResource(R.string.appearance_sphere_skin),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -754,9 +744,7 @@ fun AppearanceSettingsScreen(
                         HorizontalDivider()
 
                         Text(
-                            text = "Add your own: drop a sphere JSON spec into the app's " +
-                                "private spheres/ folder, then reopen this screen. See " +
-                                "docs/sphere-spec.md for the format.",
+                            text = stringResource(R.string.appearance_sphere_custom_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -931,7 +919,7 @@ private fun SphereSkinChip(
     val poleB = swatch.getOrElse(1) { poleA }
     val capability = buildString {
         append(skin.reactivity.summary())
-        if (skin.source == SphereSkinSource.USER) append(" · Custom")
+        if (skin.source == SphereSkinSource.USER) append(stringResource(R.string.appearance_custom_suffix))
     }
     Column(
         modifier = Modifier
