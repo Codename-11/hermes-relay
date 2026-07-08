@@ -347,6 +347,9 @@ fun BridgeScreen(
             // 1. Master toggle (with inline status rows — device, battery,
             //    screen, current app). This is the parent gate for the page.
             val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+            // Pre-resolve snackbar strings for accessibility-needed callback (non-Composable lambda)
+            val snackbarAccessibilityNeeded = stringResource(R.string.bridge_accessibility_needed)
+            val snackbarAccessibilityAction = stringResource(R.string.bridge_open_settings)
             BridgeMasterToggle(
                 enabled = masterToggle,
                 status = bridgeStatus,
@@ -369,12 +372,10 @@ fun BridgeScreen(
                 // what was wrong. Now: show a snackbar, offer a direct
                 // jump into Android's Accessibility Settings page.
                 onAccessibilityNeeded = {
-                    val snackbarMessage = stringResource(R.string.bridge_accessibility_needed)
-                    val snackbarAction = stringResource(R.string.bridge_open_settings)
                     coroutineScope.launch {
                         val result = snackbarHost.showSnackbar(
-                            message = snackbarMessage,
-                            actionLabel = snackbarAction,
+                            message = snackbarAccessibilityNeeded,
+                            actionLabel = snackbarAccessibilityAction,
                             duration = androidx.compose.material3.SnackbarDuration.Long,
                         )
                         if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
