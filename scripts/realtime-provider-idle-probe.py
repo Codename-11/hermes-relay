@@ -116,6 +116,10 @@ async def _drain_events(connection, stop: asyncio.Event, sink: list[str]) -> Non
                 sink.append(f"  ERROR payload={event.payload!r}")
             if stop.is_set():
                 return
+        # A clean stream end with no ERROR is still a socket death — stamp
+        # WHEN it happened (a pre-240s death means a keepalive mode was never
+        # actually exercised; observed once and misread as a mode failure).
+        sink.append(f"{time.monotonic():.1f}s events() stream ended (no error event)")
     except Exception as exc:  # noqa: BLE001 - probe wants the raw failure
         sink.append(f"{time.monotonic():.1f}s events() raised {exc!r}")
     finally:
