@@ -726,18 +726,32 @@ class RealtimeAgentHandler:
                 elif msg_type == CLIENT_MSG_INPUT_AUDIO_CLEAR:
                     await connection.clear_audio()
                 elif msg_type == CLIENT_MSG_RESPONSE_CANCEL:
-                    self._cancel_active_hermes(session)
+                    # Cancel the Hermes run ONLY when one is actually in
+                    # flight. A cancel after completion (observed live: the
+                    # client cancelled a run that finished 10s earlier) must
+                    # not flip hermes_run_status to "cancelled" or emit
+                    # hermes.run.cancelled for the finished run — that
+                    # re-opens a settled chip and misreports the outcome.
+                    # Stopping the CURRENT SPEECH (cancel_response +
+                    # clear_audio) always happens.
+                    hermes_run_active = (
+                        session.hermes_task is not None
+                        and not session.hermes_task.done()
+                    )
+                    if hermes_run_active:
+                        self._cancel_active_hermes(session)
                     await connection.cancel_response()
                     await connection.clear_audio()
-                    await self._send(
-                        ws,
-                        session,
-                        {
-                            "type": "hermes.run.cancelled",
-                            "session_id": session.chat_session_id,
-                            "run_id": session.hermes_run_id,
-                        },
-                    )
+                    if hermes_run_active:
+                        await self._send(
+                            ws,
+                            session,
+                            {
+                                "type": "hermes.run.cancelled",
+                                "session_id": session.chat_session_id,
+                                "run_id": session.hermes_run_id,
+                            },
+                        )
                     await self._send(
                         ws,
                         session,
@@ -2234,6 +2248,17 @@ class RealtimeAgentHandler:
         *,
         should_speak: bool = True,
     ) -> None:
+        # This lead fires BEFORE _execute_brokered_tool resets the per-run
+        # progress state, so session.hermes_run_id / completed_tool_count
+        # still describe the PREVIOUS run here (observed live: a new run's
+        # "I'll check Hermes." event carried the finished prior run's id and
+        # tool count, confusing the client chip). When no run is in flight,
+        # this event announces a FRESH run: send null/zero identity instead
+        # of the stale values. While a run IS active (fast-lane attempt),
+        # keep the active run's identity so the chip stays consistent.
+        hermes_run_active = (
+            session.hermes_task is not None and not session.hermes_task.done()
+        )
         await self._send(
             ws,
             session,
@@ -2242,7 +2267,7 @@ class RealtimeAgentHandler:
                 "source": "hermes",
                 "session_id": session.chat_session_id,
                 "chat_session_id": session.chat_session_id,
-                "run_id": session.hermes_run_id,
+                "run_id": session.hermes_run_id if hermes_run_active else None,
                 "status": "starting",
                 "message": "I'll check Hermes.",
                 "status_key": "run:checking_hermes",
@@ -2250,7 +2275,9 @@ class RealtimeAgentHandler:
                 "call_id": call_id,
                 "active_tool_name": None,
                 "last_tool_name": None,
-                "completed_tool_count": session.hermes_completed_tool_count,
+                "completed_tool_count": (
+                    session.hermes_completed_tool_count if hermes_run_active else 0
+                ),
             },
         )
         if _PRE_HERMES_STATUS_LEAD_SECONDS > 0:
@@ -2610,13 +2637,19 @@ class RealtimeAgentHandler:
         if origin == "provider_tool_call" and call_id:
             # Close the pending provider function call so the socket is not left
             # awaiting tool output for the whole background run.
+            # Deliberately NO run_id in the model-visible payload — the model
+            # read it aloud ("the run ID is run_997f23ec…", observed live).
+            # hermes_get_status / hermes_cancel default to the active run, so
+            # the model never needs the id; the client gets it via events.
             interim = {
                 "ok": True,
                 "status": "running_in_background",
-                "run_id": session.hermes_run_id,
                 "instruction": (
                     "The task is running in the background. Briefly acknowledge "
-                    "that you've started and will report back; do not answer yet."
+                    "that you've started and will report back; do not answer "
+                    "yet. Never say run IDs, session IDs, or other identifiers "
+                    "aloud. There is no task queue — do not offer to queue or "
+                    "claim to have queued anything."
                 ),
                 "interface": _interface_context(session),
             }
@@ -4374,8 +4407,9 @@ def _background_handoff_prompt(transcript: str) -> str:
         "The user's request is now running in the background and may take a "
         "little while. Speak one short, natural acknowledgement that you've "
         "started on it and will report back, for example: 'I'm on it — I'll let "
-        "you know.' Do not call tools, do not answer the request yet, and do not "
-        "ask for a run id.\n\n"
+        "you know.' Do not call tools, do not answer the request yet, and never "
+        "say run IDs, session IDs, or other identifiers aloud. There is no task "
+        "queue — do not offer to queue or claim to have queued anything.\n\n"
         f"User request: {transcript.strip()[:1000]}"
     )
 
@@ -4391,17 +4425,20 @@ def _forced_hermes_summary_prompt(transcript: str, result: dict[str, Any]) -> st
     if not answer:
         answer = "Hermes completed the request but did not return a spoken summary."
     summary = _provider_safe_answer_for_speech(answer, max_chars=1400)
+    # Deliberately NO run/session ids here — anything present in these
+    # instructions can end up spoken verbatim (observed live: the summary
+    # response read a full 32-char run id aloud). Identifiers stay in the
+    # client event stream, never in speech-composition context.
     metadata = {
-        "run_id": result.get("run_id"),
-        "session_id": result.get("session_id"),
         "tool_count": result.get("tool_count"),
         "last_tool_name": result.get("last_tool_name"),
     }
     return (
         "Hermes has already handled the user's previous voice request. "
-        "This is the final spoken answer step. Do not call any tools, do not "
-        "say you will check, and do not ask for a run id. Speak a concise "
-        "natural summary based only on the Hermes result below.\n\n"
+        "This is the final spoken answer step. Speak the answer from the "
+        "Hermes result below NOW, as a concise natural summary. Do not call "
+        "any tools, do not say you will check or report back later, and never "
+        "say run IDs, session IDs, or other identifiers aloud.\n\n"
         f"User request: {transcript.strip()[:1000]}\n"
         f"Hermes result: {summary}\n"
         f"Metadata: {json.dumps(metadata, sort_keys=True)}"
@@ -4459,6 +4496,18 @@ def _bad_forced_summary_reason(text: str) -> str | None:
         "what task you would like",
         "do you have",
         "handy",
+        # Deferral filler in what should be the final answer (observed live:
+        # "One moment while I look that up. I'll report back as soon as I
+        # have the info." spoken INSTEAD of a completed result — the answer
+        # was never delivered).
+        "one moment",
+        "i'll report back",
+        "i will report back",
+        "i'll look",
+        "i will look",
+        "looking that up",
+        "looking into",
+        "as soon as i have",
     )
     for phrase in bad_phrases:
         if phrase in normalized:

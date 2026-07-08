@@ -1771,9 +1771,12 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             ready = await self._next_ws_event(ws)
             self.assertEqual(ready["type"], "voice.session.ready")
             await ws.send_json({"type": "response.cancel"})
-            cancelled = await self._next_ws_event(ws)
+            # No Hermes run is in flight here, so the cancel must NOT
+            # fabricate a hermes.run.cancelled event (a cancel after a run
+            # completed used to re-open the settled chip and misreport the
+            # outcome) — the very next event is the cancelled response.done.
+            # Speech-stop still happens: provider cancel + audio clear.
             done = await self._next_ws_event(ws)
-            self.assertEqual(cancelled["type"], "hermes.run.cancelled")
             self.assertEqual(done["type"], "voice.response.done")
             self.assertTrue(done["cancelled"])
             self.assertTrue(fake_provider.connection.cancelled)

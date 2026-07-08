@@ -3395,7 +3395,16 @@ class ChatViewModel : ViewModel() {
             "hermes.tool.delta" -> {
                 realtimeAgentHermesBacked[assistantMessageId] = true
                 val name = event.toolName?.takeIf { it.isNotBlank() }
-                if (!name.isNullOrBlank() && !name.equals("hermes", ignoreCase = true)) {
+                // `_`-prefixed tools are internal machinery (upstream hides
+                // them from every tool surface). The gateway streams drafting
+                // text as a `_thinking` pseudo-tool that only ever emits
+                // deltas — no tool.completed — so a pill created for it spins
+                // "running" forever. Its text still feeds the detailed
+                // thinking trace below; it just never becomes a ToolCall row.
+                if (!name.isNullOrBlank() &&
+                    !name.equals("hermes", ignoreCase = true) &&
+                    !name.startsWith("_")
+                ) {
                     val callId = event.toolCallId?.takeIf { it.isNotBlank() } ?: name
                     val seen = realtimeAgentToolCallIds
                         .getOrPut(assistantMessageId) { mutableSetOf() }
@@ -3464,6 +3473,10 @@ class ChatViewModel : ViewModel() {
             "hermes.tool.started" -> {
                 realtimeAgentHermesBacked[assistantMessageId] = true
                 val name = event.toolName?.takeIf { it.isNotBlank() } ?: "hermes"
+                // Same `_`-internal-tool guard as hermes.tool.delta above —
+                // defensive here (the relay currently only sends started for
+                // real tools), since an unpaired started would pin a pill.
+                if (name.startsWith("_")) return
                 val callId = event.toolCallId?.takeIf { it.isNotBlank() } ?: name
                 realtimeAgentToolCallIds
                     .getOrPut(assistantMessageId) { mutableSetOf() }
