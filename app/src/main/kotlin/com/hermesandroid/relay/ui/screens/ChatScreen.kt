@@ -2846,6 +2846,7 @@ fun ChatScreen(
                 onModeChange = { voiceViewModel.setInteractionMode(it) },
                 onClearError = { voiceViewModel.clearError() },
                 onBackgroundRunCancel = { voiceViewModel.cancelBackgroundRun() },
+                onBackgroundRunTap = { voiceViewModel.respeakBackgroundResult() },
                 // Agent B's overlay collects this flow and renders classified
                 // voice errors (mic capture, STT/TTS failures, relay drops).
                 errorEvents = voiceViewModel.errorEvents,

@@ -2377,6 +2377,7 @@ class RelayVoiceClient(
                 activeToolName = (obj["active_tool_name"] as? JsonPrimitive)?.contentOrNull,
                 completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull,
                 elapsedMs = (obj["elapsed_ms"] as? JsonPrimitive)?.longOrNull,
+                queuedCount = (obj["queued_count"] as? JsonPrimitive)?.intOrNull,
                 raw = raw,
             )
         } catch (e: Exception) {
@@ -2753,6 +2754,9 @@ data class RealtimeVoiceEvent(
     val activeToolName: String? = null,
     val completedToolCount: Int? = null,
     val elapsedMs: Long? = null,
+    // Background-task queue depth (hermes.run.queued / promoted /
+    // background_completed) — drives the chip's "+N queued" affix.
+    val queuedCount: Int? = null,
     val raw: String,
 ) {
     val isAudioDelta: Boolean
@@ -2784,6 +2788,12 @@ class RealtimeAgentSessionControl(
 
     fun cancel(): Boolean =
         webSocket.send("""{"type":"response.cancel"}""")
+
+    /** Ask the relay to respeak the last delivered background result
+     *  (DONE-chip tap). The relay answers with a hermes-sourced response
+     *  rendered via relay TTS, or `hermes.result.respeak_unavailable`. */
+    fun respeakLastResult(): Boolean =
+        webSocket.send("""{"type":"hermes.result.respeak"}""")
 
     fun sendPlaybackDrained(
         callId: String?,

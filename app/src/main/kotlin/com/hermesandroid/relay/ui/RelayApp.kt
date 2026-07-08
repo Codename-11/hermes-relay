@@ -800,6 +800,12 @@ fun RelayApp() {
             isDemo = { connectionViewModel.isDemoMode.value },
             handler = { connectionViewModel.chatHandler },
         )
+        // Voice → chat breadcrumbs (e.g. "background task still running" when
+        // voice mode exits with a detached run) land as system notices in the
+        // shared chat transcript.
+        voiceViewModel.chatNoticeSink = { notice ->
+            connectionViewModel.chatHandler.addSystemNotice(notice)
+        }
     }
 
     // Sync tool annotation parsing toggle to ChatHandler

@@ -155,6 +155,7 @@ fun VoiceModeOverlay(
     // Cancels the promoted/durable background Hermes run from the chip's ✕.
     // Default no-op so existing call sites/previews keep compiling.
     onBackgroundRunCancel: () -> Unit = {},
+    onBackgroundRunTap: () -> Unit = {},
     onHermesConfirmationAnswer: (String) -> Unit = {},
     // === END v0.4.1 ===
 ) {
@@ -349,6 +350,7 @@ fun VoiceModeOverlay(
                 BackgroundRunChip(
                     run = uiState.backgroundRun,
                     onCancel = onBackgroundRunCancel,
+                    onTap = onBackgroundRunTap,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 4.dp),
@@ -443,6 +445,25 @@ fun VoiceModeOverlay(
                     }
                 }
             }
+        }
+
+        // Compact mode: the background-run chip must survive outside focus
+        // mode too — a running task with no visible presence reads as lost
+        // (the chip previously existed ONLY in the focus layout).
+        AnimatedVisibility(
+            visible = !focusMode && uiState.backgroundRun != null,
+            enter = fadeIn(tween(140)),
+            exit = fadeOut(tween(180)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp, start = 24.dp, end = 24.dp),
+        ) {
+            BackgroundRunChip(
+                run = uiState.backgroundRun,
+                onCancel = onBackgroundRunCancel,
+                onTap = onBackgroundRunTap,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
         // Error banner
@@ -1488,6 +1509,7 @@ private fun DestructiveCountdownRow(
 private fun BackgroundRunChip(
     run: BackgroundRunState?,
     onCancel: () -> Unit,
+    onTap: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var latest by remember { mutableStateOf<BackgroundRunState?>(null) }
@@ -1541,12 +1563,18 @@ private fun BackgroundRunChip(
                         if (display.completedToolCount == 1) "" else "s"
                 )
             }
+            if (display.queuedCount > 0) {
+                add("+${display.queuedCount} queued")
+            }
             if (!done) add(elapsedLabel)
         }.joinToString(" · ")
 
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.secondaryContainer,
+            // Tap on a settled chip = respeak the delivered answer (the VM
+            // no-ops the tap for live phases).
+            onClick = onTap,
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

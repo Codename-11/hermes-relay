@@ -160,6 +160,8 @@ data class BackgroundRunState(
     val statusLine: String? = null,
     /** Tools completed so far (from hermes.run.progress). */
     val completedToolCount: Int = 0,
+    /** Tasks queued behind this run (background-run v2 queue) — "+N queued". */
+    val queuedCount: Int = 0,
     /** Wall-clock at promotion — drives the chip's mm:ss elapsed ticker. */
     val startedAtMs: Long = System.currentTimeMillis(),
     val phase: BackgroundRunPhase = BackgroundRunPhase.RUNNING,
@@ -1356,6 +1358,43 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * relay confirms with `hermes.run.cancelled`, which clears the chip; the
      * message flips immediately so the tap feels acknowledged.
      */
+    /**
+     * DONE-chip tap: ask the relay to respeak the last delivered background
+     * result over relay TTS. No-op unless the chip is settled (a tap on a
+     * live chip must not re-trigger anything) or the control is gone.
+     */
+    fun respeakBackgroundResult() {
+        val run = _uiState.value.backgroundRun ?: return
+        if (run.phase != BackgroundRunPhase.DONE) return
+        val control = realtimeAgentControl ?: return
+        val sent = control.respeakLastResult()
+        Log.i(TAG, "Background result respeak requested sent=$sent run=${run.runId ?: "?"}")
+        if (sent) {
+            // Keep the chip up while the respeak plays; its linger job will
+            // re-dismiss afterwards.
+            deliveringChipClearJob?.cancel()
+            updateBackgroundRun { it.copy(message = "Repeating the answer…") }
+            deliveringChipClearJob = viewModelScope.launch {
+                delay(DONE_CHIP_LINGER_MS)
+                _uiState.update { state ->
+                    if (state.backgroundRun?.phase == BackgroundRunPhase.DONE) {
+                        state.copy(backgroundRun = null)
+                    } else {
+                        state
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Chat-side sink for voice lifecycle notices (wired from RelayApp to the
+     * shared ChatHandler's system-notice bubble). Used when voice mode exits
+     * with a background task still running, so the task doesn't silently
+     * vanish from every surface.
+     */
+    var chatNoticeSink: ((String) -> Unit)? = null
+
     fun cancelBackgroundRun() {
         val run = _uiState.value.backgroundRun
         if (run?.phase == BackgroundRunPhase.DONE) {
@@ -1413,6 +1452,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 "Exiting voice mode with background run=${detachedRun.runId ?: "?"} " +
                     "active — detaching, not cancelling",
             )
+            // C2: the chip dies with the overlay, but the task doesn't — leave
+            // a breadcrumb in chat so the running work stays visible somewhere.
+            // Only for runs that haven't already settled.
+            if (detachedRun.phase != BackgroundRunPhase.DONE) {
+                val queuedSuffix = if (detachedRun.queuedCount > 0) {
+                    " (+${detachedRun.queuedCount} queued)"
+                } else {
+                    ""
+                }
+                chatNoticeSink?.invoke(
+                    "🕐 Background voice task still running$queuedSuffix — " +
+                        "Hermes will report back when it finishes.",
+                )
+            }
         } else {
             cancelRealtimeAgentTurn("exit voice mode")
         }
@@ -2675,6 +2728,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
+                    // The gateway streams drafting text as the `_thinking`
+                    // pseudo-tool — the strongest "almost done" signal a
+                    // background run emits. Surface it as the chip's status
+                    // line (never as a tool pill; see ChatViewModel).
+                    if (event.toolName == "_thinking") {
+                        updateBackgroundRun { run ->
+                            if (run.phase == BackgroundRunPhase.DELIVERING ||
+                                run.phase == BackgroundRunPhase.DONE
+                            ) run
+                            else run.copy(statusLine = "Drafting the answer…")
+                        }
+                    }
                 }
                 "hermes.tool.completed", "hermes.tool.failed" -> {
                     // A tool finished. Without this, the "Using X…" status and the
@@ -2785,8 +2850,22 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                                 } else {
                                     "This is taking a moment — working on it in the background."
                                 },
+                                queuedCount = event.queuedCount ?: 0,
                             ),
                         )
+                    }
+                }
+                "hermes.run.queued" -> {
+                    // A second long ask was queued behind the running task
+                    // (background-run v2). Reflect the depth on the chip; the
+                    // model speaks the "queued" acknowledgement itself.
+                    Log.i(
+                        TAG,
+                        "Realtime task queued count=${event.queuedCount ?: "?"} " +
+                            "run=${event.runId ?: "?"}",
+                    )
+                    updateBackgroundRun { run ->
+                        run.copy(queuedCount = event.queuedCount ?: run.queuedCount)
                     }
                 }
                 "hermes.run.background_completed" -> {
