@@ -164,12 +164,12 @@ internal fun sessionCapabilities(
     }
     return listOf(
         SessionCapability(
-            type = “live_thinking”,
+            type = "live_thinking",
             available = transport.isGateway,
             reason = liveThinkingReason,
         ),
         SessionCapability(
-            type = “media”,
+            type = "media",
             available = relayConnected,
             reason = when {
                 relayConnected -> null
@@ -178,7 +178,7 @@ internal fun sessionCapabilities(
             },
         ),
         SessionCapability(
-            type = “terminal”,
+            type = "terminal",
             available = relayConnected,
             reason = when {
                 relayConnected -> null
@@ -187,12 +187,12 @@ internal fun sessionCapabilities(
             },
         ),
         SessionCapability(
-            type = “voice”,
+            type = "voice",
             available = voiceReady,
             reason = if (voiceReady) null else stringResource(R.string.session_path_voice_not_ready),
         ),
         SessionCapability(
-            type = “threads”,
+            type = "threads",
             available = threadsActive,
             reason = if (threadsActive) {
                 null
@@ -205,11 +205,11 @@ internal fun sessionCapabilities(
 
 @Composable
 internal fun capabilityLabel(type: String): String = when (type) {
-    “live_thinking” -> stringResource(R.string.session_path_live_thinking)
-    “media” -> stringResource(R.string.session_path_media)
-    “terminal” -> stringResource(R.string.session_path_terminal)
-    “voice” -> stringResource(R.string.session_path_voice)
-    “threads” -> stringResource(R.string.session_path_threads)
+    "live_thinking" -> stringResource(R.string.session_path_live_thinking)
+    "media" -> stringResource(R.string.session_path_media)
+    "terminal" -> stringResource(R.string.session_path_terminal)
+    "voice" -> stringResource(R.string.session_path_voice)
+    "threads" -> stringResource(R.string.session_path_threads)
     else -> type
 }
 

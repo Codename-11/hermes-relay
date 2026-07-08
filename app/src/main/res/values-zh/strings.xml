@@ -1901,5 +1901,16 @@
     <string name="conn_info_yes_hidden">是（已隐藏）</string>
     <string name="conn_info_yolo_mode_desc">跳过工具调用的审批提示。</string>
     <string name="conn_info_yolo_mode_title">YOLO 模式</string>
+
+    <!-- EndpointsCard -->
+    <string name="endpoints_no_routes_stored">尚未保存任何路由</string>
+    <string name="endpoints_add_route">添加路由</string>
+    <string name="endpoints_resolving">解析中</string>
+    <string name="endpoints_manual_until_disconnect">手动（断开前）</string>
+    <string name="endpoints_preferred">首选</string>
+    <string name="endpoints_automatic">自动</string>
+    <string name="endpoints_current_route">当前路由</string>
+    <string name="endpoints_cancel_manual_switch">取消手动切换</string>
+    <string name="endpoints_stop_preferring">取消首选</string>
 </resources>
 

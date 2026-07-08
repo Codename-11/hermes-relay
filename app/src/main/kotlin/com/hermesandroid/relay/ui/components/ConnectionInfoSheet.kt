@@ -217,6 +217,13 @@ fun SessionInfoSheet(
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
+    // Pre-resolve strings for non-Composable callbacks/lambdas
+    val pairingCodeLabel = stringResource(R.string.conn_info_pairing_code)
+    val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
+    val grantNeverFmt = stringResource(R.string.conn_info_grant_never)
+    val channelGrantsLabel = stringResource(R.string.conn_info_channel_grants)
+    val transportLabel = stringResource(R.string.conn_info_transport)
+    val testingText = stringResource(R.string.conn_info_testing)
     // Pass 2 (2026-04-18): the old `sessionLabels: List<String>` field was
     // replaced by a structured `agentProfiles: List<Profile>` on the VM
     // (sourced from `auth.ok`'s `profiles` entry, whose items are objects
@@ -278,7 +285,7 @@ fun SessionInfoSheet(
                         scope.launch {
                             clipboard.setClipEntry(
                                 ClipEntry(
-                                    ClipData.newPlainText(stringResource(R.string.conn_info_pairing_code), pairingCode)
+                                    ClipData.newPlainText(pairingCodeLabel, pairingCode)
                                 )
                             )
                         }
@@ -325,13 +332,13 @@ fun SessionInfoSheet(
 
                 if (paired.grants.isNotEmpty()) {
                     val grantsLabel = paired.grants.entries.joinToString(", ") { (k, v) ->
-                        if (v == null) stringResource(R.string.conn_info_grant_never, k) else k
+                        if (v == null) String.format(grantNeverFmt, k) else k
                     }
-                    InfoRow(label = stringResource(R.string.conn_info_channel_grants), value = grantsLabel)
+                    InfoRow(label = channelGrantsLabel, value = grantsLabel)
                 }
 
-                val transportLabel = paired.transportHint?.uppercase() ?: "—"
-                InfoRow(label = stringResource(R.string.conn_info_transport), value = transportLabel)
+                val transportLabelText = paired.transportHint?.uppercase() ?: "—"
+                InfoRow(label = transportLabel, value = transportLabelText)
 
                 InfoRow(
                     label = stringResource(R.string.conn_info_key_storage),
@@ -466,7 +473,7 @@ fun ApiServerInfoSheet(
             OutlinedButton(
                 onClick = {
                     testing = true
-                    testResult = stringResource(R.string.conn_info_testing)
+                    testResult = testingText
                     connectionViewModel.testApiConnection { _success, message ->
                         testing = false
                         testResult = message

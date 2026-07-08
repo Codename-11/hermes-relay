@@ -296,7 +296,7 @@ fun ActiveCardFeaturesSection(
         dashboardStatus?.authenticated == true -> CapabilityTone.Good
         dashboardStatus?.reachable == true && !dashboardSignInRequired -> CapabilityTone.Good
         dashboardSignInRequired -> CapabilityTone.Info
-        activeConnection?.resolvedDashboardUrl.isNullOrBlank() || !dashboardStatus?.reachable == true -> CapabilityTone.Warning
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() || dashboardStatus?.reachable != true -> CapabilityTone.Warning
         else -> CapabilityTone.Neutral
     }
 
@@ -977,6 +977,7 @@ private fun ManualPairingCodeSubsection(
     val noResponseFromRelayToast = stringResource(R.string.active_section_no_response_from_relay)
     val pairingCodeCopiedToast = stringResource(R.string.active_section_pairing_code_copied)
     val commandCopiedToast = stringResource(R.string.active_section_command_copied)
+    val hermesPairCommandLabel = stringResource(R.string.active_section_hermes_pair_command)
     val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
     val generateNewCodeDesc = stringResource(R.string.active_section_generate_new_code)
     val copyHermesPairCommandDesc = stringResource(R.string.active_section_copy_hermes_pair_command)
@@ -1099,7 +1100,7 @@ private fun ManualPairingCodeSubsection(
                         val cmd = "hermes pair --register-code $pairingCode"
                         scope.launch {
                             clipboard.setClipEntry(
-                                ClipEntry(ClipData.newPlainText(stringResource(R.string.active_section_hermes_pair_command), cmd)),
+                                ClipEntry(ClipData.newPlainText(hermesPairCommandLabel, cmd)),
                             )
                             UiMessageBus.info(commandCopiedToast)
                         }

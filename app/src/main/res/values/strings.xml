@@ -1904,5 +1904,16 @@
     <string name="conn_info_yes_hidden">Yes (hidden)</string>
     <string name="conn_info_yolo_mode_desc">Bypass approval prompts for tool calls.</string>
     <string name="conn_info_yolo_mode_title">YOLO mode</string>
+
+    <!-- EndpointsCard -->
+    <string name="endpoints_no_routes_stored">No routes stored yet</string>
+    <string name="endpoints_add_route">Add route</string>
+    <string name="endpoints_resolving">Resolving</string>
+    <string name="endpoints_manual_until_disconnect">Manual until disconnect</string>
+    <string name="endpoints_preferred">Preferred</string>
+    <string name="endpoints_automatic">Automatic</string>
+    <string name="endpoints_current_route">Current route</string>
+    <string name="endpoints_cancel_manual_switch">Cancel manual switch</string>
+    <string name="endpoints_stop_preferring">Stop preferring</string>
 </resources>
 
