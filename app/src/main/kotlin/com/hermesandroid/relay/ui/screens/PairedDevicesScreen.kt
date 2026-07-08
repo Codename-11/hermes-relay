@@ -56,9 +56,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
@@ -121,12 +123,12 @@ fun PairedDevicesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Relay sessions") },
+                title = { Text(stringResource(R.string.paired_devices_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.paired_devices_back)
                         )
                     }
                 },
@@ -134,7 +136,7 @@ fun PairedDevicesScreen(
                     IconButton(onClick = { connectionViewModel.loadPairedDevices() }) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Refresh"
+                            contentDescription = stringResource(R.string.paired_devices_refresh)
                         )
                     }
                 },
@@ -178,37 +180,38 @@ fun PairedDevicesScreen(
         val isCurrentDevice = target.isCurrent ||
             (currentPairedSession?.token?.startsWith(target.tokenPrefix) == true)
 
+        val unnamedDevice = stringResource(R.string.paired_devices_unnamed_device)
+        val revokeThisTitle = stringResource(R.string.paired_devices_revoke_this_title)
+        val revokeTitle = stringResource(R.string.paired_devices_revoke_title)
+        val revokeCurrentBody = stringResource(R.string.paired_devices_revoke_current_body)
+        val revokeOtherBody = stringResource(R.string.paired_devices_revoke_other_body)
+        val unpairedMessage = stringResource(R.string.paired_devices_unpaired)
+        val revokedMessage = stringResource(R.string.paired_devices_revoked)
+        val revokeFailedMessage = stringResource(R.string.paired_devices_revoke_failed)
+
         AlertDialog(
             onDismissRequest = { pendingRevoke = null },
             title = {
                 Text(
-                    text = if (isCurrentDevice) "Revoke this device?"
-                    else "Revoke device?"
+                    text = if (isCurrentDevice) revokeThisTitle else revokeTitle
                 )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = target.deviceName.ifBlank { "Unnamed device" },
+                        text = target.deviceName.ifBlank { unnamedDevice },
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "Token prefix: ${target.tokenPrefix}",
+                        text = stringResource(R.string.paired_devices_token_prefix, target.tokenPrefix),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = if (isCurrentDevice) {
-                            "This is the current device. Revoking will " +
-                                "end the session on this phone and you'll " +
-                                "need to re-pair with the server."
-                        } else {
-                            "This will end that device's relay session. " +
-                                "It can re-pair later using a new pairing code."
-                        },
+                        text = if (isCurrentDevice) revokeCurrentBody else revokeOtherBody,
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -223,13 +226,13 @@ fun PairedDevicesScreen(
                             if (success) {
                                 if (isCurrentDevice) {
                                     connectionViewModel.clearSession()
-                                    snackbarHostState.showSnackbar("This device was unpaired. Re-pair to continue.")
+                                    snackbarHostState.showSnackbar(unpairedMessage)
                                     onRequestRepair()
                                 } else {
-                                    snackbarHostState.showSnackbar("Device revoked")
+                                    snackbarHostState.showSnackbar(revokedMessage)
                                 }
                             } else {
-                                snackbarHostState.showSnackbar("Revoke failed")
+                                snackbarHostState.showSnackbar(revokeFailedMessage)
                             }
                         }
                     },
@@ -237,12 +240,12 @@ fun PairedDevicesScreen(
                         contentColor = MaterialTheme.colorScheme.error
                     )
                 ) {
-                    Text("Revoke")
+                    Text(stringResource(R.string.paired_devices_revoke))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingRevoke = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.paired_devices_cancel))
                 }
             }
         )
@@ -257,6 +260,9 @@ fun PairedDevicesScreen(
         val remaining: Long = target.expiresAt?.let { (it.toLong() - nowSec).coerceAtLeast(0L) }
             ?: 0L  // 0 = never expire (matches the picker's "Never" option)
         val initialTtl = if (target.expiresAt == null) 0L else remaining
+        val setNeverMessage = stringResource(R.string.paired_devices_session_never)
+        val updatedMessage = stringResource(R.string.paired_devices_session_updated)
+        val failedToUpdateMessage = stringResource(R.string.paired_devices_session_update_failed)
         SessionTtlPickerDialog(
             initialTtlSeconds = initialTtl,
             isTailscaleDetected = isTailscaleDetected,
@@ -270,11 +276,10 @@ fun PairedDevicesScreen(
                     )
                     if (success) {
                         snackbarHostState.showSnackbar(
-                            if (newTtl == 0L) "Session set to never expire"
-                            else "Session expiry updated"
+                            if (newTtl == 0L) setNeverMessage else updatedMessage
                         )
                     } else {
-                        snackbarHostState.showSnackbar("Failed to update session")
+                        snackbarHostState.showSnackbar(failedToUpdateMessage)
                     }
                 }
             },
@@ -285,25 +290,43 @@ fun PairedDevicesScreen(
     // === PER-CHANNEL-REVOKE: confirm dialog ===
     pendingChannelRevoke?.let { (device, channel) ->
         val channelLabel = grantDisplayName(channel)
+        val noneLabel = stringResource(R.string.paired_devices_none)
+        val thisDeviceLabel = stringResource(R.string.paired_devices_this_device)
+        // Resolve display names for every grant up-front (grantDisplayName
+        // is @Composable, so we can't call it inside joinToString's lambda).
+        val grantLabels = device.grants.keys.associateWith { grantDisplayName(it) }
         val otherChannels = device.grants.keys
             .filter { it != channel }
             .sortedWith(::compareGrantNames)
-            .joinToString(", ") { grantDisplayName(it) }
-            .ifBlank { "none" }
+            .joinToString(", ") { grantLabels[it] ?: it }
+            .ifBlank { noneLabel }
+        val revokeChannelTitle = stringResource(R.string.paired_devices_revoke_channel_title)
+        val revokeChannelBody = stringResource(
+            R.string.paired_devices_revoke_channel_body,
+            channelLabel,
+            device.deviceName.ifBlank { thisDeviceLabel },
+        )
+        val revokeChannelDesc = stringResource(
+            R.string.paired_devices_revoke_channel_desc,
+            channelLabel,
+            otherChannels,
+        )
+        val channelRevokedMsg = stringResource(R.string.paired_devices_channel_revoked, channelLabel)
+        val channelRevokeFailedMsg = stringResource(
+            R.string.paired_devices_channel_revoke_failed,
+            channelLabel,
+        )
         AlertDialog(
             onDismissRequest = { pendingChannelRevoke = null },
-            title = { Text("Revoke channel access?") },
+            title = { Text(revokeChannelTitle) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Revoke $channelLabel access for " +
-                            device.deviceName.ifBlank { "this device" } + "?",
+                        text = revokeChannelBody,
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "The session itself stays paired — only the " +
-                            "$channelLabel grant is removed. Other channels " +
-                            "($otherChannels) keep their current expiry.",
+                        text = revokeChannelDesc,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -320,8 +343,7 @@ fun PairedDevicesScreen(
                                 ch,
                             )
                             snackbarHostState.showSnackbar(
-                                if (ok) "$channelLabel access revoked"
-                                else "Failed to revoke $channelLabel access"
+                                if (ok) channelRevokedMsg else channelRevokeFailedMsg
                             )
                         }
                     },
@@ -329,12 +351,12 @@ fun PairedDevicesScreen(
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
                 ) {
-                    Text("Revoke")
+                    Text(stringResource(R.string.paired_devices_revoke))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingChannelRevoke = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.paired_devices_cancel))
                 }
             },
         )
@@ -370,7 +392,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "Couldn't load relay sessions",
+            text = stringResource(R.string.paired_devices_load_error),
             style = MaterialTheme.typography.titleMedium
         )
         Spacer(Modifier.height(4.dp))
@@ -381,7 +403,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         OutlinedButton(onClick = onRetry) {
-            Text("Try again")
+            Text(stringResource(R.string.paired_devices_try_again))
         }
     }
 }
@@ -403,17 +425,17 @@ private fun EmptyState(onRequestRepair: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "No relay sessions (yet)",
+            text = stringResource(R.string.paired_devices_empty_title),
             style = MaterialTheme.typography.titleMedium
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "Pair this phone with your relay to see it here.",
+            text = stringResource(R.string.paired_devices_empty_body),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onRequestRepair) { Text("Pair now") }
+        Button(onClick = onRequestRepair) { Text(stringResource(R.string.paired_devices_pair_now)) }
     }
 }
 
@@ -444,10 +466,7 @@ private fun DeviceList(
         // to the device cards below.
         item {
             Text(
-                text = "Each row is a phone that has paired with this server.\n" +
-                    "Channel grants are per-feature authorizations (chat, bridge, terminal, TUI, voice) " +
-                    "that can expire independently.\n" +
-                    "Revoke a session to cut off that phone's access without affecting others.",
+                text = stringResource(R.string.paired_devices_header),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 0.dp, vertical = 0.dp),
@@ -477,23 +496,16 @@ private fun DeviceList(
     if (showChannelInfoSheet) {
         AlertDialog(
             onDismissRequest = { showChannelInfoSheet = false },
-            title = { Text("About channel grants") },
+            title = { Text(stringResource(R.string.paired_devices_about_grants_title)) },
             text = {
                 Text(
-                    text = "Channel grants are per-feature permissions.\n\n" +
-                        "• Chat controls sent/received messages.\n" +
-                        "• Bridge controls accessibility actions.\n" +
-                        "• Terminal and TUI control shell-style remote sessions.\n" +
-                        "• Voice is split into config, speech-to-text, and text-to-speech grants.\n\n" +
-                        "Each grant has its own expiry, so a phone can keep chat " +
-                        "access long after bridge or voice access has lapsed — or you can " +
-                        "revoke one channel without ending the whole session.",
+                    text = stringResource(R.string.paired_devices_about_grants_body),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },
             confirmButton = {
                 TextButton(onClick = { showChannelInfoSheet = false }) {
-                    Text("Got it")
+                    Text(stringResource(R.string.paired_devices_got_it))
                 }
             },
         )
@@ -531,8 +543,9 @@ private fun DeviceCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.weight(1f)) {
+                    val unnamedDevice = stringResource(R.string.paired_devices_unnamed_device)
                     Text(
-                        text = device.deviceName.ifBlank { "Unnamed device" },
+                        text = device.deviceName.ifBlank { unnamedDevice },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -592,7 +605,7 @@ private fun DeviceCard(
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = "Channel grants",
+                        text = stringResource(R.string.paired_devices_channel_grants),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -602,7 +615,7 @@ private fun DeviceCard(
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Info,
-                            contentDescription = "About channel grants",
+                            contentDescription = stringResource(R.string.paired_devices_about_grants_title),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(14.dp),
                         )
@@ -627,10 +640,10 @@ private fun DeviceCard(
 
             // Metadata rows (first seen / last seen)
             if (device.createdAt != null) {
-                MetaRow(label = "First seen", value = formatEpoch(device.createdAt.toLong()))
+                MetaRow(label = stringResource(R.string.paired_devices_first_seen), value = formatEpoch(device.createdAt.toLong()))
             }
             if (device.lastSeen != null) {
-                MetaRow(label = "Last seen", value = formatEpoch(device.lastSeen.toLong()))
+                MetaRow(label = stringResource(R.string.paired_devices_last_seen), value = formatEpoch(device.lastSeen.toLong()))
             }
 
             // Extend + Revoke actions
@@ -642,7 +655,7 @@ private fun DeviceCard(
                     onClick = onExtend,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Extend")
+                    Text(stringResource(R.string.paired_devices_extend))
                 }
                 OutlinedButton(
                     onClick = onRevoke,
@@ -651,7 +664,10 @@ private fun DeviceCard(
                         contentColor = MaterialTheme.colorScheme.error
                     )
                 ) {
-                    Text(if (isCurrent) "Revoke this" else "Revoke")
+                    Text(
+                        if (isCurrent) stringResource(R.string.paired_devices_revoke_this)
+                        else stringResource(R.string.paired_devices_revoke)
+                    )
                 }
             }
         }
@@ -675,7 +691,7 @@ private fun CurrentBadge() {
             modifier = Modifier.height(14.dp)
         )
         Text(
-            text = "This device",
+            text = stringResource(R.string.paired_devices_this_device_badge),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary
         )
@@ -685,8 +701,8 @@ private fun CurrentBadge() {
 @Composable
 private fun ExpiryRow(expiresAt: Double?) {
     val text = when {
-        expiresAt == null -> "Never expires"
-        else -> "Expires ${formatEpoch(expiresAt.toLong())}"
+        expiresAt == null -> stringResource(R.string.paired_devices_never_expires)
+        else -> stringResource(R.string.paired_devices_expires, formatEpoch(expiresAt.toLong()))
     }
     val color = when {
         expiresAt == null -> MaterialTheme.colorScheme.primary
@@ -725,7 +741,7 @@ private fun GrantChip(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "$channelLabel · ${formatRelativeTtl(expiresAt, nowSec)}",
+            text = stringResource(R.string.paired_devices_grant_chip, channelLabel, formatRelativeTtl(expiresAt, nowSec)),
             style = MaterialTheme.typography.labelSmall,
             color = fg,
         )
@@ -746,7 +762,7 @@ private fun GrantChip(
         ) {
             Icon(
                 imageVector = Icons.Filled.Close,
-                contentDescription = "Revoke $channelLabel access",
+                contentDescription = stringResource(R.string.paired_devices_revoke_channel_access, channelLabel),
                 modifier = Modifier.height(14.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -770,14 +786,16 @@ private fun grantSortKey(channel: String): Int = when (channel.lowercase()) {
     else -> 100
 }
 
+@Composable
+@Composable
 private fun grantDisplayName(channel: String): String = when (channel.lowercase()) {
-    "chat" -> "Chat"
-    "bridge" -> "Bridge"
-    "terminal" -> "Terminal"
-    "tui" -> "TUI"
-    "voice:config" -> "Voice config"
-    "voice:stt" -> "Voice STT"
-    "voice:tts" -> "Voice TTS"
+    "chat" -> stringResource(R.string.paired_devices_grant_chat)
+    "bridge" -> stringResource(R.string.paired_devices_grant_bridge)
+    "terminal" -> stringResource(R.string.paired_devices_grant_terminal)
+    "tui" -> stringResource(R.string.paired_devices_grant_tui)
+    "voice:config" -> stringResource(R.string.paired_devices_grant_voice_config)
+    "voice:stt" -> stringResource(R.string.paired_devices_grant_voice_stt)
+    "voice:tts" -> stringResource(R.string.paired_devices_grant_voice_tts)
     else -> channel
 }
 
@@ -791,18 +809,19 @@ private fun grantDisplayName(channel: String): String = when (channel.lowercase(
  *   hours     → "in Nh"
  *   days      → "in Nd"
  */
+@Composable
 private fun formatRelativeTtl(expiresAt: Double?, nowSec: Double): String {
-    if (expiresAt == null) return "never"
+    if (expiresAt == null) return stringResource(R.string.paired_devices_ttl_never)
     val deltaSec = (expiresAt - nowSec).toLong()
-    if (deltaSec <= 0) return "expired"
+    if (deltaSec <= 0) return stringResource(R.string.paired_devices_ttl_expired)
     val days = deltaSec / 86_400
     val hours = deltaSec / 3_600
     val minutes = deltaSec / 60
     return when {
-        days >= 1 -> "in ${days}d"
-        hours >= 1 -> "in ${hours}h"
-        minutes >= 1 -> "in ${minutes}m"
-        else -> "in <1m"
+        days >= 1 -> stringResource(R.string.paired_devices_ttl_days, days)
+        hours >= 1 -> stringResource(R.string.paired_devices_ttl_hours, hours)
+        minutes >= 1 -> stringResource(R.string.paired_devices_ttl_minutes, minutes)
+        else -> stringResource(R.string.paired_devices_ttl_seconds)
     }
 }
 // === END PER-CHANNEL-REVOKE ===
@@ -847,7 +866,7 @@ private fun EndpointsSubList(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            text = "Routes",
+            text = stringResource(R.string.paired_devices_routes),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -889,7 +908,7 @@ private fun EndpointsSubList(
                 )
                 if (isActive) {
                     Text(
-                        text = "active",
+                        text = stringResource(R.string.paired_devices_active),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )

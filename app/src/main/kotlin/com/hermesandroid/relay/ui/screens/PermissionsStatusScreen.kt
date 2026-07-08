@@ -60,12 +60,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.permissions.AppPermissionStatus
 import com.hermesandroid.relay.permissions.AppPermissionStatusProbe
@@ -104,12 +106,12 @@ fun PermissionsStatusScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Permissions") },
+                title = { Text(stringResource(R.string.perms_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.perms_back),
                         )
                     }
                 },
@@ -117,7 +119,7 @@ fun PermissionsStatusScreen(
                     IconButton(onClick = { refreshStatus() }) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Refresh status",
+                            contentDescription = stringResource(R.string.perms_refresh_status_cd),
                         )
                     }
                 },
@@ -138,69 +140,69 @@ fun PermissionsStatusScreen(
             PermissionsIntroCard()
 
             PermissionSection(
-                title = "Hermes",
-                subtitle = "Chat and Manage use your configured Hermes API/dashboard connection.",
+                title = stringResource(R.string.perms_section_hermes),
+                subtitle = stringResource(R.string.perms_section_hermes_desc),
             ) {
                 PermissionStatusRow(
                     icon = Icons.Filled.CheckCircle,
-                    title = "Chat and Manage",
-                    subtitle = "No Android runtime permission needed. API/dashboard auth is configured separately.",
-                    badge = "Included",
-                    statusLabel = "Ready",
+                    title = stringResource(R.string.perms_chat_and_manage),
+                    subtitle = stringResource(R.string.perms_chat_and_manage_desc),
+                    badge = stringResource(R.string.perms_badge_included),
+                    statusLabel = stringResource(R.string.perms_status_ready),
                     granted = true,
                     onClick = null,
                 )
             }
 
             PermissionSection(
-                title = "On demand",
-                subtitle = "These stay optional until you use the matching feature.",
+                title = stringResource(R.string.perms_section_on_demand),
+                subtitle = stringResource(R.string.perms_section_on_demand_desc),
             ) {
                 PermissionStatusRow(
                     icon = Icons.Filled.CameraAlt,
-                    title = "Camera",
-                    subtitle = "Scan setup QR codes or attach photos taken in-app.",
-                    badge = "Optional",
-                    statusLabel = optionalStatus(status.cameraPermitted),
+                    title = stringResource(R.string.perms_camera),
+                    subtitle = stringResource(R.string.perms_camera_desc),
+                    badge = stringResource(R.string.perms_badge_optional),
+                    statusLabel = optionalStatus(context, status.cameraPermitted),
                     granted = status.cameraPermitted,
                     onClick = { openAppDetailsSettings(context) },
                 )
                 PermissionStatusRow(
                     icon = Icons.Filled.Mic,
-                    title = "Microphone",
-                    subtitle = "Talk to Hermes in voice mode.",
-                    badge = "Optional",
-                    statusLabel = optionalStatus(status.microphonePermitted),
+                    title = stringResource(R.string.perms_microphone),
+                    subtitle = stringResource(R.string.perms_microphone_desc),
+                    badge = stringResource(R.string.perms_badge_optional),
+                    statusLabel = optionalStatus(context, status.microphonePermitted),
                     granted = status.microphonePermitted,
                     onClick = { openAppDetailsSettings(context) },
                 )
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     PermissionStatusRow(
                         icon = Icons.Filled.Notifications,
-                        title = "App notifications",
-                        subtitle = "Turn-complete alerts and foreground-service indicators.",
-                        badge = "Optional",
-                        statusLabel = optionalStatus(status.notificationsPermitted),
+                        title = stringResource(R.string.perms_app_notifications),
+                        subtitle = stringResource(R.string.perms_app_notifications_desc),
+                        badge = stringResource(R.string.perms_badge_optional),
+                        statusLabel = optionalStatus(context, status.notificationsPermitted),
                         granted = status.notificationsPermitted,
                         onClick = { openAppDetailsSettings(context) },
                     )
                 } else {
                     PermissionStatusRow(
                         icon = Icons.Filled.Notifications,
-                        title = "App notifications",
-                        subtitle = "This Android version does not require a runtime notification grant.",
-                        badge = "Included",
-                        statusLabel = "Ready",
+                        title = stringResource(R.string.perms_app_notifications),
+                        subtitle = stringResource(R.string.perms_app_notifications_legacy_desc),
+                        badge = stringResource(R.string.perms_badge_included),
+                        statusLabel = stringResource(R.string.perms_status_ready),
                         granted = true,
                         onClick = null,
                     )
                 }
                 PermissionStatusRow(
                     icon = Icons.Filled.Notifications,
-                    title = "Notification access",
-                    subtitle = "Let the notification companion share posted notifications with paired Relay tools.",
-                    badge = "Optional",
-                    statusLabel = optionalStatus(status.notificationListenerPermitted),
+                    title = stringResource(R.string.perms_notification_access),
+                    subtitle = stringResource(R.string.perms_notification_access_desc),
+                    badge = stringResource(R.string.perms_badge_optional),
+                    statusLabel = optionalStatus(context, status.notificationListenerPermitted),
                     granted = status.notificationListenerPermitted,
                     onClick = { openNotificationListenerSettings(context) },
                 )
@@ -243,12 +245,12 @@ private fun PermissionsIntroCard() {
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Permissions and capabilities",
+                    text = stringResource(R.string.perms_intro_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Grant only the features you use. Standard Chat and Manage do not need phone-control permissions.",
+                    text = stringResource(R.string.perms_intro_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -265,34 +267,35 @@ private fun SideloadPermissionsSection(
     onOpenAccessibility: () -> Unit,
     onOpenOverlay: () -> Unit,
 ) {
+    val context = LocalContext.current
     PermissionSection(
-        title = "Sideload Device Control",
-        subtitle = "Only needed when the agent operates this phone.",
+        title = stringResource(R.string.perms_section_sideload),
+        subtitle = stringResource(R.string.perms_section_sideload_desc),
     ) {
         PermissionStatusRow(
             icon = Icons.Filled.Accessibility,
-            title = "Accessibility Service",
-            subtitle = "Required for screen reading, taps, typing, and app navigation.",
-            badge = "Required",
-            statusLabel = requiredStatus(status.accessibilityServiceEnabled),
+            title = stringResource(R.string.perms_accessibility_service),
+            subtitle = stringResource(R.string.perms_accessibility_service_desc),
+            badge = stringResource(R.string.perms_badge_required),
+            statusLabel = requiredStatus(context, status.accessibilityServiceEnabled),
             granted = status.accessibilityServiceEnabled,
             onClick = onOpenAccessibility,
         )
         PermissionStatusRow(
             icon = Icons.Filled.PictureInPicture,
-            title = "Display over other apps",
-            subtitle = "Required for cross-app confirmation prompts and the Bridge status chip.",
-            badge = "Required",
-            statusLabel = requiredStatus(status.overlayPermitted),
+            title = stringResource(R.string.perms_display_over_apps),
+            subtitle = stringResource(R.string.perms_display_over_apps_desc),
+            badge = stringResource(R.string.perms_badge_required),
+            statusLabel = requiredStatus(context, status.overlayPermitted),
             granted = status.overlayPermitted,
             onClick = onOpenOverlay,
         )
         PermissionStatusRow(
             icon = Icons.AutoMirrored.Filled.ScreenShare,
-            title = "Screen capture",
-            subtitle = "Per-session Android consent for screenshots. Open Bridge to grant or refresh it.",
-            badge = "Session",
-            statusLabel = if (status.screenCapturePermitted) "Active" else "Per-session",
+            title = stringResource(R.string.perms_screen_capture),
+            subtitle = stringResource(R.string.perms_screen_capture_desc),
+            badge = stringResource(R.string.perms_badge_session),
+            statusLabel = if (status.screenCapturePermitted) stringResource(R.string.perms_status_active) else stringResource(R.string.perms_status_per_session),
             granted = status.screenCapturePermitted,
             onClick = onOpenBridge,
         )
@@ -302,37 +305,37 @@ private fun SideloadPermissionsSection(
         )
         PermissionStatusRow(
             icon = Icons.Filled.Contacts,
-            title = "Contacts",
-            subtitle = "Resolve names to phone numbers for sideload Relay tools.",
-            badge = "Optional",
-            statusLabel = optionalStatus(status.contactsPermitted),
+            title = stringResource(R.string.perms_contacts),
+            subtitle = stringResource(R.string.perms_contacts_desc),
+            badge = stringResource(R.string.perms_badge_optional),
+            statusLabel = optionalStatus(context, status.contactsPermitted),
             granted = status.contactsPermitted,
             onClick = onOpenAppDetails,
         )
         PermissionStatusRow(
             icon = Icons.Filled.Sms,
-            title = "SMS",
-            subtitle = "Send text messages directly after Bridge safety confirmation.",
-            badge = "Optional",
-            statusLabel = optionalStatus(status.smsPermitted),
+            title = stringResource(R.string.perms_sms),
+            subtitle = stringResource(R.string.perms_sms_desc),
+            badge = stringResource(R.string.perms_badge_optional),
+            statusLabel = optionalStatus(context, status.smsPermitted),
             granted = status.smsPermitted,
             onClick = onOpenAppDetails,
         )
         PermissionStatusRow(
             icon = Icons.Filled.Call,
-            title = "Phone",
-            subtitle = "Place calls directly instead of opening the dialer.",
-            badge = "Optional",
-            statusLabel = optionalStatus(status.phonePermitted),
+            title = stringResource(R.string.perms_phone),
+            subtitle = stringResource(R.string.perms_phone_desc),
+            badge = stringResource(R.string.perms_badge_optional),
+            statusLabel = optionalStatus(context, status.phonePermitted),
             granted = status.phonePermitted,
             onClick = onOpenAppDetails,
         )
         PermissionStatusRow(
             icon = Icons.Filled.LocationOn,
-            title = "Location",
-            subtitle = "Share last-known location with sideload Relay tools.",
-            badge = "Optional",
-            statusLabel = optionalStatus(status.locationPermitted),
+            title = stringResource(R.string.perms_location),
+            subtitle = stringResource(R.string.perms_location_desc),
+            badge = stringResource(R.string.perms_badge_optional),
+            statusLabel = optionalStatus(context, status.locationPermitted),
             granted = status.locationPermitted,
             onClick = onOpenAppDetails,
         )
@@ -361,12 +364,12 @@ private fun GooglePlayBridgeCoreCard() {
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Bridge Core",
+                    text = stringResource(R.string.perms_bridge_core),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Sideload Device Control permissions are not included in the Google Play build.",
+                    text = stringResource(R.string.perms_bridge_core_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -532,11 +535,11 @@ private fun StatusBadge(label: String, granted: Boolean) {
     }
 }
 
-private fun optionalStatus(granted: Boolean): String =
-    if (granted) "Granted" else "Optional"
+private fun optionalStatus(context: Context, granted: Boolean): String =
+    if (granted) context.getString(R.string.perms_status_granted) else context.getString(R.string.perms_status_optional)
 
-private fun requiredStatus(granted: Boolean): String =
-    if (granted) "Granted" else "Needed"
+private fun requiredStatus(context: Context, granted: Boolean): String =
+    if (granted) context.getString(R.string.perms_status_granted) else context.getString(R.string.perms_status_needed)
 
 private fun openAppDetailsSettings(context: Context) {
     runCatching {

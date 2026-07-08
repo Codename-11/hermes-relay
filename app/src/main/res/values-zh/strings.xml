@@ -751,5 +751,725 @@
     <string name="appearance_state_listening">聆听中</string>
     <string name="appearance_state_error">错误</string>
     <string name="appearance_custom_suffix"> · 自定义</string>
+
+    <!-- DeveloperSettingsScreen -->
+    <string name="dev_settings_title">开发者选项</string>
+    <string name="dev_settings_back">返回</string>
+    <string name="dev_settings_data_section">数据</string>
+    <string name="dev_settings_reset_onboarding">重置引导</string>
+    <string name="dev_settings_reset_onboarding_desc">下次启动时再次显示设置向导</string>
+    <string name="dev_settings_onboarding_reset_toast">引导将在下次启动时显示</string>
+    <string name="dev_settings_reset_onboarding_cd">重置引导</string>
+    <string name="dev_settings_export_settings">导出设置</string>
+    <string name="dev_settings_export_settings_desc">完整备份，包含 API 密钥、令牌和仪表盘 Cookie</string>
+    <string name="dev_settings_export_settings_cd">导出设置</string>
+    <string name="dev_settings_import_settings">导入设置</string>
+    <string name="dev_settings_import_settings_desc">恢复完整备份并替换已保存的连接</string>
+    <string name="dev_settings_import_settings_cd">导入设置</string>
+    <string name="dev_settings_reset_all_data">重置全部数据</string>
+    <string name="dev_settings_reset_all_data_desc">清除所有设置、令牌、API 密钥和缓存数据</string>
+    <string name="dev_settings_reset_all_data_cd">重置全部数据</string>
+    <string name="dev_options_section">开发者选项</string>
+    <string name="dev_settings_relay_features">Relay 功能</string>
+    <string name="dev_settings_relay_features_desc">显示 Relay 服务器和配对设置，用于 Bridge/Terminal 开发</string>
+    <string name="dev_settings_realtime_voice_lab">实时语音实验室</string>
+    <string name="dev_settings_realtime_voice_lab_desc">为开发构建打开 provider websocket 测试台</string>
+    <string name="dev_settings_open_realtime_voice_lab_cd">打开实时语音实验室</string>
+    <string name="dev_settings_lock_dev_options">锁定开发者选项</string>
+    <string name="dev_settings_lock_dev_options_desc">隐藏此分区并禁用实验性功能</string>
+    <string name="dev_settings_locked_toast">开发者选项已锁定</string>
+    <string name="dev_settings_lock_dev_options_cd">锁定开发者选项</string>
+    <string name="dev_settings_test_harness">测试工具</string>
+    <string name="dev_settings_test_emit_diagnostics">生成示例诊断</string>
+    <string name="dev_settings_test_emit_diagnostics_desc">将 Info / Warning / Error 条目推送到诊断日志</string>
+    <string name="dev_settings_sample_info_title">示例信息诊断</string>
+    <string name="dev_settings_sample_info_detail">来自开发者选项测试工具。</string>
+    <string name="dev_settings_sample_warning_title">示例警告诊断</string>
+    <string name="dev_settings_sample_warning_detail">Relay 可达性下降（模拟）。</string>
+    <string name="dev_settings_sample_error_title">示例错误诊断</string>
+    <string name="dev_settings_sample_error_detail">用于详情视图的模拟失败。</string>
+    <string name="dev_settings_sample_stacktrace">示例堆栈跟踪——开发者选项测试工具</string>
+    <string name="dev_settings_diagnostics_emitted_toast">已生成 3 条示例诊断</string>
+    <string name="dev_settings_test_preview_update_banner">预览更新横幅</string>
+    <string name="dev_settings_test_preview_update_banner_desc">循环切换应用内更新横幅：可用 → 已下载 → 关闭</string>
+    <string name="dev_settings_update_state_available">可用</string>
+    <string name="dev_settings_update_state_downloaded">已下载</string>
+    <string name="dev_settings_update_state_off">关闭</string>
+    <string name="dev_settings_update_banner_preview_toast">更新横幅预览：%1$s</string>
+    <string name="dev_settings_test_show_whats_new">显示"新功能"</string>
+    <string name="dev_settings_test_show_whats_new_desc">立即打开"新功能"对话框</string>
+    <string name="dev_settings_test_force_crash">触发测试崩溃</string>
+    <string name="dev_settings_test_force_crash_desc">抛出未捕获异常——崩溃报告将在下次启动时显示</string>
+    <string name="dev_settings_exported">设置已导出</string>
+    <string name="dev_settings_export_failed">导出失败</string>
+    <string name="dev_settings_imported">设置已导入</string>
+    <string name="dev_settings_import_failed">导入失败——文件无效</string>
+    <string name="dev_settings_export_sensitive_backup_title">导出敏感备份？</string>
+    <string name="dev_settings_export_sensitive_backup_body">此备份包含已保存的连接、API 密钥、Relay 会话令牌、设备 ID 和仪表盘 Cookie。任何持有该文件的人都可能访问您的 Hermes 服务器。</string>
+    <string name="dev_settings_export_action">导出</string>
+    <string name="dev_settings_cancel">取消</string>
+    <string name="dev_settings_import_backup_title">导入备份？</string>
+    <string name="dev_settings_import_backup_body">导入备份可恢复 API 密钥、Relay 令牌、设备 ID 和仪表盘 Cookie。它将替换此设备上已保存的连接列表。</string>
+    <string name="dev_settings_choose_file">选择文件</string>
+    <string name="dev_settings_reset_all_app_data_title">重置所有应用数据？</string>
+    <string name="dev_settings_reset_all_app_data_body">这将清除已保存的连接、API 密钥、Relay 令牌、仪表盘 Cookie、设备 ID、设置和缓存数据。如仅需清除单条连接路径，请使用仪表盘登出或 Relay 配对控件。此操作无法撤销。</string>
+    <string name="dev_settings_app_data_reset_toast">应用数据已重置</string>
+    <string name="dev_settings_reset_action">重置</string>
+
+    <!-- PermissionsStatusScreen -->
+    <string name="perms_title">权限</string>
+    <string name="perms_back">返回</string>
+    <string name="perms_refresh_status_cd">刷新状态</string>
+    <string name="perms_intro_title">权限与功能</string>
+    <string name="perms_intro_desc">仅授予您使用的功能。标准聊天和管理无需手机控制权限。</string>
+    <string name="perms_section_hermes">Hermes</string>
+    <string name="perms_section_hermes_desc">聊天和管理使用您配置的 Hermes API/仪表盘连接。</string>
+    <string name="perms_chat_and_manage">聊天和管理</string>
+    <string name="perms_chat_and_manage_desc">无需 Android 运行时权限。API/仪表盘认证单独配置。</string>
+    <string name="perms_badge_included">已包含</string>
+    <string name="perms_status_ready">就绪</string>
+    <string name="perms_section_on_demand">按需</string>
+    <string name="perms_section_on_demand_desc">在使用相应功能前保持可选状态。</string>
+    <string name="perms_camera">相机</string>
+    <string name="perms_camera_desc">扫描设置二维码或附上应用内拍摄的照片。</string>
+    <string name="perms_badge_optional">可选</string>
+    <string name="perms_microphone">麦克风</string>
+    <string name="perms_microphone_desc">在语音模式下与 Hermes 对话。</string>
+    <string name="perms_app_notifications">应用通知</string>
+    <string name="perms_app_notifications_desc">回合完成提醒和前台服务指示器。</string>
+    <string name="perms_app_notifications_legacy_desc">此 Android 版本不需要运行时通知授权。</string>
+    <string name="perms_notification_access">通知访问权限</string>
+    <string name="perms_notification_access_desc">允许通知伴侣将已发布的通知分享给已配对的 Relay 工具。</string>
+    <string name="perms_section_sideload">旁加载设备控制</string>
+    <string name="perms_section_sideload_desc">仅在代理操作此手机时需要。</string>
+    <string name="perms_accessibility_service">无障碍服务</string>
+    <string name="perms_accessibility_service_desc">屏幕阅读、点击、输入和应用导航所需。</string>
+    <string name="perms_badge_required">必需</string>
+    <string name="perms_display_over_apps">显示在其他应用之上</string>
+    <string name="perms_display_over_apps_desc">跨应用确认提示和 Bridge 状态图标所需。</string>
+    <string name="perms_screen_capture">屏幕截图</string>
+    <string name="perms_screen_capture_desc">每次会话需单独授予 Android 同意。打开 Bridge 授予或刷新。</string>
+    <string name="perms_badge_session">按会话</string>
+    <string name="perms_status_active">活跃</string>
+    <string name="perms_status_per_session">按会话</string>
+    <string name="perms_contacts">通讯录</string>
+    <string name="perms_contacts_desc">为旁加载 Relay 工具将姓名解析为电话号码。</string>
+    <string name="perms_sms">短信</string>
+    <string name="perms_sms_desc">在 Bridge 安全确认后直接发送短信。</string>
+    <string name="perms_phone">电话</string>
+    <string name="perms_phone_desc">直接拨打电话，而无需打开拨号器。</string>
+    <string name="perms_location">位置</string>
+    <string name="perms_location_desc">与旁加载 Relay 工具共享上次已知位置。</string>
+    <string name="perms_bridge_core">Bridge 核心</string>
+    <string name="perms_bridge_core_desc">Google Play 版本不包含旁加载设备控制权限。</string>
+    <string name="perms_status_granted">已授予</string>
+    <string name="perms_status_optional">可选</string>
+    <string name="perms_status_needed">需要</string>
+
+    <!-- ProactiveSettingsScreen -->
+    <string name="proactive_title">Threads</string>
+    <string name="proactive_back">返回</string>
+    <string name="proactive_let_hermes_message_me">让 Hermes 主动联系我</string>
+    <string name="proactive_allow_proactive_messages">允许主动消息</string>
+    <string name="proactive_allow_proactive_messages_desc">您的代理可自行联系您——提醒、已完成的任务、警报。其消息会以 Threads 形式出现在聊天中，您可在其中回复。</string>
+    <string name="proactive_not_paired_warning">尚未配对——请在 设置 → 连接 中与您的 Hermes 服务器配对以开始接收消息。</string>
+    <string name="proactive_your_threads">您的 Threads</string>
+    <string name="proactive_your_threads_desc">您的代理发起的每段对话都会以 Thread 形式出现在聊天中——打开会话列表，筛选 Threads，即可直接回复。</string>
+    <string name="proactive_open_chat">打开聊天</string>
+    <string name="proactive_about">关于</string>
+    <string name="proactive_about_desc">开启后，您的手机会告知 Relay 它愿意接收代理主动发起的消息。代理会通过 Relay 已使用的同一配对连接投递消息——除通知外无需新权限。</string>
+    <string name="proactive_about_server_note">您的服务器也必须启用手机平台（在服务器上设置 PHONE_ENABLED）。在两侧均开启且手机已配对之前，不会推送任何内容。</string>
+
+    <!-- ProfileInspectorScreen -->
+    <string name="profile_inspector_back">返回</string>
+    <string name="profile_inspector_refresh_all">刷新全部</string>
+    <string name="profile_inspector_title">检查 %1$s</string>
+    <string name="profile_inspector_tab_config">配置</string>
+    <string name="profile_inspector_tab_soul">SOUL</string>
+    <string name="profile_inspector_tab_memory">记忆</string>
+    <string name="profile_inspector_tab_skills">技能</string>
+    <string name="profile_inspector_config_file">配置文件</string>
+    <string name="profile_inspector_read_only">只读视图</string>
+    <string name="profile_inspector_empty_config">（空配置）</string>
+    <string name="profile_inspector_field_count_single">{%1$d 个字段}</string>
+    <string name="profile_inspector_field_count">{%1$d 个字段}</string>
+    <string name="profile_inspector_hide_value">隐藏值</string>
+    <string name="profile_inspector_reveal_value">显示值</string>
+    <string name="profile_inspector_soul_file">SOUL 文件</string>
+    <string name="profile_inspector_soul_file_not_created">SOUL 文件（未创建）</string>
+    <string name="profile_inspector_bytes">%1$d 字节</string>
+    <string name="profile_inspector_show_rendered">显示渲染后的 Markdown</string>
+    <string name="profile_inspector_show_raw">显示原始源码</string>
+    <string name="profile_inspector_edit_soul">编辑 SOUL</string>
+    <string name="profile_inspector_cancel_edit">取消编辑</string>
+    <string name="profile_inspector_no_soul">此配置文件没有 SOUL.md</string>
+    <string name="profile_inspector_no_soul_hint">点击上方的铅笔图标以创建一个。</string>
+    <string name="profile_inspector_cancel">取消</string>
+    <string name="profile_inspector_saving">保存中…</string>
+    <string name="profile_inspector_save">保存</string>
+    <string name="profile_inspector_no_memory">此配置文件没有记忆条目</string>
+    <string name="profile_inspector_memories_dir">记忆目录：</string>
+    <string name="profile_inspector_pending_save">（待保存）</string>
+    <string name="profile_inspector_new_entry">新建条目</string>
+    <string name="profile_inspector_new_memory_entry">新建记忆条目</string>
+    <string name="profile_inspector_filename_md">文件名必须以 .md 结尾</string>
+    <string name="profile_inspector_filename_placeholder">notes.md</string>
+    <string name="profile_inspector_filename_exists">同名文件已存在</string>
+    <string name="profile_inspector_create">创建</string>
+    <string name="profile_inspector_edit_entry">编辑条目</string>
+    <string name="profile_inspector_collapse">折叠</string>
+    <string name="profile_inspector_expand">展开</string>
+    <string name="profile_inspector_empty_content">（空）</string>
+    <string name="profile_inspector_no_skills">此配置文件没有技能</string>
+    <string name="profile_inspector_skills_total">总计：%1$d</string>
+    <string name="profile_inspector_uncategorized">（未分类）</string>
+    <string name="profile_inspector_toggle_unsupported">启用/禁用需要更新的服务器。</string>
+    <string name="profile_inspector_disabled">（已禁用）</string>
+    <string name="profile_inspector_retry">重试</string>
+    <string name="profile_inspector_truncated">内容已被 Relay 截断——仅显示前一部分。</string>
+
+    <!-- PairedDevicesScreen -->
+    <string name="paired_devices_title">Relay 会话</string>
+    <string name="paired_devices_back">返回</string>
+    <string name="paired_devices_refresh">刷新</string>
+    <string name="paired_devices_unnamed_device">未命名设备</string>
+    <string name="paired_devices_this_device">此设备</string>
+    <string name="paired_devices_this_device_badge">本设备</string>
+    <string name="paired_devices_revoke_this_title">撤销此设备？</string>
+    <string name="paired_devices_revoke_title">撤销设备？</string>
+    <string name="paired_devices_revoke_current_body">这是当前设备。撤销将结束此手机上的会话，您需要重新与服务器配对。</string>
+    <string name="paired_devices_revoke_other_body">这将结束该设备的 Relay 会话。它稍后可使用新的配对码重新配对。</string>
+    <string name="paired_devices_token_prefix">令牌前缀：%1$s</string>
+    <string name="paired_devices_unpaired">此设备已取消配对。请重新配对以继续。</string>
+    <string name="paired_devices_revoked">设备已撤销</string>
+    <string name="paired_devices_revoke_failed">撤销失败</string>
+    <string name="paired_devices_revoke">撤销</string>
+    <string name="paired_devices_revoke_this">撤销此设备</string>
+    <string name="paired_devices_cancel">取消</string>
+    <string name="paired_devices_session_never">会话已设为永不过期</string>
+    <string name="paired_devices_session_updated">会话过期时间已更新</string>
+    <string name="paired_devices_session_update_failed">更新会话失败</string>
+    <string name="paired_devices_none">无</string>
+    <string name="paired_devices_revoke_channel_title">撤销通道访问权限？</string>
+    <string name="paired_devices_revoke_channel_body">撤销 %2$s 的 %1$s 访问权限？</string>
+    <string name="paired_devices_revoke_channel_desc">会话本身保持配对——仅移除 %1$s 授权。其他通道（%2$s）保持当前过期时间。</string>
+    <string name="paired_devices_channel_revoked">%1$s 访问权限已撤销</string>
+    <string name="paired_devices_channel_revoke_failed">撤销 %1$s 访问权限失败</string>
+    <string name="paired_devices_load_error">无法加载 Relay 会话</string>
+    <string name="paired_devices_try_again">重试</string>
+    <string name="paired_devices_empty_title">（暂无 Relay 会话）</string>
+    <string name="paired_devices_empty_body">将此手机与您的 Relay 配对即可在此处查看。</string>
+    <string name="paired_devices_pair_now">立即配对</string>
+    <string name="paired_devices_header">每一行是一个已与此服务器配对的手机。\n通道授权是按功能划分的授权（聊天、Bridge、终端、TUI、语音），可独立过期。\n撤销会话可切断该手机的访问而不影响其他设备。</string>
+    <string name="paired_devices_about_grants_title">关于通道授权</string>
+    <string name="paired_devices_about_grants_body">通道授权是按功能划分的权限。\n\n• 聊天控制发送/接收的消息。\n• Bridge 控制无障碍操作。\n• 终端和 TUI 控制 shell 风格的远程会话。\n• 语音分为配置、语音转文字和文字转语音授权。\n\n每个授权有自己的过期时间，因此手机可在 Bridge 或语音访问权限过期很久后仍保留聊天访问——您也可以撤销某个通道而不结束整个会话。</string>
+    <string name="paired_devices_got_it">知道了</string>
+    <string name="paired_devices_channel_grants">通道授权</string>
+    <string name="paired_devices_first_seen">首次出现</string>
+    <string name="paired_devices_last_seen">最近活动</string>
+    <string name="paired_devices_extend">延长</string>
+    <string name="paired_devices_never_expires">永不过期</string>
+    <string name="paired_devices_expires">过期时间 %1$s</string>
+    <string name="paired_devices_revoke_channel_access">撤销 %1$s 访问权限</string>
+    <string name="paired_devices_grant_chat">聊天</string>
+    <string name="paired_devices_grant_bridge">Bridge</string>
+    <string name="paired_devices_grant_terminal">终端</string>
+    <string name="paired_devices_grant_tui">TUI</string>
+    <string name="paired_devices_grant_voice_config">语音配置</string>
+    <string name="paired_devices_grant_voice_stt">语音转文字</string>
+    <string name="paired_devices_grant_voice_tts">文字转语音</string>
+    <string name="paired_devices_ttl_never">永不过期</string>
+    <string name="paired_devices_ttl_expired">已过期</string>
+    <string name="paired_devices_ttl_days">%1$d 天后</string>
+    <string name="paired_devices_ttl_hours">%1$d 小时后</string>
+    <string name="paired_devices_ttl_minutes">%1$d 分钟后</string>
+    <string name="paired_devices_ttl_seconds">不到 1 分钟后</string>
+    <string name="paired_devices_grant_chip">%1$s · %2$s</string>
+    <string name="paired_devices_routes">路由</string>
+    <string name="paired_devices_active">活跃</string>
+
+    <!-- RealtimeVoiceTestScreen -->
+    <string name="voice_test_title">实时语音实验室</string>
+    <string name="voice_test_back">返回</string>
+    <string name="voice_test_default_prompt">让我检查一下。确认实时语音提供商路径是否正常工作。</string>
+    <string name="voice_test_status_idle">空闲</string>
+    <string name="voice_test_status_recording">录音中——点击停止并发送</string>
+    <string name="voice_test_status_mic_failed">麦克风捕获失败：%1$s</string>
+    <string name="voice_test_status_recording_short">录音太短</string>
+    <string name="voice_test_status_mic_permission_denied">麦克风权限被拒绝</string>
+    <string name="voice_test_status_ready">就绪</string>
+    <string name="voice_test_status_route_disabled">实时路由已禁用</string>
+    <string name="voice_test_status_config_failed">实时配置失败</string>
+    <string name="voice_test_status_streaming">流式传输中</string>
+    <string name="voice_test_status_complete">完成</string>
+    <string name="voice_test_status_demo_failed">实时演示失败</string>
+    <string name="voice_test_status_transcribing">转写 + 思考中</string>
+    <string name="voice_test_status_speaking">说话中</string>
+    <string name="voice_test_status_agent_failed">实时代理失败</string>
+    <string name="voice_test_transcript_spoken">已朗读：%1$s</string>
+    <string name="voice_test_transcript_you_said">你说：%1$s</string>
+    <string name="voice_test_section_provider">提供商</string>
+    <string name="voice_test_section_prompt">提示</string>
+    <string name="voice_test_section_transcript">转写</string>
+    <string name="voice_test_section_waveform">波形</string>
+    <string name="voice_test_section_events">事件</string>
+    <string name="voice_test_label_status">状态</string>
+    <string name="voice_test_label_provider">提供商</string>
+    <string name="voice_test_label_model">模型</string>
+    <string name="voice_test_label_voice">语音</string>
+    <string name="voice_test_label_advertised">已公告</string>
+    <string name="voice_test_label_auth">认证</string>
+    <string name="voice_test_loading">加载中</string>
+    <string name="voice_test_none">无</string>
+    <string name="voice_test_auth_xai_oauth">xAI OAuth</string>
+    <string name="voice_test_auth_xai_env">xAI env</string>
+    <string name="voice_test_auth_not_detected">未检测到</string>
+    <string name="voice_test_prompt_label">文本演示提示（由提供商朗读）</string>
+    <string name="voice_test_prompt_hint">麦克风演示向代理说话：它转写您说的话、Hermes 回复，并将回复朗读出来。文本演示仅合成上方的提示（无麦克风、无代理）。</string>
+    <string name="voice_test_stop_send">停止并发送</string>
+    <string name="voice_test_mic_demo">麦克风演示</string>
+    <string name="voice_test_text_demo">文本演示</string>
+    <string name="voice_test_no_events">暂无事件</string>
+    <string name="voice_test_label_first_audio">首个音频</string>
+    <string name="voice_test_label_done">完成</string>
+    <string name="voice_test_label_chunks">数据块</string>
+    <string name="voice_test_label_bytes">字节数</string>
+    <string name="voice_test_label_log">日志</string>
+    <string name="voice_test_ms">%1$d 毫秒</string>
+    <string name="voice_test_dash">---</string>
+
+    <!-- VoiceSettingsScreen -->
+    <string name="voice_settings_title">语音</string>
+    <string name="voice_settings_back">返回</string>
+    <string name="voice_settings_scope_label">语音范围</string>
+    <string name="voice_settings_global_voice">全局语音</string>
+    <string name="voice_settings_standard_scope_body">此连接通过您的 Hermes 服务器配置的 TTS 和 STT（服务器上的 config.yaml，或仪表板的音频设置）说话——它是主机级的，不按个人资料区分。配对 Relay 即可从手机选择提供商、模型和语音，并按个人资料携带。</string>
+    <string name="voice_settings_scope_resolving">正在解析当前个人资料的语音范围……</string>
+    <string name="voice_settings_label_profile">个人资料</string>
+    <string name="voice_settings_label_scope">范围</string>
+    <string name="voice_settings_relay_scope_footer">下方的引擎、路由和语音选择将保存到此个人资料。</string>
+    <string name="voice_settings_for_profile_title">此个人资料的语音</string>
+    <string name="voice_settings_engine_label">语音引擎</string>
+    <string name="voice_settings_engine_hermes">Hermes 聊天 + 语音输出</string>
+    <string name="voice_settings_engine_hermes_desc">Hermes 负责聊天、工具和记忆；语音通过标准 Hermes 仪表板或 Relay 运行——取决于下方 STT/TTS 路由的选择。</string>
+    <string name="voice_settings_engine_realtime">实时 Agent</string>
+    <string name="voice_settings_engine_realtime_desc">由提供商原生实时语音配合 Hermes 中介的工具。需要已配对的 Relay。</string>
+    <string name="voice_settings_experimental">实验性</string>
+    <string name="voice_settings_realtime_no_relay">此连接未配置 Relay，因此实时 Agent 无法启动。请在 设置 → 连接 中配对 Relay，或切回 Hermes 聊天 + 语音输出。</string>
+    <string name="voice_settings_route_label">STT/TTS 路由</string>
+    <string name="voice_settings_status_ready">就绪</string>
+    <string name="voice_settings_status_sign_in_required">需要仪表板登录</string>
+    <string name="voice_settings_status_dashboard_unreachable">仪表板不可达</string>
+    <string name="voice_settings_status_unsupported_build">此 Hermes 构建不可用</string>
+    <string name="voice_settings_status_checking">检查中……</string>
+    <string name="voice_settings_relay_not_configured">Relay 未配置</string>
+    <string name="voice_settings_status_auto_relay">就绪——使用 Relay</string>
+    <string name="voice_settings_status_auto_hermes">就绪——使用 Hermes</string>
+    <string name="voice_settings_status_no_route">暂无可用路由</string>
+    <string name="voice_settings_route_auto">自动</string>
+    <string name="voice_settings_route_auto_desc">已配对时使用 Relay；否则使用 Hermes 仪表板。推荐。</string>
+    <string name="voice_settings_route_hermes">Hermes</string>
+    <string name="voice_settings_route_hermes_desc">Hermes 桌面版使用的仪表板音频路径——在 Hermes 安装上即可工作，无需 Relay 插件。</string>
+    <string name="voice_settings_route_relay">Relay</string>
+    <string name="voice_settings_route_relay_desc">Relay 插件语音——支持按个人资料的提供商和流式语音输出。</string>
+    <string name="voice_settings_optional">可选</string>
+    <string name="voice_settings_signin_route_hint">您正通过 %1$s 路由连接，而仪表板登录是按主机区分的——家庭网络上的登录不会延续到此。请在此路由上在 Manage 中登录一次，以在此处解锁语音。</string>
+    <string name="voice_settings_signin_default_hint">您的 Hermes 仪表板需要先登录，标准语音才能转录或朗读。在 Manage 中登录一次即可为此连接解锁。</string>
+    <string name="voice_settings_sign_in_via_manage">通过 Manage 登录</string>
+    <string name="voice_settings_unsupported_build_body">此 Hermes 服务器构建尚未公开仪表板音频路由。请在服务器上更新 hermes-agent，或配对 Relay 以使用 Relay 语音。</string>
+    <string name="voice_settings_tts_title">文本转语音</string>
+    <string name="voice_settings_streaming_output_label">流式输出 (/voice/output)</string>
+    <string name="voice_settings_streaming_output_desc">Agent 在 Relay 路径上说话所用的提供商、模型和语音。</string>
+    <string name="voice_settings_basic_synthesize_label">基础合成回退 (/voice/synthesize)</string>
+    <string name="voice_settings_basic_synthesize_desc">在提供商原生语音不可用时，始终作为稳定的语音安全网可用。</string>
+    <string name="voice_settings_provider_unavailable">不可用</string>
+    <string name="voice_settings_loading">加载中……</string>
+    <string name="voice_settings_yes">是</string>
+    <string name="voice_settings_no">否</string>
+    <string name="voice_settings_label_provider">提供商</string>
+    <string name="voice_settings_label_enabled">已启用</string>
+    <string name="voice_settings_label_model">模型</string>
+    <string name="voice_settings_label_voice">语音</string>
+    <string name="voice_settings_provider_gemini">Gemini</string>
+    <string name="voice_settings_provider_xai">xAI</string>
+    <string name="voice_settings_hide_enhanced">隐藏增强语音 (%1$s)</string>
+    <string name="voice_settings_advanced_enhanced">高级：增强语音 (%1$s)</string>
+    <string name="voice_settings_enhanced_body">为 %1$s TTS 提供商选择语音和语气。将某个字段保留为“服务器默认”即可使用 Relay 已保存的配置。</string>
+    <string name="voice_settings_server_default">服务器默认</string>
+    <string name="voice_settings_voice_blank_label">语音（留空 = 服务器默认）</string>
+    <string name="voice_settings_supports_tone_tags">支持语气标签</string>
+    <string name="voice_settings_audio_tags_supported">让模型在朗读脚本中加入语气提示（例如 [whispers]、[excitedly]）。</string>
+    <string name="voice_settings_audio_tags_unsupported">需要 Gemini 3.1 TTS 模型——请在上方选择一个以启用。</string>
+    <string name="voice_settings_voice_direction_label">语音方向（可选）</string>
+    <string name="voice_settings_voice_direction_placeholder">例如：温暖、平静的旁白；不疾不徐的节奏。</string>
+    <string name="voice_settings_language_label">语言（可选，例如 en）</string>
+    <string name="voice_settings_status_active">活跃</string>
+    <string name="voice_settings_status_unavailable">不可用</string>
+    <string name="voice_settings_status_disabled">已禁用</string>
+    <string name="voice_settings_status_available">可用</string>
+    <string name="voice_settings_render_streaming">流式 (/voice/output)</string>
+    <string name="voice_settings_render_basic">基础合成 (/voice/synthesize)</string>
+    <string name="voice_settings_render_path">渲染路径</string>
+    <string name="voice_settings_fallback_legacy">出错时使用旧版 TTS</string>
+    <string name="voice_settings_off">关闭</string>
+    <string name="voice_settings_label_status">状态</string>
+    <string name="voice_settings_hz_value">%1$d Hz</string>
+    <string name="voice_settings_label_sample_rate">采样率</string>
+    <string name="voice_settings_label_language">语言</string>
+    <string name="voice_settings_label_fallback">回退</string>
+    <string name="voice_settings_label_advertised">已公布</string>
+    <string name="voice_settings_label_auth">认证</string>
+    <string name="voice_settings_provider_id">提供商 ID</string>
+    <string name="voice_settings_model_id">模型 ID</string>
+    <string name="voice_settings_voice_id">语音 ID</string>
+    <string name="voice_settings_streaming_latency">流式延迟：%1$d</string>
+    <string name="voice_settings_fallback_desc">如果流式输出在音频开始前失败，则使用旧版 Hermes TTS</string>
+    <string name="voice_settings_expressive_tags">表现力语音标签</string>
+    <string name="voice_settings_expressive_tags_desc">让 xAI 在流式语音中加入语气提示（耳语、笑、叹气、音高变化）。</string>
+    <string name="voice_settings_saving">保存中……</string>
+    <string name="voice_settings_save">保存</string>
+    <string name="voice_settings_save_and_test">保存并测试</string>
+    <string name="voice_settings_sample_rate_must_be_number">采样率必须是数字</string>
+    <string name="voice_settings_realtime_agent_title">实时 Agent</string>
+    <string name="voice_settings_realtime_agent_desc">Hermes 仍负责工具和确认。如果提供商断开连接，实时模式可能回退到稳定语音。</string>
+    <string name="voice_settings_detailed_trace">详细追踪</string>
+    <string name="voice_settings_detailed_trace_desc">在时间线中显示紧凑的 Hermes 状态和结果来源</string>
+    <string name="voice_settings_persistent_session">持久会话</string>
+    <string name="voice_settings_persistent_session_desc">跨轮次保持一个提供商对话开启。关闭则每次发言回退到全新会话。</string>
+    <string name="voice_settings_background_tasks">后台任务</string>
+    <string name="voice_settings_background_tasks_desc">长时间运行的 Hermes 任务会在后台继续执行，保持对话响应迅速；答案就绪后会朗读出来。</string>
+    <string name="voice_settings_promote_long_tasks">提升长任务</string>
+    <string name="voice_settings_promote_long_tasks_desc">在 %1$d 毫秒后挂起慢任务，而不是静默等待</string>
+    <string name="voice_settings_spoken_handoff">语音交接</string>
+    <string name="voice_settings_spoken_handoff_desc">当任务转入后台时，说一句简短的“我来处理”</string>
+    <string name="voice_settings_when_answer_ready">答案就绪时</string>
+    <string name="voice_settings_delivery_speak">朗读</string>
+    <string name="voice_settings_delivery_notify">通知</string>
+    <string name="voice_settings_delivery_show_only">仅显示</string>
+    <string name="voice_settings_realtime_defaults_desc">此个人资料的服务器端实时语音 Agent 默认值</string>
+    <string name="voice_settings_save_realtime_agent">保存实时 Agent</string>
+    <string name="voice_settings_global_controls_title">全局语音控制</string>
+    <string name="voice_settings_global_controls_desc">这些设置适用于所有个人资料上的两个语音引擎。</string>
+    <string name="voice_settings_interaction_mode">交互模式</string>
+    <string name="voice_settings_interaction_tap">点击说话</string>
+    <string name="voice_settings_interaction_hold">按住说话</string>
+    <string name="voice_settings_interaction_continuous">连续</string>
+    <string name="voice_settings_silence_threshold">静音阈值：%1$s</string>
+    <string name="voice_settings_silence_threshold_desc">结束语音：在您说话后，超过此静音时长即自动停止（桌面默认 1.25 秒）。</string>
+    <string name="voice_settings_barge_in_title">插话</string>
+    <string name="voice_settings_barge_in_master">我说话时打断</string>
+    <string name="voice_settings_barge_in_master_desc">实验性：可能听到扬声器输出并误打断或录到自身。建议佩戴耳机使用。</string>
+    <string name="voice_settings_barge_in_aec_warning">您的设备可能回声消除能力有限。插话质量会有差异。</string>
+    <string name="voice_settings_sensitivity">灵敏度</string>
+    <string name="voice_settings_sensitivity_desc">关闭可在不翻转上方开关的情况下禁用检测。</string>
+    <string name="voice_settings_sensitivity_off">关闭</string>
+    <string name="voice_settings_sensitivity_low">低</string>
+    <string name="voice_settings_sensitivity_default">默认</string>
+    <string name="voice_settings_sensitivity_high">高</string>
+    <string name="voice_settings_resume_after_interruption">打断后继续</string>
+    <string name="voice_settings_resume_after_interruption_desc">如果您不再继续说话，则从下一句继续</string>
+    <string name="voice_settings_stt_title">语音转文本</string>
+    <string name="voice_settings_stt_standard_desc">转录在您的 Hermes 服务器上以其配置的 STT 提供商运行。</string>
+    <string name="voice_settings_test_engine_title">测试当前引擎</string>
+    <string name="voice_settings_playing_output_sample">正在播放语音输出示例……</string>
+    <string name="voice_settings_output_test_success">语音输出测试成功。</string>
+    <string name="voice_settings_playback_error">播放错误</string>
+    <string name="voice_settings_starting_realtime_sample">正在启动实时 Agent 示例……</string>
+    <string name="voice_settings_realtime_test_success">实时 Agent 测试成功。</string>
+    <string name="voice_settings_provider_error">提供商错误</string>
+    <string name="voice_settings_not_set">未设置</string>
+    <string name="voice_settings_server_configured_tts">服务器配置的 TTS</string>
+    <string name="voice_settings_label_engine">引擎</string>
+    <string name="voice_settings_label_route">路由</string>
+    <string name="voice_settings_play_sample_desc">通过当前语音路由播放一段简短示例。</string>
+    <string name="voice_settings_output_test_failed_format">语音输出测试失败：%1$s</string>
+    <string name="voice_settings_play_output_test">播放语音输出测试</string>
+    <string name="voice_settings_realtime_test_desc">打开提供商原生的实时 Agent 会话，并通过 Relay 播放一段简短示例。</string>
+    <string name="voice_settings_realtime_test_failed_format">实时 Agent 测试失败：%1$s</string>
+    <string name="voice_settings_play_realtime_test">播放实时 Agent 测试</string>
+    <string name="voice_settings_signin_to_edit">登录 Manage 以编辑服务器语音配置。</string>
+    <string name="voice_settings_could_not_load_config">无法加载服务器语音配置</string>
+    <string name="voice_settings_voice_config_saved">语音配置已保存</string>
+    <string name="voice_settings_save_failed">保存失败</string>
+    <string name="voice_settings_signin_required">需要登录。</string>
+    <string name="voice_settings_server_config_title">服务器语音配置</string>
+    <string name="voice_settings_standard_badge">标准</string>
+    <string name="voice_settings_server_config_desc">编辑主机的文本转语音和语音转文本设置（config.yaml tts.* / stt.*）——与仪表板音频设置所写入的值相同。适用于新的语音轮次。</string>
+    <string name="voice_settings_no_elevenlabs_key">服务器上没有 ElevenLabs API 密钥——请在 Manage → Keys 中设置 ELEVENLABS_API_KEY 以从列表中选择语音。</string>
+    <string name="voice_settings_saving_ellipsis">保存中……</string>
+    <string name="voice_settings_discard">放弃</string>
+    <string name="voice_settings_open_manage_signin">打开 Manage 登录</string>
+    <string name="voice_settings_retry">重试</string>
+    <string name="voice_settings_hide_advanced_manual">隐藏高级手动输入</string>
+    <string name="voice_settings_advanced_manual">高级手动输入</string>
+    <string name="voice_settings_search">搜索</string>
+    <string name="voice_settings_no_matches">无匹配项</string>
+    <string name="voice_settings_none">无</string>
+    <string name="voice_settings_auth_not_reported">未上报</string>
+    <string name="voice_settings_auth_hermes_xai_oauth">Hermes xAI OAuth</string>
+    <string name="voice_settings_auth_xai_oauth">xAI OAuth</string>
+    <string name="voice_settings_auth_xai_env">xAI 环境变量</string>
+    <string name="voice_settings_auth_openai_env">OpenAI 环境变量</string>
+    <string name="voice_settings_auth_server_managed">服务器托管</string>
+    <string name="voice_settings_profile_label_with_profile">%1$s (%2$s)</string>
+    <string name="voice_settings_profile_label_pending">%1$s (待定)</string>
+    <string name="voice_settings_scope_profile_config">个人资料配置</string>
+    <string name="voice_settings_scope_relay_config">Relay 配置</string>
+    <string name="voice_settings_scope_global_config">全局 Hermes 配置</string>
+    <string name="voice_settings_scope_with_fallback">%1$s 回退</string>
+    <string name="voice_settings_voice_not_advertised">所选模型未公布此语音</string>
+    <string name="voice_settings_provider_not_valid">所选提供商无效</string>
+    <string name="voice_settings_saved_with_warning_format">已保存，但有警告：%1$s</string>
+    <string name="voice_settings_refreshing_options">正在刷新提供商选项……</string>
+    <string name="voice_settings_summary_provider">提供商 ……</string>
+    <string name="voice_settings_summary_voice">语音 ……</string>
+    <string name="voice_settings_loading_output">正在加载语音输出……</string>
+    <string name="voice_settings_summary_realtime">实时 ……</string>
+    <string name="voice_settings_loading_realtime">正在加载实时……</string>
+    <string name="voice_settings_summary_hermes_engine">Hermes 聊天 + 语音输出 - %1$s</string>
+    <string name="voice_settings_summary_realtime_engine">实时 Agent - %1$s</string>
+    <string name="voice_settings_voices_fallback">语音</string>
+    <string name="voice_settings_recommended">推荐</string>
+    <string name="voice_settings_custom">自定义</string>
+    <string name="voice_settings_current_value">%1$s (当前)</string>
+    <string name="voice_settings_manual_entry">手动输入</string>
+    <string name="voice_settings_manual_group">手动</string>
+
+    <!-- DashboardManagementScreen -->
+    <!-- Tab labels (display) -->
+    <string name="dashboard_tab_skills">技能</string>
+    <string name="dashboard_tab_cron">定时</string>
+    <string name="dashboard_tab_mcp">MCP</string>
+    <string name="dashboard_tab_catalog">目录</string>
+    <string name="dashboard_tab_profiles">配置文件</string>
+    <string name="dashboard_tab_models">模型</string>
+    <string name="dashboard_tab_keys">密钥</string>
+    <string name="dashboard_tab_config">配置</string>
+    <!-- Lowercase tab labels for compact UI surfaces (KPI strip) -->
+    <string name="dashboard_tab_skills_lower">技能</string>
+    <string name="dashboard_tab_cron_lower">定时</string>
+    <string name="dashboard_tab_mcp_lower">mcp</string>
+    <string name="dashboard_tab_catalog_lower">目录</string>
+    <string name="dashboard_tab_profiles_lower">配置文件</string>
+    <string name="dashboard_tab_models_lower">模型</string>
+    <string name="dashboard_tab_keys_lower">密钥</string>
+    <string name="dashboard_tab_config_lower">配置</string>
+
+    <!-- Tile titles + subtitles -->
+    <string name="dashboard_tile_profiles_title">配置文件</string>
+    <string name="dashboard_tile_profiles_sub">SOUL、记忆、技能、会话</string>
+    <string name="dashboard_tile_skills_title">技能 + 工具</string>
+    <string name="dashboard_tile_skills_sub">浏览、启用、配置</string>
+    <string name="dashboard_tile_cron_title">自动化</string>
+    <string name="dashboard_tile_cron_sub">定时任务、后台运行、投递</string>
+    <string name="dashboard_tile_mcp_title">MCP 服务器</string>
+    <string name="dashboard_tile_mcp_sub">服务器、状态、工具</string>
+    <string name="dashboard_tile_catalog_title">目录</string>
+    <string name="dashboard_tile_catalog_sub">发现上游服务器</string>
+    <string name="dashboard_tile_models_title">模型</string>
+    <string name="dashboard_tile_models_sub">选择提供商和默认模型</string>
+    <string name="dashboard_tile_keys_title">密钥</string>
+    <string name="dashboard_tile_keys_sub">提供商密钥和环境变量</string>
+    <string name="dashboard_tile_config_title">配置</string>
+    <string name="dashboard_tile_config_sub">Schema 与运行时选项</string>
+
+    <!-- Nav tiles -->
+    <string name="dashboard_nav_connections_title">连接</string>
+    <string name="dashboard_nav_connections_sub">配对、切换、校验路由</string>
+
+    <!-- Hub header -->
+    <string name="dashboard_hub_title">Relay 中心</string>
+    <string name="dashboard_hub_meta">概览</string>
+
+    <!-- Health word KPI strip -->
+    <string name="dashboard_health_loading">…</string>
+    <string name="dashboard_health_signin">需登录</string>
+    <string name="dashboard_health_offline">离线</string>
+    <string name="dashboard_health_error">错误</string>
+    <string name="dashboard_health_ready">就绪</string>
+
+    <!-- KPI strip labels -->
+    <string name="dashboard_metric_dashboard">仪表盘</string>
+    <string name="dashboard_metric_server">服务器</string>
+
+    <!-- Return strip -->
+    <string name="dashboard_overview_label">概览</string>
+
+    <!-- Connection header status line -->
+    <string name="dashboard_status_checking">正在检查仪表盘</string>
+    <string name="dashboard_status_signed_in">仪表盘已登录</string>
+    <string name="dashboard_status_signin_required">需要登录仪表盘</string>
+    <string name="dashboard_status_available">仪表盘可用</string>
+    <string name="dashboard_provider_prefix">提供商：%1$s</string>
+    <string name="dashboard_no_url">无仪表盘地址</string>
+    <string name="dashboard_route_suffix">%1$s 路由</string>
+    <string name="dashboard_checked_at">已检查 %1$s</string>
+    <string name="dashboard_sign_out">退出登录</string>
+    <string name="dashboard_just_now">刚刚</string>
+    <string name="dashboard_minutes_ago">%1$d 分钟前</string>
+    <string name="dashboard_hours_ago">%1$d 小时前</string>
+
+    <!-- Sign-in card -->
+    <string name="dashboard_signin_required_title">需要登录仪表盘</string>
+    <string name="dashboard_signin_required_body">管理功能使用位于 %1$s 的 Hermes 仪表盘会话。</string>
+    <string name="dashboard_signin_route_hint">你当前使用 %1$s 路由。仪表盘登录按主机区分，所以在另一条路由上的登录不会自动延续——在这里登录一次，应用会同时保留两个会话。</string>
+    <string name="dashboard_signin_with_provider">使用 %1$s 登录</string>
+    <string name="dashboard_username_password">用户名与密码</string>
+    <string name="dashboard_username">用户名</string>
+    <string name="dashboard_password">密码</string>
+    <string name="dashboard_sign_in">登录</string>
+    <string name="dashboard_signing_in">正在登录……</string>
+    <string name="dashboard_no_supported_provider">该仪表盘未提供受 Android 支持的登录方式。</string>
+
+    <!-- OAuth sign-in dialog -->
+    <string name="dashboard_oauth_initial_status">请在安全的仪表盘页面完成登录。</string>
+    <string name="dashboard_oauth_verifying">正在验证仪表盘会话……</string>
+    <string name="dashboard_oauth_not_accepted">登录尚未完成。请先走完仪表盘登录流程再继续。</string>
+    <string name="dashboard_oauth_verify_failed">仪表盘登录验证失败</string>
+    <string name="dashboard_close_signin">关闭登录</string>
+
+    <!-- Error body -->
+    <string name="dashboard_error_title">仪表盘不可用</string>
+    <string name="dashboard_error_target">无法从 %1$s 加载</string>
+    <string name="dashboard_error_route_suffix">（%1$s 路由）</string>
+    <string name="dashboard_retry">重试</string>
+
+    <!-- Loading / empty states -->
+    <string name="dashboard_loading_section">正在加载 %1$s……</string>
+    <string name="dashboard_empty_section">没有返回 %1$s</string>
+
+    <!-- Section action buttons -->
+    <string name="dashboard_section_action_change_main_model">更改主模型</string>
+    <string name="dashboard_section_action_new_profile">新建配置文件</string>
+    <string name="dashboard_section_action_browse_hub">浏览中心</string>
+    <string name="dashboard_section_action_update_installed">更新已安装</string>
+
+    <!-- Action labels (rendered via kind → string) -->
+    <string name="dashboard_action_set">设置</string>
+    <string name="dashboard_action_reveal">显示</string>
+    <string name="dashboard_action_clear">清除</string>
+    <string name="dashboard_action_install">安装</string>
+    <string name="dashboard_action_runs">运行记录</string>
+    <string name="dashboard_action_resume">继续</string>
+    <string name="dashboard_action_pause">暂停</string>
+    <string name="dashboard_action_run_now">立即运行</string>
+    <string name="dashboard_action_delete">删除</string>
+    <string name="dashboard_action_enable">启用</string>
+    <string name="dashboard_action_disable">禁用</string>
+    <string name="dashboard_action_test">测试</string>
+    <string name="dashboard_action_remove">移除</string>
+    <string name="dashboard_action_soul">SOUL</string>
+    <string name="dashboard_action_edit_soul">编辑 SOUL</string>
+    <string name="dashboard_action_use">使用</string>
+    <string name="dashboard_action_describe">描述</string>
+    <string name="dashboard_action_model">模型</string>
+    <string name="dashboard_action_completed">%1$s 已完成</string>
+    <string name="dashboard_action_failed">%1$s 失败</string>
+    <string name="dashboard_more">更多</string>
+
+    <!-- Detail dialog -->
+    <string name="dashboard_detail_title">%1$s · %2$s</string>
+    <string name="dashboard_done">完成</string>
+    <string name="dashboard_no_recent_runs">没有返回最近的运行记录。</string>
+    <string name="dashboard_soul_not_exists">该配置文件还没有 SOUL.md。</string>
+
+    <!-- Confirm dialogs -->
+    <string name="dashboard_make_default_title">把 %1$s 设为服务器默认？</string>
+    <string name="dashboard_activate_profile_body">这会把 %1$s 设为所有客户端使用的活跃代理，即持久的“hermes use”默认值。聊天里切换代理仅对当前会话生效，不会改变这个默认值。</string>
+    <string name="dashboard_generic_action_body">这将修改 %1$s 的服务器端仪表盘状态。</string>
+    <string name="dashboard_set_default">设为默认</string>
+    <string name="dashboard_input_action_title">%1$s %2$s</string>
+    <string name="dashboard_action_confirm_title">%1$s · %2$s</string>
+    <string name="dashboard_env_key_help">保存在服务器的 ~/.hermes/.env 中。此字段仅可写——要读回当前值请使用“显示”。</string>
+    <string name="dashboard_profile_desc_help">在配置文件选择器里显示的简短角色描述，并用于路由。留空即清除。</string>
+    <string name="dashboard_value_label">值</string>
+    <string name="dashboard_description_label">描述</string>
+    <string name="dashboard_save">保存</string>
+    <string name="dashboard_cancel">取消</string>
+    <string name="dashboard_new_profile_title">新建配置文件</string>
+    <string name="dashboard_name_label">名称</string>
+    <string name="dashboard_description_optional">描述（可选）</string>
+    <string name="dashboard_clone_from_default">从默认配置文件的配置和技能开始</string>
+    <string name="dashboard_create">创建</string>
+    <string name="dashboard_expensive_model_title">高成本模型</string>
+    <string name="dashboard_expensive_model_default_warning">这个模型的运行成本可能较高。</string>
+    <string name="dashboard_use_anyway">仍然使用</string>
+    <string name="dashboard_clear_session_title">清除仪表盘会话？</string>
+    <string name="dashboard_clear_session_body">这会让此连接在本设备上登出 Hermes 仪表盘。你的 API 密钥、已保存的连接和 Relay 配对不会受影响。</string>
+    <string name="dashboard_clear_session_button">清除会话</string>
+    <string name="dashboard_session_cleared">仪表盘会话已清除</string>
+
+    <!-- OAuth success message -->
+    <string name="dashboard_signed_in">已登录</string>
+    <string name="dashboard_signed_in_with">已通过 %1$s 登录</string>
+
+    <!-- Top bar -->
+    <string name="dashboard_title">管理</string>
+    <string name="dashboard_back">返回</string>
+    <string name="dashboard_terminal">终端</string>
+    <string name="dashboard_settings">设置</string>
+    <string name="dashboard_refresh">刷新</string>
+
+    <!-- Model picker -->
+    <string name="dashboard_main_model_title">主模型</string>
+    <string name="dashboard_profile_model_title">%1$s 的模型</string>
+    <string name="dashboard_loading_provider_catalog">正在加载提供商目录……</string>
+    <string name="dashboard_no_model_options">仪表盘未返回任何模型选项。</string>
+    <string name="dashboard_model_options_load_failed">无法加载模型选项</string>
+    <string name="dashboard_model_picker_help">对新会话生效。灰色的提供商缺少密钥——请在“管理 → 密钥”下添加。</string>
+    <string name="dashboard_key_missing_suffix"> · 缺少密钥</string>
+    <string name="dashboard_model_set">模型已设为 %1$s</string>
+    <string name="dashboard_model_change_failed">模型更改失败</string>
+
+    <!-- Skills hub dialog -->
+    <string name="dashboard_skills_hub_title">技能中心</string>
+    <string name="dashboard_skills_hub_help">搜索已配置的中心来源。预览会在安装前先读取 SKILL.md。</string>
+    <string name="dashboard_skills_hub_sources">来源：%1$s</string>
+    <string name="dashboard_search_skills">搜索技能</string>
+    <string name="dashboard_search">搜索</string>
+    <string name="dashboard_hub_searching">正在搜索中心来源（最长可能约 30 秒）……</string>
+    <string name="dashboard_hub_search_failed">中心搜索失败</string>
+    <string name="dashboard_hub_no_matches">没有技能匹配“%1$s”。</string>
+    <string name="dashboard_hub_featured">推荐技能</string>
+    <string name="dashboard_hub_installed">已安装</string>
+    <string name="dashboard_hub_skill_md_title">%1$s · SKILL.md</string>
+    <string name="dashboard_hub_preview">预览</string>
+    <string name="dashboard_hub_preview_failed">预览失败</string>
+    <string name="dashboard_hub_install">安装</string>
+    <string name="dashboard_hub_install_started">已开始安装 %1$s——稍后刷新“技能”即可看到</string>
+    <string name="dashboard_hub_install_failed">无法开始安装</string>
+    <string name="dashboard_hub_uninstall">卸载</string>
+    <string name="dashboard_hub_uninstall_started">已开始卸载 %1$s——稍后刷新“技能”即可看到</string>
+    <string name="dashboard_hub_uninstall_failed">无法开始卸载</string>
+    <string name="dashboard_close">关闭</string>
+
+    <!-- Soul editor -->
+    <string name="dashboard_soul_editor_title">SOUL.md · %1$s</string>
+    <string name="dashboard_soul_editor_missing">该配置文件还没有 SOUL.md——保存后会自动创建。</string>
+    <string name="dashboard_soul_editor_chars">%1$d 个字符</string>
+    <string name="dashboard_saving">正在保存……</string>
+    <string name="dashboard_soul_load_failed">无法加载 SOUL.md</string>
+    <string name="dashboard_soul_saved">已为 %1$s 保存 SOUL.md</string>
+    <string name="dashboard_soul_save_failed">SOUL.md 保存失败</string>
+
+    <!-- Sign-in submit -->
+    <string name="dashboard_signin_no_session">登录已完成，但仪表盘没有返回已认证的会话。</string>
+    <string name="dashboard_signin_failed">仪表盘登录失败</string>
+
+    <!-- Loader error fallbacks -->
+    <string name="dashboard_no_url_configured">该连接未配置仪表盘地址。</string>
+    <string name="dashboard_request_failed">仪表盘请求失败</string>
+
+    <!-- Target line -->
+    <string name="dashboard_target_line">仪表盘：%1$s</string>
+    <string name="dashboard_target_line_route_suffix"> · %1$s 路由</string>
+
+    <!-- Skills update -->
+    <string name="dashboard_skills_update_started">服务器已开始更新技能——稍等一分钟后刷新“技能”</string>
+    <string name="dashboard_skills_update_failed">无法开始更新技能</string>
+
+    <!-- Profile create -->
+    <string name="dashboard_profile_created">已创建配置文件 %1$s</string>
+    <string name="dashboard_profile_create_failed">创建配置文件失败</string>
 </resources>
 

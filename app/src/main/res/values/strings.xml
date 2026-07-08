@@ -754,5 +754,725 @@
     <string name="appearance_state_listening">Listening</string>
     <string name="appearance_state_error">Error</string>
     <string name="appearance_custom_suffix"> · Custom</string>
+
+    <!-- DeveloperSettingsScreen -->
+    <string name="dev_settings_title">Developer options</string>
+    <string name="dev_settings_back">Back</string>
+    <string name="dev_settings_data_section">Data</string>
+    <string name="dev_settings_reset_onboarding">Reset Onboarding</string>
+    <string name="dev_settings_reset_onboarding_desc">Show the setup guide again on next launch</string>
+    <string name="dev_settings_onboarding_reset_toast">Onboarding will show on next launch</string>
+    <string name="dev_settings_reset_onboarding_cd">Reset onboarding</string>
+    <string name="dev_settings_export_settings">Export Settings</string>
+    <string name="dev_settings_export_settings_desc">Full backup with API keys, tokens, and dashboard cookies</string>
+    <string name="dev_settings_export_settings_cd">Export settings</string>
+    <string name="dev_settings_import_settings">Import Settings</string>
+    <string name="dev_settings_import_settings_desc">Restore full backup and replace saved connections</string>
+    <string name="dev_settings_import_settings_cd">Import settings</string>
+    <string name="dev_settings_reset_all_data">Reset All Data</string>
+    <string name="dev_settings_reset_all_data_desc">Clear all settings, tokens, API keys, and cached data</string>
+    <string name="dev_settings_reset_all_data_cd">Reset all data</string>
+    <string name="dev_options_section">Developer Options</string>
+    <string name="dev_settings_relay_features">Relay features</string>
+    <string name="dev_settings_relay_features_desc">Show Relay Server and Pairing settings for Bridge/Terminal development</string>
+    <string name="dev_settings_realtime_voice_lab">Realtime voice lab</string>
+    <string name="dev_settings_realtime_voice_lab_desc">Open the provider websocket testbench for dev builds</string>
+    <string name="dev_settings_open_realtime_voice_lab_cd">Open realtime voice lab</string>
+    <string name="dev_settings_lock_dev_options">Lock developer options</string>
+    <string name="dev_settings_lock_dev_options_desc">Hide this section and disable experimental features</string>
+    <string name="dev_settings_locked_toast">Developer options locked</string>
+    <string name="dev_settings_lock_dev_options_cd">Lock developer options</string>
+    <string name="dev_settings_test_harness">Test harness</string>
+    <string name="dev_settings_test_emit_diagnostics">Emit sample diagnostics</string>
+    <string name="dev_settings_test_emit_diagnostics_desc">Push Info / Warning / Error entries into the diagnostics log</string>
+    <string name="dev_settings_sample_info_title">Sample info diagnostic</string>
+    <string name="dev_settings_sample_info_detail">Emitted from the Developer options test harness.</string>
+    <string name="dev_settings_sample_warning_title">Sample warning diagnostic</string>
+    <string name="dev_settings_sample_warning_detail">Relay reachability degraded (synthetic).</string>
+    <string name="dev_settings_sample_error_title">Sample error diagnostic</string>
+    <string name="dev_settings_sample_error_detail">Synthetic failure for the detail view.</string>
+    <string name="dev_settings_sample_stacktrace">Sample stacktrace — Developer options test harness</string>
+    <string name="dev_settings_diagnostics_emitted_toast">3 sample diagnostics emitted</string>
+    <string name="dev_settings_test_preview_update_banner">Preview update banner</string>
+    <string name="dev_settings_test_preview_update_banner_desc">Cycle the in-app update banner: Available → Downloaded → off</string>
+    <string name="dev_settings_update_state_available">Available</string>
+    <string name="dev_settings_update_state_downloaded">Downloaded</string>
+    <string name="dev_settings_update_state_off">off</string>
+    <string name="dev_settings_update_banner_preview_toast">Update banner preview: %1$s</string>
+    <string name="dev_settings_test_show_whats_new">Show What\'s New</string>
+    <string name="dev_settings_test_show_whats_new_desc">Open the What\'s New dialog now</string>
+    <string name="dev_settings_test_force_crash">Force a test crash</string>
+    <string name="dev_settings_test_force_crash_desc">Throws an uncaught exception — the crash report shows on next launch</string>
+    <string name="dev_settings_exported">Settings exported</string>
+    <string name="dev_settings_export_failed">Export failed</string>
+    <string name="dev_settings_imported">Settings imported</string>
+    <string name="dev_settings_import_failed">Import failed — invalid file</string>
+    <string name="dev_settings_export_sensitive_backup_title">Export sensitive backup?</string>
+    <string name="dev_settings_export_sensitive_backup_body">This backup includes saved connections, API keys, relay session tokens, device IDs, and dashboard cookies. Anyone with the file may be able to access your Hermes server.</string>
+    <string name="dev_settings_export_action">Export</string>
+    <string name="dev_settings_cancel">Cancel</string>
+    <string name="dev_settings_import_backup_title">Import backup?</string>
+    <string name="dev_settings_import_backup_body">Importing a backup can restore API keys, relay tokens, device IDs, and dashboard cookies. It replaces the saved connection list on this device.</string>
+    <string name="dev_settings_choose_file">Choose file</string>
+    <string name="dev_settings_reset_all_app_data_title">Reset all app data?</string>
+    <string name="dev_settings_reset_all_app_data_body">This clears saved connections, API keys, Relay tokens, dashboard cookies, device IDs, settings, and cached data. Use dashboard sign out or Relay pairing controls when you only need to clear one connection path. This cannot be undone.</string>
+    <string name="dev_settings_app_data_reset_toast">App data reset</string>
+    <string name="dev_settings_reset_action">Reset</string>
+
+    <!-- PermissionsStatusScreen -->
+    <string name="perms_title">Permissions</string>
+    <string name="perms_back">Back</string>
+    <string name="perms_refresh_status_cd">Refresh status</string>
+    <string name="perms_intro_title">Permissions and capabilities</string>
+    <string name="perms_intro_desc">Grant only the features you use. Standard Chat and Manage do not need phone-control permissions.</string>
+    <string name="perms_section_hermes">Hermes</string>
+    <string name="perms_section_hermes_desc">Chat and Manage use your configured Hermes API/dashboard connection.</string>
+    <string name="perms_chat_and_manage">Chat and Manage</string>
+    <string name="perms_chat_and_manage_desc">No Android runtime permission needed. API/dashboard auth is configured separately.</string>
+    <string name="perms_badge_included">Included</string>
+    <string name="perms_status_ready">Ready</string>
+    <string name="perms_section_on_demand">On demand</string>
+    <string name="perms_section_on_demand_desc">These stay optional until you use the matching feature.</string>
+    <string name="perms_camera">Camera</string>
+    <string name="perms_camera_desc">Scan setup QR codes or attach photos taken in-app.</string>
+    <string name="perms_badge_optional">Optional</string>
+    <string name="perms_microphone">Microphone</string>
+    <string name="perms_microphone_desc">Talk to Hermes in voice mode.</string>
+    <string name="perms_app_notifications">App notifications</string>
+    <string name="perms_app_notifications_desc">Turn-complete alerts and foreground-service indicators.</string>
+    <string name="perms_app_notifications_legacy_desc">This Android version does not require a runtime notification grant.</string>
+    <string name="perms_notification_access">Notification access</string>
+    <string name="perms_notification_access_desc">Let the notification companion share posted notifications with paired Relay tools.</string>
+    <string name="perms_section_sideload">Sideload Device Control</string>
+    <string name="perms_section_sideload_desc">Only needed when the agent operates this phone.</string>
+    <string name="perms_accessibility_service">Accessibility Service</string>
+    <string name="perms_accessibility_service_desc">Required for screen reading, taps, typing, and app navigation.</string>
+    <string name="perms_badge_required">Required</string>
+    <string name="perms_display_over_apps">Display over other apps</string>
+    <string name="perms_display_over_apps_desc">Required for cross-app confirmation prompts and the Bridge status chip.</string>
+    <string name="perms_screen_capture">Screen capture</string>
+    <string name="perms_screen_capture_desc">Per-session Android consent for screenshots. Open Bridge to grant or refresh it.</string>
+    <string name="perms_badge_session">Session</string>
+    <string name="perms_status_active">Active</string>
+    <string name="perms_status_per_session">Per-session</string>
+    <string name="perms_contacts">Contacts</string>
+    <string name="perms_contacts_desc">Resolve names to phone numbers for sideload Relay tools.</string>
+    <string name="perms_sms">SMS</string>
+    <string name="perms_sms_desc">Send text messages directly after Bridge safety confirmation.</string>
+    <string name="perms_phone">Phone</string>
+    <string name="perms_phone_desc">Place calls directly instead of opening the dialer.</string>
+    <string name="perms_location">Location</string>
+    <string name="perms_location_desc">Share last-known location with sideload Relay tools.</string>
+    <string name="perms_bridge_core">Bridge Core</string>
+    <string name="perms_bridge_core_desc">Sideload Device Control permissions are not included in the Google Play build.</string>
+    <string name="perms_status_granted">Granted</string>
+    <string name="perms_status_optional">Optional</string>
+    <string name="perms_status_needed">Needed</string>
+
+    <!-- ProactiveSettingsScreen -->
+    <string name="proactive_title">Threads</string>
+    <string name="proactive_back">Back</string>
+    <string name="proactive_let_hermes_message_me">Let Hermes message me</string>
+    <string name="proactive_allow_proactive_messages">Allow proactive messages</string>
+    <string name="proactive_allow_proactive_messages_desc">Your agent can reach out on its own — reminders, finished jobs, alerts. Its messages appear as Threads in Chat, where you can reply.</string>
+    <string name="proactive_not_paired_warning">Not paired yet — pair with your Hermes server under Settings → Connections to start receiving messages.</string>
+    <string name="proactive_your_threads">Your Threads</string>
+    <string name="proactive_your_threads_desc">Each conversation your agent starts shows as a Thread in Chat — open the session list, filter to Threads, and reply right there.</string>
+    <string name="proactive_open_chat">Open Chat</string>
+    <string name="proactive_about">About</string>
+    <string name="proactive_about_desc">When on, your phone tells the relay it\'s open to agent-initiated messages. The agent delivers them over the same paired connection the relay already uses — no new permissions beyond notifications.</string>
+    <string name="proactive_about_server_note">Your server must also enable the phone platform (set PHONE_ENABLED on the server). Until both sides are on and the phone is paired, nothing is pushed.</string>
+
+    <!-- ProfileInspectorScreen -->
+    <string name="profile_inspector_back">Back</string>
+    <string name="profile_inspector_refresh_all">Refresh all</string>
+    <string name="profile_inspector_title">Inspect %1$s</string>
+    <string name="profile_inspector_tab_config">Config</string>
+    <string name="profile_inspector_tab_soul">SOUL</string>
+    <string name="profile_inspector_tab_memory">Memory</string>
+    <string name="profile_inspector_tab_skills">Skills</string>
+    <string name="profile_inspector_config_file">Config file</string>
+    <string name="profile_inspector_read_only">Read-only view</string>
+    <string name="profile_inspector_empty_config">(empty config)</string>
+    <string name="profile_inspector_field_count_single">{%1$d field}</string>
+    <string name="profile_inspector_field_count">{%1$d fields}</string>
+    <string name="profile_inspector_hide_value">Hide value</string>
+    <string name="profile_inspector_reveal_value">Reveal value</string>
+    <string name="profile_inspector_soul_file">SOUL file</string>
+    <string name="profile_inspector_soul_file_not_created">SOUL file (not created)</string>
+    <string name="profile_inspector_bytes">%1$d bytes</string>
+    <string name="profile_inspector_show_rendered">Show rendered markdown</string>
+    <string name="profile_inspector_show_raw">Show raw source</string>
+    <string name="profile_inspector_edit_soul">Edit SOUL</string>
+    <string name="profile_inspector_cancel_edit">Cancel edit</string>
+    <string name="profile_inspector_no_soul">No SOUL.md for this profile</string>
+    <string name="profile_inspector_no_soul_hint">Tap the pencil icon above to create one.</string>
+    <string name="profile_inspector_cancel">Cancel</string>
+    <string name="profile_inspector_saving">Saving…</string>
+    <string name="profile_inspector_save">Save</string>
+    <string name="profile_inspector_no_memory">No memory entries for this profile</string>
+    <string name="profile_inspector_memories_dir">Memories directory:</string>
+    <string name="profile_inspector_pending_save">(pending save)</string>
+    <string name="profile_inspector_new_entry">New entry</string>
+    <string name="profile_inspector_new_memory_entry">New memory entry</string>
+    <string name="profile_inspector_filename_md">Filename must end in .md</string>
+    <string name="profile_inspector_filename_placeholder">notes.md</string>
+    <string name="profile_inspector_filename_exists">A file with that name already exists</string>
+    <string name="profile_inspector_create">Create</string>
+    <string name="profile_inspector_edit_entry">Edit entry</string>
+    <string name="profile_inspector_collapse">Collapse</string>
+    <string name="profile_inspector_expand">Expand</string>
+    <string name="profile_inspector_empty_content">(empty)</string>
+    <string name="profile_inspector_no_skills">No skills in this profile</string>
+    <string name="profile_inspector_skills_total">Total: %1$d</string>
+    <string name="profile_inspector_uncategorized">(uncategorized)</string>
+    <string name="profile_inspector_toggle_unsupported">Enable/disable requires a newer server.</string>
+    <string name="profile_inspector_disabled">(disabled)</string>
+    <string name="profile_inspector_retry">Retry</string>
+    <string name="profile_inspector_truncated">Content truncated by relay — showing the first slice only.</string>
+
+    <!-- PairedDevicesScreen -->
+    <string name="paired_devices_title">Relay sessions</string>
+    <string name="paired_devices_back">Back</string>
+    <string name="paired_devices_refresh">Refresh</string>
+    <string name="paired_devices_unnamed_device">Unnamed device</string>
+    <string name="paired_devices_this_device">this device</string>
+    <string name="paired_devices_this_device_badge">This device</string>
+    <string name="paired_devices_revoke_this_title">Revoke this device?</string>
+    <string name="paired_devices_revoke_title">Revoke device?</string>
+    <string name="paired_devices_revoke_current_body">This is the current device. Revoking will end the session on this phone and you\'ll need to re-pair with the server.</string>
+    <string name="paired_devices_revoke_other_body">This will end that device\'s relay session. It can re-pair later using a new pairing code.</string>
+    <string name="paired_devices_token_prefix">Token prefix: %1$s</string>
+    <string name="paired_devices_unpaired">This device was unpaired. Re-pair to continue.</string>
+    <string name="paired_devices_revoked">Device revoked</string>
+    <string name="paired_devices_revoke_failed">Revoke failed</string>
+    <string name="paired_devices_revoke">Revoke</string>
+    <string name="paired_devices_revoke_this">Revoke this</string>
+    <string name="paired_devices_cancel">Cancel</string>
+    <string name="paired_devices_session_never">Session set to never expire</string>
+    <string name="paired_devices_session_updated">Session expiry updated</string>
+    <string name="paired_devices_session_update_failed">Failed to update session</string>
+    <string name="paired_devices_none">none</string>
+    <string name="paired_devices_revoke_channel_title">Revoke channel access?</string>
+    <string name="paired_devices_revoke_channel_body">Revoke %1$s access for %2$s?</string>
+    <string name="paired_devices_revoke_channel_desc">The session itself stays paired — only the %1$s grant is removed. Other channels (%2$s) keep their current expiry.</string>
+    <string name="paired_devices_channel_revoked">%1$s access revoked</string>
+    <string name="paired_devices_channel_revoke_failed">Failed to revoke %1$s access</string>
+    <string name="paired_devices_load_error">Couldn\'t load relay sessions</string>
+    <string name="paired_devices_try_again">Try again</string>
+    <string name="paired_devices_empty_title">No relay sessions (yet)</string>
+    <string name="paired_devices_empty_body">Pair this phone with your relay to see it here.</string>
+    <string name="paired_devices_pair_now">Pair now</string>
+    <string name="paired_devices_header">Each row is a phone that has paired with this server.\nChannel grants are per-feature authorizations (chat, bridge, terminal, TUI, voice) that can expire independently.\nRevoke a session to cut off that phone\'s access without affecting others.</string>
+    <string name="paired_devices_about_grants_title">About channel grants</string>
+    <string name="paired_devices_about_grants_body">Channel grants are per-feature permissions.\n\n• Chat controls sent/received messages.\n• Bridge controls accessibility actions.\n• Terminal and TUI control shell-style remote sessions.\n• Voice is split into config, speech-to-text, and text-to-speech grants.\n\nEach grant has its own expiry, so a phone can keep chat access long after bridge or voice access has lapsed — or you can revoke one channel without ending the whole session.</string>
+    <string name="paired_devices_got_it">Got it</string>
+    <string name="paired_devices_channel_grants">Channel grants</string>
+    <string name="paired_devices_first_seen">First seen</string>
+    <string name="paired_devices_last_seen">Last seen</string>
+    <string name="paired_devices_extend">Extend</string>
+    <string name="paired_devices_never_expires">Never expires</string>
+    <string name="paired_devices_expires">Expires %1$s</string>
+    <string name="paired_devices_revoke_channel_access">Revoke %1$s access</string>
+    <string name="paired_devices_grant_chat">Chat</string>
+    <string name="paired_devices_grant_bridge">Bridge</string>
+    <string name="paired_devices_grant_terminal">Terminal</string>
+    <string name="paired_devices_grant_tui">TUI</string>
+    <string name="paired_devices_grant_voice_config">Voice config</string>
+    <string name="paired_devices_grant_voice_stt">Voice STT</string>
+    <string name="paired_devices_grant_voice_tts">Voice TTS</string>
+    <string name="paired_devices_ttl_never">never</string>
+    <string name="paired_devices_ttl_expired">expired</string>
+    <string name="paired_devices_ttl_days">in %1$d d</string>
+    <string name="paired_devices_ttl_hours">in %1$d h</string>
+    <string name="paired_devices_ttl_minutes">in %1$d m</string>
+    <string name="paired_devices_ttl_seconds">in &lt;1m</string>
+    <string name="paired_devices_grant_chip">%1$s · %2$s</string>
+    <string name="paired_devices_routes">Routes</string>
+    <string name="paired_devices_active">active</string>
+
+    <!-- RealtimeVoiceTestScreen -->
+    <string name="voice_test_title">Realtime Voice Lab</string>
+    <string name="voice_test_back">Back</string>
+    <string name="voice_test_default_prompt">Let me check that. Confirm the realtime voice provider path is working.</string>
+    <string name="voice_test_status_idle">Idle</string>
+    <string name="voice_test_status_recording">Recording — tap Stop &amp; send</string>
+    <string name="voice_test_status_mic_failed">Mic capture failed: %1$s</string>
+    <string name="voice_test_status_recording_short">Recording too short</string>
+    <string name="voice_test_status_mic_permission_denied">Microphone permission denied</string>
+    <string name="voice_test_status_ready">Ready</string>
+    <string name="voice_test_status_route_disabled">Realtime route disabled</string>
+    <string name="voice_test_status_config_failed">Realtime config failed</string>
+    <string name="voice_test_status_streaming">Streaming</string>
+    <string name="voice_test_status_complete">Complete</string>
+    <string name="voice_test_status_demo_failed">Realtime demo failed</string>
+    <string name="voice_test_status_transcribing">Transcribing + thinking</string>
+    <string name="voice_test_status_speaking">Speaking</string>
+    <string name="voice_test_status_agent_failed">Realtime agent failed</string>
+    <string name="voice_test_transcript_spoken">Spoken: %1$s</string>
+    <string name="voice_test_transcript_you_said">You said: %1$s</string>
+    <string name="voice_test_section_provider">Provider</string>
+    <string name="voice_test_section_prompt">Prompt</string>
+    <string name="voice_test_section_transcript">Transcript</string>
+    <string name="voice_test_section_waveform">Waveform</string>
+    <string name="voice_test_section_events">Events</string>
+    <string name="voice_test_label_status">Status</string>
+    <string name="voice_test_label_provider">Provider</string>
+    <string name="voice_test_label_model">Model</string>
+    <string name="voice_test_label_voice">Voice</string>
+    <string name="voice_test_label_advertised">Advertised</string>
+    <string name="voice_test_label_auth">Auth</string>
+    <string name="voice_test_loading">loading</string>
+    <string name="voice_test_none">none</string>
+    <string name="voice_test_auth_xai_oauth">xAI OAuth</string>
+    <string name="voice_test_auth_xai_env">xAI env</string>
+    <string name="voice_test_auth_not_detected">not detected</string>
+    <string name="voice_test_prompt_label">Text demo prompt (spoken back via provider)</string>
+    <string name="voice_test_prompt_hint">Mic demo speaks to the agent: it transcribes what you say, Hermes responds, and the reply is spoken back. Text demo just synthesizes the prompt above (no mic, no agent).</string>
+    <string name="voice_test_stop_send">Stop &amp; send</string>
+    <string name="voice_test_mic_demo">Mic demo</string>
+    <string name="voice_test_text_demo">Text demo</string>
+    <string name="voice_test_no_events">No events yet</string>
+    <string name="voice_test_label_first_audio">First audio</string>
+    <string name="voice_test_label_done">Done</string>
+    <string name="voice_test_label_chunks">Chunks</string>
+    <string name="voice_test_label_bytes">Bytes</string>
+    <string name="voice_test_label_log">Log</string>
+    <string name="voice_test_ms">%1$d ms</string>
+    <string name="voice_test_dash">---</string>
+
+    <!-- VoiceSettingsScreen -->
+    <string name="voice_settings_title">Voice</string>
+    <string name="voice_settings_back">Back</string>
+    <string name="voice_settings_scope_label">Voice scope</string>
+    <string name="voice_settings_global_voice">Global voice</string>
+    <string name="voice_settings_standard_scope_body">This connection speaks through your Hermes server\'s configured TTS and STT (config.yaml on the server, or the dashboard\'s Audio settings) — it\'s host-wide, not per profile. Pair Relay to pick providers, models, and voices from the phone and carry them per profile.</string>
+    <string name="voice_settings_scope_resolving">Resolving the active profile\'s voice scope…</string>
+    <string name="voice_settings_label_profile">Profile</string>
+    <string name="voice_settings_label_scope">Scope</string>
+    <string name="voice_settings_relay_scope_footer">Engine, route, and voice picks below are saved for this profile.</string>
+    <string name="voice_settings_for_profile_title">Voice for this profile</string>
+    <string name="voice_settings_engine_label">Voice engine</string>
+    <string name="voice_settings_engine_hermes">Hermes Chat + Voice Output</string>
+    <string name="voice_settings_engine_hermes_desc">Hermes handles chat, tools, and memory; speech runs over the standard Hermes dashboard or Relay — whichever the STT/TTS route below picks.</string>
+    <string name="voice_settings_engine_realtime">Realtime Agent</string>
+    <string name="voice_settings_engine_realtime_desc">Provider-native realtime speech with Hermes-brokered tools. Requires a paired Relay.</string>
+    <string name="voice_settings_experimental">Experimental</string>
+    <string name="voice_settings_realtime_no_relay">No Relay is configured for this connection, so the Realtime Agent can\'t start. Pair Relay in Settings → Connections, or switch back to Hermes Chat + Voice Output.</string>
+    <string name="voice_settings_route_label">STT/TTS route</string>
+    <string name="voice_settings_status_ready">Ready</string>
+    <string name="voice_settings_status_sign_in_required">Dashboard sign-in required</string>
+    <string name="voice_settings_status_dashboard_unreachable">Dashboard unreachable</string>
+    <string name="voice_settings_status_unsupported_build">Not available on this Hermes build</string>
+    <string name="voice_settings_status_checking">Checking...</string>
+    <string name="voice_settings_relay_not_configured">Relay not configured</string>
+    <string name="voice_settings_status_auto_relay">Ready — using Relay</string>
+    <string name="voice_settings_status_auto_hermes">Ready — using Hermes</string>
+    <string name="voice_settings_status_no_route">No route available yet</string>
+    <string name="voice_settings_route_auto">Auto</string>
+    <string name="voice_settings_route_auto_desc">Relay when paired; otherwise the Hermes dashboard. Recommended.</string>
+    <string name="voice_settings_route_hermes">Hermes</string>
+    <string name="voice_settings_route_hermes_desc">The dashboard audio path Hermes Desktop uses — works on a Hermes install, no Relay plugin required.</string>
+    <string name="voice_settings_route_relay">Relay</string>
+    <string name="voice_settings_route_relay_desc">Relay plugin voice — profile-aware providers and streaming voice output.</string>
+    <string name="voice_settings_optional">Optional</string>
+    <string name="voice_settings_signin_route_hint">You\'re connected over the %1$s route, and dashboard sign-ins are per-host — a sign-in from your home network doesn\'t carry over. Sign in once in Manage while on this route to unlock voice here too.</string>
+    <string name="voice_settings_signin_default_hint">Your Hermes dashboard requires sign-in before standard voice can transcribe or speak. Signing in once in Manage unlocks it for this connection.</string>
+    <string name="voice_settings_sign_in_via_manage">Sign in via Manage</string>
+    <string name="voice_settings_unsupported_build_body">This Hermes server build doesn\'t expose the dashboard audio routes yet. Update hermes-agent on the server, or pair Relay to use Relay voice.</string>
+    <string name="voice_settings_tts_title">Text-to-Speech</string>
+    <string name="voice_settings_streaming_output_label">Streaming output (/voice/output)</string>
+    <string name="voice_settings_streaming_output_desc">The provider, model, and voice the agent speaks with on the Relay path.</string>
+    <string name="voice_settings_basic_synthesize_label">Basic synthesize fallback (/voice/synthesize)</string>
+    <string name="voice_settings_basic_synthesize_desc">Always available as the stable speech safety net when provider-native voice is unavailable.</string>
+    <string name="voice_settings_provider_unavailable">unavailable</string>
+    <string name="voice_settings_loading">loading...</string>
+    <string name="voice_settings_yes">yes</string>
+    <string name="voice_settings_no">no</string>
+    <string name="voice_settings_label_provider">Provider</string>
+    <string name="voice_settings_label_enabled">Enabled</string>
+    <string name="voice_settings_label_model">Model</string>
+    <string name="voice_settings_label_voice">Voice</string>
+    <string name="voice_settings_provider_gemini">Gemini</string>
+    <string name="voice_settings_provider_xai">xAI</string>
+    <string name="voice_settings_hide_enhanced">Hide enhanced voice (%1$s)</string>
+    <string name="voice_settings_advanced_enhanced">Advanced: enhanced voice (%1$s)</string>
+    <string name="voice_settings_enhanced_body">Pick a voice and tone for the %1$s TTS provider. Leave a field on \"Server default\" to use the relay\'s saved config.</string>
+    <string name="voice_settings_server_default">Server default</string>
+    <string name="voice_settings_voice_blank_label">Voice (blank = server default)</string>
+    <string name="voice_settings_supports_tone_tags">supports tone tags</string>
+    <string name="voice_settings_audio_tags_supported">Let the model add tone cues (e.g. [whispers], [excitedly]) to the spoken script.</string>
+    <string name="voice_settings_audio_tags_unsupported">Requires a Gemini 3.1 TTS model — pick one above to enable.</string>
+    <string name="voice_settings_voice_direction_label">Voice direction (optional)</string>
+    <string name="voice_settings_voice_direction_placeholder">e.g. Warm, calm narrator; unhurried pace.</string>
+    <string name="voice_settings_language_label">Language (optional, e.g. en)</string>
+    <string name="voice_settings_status_active">active</string>
+    <string name="voice_settings_status_unavailable">unavailable</string>
+    <string name="voice_settings_status_disabled">disabled</string>
+    <string name="voice_settings_status_available">available</string>
+    <string name="voice_settings_render_streaming">streaming (/voice/output)</string>
+    <string name="voice_settings_render_basic">basic synthesize (/voice/synthesize)</string>
+    <string name="voice_settings_render_path">Render path</string>
+    <string name="voice_settings_fallback_legacy">legacy TTS on error</string>
+    <string name="voice_settings_off">off</string>
+    <string name="voice_settings_label_status">Status</string>
+    <string name="voice_settings_hz_value">%1$d Hz</string>
+    <string name="voice_settings_label_sample_rate">Sample rate</string>
+    <string name="voice_settings_label_language">Language</string>
+    <string name="voice_settings_label_fallback">Fallback</string>
+    <string name="voice_settings_label_advertised">Advertised</string>
+    <string name="voice_settings_label_auth">Auth</string>
+    <string name="voice_settings_provider_id">Provider ID</string>
+    <string name="voice_settings_model_id">Model ID</string>
+    <string name="voice_settings_voice_id">Voice ID</string>
+    <string name="voice_settings_streaming_latency">Streaming latency: %1$d</string>
+    <string name="voice_settings_fallback_desc">Use legacy Hermes TTS if streaming output fails before audio starts</string>
+    <string name="voice_settings_expressive_tags">Expressive speech tags</string>
+    <string name="voice_settings_expressive_tags_desc">Let xAI add tone cues (whisper, laugh, sigh, pitch shifts) to streamed speech.</string>
+    <string name="voice_settings_saving">Saving...</string>
+    <string name="voice_settings_save">Save</string>
+    <string name="voice_settings_save_and_test">Save &amp; test</string>
+    <string name="voice_settings_sample_rate_must_be_number">Sample rate must be a number</string>
+    <string name="voice_settings_realtime_agent_title">Realtime Agent</string>
+    <string name="voice_settings_realtime_agent_desc">Hermes still owns tools and confirmations. Realtime mode may fall back to stable voice if the provider disconnects.</string>
+    <string name="voice_settings_detailed_trace">Detailed trace</string>
+    <string name="voice_settings_detailed_trace_desc">Show compact Hermes status and result provenance in the timeline</string>
+    <string name="voice_settings_persistent_session">Persistent session</string>
+    <string name="voice_settings_persistent_session_desc">Keep one provider conversation open across turns. Turn off to fall back to a fresh session per utterance.</string>
+    <string name="voice_settings_background_tasks">Background tasks</string>
+    <string name="voice_settings_background_tasks_desc">Long Hermes tasks keep running in the background so the conversation stays responsive; the answer is spoken when it\'s ready.</string>
+    <string name="voice_settings_promote_long_tasks">Promote long tasks</string>
+    <string name="voice_settings_promote_long_tasks_desc">Detach a slow run after %1$d ms instead of waiting silently</string>
+    <string name="voice_settings_spoken_handoff">Spoken handoff</string>
+    <string name="voice_settings_spoken_handoff_desc">Say a short \"I\'m on it\" when a task moves to the background</string>
+    <string name="voice_settings_when_answer_ready">When the answer is ready</string>
+    <string name="voice_settings_delivery_speak">Speak</string>
+    <string name="voice_settings_delivery_notify">Notify</string>
+    <string name="voice_settings_delivery_show_only">Show only</string>
+    <string name="voice_settings_realtime_defaults_desc">Server-side realtime voice agent defaults for this profile</string>
+    <string name="voice_settings_save_realtime_agent">Save realtime agent</string>
+    <string name="voice_settings_global_controls_title">Global Voice Controls</string>
+    <string name="voice_settings_global_controls_desc">These settings apply to both voice engines, on every profile.</string>
+    <string name="voice_settings_interaction_mode">Interaction mode</string>
+    <string name="voice_settings_interaction_tap">Tap to talk</string>
+    <string name="voice_settings_interaction_hold">Hold to talk</string>
+    <string name="voice_settings_interaction_continuous">Continuous</string>
+    <string name="voice_settings_silence_threshold">Silence threshold: %1$s</string>
+    <string name="voice_settings_silence_threshold_desc">End-of-speech: auto-stop after this much silence once you\'ve spoken (desktop default 1.25s).</string>
+    <string name="voice_settings_barge_in_title">Barge-in</string>
+    <string name="voice_settings_barge_in_master">Interrupt when I speak</string>
+    <string name="voice_settings_barge_in_master_desc">Experimental: may hear speaker output and falsely interrupt or record itself. Best with headphones.</string>
+    <string name="voice_settings_barge_in_aec_warning">Your device may have limited echo cancellation. Barge-in quality will vary.</string>
+    <string name="voice_settings_sensitivity">Sensitivity</string>
+    <string name="voice_settings_sensitivity_desc">Off disables detection without flipping the toggle above.</string>
+    <string name="voice_settings_sensitivity_off">Off</string>
+    <string name="voice_settings_sensitivity_low">Low</string>
+    <string name="voice_settings_sensitivity_default">Default</string>
+    <string name="voice_settings_sensitivity_high">High</string>
+    <string name="voice_settings_resume_after_interruption">Resume after interruption</string>
+    <string name="voice_settings_resume_after_interruption_desc">Continue from the next sentence if you don\'t keep talking</string>
+    <string name="voice_settings_stt_title">Speech-to-Text</string>
+    <string name="voice_settings_stt_standard_desc">Transcription runs on your Hermes server with its configured STT provider.</string>
+    <string name="voice_settings_test_engine_title">Test Current Engine</string>
+    <string name="voice_settings_playing_output_sample">Playing Voice Output sample...</string>
+    <string name="voice_settings_output_test_success">Voice Output test successful.</string>
+    <string name="voice_settings_playback_error">playback error</string>
+    <string name="voice_settings_starting_realtime_sample">Starting Realtime Agent sample...</string>
+    <string name="voice_settings_realtime_test_success">Realtime Agent test successful.</string>
+    <string name="voice_settings_provider_error">provider error</string>
+    <string name="voice_settings_not_set">not set</string>
+    <string name="voice_settings_server_configured_tts">server-configured TTS</string>
+    <string name="voice_settings_label_engine">Engine</string>
+    <string name="voice_settings_label_route">Route</string>
+    <string name="voice_settings_play_sample_desc">Play a short sample through the active voice route.</string>
+    <string name="voice_settings_output_test_failed_format">Voice Output test failed: %1$s</string>
+    <string name="voice_settings_play_output_test">Play Voice Output Test</string>
+    <string name="voice_settings_realtime_test_desc">Open a provider-native Realtime Agent session and play a short sample through the relay.</string>
+    <string name="voice_settings_realtime_test_failed_format">Realtime Agent test failed: %1$s</string>
+    <string name="voice_settings_play_realtime_test">Play Realtime Agent Test</string>
+    <string name="voice_settings_signin_to_edit">Sign in to Manage to edit the server\'s voice config.</string>
+    <string name="voice_settings_could_not_load_config">Could not load server voice config</string>
+    <string name="voice_settings_voice_config_saved">Voice config saved</string>
+    <string name="voice_settings_save_failed">Save failed</string>
+    <string name="voice_settings_signin_required">Sign in required.</string>
+    <string name="voice_settings_server_config_title">Server voice config</string>
+    <string name="voice_settings_standard_badge">Standard</string>
+    <string name="voice_settings_server_config_desc">Edit the host\'s text-to-speech and speech-to-text settings (config.yaml tts.* / stt.*) — the same values the dashboard\'s Audio settings write. Applies to new voice turns.</string>
+    <string name="voice_settings_no_elevenlabs_key">No ElevenLabs API key on the server — set ELEVENLABS_API_KEY in Manage → Keys to pick a voice from a list.</string>
+    <string name="voice_settings_saving_ellipsis">Saving…</string>
+    <string name="voice_settings_discard">Discard</string>
+    <string name="voice_settings_open_manage_signin">Open Manage to sign in</string>
+    <string name="voice_settings_retry">Retry</string>
+    <string name="voice_settings_hide_advanced_manual">Hide advanced manual entry</string>
+    <string name="voice_settings_advanced_manual">Advanced manual entry</string>
+    <string name="voice_settings_search">Search</string>
+    <string name="voice_settings_no_matches">No matches</string>
+    <string name="voice_settings_none">none</string>
+    <string name="voice_settings_auth_not_reported">not reported</string>
+    <string name="voice_settings_auth_hermes_xai_oauth">Hermes xAI OAuth</string>
+    <string name="voice_settings_auth_xai_oauth">xAI OAuth</string>
+    <string name="voice_settings_auth_xai_env">xAI env</string>
+    <string name="voice_settings_auth_openai_env">OpenAI env</string>
+    <string name="voice_settings_auth_server_managed">server managed</string>
+    <string name="voice_settings_profile_label_with_profile">%1$s (%2$s)</string>
+    <string name="voice_settings_profile_label_pending">%1$s (pending)</string>
+    <string name="voice_settings_scope_profile_config">profile config</string>
+    <string name="voice_settings_scope_relay_config">relay config</string>
+    <string name="voice_settings_scope_global_config">global Hermes config</string>
+    <string name="voice_settings_scope_with_fallback">%1$s fallback</string>
+    <string name="voice_settings_voice_not_advertised">Voice is not advertised for the selected model</string>
+    <string name="voice_settings_provider_not_valid">Provider selection is not valid</string>
+    <string name="voice_settings_saved_with_warning_format">Saved with warning: %1$s</string>
+    <string name="voice_settings_refreshing_options">Refreshing provider options...</string>
+    <string name="voice_settings_summary_provider">provider ...</string>
+    <string name="voice_settings_summary_voice">voice ...</string>
+    <string name="voice_settings_loading_output">loading voice output...</string>
+    <string name="voice_settings_summary_realtime">realtime ...</string>
+    <string name="voice_settings_loading_realtime">realtime loading...</string>
+    <string name="voice_settings_summary_hermes_engine">Hermes Chat + Voice Output - %1$s</string>
+    <string name="voice_settings_summary_realtime_engine">Realtime Agent - %1$s</string>
+    <string name="voice_settings_voices_fallback">Voices</string>
+    <string name="voice_settings_recommended">recommended</string>
+    <string name="voice_settings_custom">custom</string>
+    <string name="voice_settings_current_value">%1$s (current)</string>
+    <string name="voice_settings_manual_entry">manual entry</string>
+    <string name="voice_settings_manual_group">Manual</string>
+
+    <!-- DashboardManagementScreen -->
+    <!-- Tab labels (display) -->
+    <string name="dashboard_tab_skills">Skills</string>
+    <string name="dashboard_tab_cron">Cron</string>
+    <string name="dashboard_tab_mcp">MCP</string>
+    <string name="dashboard_tab_catalog">Catalog</string>
+    <string name="dashboard_tab_profiles">Profiles</string>
+    <string name="dashboard_tab_models">Models</string>
+    <string name="dashboard_tab_keys">Keys</string>
+    <string name="dashboard_tab_config">Config</string>
+    <!-- Lowercase tab labels for compact UI surfaces (KPI strip) -->
+    <string name="dashboard_tab_skills_lower">skills</string>
+    <string name="dashboard_tab_cron_lower">cron</string>
+    <string name="dashboard_tab_mcp_lower">mcp</string>
+    <string name="dashboard_tab_catalog_lower">catalog</string>
+    <string name="dashboard_tab_profiles_lower">profiles</string>
+    <string name="dashboard_tab_models_lower">models</string>
+    <string name="dashboard_tab_keys_lower">keys</string>
+    <string name="dashboard_tab_config_lower">config</string>
+
+    <!-- Tile titles + subtitles -->
+    <string name="dashboard_tile_profiles_title">Profiles</string>
+    <string name="dashboard_tile_profiles_sub">SOUL, memory, skills, sessions</string>
+    <string name="dashboard_tile_skills_title">Skills + Tools</string>
+    <string name="dashboard_tile_skills_sub">Browse, enable, configure</string>
+    <string name="dashboard_tile_cron_title">Automations</string>
+    <string name="dashboard_tile_cron_sub">Cron, background runs, delivery</string>
+    <string name="dashboard_tile_mcp_title">MCP Servers</string>
+    <string name="dashboard_tile_mcp_sub">Servers, status, tools</string>
+    <string name="dashboard_tile_catalog_title">Catalog</string>
+    <string name="dashboard_tile_catalog_sub">Discover upstream servers</string>
+    <string name="dashboard_tile_models_title">Models</string>
+    <string name="dashboard_tile_models_sub">Pick provider + default model</string>
+    <string name="dashboard_tile_keys_title">Keys</string>
+    <string name="dashboard_tile_keys_sub">Provider keys + env secrets</string>
+    <string name="dashboard_tile_config_title">Config</string>
+    <string name="dashboard_tile_config_sub">Schema and runtime options</string>
+
+    <!-- Nav tiles -->
+    <string name="dashboard_nav_connections_title">Connections</string>
+    <string name="dashboard_nav_connections_sub">Pair, switch, verify routes</string>
+
+    <!-- Hub header -->
+    <string name="dashboard_hub_title">Relay Hub</string>
+    <string name="dashboard_hub_meta">overview</string>
+
+    <!-- Health word KPI strip -->
+    <string name="dashboard_health_loading">…</string>
+    <string name="dashboard_health_signin">sign-in</string>
+    <string name="dashboard_health_offline">offline</string>
+    <string name="dashboard_health_error">error</string>
+    <string name="dashboard_health_ready">ready</string>
+
+    <!-- KPI strip labels -->
+    <string name="dashboard_metric_dashboard">dashboard</string>
+    <string name="dashboard_metric_server">server</string>
+
+    <!-- Return strip -->
+    <string name="dashboard_overview_label">Overview</string>
+
+    <!-- Connection header status line -->
+    <string name="dashboard_status_checking">Checking dashboard</string>
+    <string name="dashboard_status_signed_in">Dashboard signed in</string>
+    <string name="dashboard_status_signin_required">Dashboard sign-in required</string>
+    <string name="dashboard_status_available">Dashboard available</string>
+    <string name="dashboard_provider_prefix">Provider: %1$s</string>
+    <string name="dashboard_no_url">No dashboard URL</string>
+    <string name="dashboard_route_suffix">%1$s route</string>
+    <string name="dashboard_checked_at">Checked %1$s</string>
+    <string name="dashboard_sign_out">Sign out</string>
+    <string name="dashboard_just_now">just now</string>
+    <string name="dashboard_minutes_ago">%1$dm ago</string>
+    <string name="dashboard_hours_ago">%1$dh ago</string>
+
+    <!-- Sign-in card -->
+    <string name="dashboard_signin_required_title">Dashboard sign-in required</string>
+    <string name="dashboard_signin_required_body">Manage uses the Hermes dashboard session at %1$s.</string>
+    <string name="dashboard_signin_route_hint">You\'re on the %1$s route. Dashboard sign-ins are per host, so your sign-in from the other route doesn\'t carry over — sign in once here and the app keeps both sessions.</string>
+    <string name="dashboard_signin_with_provider">Sign in with %1$s</string>
+    <string name="dashboard_username_password">Username &amp; Password</string>
+    <string name="dashboard_username">Username</string>
+    <string name="dashboard_password">Password</string>
+    <string name="dashboard_sign_in">Sign in</string>
+    <string name="dashboard_signing_in">Signing in…</string>
+    <string name="dashboard_no_supported_provider">This dashboard did not advertise a supported Android sign-in provider.</string>
+
+    <!-- OAuth sign-in dialog -->
+    <string name="dashboard_oauth_initial_status">Complete sign-in in the secure dashboard page.</string>
+    <string name="dashboard_oauth_verifying">Verifying dashboard session…</string>
+    <string name="dashboard_oauth_not_accepted">Sign-in was not accepted yet. Finish the dashboard flow to continue.</string>
+    <string name="dashboard_oauth_verify_failed">Dashboard sign-in verification failed</string>
+    <string name="dashboard_close_signin">Close sign-in</string>
+
+    <!-- Error body -->
+    <string name="dashboard_error_title">Dashboard unavailable</string>
+    <string name="dashboard_error_target">Couldn\'t load from %1$s</string>
+    <string name="dashboard_error_route_suffix"> (%1$s route)</string>
+    <string name="dashboard_retry">Retry</string>
+
+    <!-- Loading / empty states -->
+    <string name="dashboard_loading_section">Loading %1$s…</string>
+    <string name="dashboard_empty_section">No %1$s returned</string>
+
+    <!-- Section action buttons -->
+    <string name="dashboard_section_action_change_main_model">Change main model</string>
+    <string name="dashboard_section_action_new_profile">New profile</string>
+    <string name="dashboard_section_action_browse_hub">Browse hub</string>
+    <string name="dashboard_section_action_update_installed">Update installed</string>
+
+    <!-- Action labels (rendered via kind → string) -->
+    <string name="dashboard_action_set">Set</string>
+    <string name="dashboard_action_reveal">Reveal</string>
+    <string name="dashboard_action_clear">Clear</string>
+    <string name="dashboard_action_install">Install</string>
+    <string name="dashboard_action_runs">Runs</string>
+    <string name="dashboard_action_resume">Resume</string>
+    <string name="dashboard_action_pause">Pause</string>
+    <string name="dashboard_action_run_now">Run now</string>
+    <string name="dashboard_action_delete">Delete</string>
+    <string name="dashboard_action_enable">Enable</string>
+    <string name="dashboard_action_disable">Disable</string>
+    <string name="dashboard_action_test">Test</string>
+    <string name="dashboard_action_remove">Remove</string>
+    <string name="dashboard_action_soul">SOUL</string>
+    <string name="dashboard_action_edit_soul">Edit SOUL</string>
+    <string name="dashboard_action_use">Use</string>
+    <string name="dashboard_action_describe">Describe</string>
+    <string name="dashboard_action_model">Model</string>
+    <string name="dashboard_action_completed">%1$s completed</string>
+    <string name="dashboard_action_failed">%1$s failed</string>
+    <string name="dashboard_more">More</string>
+
+    <!-- Detail dialog -->
+    <string name="dashboard_detail_title">%1$s · %2$s</string>
+    <string name="dashboard_done">Done</string>
+    <string name="dashboard_no_recent_runs">No recent runs returned.</string>
+    <string name="dashboard_soul_not_exists">No SOUL.md exists for this profile yet.</string>
+
+    <!-- Confirm dialogs -->
+    <string name="dashboard_make_default_title">Make %1$s the server default?</string>
+    <string name="dashboard_activate_profile_body">Sets %1$s as the server\'s active agent for every client — the persistent “hermes use” default. Switching agents in chat is per-conversation and doesn\'t change this.</string>
+    <string name="dashboard_generic_action_body">This changes server-side dashboard state for %1$s.</string>
+    <string name="dashboard_set_default">Set default</string>
+    <string name="dashboard_input_action_title">%1$s %2$s</string>
+    <string name="dashboard_action_confirm_title">%1$s · %2$s</string>
+    <string name="dashboard_env_key_help">Stored in the server\'s ~/.hermes/.env. The field is write-only here — use Reveal to read the current value back.</string>
+    <string name="dashboard_profile_desc_help">Short role description shown in the profile picker and used for routing. Leave empty to clear it.</string>
+    <string name="dashboard_value_label">Value</string>
+    <string name="dashboard_description_label">Description</string>
+    <string name="dashboard_save">Save</string>
+    <string name="dashboard_cancel">Cancel</string>
+    <string name="dashboard_new_profile_title">New profile</string>
+    <string name="dashboard_name_label">Name</string>
+    <string name="dashboard_description_optional">Description (optional)</string>
+    <string name="dashboard_clone_from_default">Start from the default profile\'s config and skills</string>
+    <string name="dashboard_create">Create</string>
+    <string name="dashboard_expensive_model_title">Expensive model</string>
+    <string name="dashboard_expensive_model_default_warning">This model can be expensive to run.</string>
+    <string name="dashboard_use_anyway">Use anyway</string>
+    <string name="dashboard_clear_session_title">Clear dashboard session?</string>
+    <string name="dashboard_clear_session_body">This signs this connection out of the Hermes dashboard on this device. Your API key, saved connection, and Relay pairing stay unchanged.</string>
+    <string name="dashboard_clear_session_button">Clear session</string>
+    <string name="dashboard_session_cleared">Dashboard session cleared</string>
+
+    <!-- OAuth success message -->
+    <string name="dashboard_signed_in">Signed in</string>
+    <string name="dashboard_signed_in_with">Signed in with %1$s</string>
+
+    <!-- Top bar -->
+    <string name="dashboard_title">Manage</string>
+    <string name="dashboard_back">Back</string>
+    <string name="dashboard_terminal">Terminal</string>
+    <string name="dashboard_settings">Settings</string>
+    <string name="dashboard_refresh">Refresh</string>
+
+    <!-- Model picker -->
+    <string name="dashboard_main_model_title">Main model</string>
+    <string name="dashboard_profile_model_title">Model for %1$s</string>
+    <string name="dashboard_loading_provider_catalog">Loading provider catalog…</string>
+    <string name="dashboard_no_model_options">The dashboard returned no model options.</string>
+    <string name="dashboard_model_options_load_failed">Could not load model options</string>
+    <string name="dashboard_model_picker_help">Applies to new sessions. Greyed providers need a key — add one under Manage → Keys.</string>
+    <string name="dashboard_key_missing_suffix"> · key missing</string>
+    <string name="dashboard_model_set">Model set to %1$s</string>
+    <string name="dashboard_model_change_failed">Model change failed</string>
+
+    <!-- Skills hub dialog -->
+    <string name="dashboard_skills_hub_title">Skills hub</string>
+    <string name="dashboard_skills_hub_help">Search the configured hub sources. Preview reads the SKILL.md before anything is installed.</string>
+    <string name="dashboard_skills_hub_sources">Sources: %1$s</string>
+    <string name="dashboard_search_skills">Search skills</string>
+    <string name="dashboard_search">Search</string>
+    <string name="dashboard_hub_searching">Searching hub sources (can take up to ~30s)…</string>
+    <string name="dashboard_hub_search_failed">Hub search failed</string>
+    <string name="dashboard_hub_no_matches">No skills matched \"%1$s\".</string>
+    <string name="dashboard_hub_featured">Featured skills</string>
+    <string name="dashboard_hub_installed">installed</string>
+    <string name="dashboard_hub_skill_md_title">%1$s · SKILL.md</string>
+    <string name="dashboard_hub_preview">Preview</string>
+    <string name="dashboard_hub_preview_failed">Preview failed</string>
+    <string name="dashboard_hub_install">Install</string>
+    <string name="dashboard_hub_install_started">Install of %1$s started — refresh Skills shortly</string>
+    <string name="dashboard_hub_install_failed">Install failed to start</string>
+    <string name="dashboard_hub_uninstall">Uninstall</string>
+    <string name="dashboard_hub_uninstall_started">Uninstall of %1$s started — refresh Skills shortly</string>
+    <string name="dashboard_hub_uninstall_failed">Uninstall failed to start</string>
+    <string name="dashboard_close">Close</string>
+
+    <!-- Soul editor -->
+    <string name="dashboard_soul_editor_title">SOUL.md · %1$s</string>
+    <string name="dashboard_soul_editor_missing">No SOUL.md exists for this profile yet — saving creates it.</string>
+    <string name="dashboard_soul_editor_chars">%1$d chars</string>
+    <string name="dashboard_saving">Saving…</string>
+    <string name="dashboard_soul_load_failed">Could not load SOUL.md</string>
+    <string name="dashboard_soul_saved">SOUL.md saved for %1$s</string>
+    <string name="dashboard_soul_save_failed">SOUL.md save failed</string>
+
+    <!-- Sign-in submit -->
+    <string name="dashboard_signin_no_session">Sign-in completed, but the dashboard did not return an authenticated session.</string>
+    <string name="dashboard_signin_failed">Dashboard sign-in failed</string>
+
+    <!-- Loader error fallbacks -->
+    <string name="dashboard_no_url_configured">No dashboard URL is configured for this connection.</string>
+    <string name="dashboard_request_failed">Dashboard request failed</string>
+
+    <!-- Target line -->
+    <string name="dashboard_target_line">Dashboard: %1$s</string>
+    <string name="dashboard_target_line_route_suffix"> · %1$s route</string>
+
+    <!-- Skills update -->
+    <string name="dashboard_skills_update_started">Skill update started on the server — refresh Skills in a minute</string>
+    <string name="dashboard_skills_update_failed">Skill update failed to start</string>
+
+    <!-- Profile create -->
+    <string name="dashboard_profile_created">Profile %1$s created</string>
+    <string name="dashboard_profile_create_failed">Profile create failed</string>
 </resources>
 

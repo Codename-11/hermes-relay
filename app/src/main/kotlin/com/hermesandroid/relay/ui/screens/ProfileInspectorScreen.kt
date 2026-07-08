@@ -62,9 +62,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ProfileMemoryEntry
 import com.hermesandroid.relay.data.ProfileSkillEntry
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -149,12 +151,16 @@ fun ProfileInspectorScreen(
         }
     }
 
-    val tabs = remember {
+    val configLabel = stringResource(R.string.profile_inspector_tab_config)
+    val soulLabel = stringResource(R.string.profile_inspector_tab_soul)
+    val memoryLabel = stringResource(R.string.profile_inspector_tab_memory)
+    val skillsLabel = stringResource(R.string.profile_inspector_tab_skills)
+    val tabs = remember(configLabel, soulLabel, memoryLabel, skillsLabel) {
         listOf(
-            InspectorTab("Config", InspectorSection.Config),
-            InspectorTab("SOUL", InspectorSection.Soul),
-            InspectorTab("Memory", InspectorSection.Memory),
-            InspectorTab("Skills", InspectorSection.Skills),
+            InspectorTab(configLabel, InspectorSection.Config),
+            InspectorTab(soulLabel, InspectorSection.Soul),
+            InspectorTab(memoryLabel, InspectorSection.Memory),
+            InspectorTab(skillsLabel, InspectorSection.Skills),
         )
     }
     // Resolve the incoming deep-link section arg to a tab index. An
@@ -176,7 +182,7 @@ fun ProfileInspectorScreen(
                 title = {
                     Column {
                         Text(
-                            text = "Inspect $profileName",
+                            text = stringResource(R.string.profile_inspector_title, profileName),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         if (!profileModel.isNullOrBlank()) {
@@ -192,7 +198,7 @@ fun ProfileInspectorScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.profile_inspector_back),
                         )
                     }
                 },
@@ -200,7 +206,7 @@ fun ProfileInspectorScreen(
                     IconButton(onClick = { viewModel.loadAll() }) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Refresh all",
+                            contentDescription = stringResource(R.string.profile_inspector_refresh_all),
                         )
                     }
                 },
@@ -294,17 +300,17 @@ private fun ConfigPane(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            PathCaption(label = "Config file", path = response.path)
+            PathCaption(label = stringResource(R.string.profile_inspector_config_file), path = response.path)
             if (response.readonly) {
                 Text(
-                    text = "Read-only view",
+                    text = stringResource(R.string.profile_inspector_read_only),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
             if (response.config.isEmpty()) {
-                EmptyStateRow("(empty config)")
+                EmptyStateRow(stringResource(R.string.profile_inspector_empty_config))
             } else {
                 JsonObjectTree(obj = response.config, depth = 0)
             }
@@ -370,7 +376,14 @@ private fun JsonObjectTree(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "{${value.size} field${if (value.size == 1) "" else "s"}}",
+                            text = stringResource(
+                                if (value.size == 1) {
+                                    R.string.profile_inspector_field_count_single
+                                } else {
+                                    R.string.profile_inspector_field_count
+                                },
+                                value.size,
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -457,9 +470,9 @@ private fun JsonObjectTree(
                                         Icons.Filled.Visibility
                                     },
                                     contentDescription = if (isRevealed) {
-                                        "Hide value"
+                                        stringResource(R.string.profile_inspector_hide_value)
                                     } else {
-                                        "Reveal value"
+                                        stringResource(R.string.profile_inspector_reveal_value)
                                     },
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp),
@@ -568,12 +581,13 @@ private fun SoulPane(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     PathCaption(
-                        label = if (response.exists) "SOUL file" else "SOUL file (not created)",
+                        label = if (response.exists) stringResource(R.string.profile_inspector_soul_file)
+                        else stringResource(R.string.profile_inspector_soul_file_not_created),
                         path = response.path,
                     )
                     if (response.exists) {
                         Text(
-                            text = "${response.sizeBytes} bytes",
+                            text = stringResource(R.string.profile_inspector_bytes, response.sizeBytes),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -590,16 +604,16 @@ private fun SoulPane(
                                 Icons.Filled.Code
                             },
                             contentDescription = if (rawView) {
-                                "Show rendered markdown"
+                                stringResource(R.string.profile_inspector_show_rendered)
                             } else {
-                                "Show raw source"
+                                stringResource(R.string.profile_inspector_show_raw)
                             },
                         )
                     }
                     IconButton(onClick = onBeginEdit) {
                         Icon(
                             imageVector = Icons.Filled.Edit,
-                            contentDescription = "Edit SOUL",
+                            contentDescription = stringResource(R.string.profile_inspector_edit_soul),
                         )
                     }
                 } else {
@@ -609,7 +623,7 @@ private fun SoulPane(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = "Cancel edit",
+                            contentDescription = stringResource(R.string.profile_inspector_cancel_edit),
                         )
                     }
                 }
@@ -641,11 +655,11 @@ private fun SoulPane(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "No SOUL.md for this profile",
+                        text = stringResource(R.string.profile_inspector_no_soul),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "Tap the pencil icon above to create one.",
+                        text = stringResource(R.string.profile_inspector_no_soul_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -783,7 +797,7 @@ private fun EditorBottomBar(
             enabled = !saving,
             modifier = Modifier.weight(1f),
         ) {
-            Text("Cancel")
+            Text(stringResource(R.string.profile_inspector_cancel))
         }
         FilledTonalButton(
             onClick = onSave,
@@ -796,9 +810,9 @@ private fun EditorBottomBar(
                     strokeWidth = 2.dp,
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Saving…")
+                Text(stringResource(R.string.profile_inspector_saving))
             } else {
-                Text("Save")
+                Text(stringResource(R.string.profile_inspector_save))
             }
         }
     }
@@ -853,11 +867,11 @@ private fun MemoryPane(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "No memory entries for this profile",
+                        text = stringResource(R.string.profile_inspector_no_memory),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "Memories directory:",
+                        text = stringResource(R.string.profile_inspector_memories_dir),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -888,7 +902,7 @@ private fun MemoryPane(
                             val placeholder = ProfileMemoryEntry(
                                 name = newEntryFilename.removeSuffix(".md"),
                                 filename = newEntryFilename,
-                                path = "(pending save)",
+                                path = stringResource(R.string.profile_inspector_pending_save),
                                 content = "",
                                 sizeBytes = 0L,
                                 truncated = false,
@@ -947,7 +961,7 @@ private fun MemoryPane(
                         contentDescription = null,
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("New entry")
+                    Text(stringResource(R.string.profile_inspector_new_entry))
                 }
             }
 
@@ -981,26 +995,27 @@ private fun NewMemoryEntryDialog(
     onCreate: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val duplicateError = stringResource(R.string.profile_inspector_filename_exists)
     var filename by remember { mutableStateOf("") }
-    val error = remember(filename, existingFilenames) {
+    val error = remember(filename, existingFilenames, duplicateError) {
         if (filename.isBlank()) null
         else validateFilename(filename)
-            ?: if (filename in existingFilenames) "A file with that name already exists" else null
+            ?: if (filename in existingFilenames) duplicateError else null
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New memory entry") },
+        title = { Text(stringResource(R.string.profile_inspector_new_memory_entry)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "Filename must end in .md",
+                    text = stringResource(R.string.profile_inspector_filename_md),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedTextField(
                     value = filename,
                     onValueChange = { filename = it },
-                    placeholder = { Text("notes.md") },
+                    placeholder = { Text(stringResource(R.string.profile_inspector_filename_placeholder)) },
                     isError = error != null && filename.isNotBlank(),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -1019,12 +1034,12 @@ private fun NewMemoryEntryDialog(
                 onClick = { onCreate(filename.trim()) },
                 enabled = filename.isNotBlank() && error == null,
             ) {
-                Text("Create")
+                Text(stringResource(R.string.profile_inspector_create))
             }
         },
         dismissButton = {
             OutlinedButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.profile_inspector_cancel))
             }
         },
     )
@@ -1067,7 +1082,7 @@ private fun MemoryEntryCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "${entry.sizeBytes} bytes",
+                        text = stringResource(R.string.profile_inspector_bytes, entry.sizeBytes),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1076,7 +1091,7 @@ private fun MemoryEntryCard(
                     IconButton(onClick = onBeginEdit) {
                         Icon(
                             imageVector = Icons.Filled.Edit,
-                            contentDescription = "Edit entry",
+                            contentDescription = stringResource(R.string.profile_inspector_edit_entry),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -1086,7 +1101,8 @@ private fun MemoryEntryCard(
                         } else {
                             Icons.Filled.ExpandMore
                         },
-                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        contentDescription = if (expanded) stringResource(R.string.profile_inspector_collapse)
+                        else stringResource(R.string.profile_inspector_expand),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -1096,7 +1112,7 @@ private fun MemoryEntryCard(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = "Cancel edit",
+                            contentDescription = stringResource(R.string.profile_inspector_cancel_edit),
                         )
                     }
                 }
@@ -1142,8 +1158,9 @@ private fun MemoryEntryCard(
                             )
                             .padding(8.dp),
                     ) {
+                        val emptyContentLabel = stringResource(R.string.profile_inspector_empty_content)
                         Text(
-                            text = entry.content.ifBlank { "(empty)" },
+                            text = entry.content.ifBlank { emptyContentLabel },
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -1178,11 +1195,11 @@ private fun SkillsPane(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text = "No skills in this profile",
+                    text = stringResource(R.string.profile_inspector_no_skills),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = "Total: ${response.total}",
+                    text = stringResource(R.string.profile_inspector_skills_total, response.total),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1191,8 +1208,9 @@ private fun SkillsPane(
             // Group by category, preserving insertion order (server-side
             // ordering is the source of truth). A LinkedHashMap keeps the
             // traversal order stable.
-            val grouped = remember(response.skills) {
-                response.skills.groupBy { it.category.ifBlank { "(uncategorized)" } }
+            val uncategorizedLabel = stringResource(R.string.profile_inspector_uncategorized)
+            val grouped = remember(response.skills, uncategorizedLabel) {
+                response.skills.groupBy { it.category.ifBlank { uncategorizedLabel } }
                     .toList() // preserves group order in the JSON payload
             }
             LazyColumn(
@@ -1221,7 +1239,7 @@ private fun SkillsPane(
                     // rather than N times.
                     item(key = "__toggle_unsupported_caption__") {
                         Text(
-                            text = "Enable/disable requires a newer server.",
+                            text = stringResource(R.string.profile_inspector_toggle_unsupported),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
@@ -1307,7 +1325,7 @@ private fun SkillRow(
                 if (!localEnabled) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "(disabled)",
+                        text = stringResource(R.string.profile_inspector_disabled),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1392,7 +1410,7 @@ private fun <T> PaneShell(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
-                Button(onClick = onRetry) { Text("Retry") }
+                Button(onClick = onRetry) { Text(stringResource(R.string.profile_inspector_retry)) }
             }
         }
         is LoadState.Loaded<T> -> {
@@ -1437,7 +1455,7 @@ private fun TruncatedBanner() {
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = "Content truncated by relay — showing the first slice only.",
+            text = stringResource(R.string.profile_inspector_truncated),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
