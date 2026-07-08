@@ -394,6 +394,7 @@ fun ApiServerInfoSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val testingText = stringResource(R.string.conn_info_testing)
 
     val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
     val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
