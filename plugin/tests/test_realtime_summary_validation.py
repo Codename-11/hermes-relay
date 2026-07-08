@@ -109,6 +109,32 @@ class AnswerOverlapTest(unittest.TestCase):
             ),
         )
 
+    def test_queue_speak_in_a_final_answer_is_flagged(self) -> None:
+        # Observed live: the summary response was a queue acknowledgement —
+        # the completed answer was lost behind it.
+        self.assertEqual(
+            "acknowledgement_not_summary",
+            _bad_forced_summary_reason(
+                "It's queued and will start automatically once the Minnesota "
+                "check finishes. I'll let you know the dog's name as soon as "
+                "both results come back.",
+                "Obsidian's Minnesota context is one active project: St. Paul "
+                "relocation, moving from Tampa Bay, Florida by July 2027, "
+                "renting first before starting a purchase.",
+            ),
+        )
+
+    def test_overlap_is_whole_word_not_substring(self) -> None:
+        # "will START automatically" must not count as evidence for an answer
+        # containing "starting" — the substring hole behind the live miss.
+        answer = "The job is starting tomorrow at 9am in the main warehouse."
+        self.assertEqual(
+            "no_answer_overlap",
+            _bad_forced_summary_reason(
+                "Sure — it will start automatically for you.", answer
+            ),
+        )
+
 
 class EarlyCommitTest(unittest.IsolatedAsyncioTestCase):
     """Forced-summary early flush: stream live once the prefix validates."""
@@ -170,6 +196,18 @@ class EarlyCommitTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_never_commits_without_answer_overlap(self) -> None:
         self._buffer("Everything went really well on my side of things today.")
+        await self.handler._maybe_commit_forced_summary_early(None, self.session)
+        self.assertFalse(self.session.native_forced_summary_committed)
+
+    async def test_single_weak_hit_does_not_commit_early(self) -> None:
+        # Early commit is irreversible, so it needs TWO whole-word evidence
+        # hits. The live regression prefix ("It's queued and will start
+        # automatically once…") must keep buffering — end validation and the
+        # fallback then deliver the real answer.
+        self.session.native_forced_summary_result = {
+            "answer": "The relocation project is starting in Tokyo in 2027."
+        }
+        self._buffer("It's fine — this one will start automatically in Tokyo, ")
         await self.handler._maybe_commit_forced_summary_early(None, self.session)
         self.assertFalse(self.session.native_forced_summary_committed)
 

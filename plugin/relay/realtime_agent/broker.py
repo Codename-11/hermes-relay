@@ -1960,7 +1960,14 @@ class RealtimeAgentHandler:
         if _bad_forced_summary_reason(text) is not None:
             return
         answer = _result_answer_text(session.native_forced_summary_result or {})
-        if not _summary_overlaps_answer(text, answer):
+        # Committing is irreversible (audio plays), so the early bar is
+        # HIGHER than end-of-response validation: two whole-word evidence
+        # hits, not one. A single hit let a queue acknowledgement ("will
+        # start automatically…") stream as the answer (observed live). A
+        # prefix that can't clear the bar simply keeps buffering — the full
+        # response still gets end validation + fallback.
+        hits = _summary_overlap_hits(text, answer)
+        if hits != -1 and hits < 2:
             return
         session.native_forced_summary_committed = True
         buffered = list(session.native_forced_summary_buffer)
@@ -2874,7 +2881,11 @@ class RealtimeAgentHandler:
                 )
         elif origin == "queued" and speak:
             # Broker-initiated start of a previously queued task — one short
-            # spoken transition so the user knows the next item began.
+            # spoken transition so the user knows the next item began. Wait
+            # for the floor first: a fallback TTS render for the previous
+            # result may still be speaking, and the transition must not
+            # overlap or clip it.
+            await self._await_floor_idle_for_result(session)
             with contextlib.suppress(Exception):
                 await connection.request_response(
                     instructions=_queued_start_prompt(transcript)
@@ -3082,6 +3093,20 @@ class RealtimeAgentHandler:
         queued task's handoff can't stomp the delivery; then runs the queued
         task as a durable background run through the same delivery machinery.
         """
+        # Phase 1: wait (bounded ~10s) for the current result's spoken
+        # summary to actually BEGIN. This task is spawned the moment the run's
+        # task completes — before the delivery task has injected — so "no
+        # summary active" is true trivially at first; starting then would race
+        # the injection (correct ordering previously held only by task
+        # scheduling luck). Cancel/timeout/visual-only paths never inject, so
+        # the grace expiry lets those proceed.
+        for _ in range(20):
+            if session.closed:
+                return
+            if session.native_forced_summary_active or session.native_forced_summary_done:
+                break
+            await asyncio.sleep(0.5)
+        # Phase 2: wait (bounded) for the active summary to finish speaking.
         for _ in range(int(_DELIVERY_CONFIRM_SECONDS * 2)):
             if session.closed:
                 return
@@ -4883,16 +4908,31 @@ def _answer_evidence_tokens(answer: str) -> set[str]:
     return tokens
 
 
-def _summary_overlaps_answer(summary: str, answer: str) -> bool:
-    """True when the summary shares at least one content token with the
-    answer — positive evidence the model is actually delivering it. Vacuously
-    true when the answer has no content tokens to check against (e.g. a bare
-    'Done.'), so short confirmations never false-positive into the fallback."""
+def _summary_overlap_hits(summary: str, answer: str) -> int:
+    """Count WHOLE-WORD content tokens the summary shares with the answer.
+
+    Returns -1 when the answer has no content tokens to check against (a bare
+    'Done.') — the check is vacuous there. Whole-word matching matters:
+    substring matching let "will START automatically" (a queue acknowledgement)
+    count as evidence for an answer containing "starting" (observed live — a
+    completed answer was lost behind a queue-ack that early-committed on one
+    weak substring hit)."""
     evidence = _answer_evidence_tokens(answer)
     if not evidence:
-        return True
-    lowered = summary.lower()
-    return any(token in lowered for token in evidence)
+        return -1
+    words: set[str] = set()
+    for raw in summary.lower().split():
+        token = raw.strip(".,;:!?'\"()[]{}—–-*`")
+        if token:
+            words.add(token)
+    return len(evidence & words)
+
+
+def _summary_overlaps_answer(summary: str, answer: str) -> bool:
+    """True when the summary shares at least one whole-word content token with
+    the answer — positive evidence the model is actually delivering it.
+    Vacuously true when the answer has no content tokens."""
+    return _summary_overlap_hits(summary, answer) != 0
 
 
 def _is_bad_forced_summary_response(text: str, answer: str | None = None) -> bool:
@@ -4932,6 +4972,16 @@ def _bad_forced_summary_reason(text: str, answer: str | None = None) -> str | No
         "looking that up",
         "looking into",
         "as soon as i have",
+        # Queue-speak in a FINAL answer (observed live: the summary response
+        # was "It's queued and will start automatically once the Minnesota
+        # check finishes. I'll let you know…" — a queue acknowledgement
+        # spoken instead of the completed result).
+        "i'll let you know",
+        "i will let you know",
+        "it's queued",
+        "is queued",
+        "queued and will",
+        "in the queue",
     )
     for phrase in bad_phrases:
         if phrase in normalized:
