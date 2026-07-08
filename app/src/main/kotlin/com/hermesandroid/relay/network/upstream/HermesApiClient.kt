@@ -28,6 +28,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -604,10 +605,16 @@ class HermesApiClient(
         )
         val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
 
-        val request = authRequest("$baseUrl/api/sessions/$sessionId/chat/stream")
-            .header("Accept", "text/event-stream")
-            .post(requestBody.toRequestBody(JSON_MEDIA))
-            .build()
+        val request = authRequestOrNull("$baseUrl/api/sessions/$sessionId/chat/stream")
+            ?.header("Accept", "text/event-stream")
+            ?.post(requestBody.toRequestBody(JSON_MEDIA))
+            ?.build()
+            ?: run {
+                // #131: malformed base URL — fail the turn through the normal
+                // error channel instead of throwing out of the ViewModel.
+                mainHandler.post { onError(invalidBaseUrlMessage()) }
+                return failedEventSource()
+            }
 
         val completeCalled = AtomicBoolean(false)
         // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
@@ -850,10 +857,15 @@ class HermesApiClient(
         )
         val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
 
-        val request = authRequest("$baseUrl/v1/chat/completions")
-            .header("Accept", "text/event-stream")
-            .post(requestBody.toRequestBody(JSON_MEDIA))
-            .build()
+        val request = authRequestOrNull("$baseUrl/v1/chat/completions")
+            ?.header("Accept", "text/event-stream")
+            ?.post(requestBody.toRequestBody(JSON_MEDIA))
+            ?.build()
+            ?: run {
+                // #131: malformed base URL — see sendChatStream.
+                mainHandler.post { onError(invalidBaseUrlMessage()) }
+                return failedEventSource()
+            }
 
         val completeCalled = AtomicBoolean(false)
         val messageStarted = AtomicBoolean(false)
@@ -1033,10 +1045,15 @@ class HermesApiClient(
         )
         val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
 
-        val request = authRequest("$baseUrl/v1/runs")
-            .header("Accept", "text/event-stream")
-            .post(requestBody.toRequestBody(JSON_MEDIA))
-            .build()
+        val request = authRequestOrNull("$baseUrl/v1/runs")
+            ?.header("Accept", "text/event-stream")
+            ?.post(requestBody.toRequestBody(JSON_MEDIA))
+            ?.build()
+            ?: run {
+                // #131: malformed base URL — see sendChatStream.
+                mainHandler.post { onError(invalidBaseUrlMessage()) }
+                return failedEventSource()
+            }
 
         val completeCalled = AtomicBoolean(false)
         // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
@@ -1372,6 +1389,42 @@ class HermesApiClient(
         return builder
     }
 
+    /**
+     * Non-throwing twin of [authRequest] for the streaming entry points
+     * (#131 crash class). The three send*Stream methods build their Request
+     * BEFORE any try/catch or EventSource listener exists, so a malformed
+     * [baseUrl] (hand-edited connection, corrupt settings import) made
+     * `Request.Builder.url(String)` throw `IllegalArgumentException`
+     * synchronously up through the ViewModel. Returns null on a bad URL so
+     * the caller can route the failure through its normal `onError` channel
+     * instead. Non-streaming methods keep [authRequest] — their existing
+     * try/catch already contains the throw.
+     */
+    private fun authRequestOrNull(url: String): Request.Builder? {
+        val builder = buildApiRequestOrNull(url) ?: return null
+        if (apiKey.isNotBlank()) {
+            builder.header("Authorization", "Bearer $apiKey")
+        }
+        return builder
+    }
+
+    /**
+     * Inert [EventSource] returned by the streaming methods when the request
+     * couldn't even be built (bad base URL). The turn already failed via
+     * `onError`; this just satisfies the return type so callers' cancel()
+     * handling stays uniform.
+     */
+    private fun failedEventSource(): EventSource = object : EventSource {
+        // Guaranteed-parseable placeholder; never dispatched.
+        private val placeholder = Request.Builder().url("http://invalid.invalid/").build()
+        override fun request(): Request = placeholder
+        override fun cancel() {}
+    }
+
+    /** Human message for a base URL that fails to parse (#131). */
+    private fun invalidBaseUrlMessage(): String =
+        "Invalid server address ($baseUrl) — edit the connection's API URL or re-pair."
+
     private fun apiFailure(response: Response, operation: String): IOException {
         val detail = response.message.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
         val message = when (response.code) {
@@ -1388,3 +1441,13 @@ class HermesApiClient(
     private fun firstNonBlank(vararg values: String?): String =
         values.firstOrNull { !it.isNullOrBlank() }.orEmpty()
 }
+
+/**
+ * #131 guard, api_server half: parse-or-null Request builder for a URL string.
+ * `Request.Builder.url(String)` throws `IllegalArgumentException` on a
+ * malformed host; the streaming send paths must fail through `onError`
+ * instead. Top-level (like `buildRelayRequestOrNull` in ConnectionManager)
+ * so the guard is unit-testable without instantiating the client.
+ */
+internal fun buildApiRequestOrNull(url: String): Request.Builder? =
+    url.toHttpUrlOrNull()?.let { Request.Builder().url(it) }
