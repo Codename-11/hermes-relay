@@ -31,11 +31,10 @@ instead of `send_text(...)`; the one genuine passthrough (real client-supplied t
 
 **Verification.** `python -m unittest discover -s plugin/tests` — 1073/1074 green;
 the one failure (`test_reads_hermes_xai_oauth_credential_pool`) is the pre-existing,
-already-documented local-fixture gap, unrelated to this change. **Not yet
-deployed or live-verified** — this is relay/plugin code, and per project policy
-automation does not deploy to or restart the live relay host. Needs an owner-driven
-deploy + a real on-device voice session to confirm the model still produces a
-natural spoken summary when driven by `instructions` alone.
+already-documented local-fixture gap, unrelated to this change. Deployed to the
+relay for e2e testing; a real on-device voice session confirming the model still
+produces a natural spoken summary when driven by `instructions` alone (no
+preceding fake user turn) is still pending.
 
 ## 2026-07-07 — Voice tool-call ordering/stuck-chip fix + screen-wake-lock
 
