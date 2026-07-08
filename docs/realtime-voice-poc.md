@@ -1229,6 +1229,17 @@ confirms or refutes it before the keepalive is trusted; if appends do NOT
 count as activity, the fallback is a periodic no-op protocol message or a
 scheduled reopen, and this section gets a further revision.
 
+**Further revision (2026-07-08 PM) — silent appends do NOT count as
+activity.** Both probe runs completed on the relay host against live xAI:
+the repro died at exactly 900.0s, and the silent-PCM keepalive run (240s
+pings, confirmed sent) **also died at exactly 900.0s**. xAI's
+conversation-inactivity timer counts conversation-level activity
+(responses/commits/transcripts), not input-buffer appends — the shipped
+silent-append keepalive is ineffective for xAI and remains in place only as
+harmless scaffolding until a working ping lands. Next candidate under test:
+a periodic `session.update` re-send (`--keepalive-mode session_update`,
+probe run pending); if that also fails, the remaining option is a scheduled
+provider-socket reopen before the 900s deadline (with context reseed).
+
 OpenAI's tolerance at the 900s scale remains unprobed (2026-05-24 ran only
-10/20/30s); the keepalive runs for both providers, so the question is moot
-unless OpenAI objects to silent appends — no such behavior observed.
+10/20/30s).

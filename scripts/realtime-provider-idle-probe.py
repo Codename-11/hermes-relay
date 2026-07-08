@@ -128,9 +128,17 @@ async def _keepalive_pinger(
     interval_s: float,
     stop: asyncio.Event,
     sink: list[str],
+    mode: str = "audio",
 ) -> None:
-    """Mirror the broker's _provider_keepalive_loop: 100ms of silent PCM
-    (16-bit mono, never committed) every interval while the probe idles."""
+    """Ping the provider on an interval while the probe idles.
+
+    Modes:
+    - ``audio``: 100ms of silent PCM (16-bit mono, never committed) — the
+      broker's original keepalive. VERDICT 2026-07-08: does NOT reset xAI's
+      900s conversation-inactivity timer (both runs died at exactly 900.0s).
+    - ``session_update``: re-send the session.update configure message — a
+      server-processed protocol message, the next candidate for "activity".
+    """
     chunk = b"\x00" * max(2, int(sample_rate * 2 * 0.1))
     while not stop.is_set():
         try:
@@ -139,14 +147,23 @@ async def _keepalive_pinger(
         except asyncio.TimeoutError:
             pass
         try:
-            await connection.send_audio(chunk, sample_rate)
-            sink.append(f"{time.monotonic():.1f}s keepalive ping ({len(chunk)} bytes silence)")
+            if mode == "session_update":
+                await connection.configure()
+                sink.append(f"{time.monotonic():.1f}s keepalive ping (session.update)")
+            else:
+                await connection.send_audio(chunk, sample_rate)
+                sink.append(f"{time.monotonic():.1f}s keepalive ping ({len(chunk)} bytes silence)")
         except Exception as exc:  # noqa: BLE001 - probe wants the raw failure
             sink.append(f"{time.monotonic():.1f}s keepalive send failed: {exc!r}")
             return
 
 
-async def probe(provider_id: str, windows: list[int], keepalive_ms: int = 0) -> int:
+async def probe(
+    provider_id: str,
+    windows: list[int],
+    keepalive_ms: int = 0,
+    keepalive_mode: str = "audio",
+) -> int:
     cls, *_, sample_rate = _PROVIDERS[provider_id]
     provider = cls()
     print(f"[probe] connecting {provider_id} ...")
@@ -158,9 +175,18 @@ async def probe(provider_id: str, windows: list[int], keepalive_ms: int = 0) -> 
     reader = asyncio.create_task(_drain_events(connection, stop, sink))
     pinger: asyncio.Task | None = None
     if keepalive_ms > 0:
-        print(f"[probe] keepalive enabled: silent PCM every {keepalive_ms / 1000:.0f}s")
+        print(
+            f"[probe] keepalive enabled: {keepalive_mode} every {keepalive_ms / 1000:.0f}s"
+        )
         pinger = asyncio.create_task(
-            _keepalive_pinger(connection, sample_rate, keepalive_ms / 1000.0, stop, sink)
+            _keepalive_pinger(
+                connection,
+                sample_rate,
+                keepalive_ms / 1000.0,
+                stop,
+                sink,
+                mode=keepalive_mode,
+            )
         )
 
     verdict = "hold-floor-ok"
@@ -221,12 +247,25 @@ def main() -> int:
         "--keepalive-ms",
         type=int,
         default=0,
-        help="send 100ms of silent PCM every N ms while idling (0 = off); "
-        "mirrors the broker's provider keepalive",
+        help="ping every N ms while idling (0 = off)",
+    )
+    parser.add_argument(
+        "--keepalive-mode",
+        choices=("audio", "session_update"),
+        default="audio",
+        help="ping type: silent PCM append (proven ineffective on xAI) or a "
+        "session.update re-send",
     )
     args = parser.parse_args()
     windows = [int(w) for w in str(args.windows).split(",") if w.strip()]
-    return asyncio.run(probe(args.provider, windows, keepalive_ms=args.keepalive_ms))
+    return asyncio.run(
+        probe(
+            args.provider,
+            windows,
+            keepalive_ms=args.keepalive_ms,
+            keepalive_mode=args.keepalive_mode,
+        )
+    )
 
 
 if __name__ == "__main__":
