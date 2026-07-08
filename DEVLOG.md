@@ -1,5 +1,64 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Realtime keepalive (xAI 900s idle-close), turn-sync durability, voice delegate nudge
+
+Three-voice-item batch on `dev` (`c7de0da`, `c079a63`, `5c214a2`, `a660b38`).
+
+**1. Provider keepalive — xAI closes realtime conversations after 900s of
+inactivity.** A live relay event log showed a session dying while quiet
+(~896s of zero events after a background-run summary → `voice.error`
+"Conversation timed out after 900.0 seconds due to inactivity"). Client-side
+investigation answered the open question in the TODO: mic capture is
+turn-bracketed by design (`startListening()`/`stopListening()` bracket one
+utterance shipped as `input_audio.append`×N + `commit`; `turn_detection:
+None`), so no continuous stream ever exists — *any* quiet stretch ≥900s
+starves the provider socket; background waits are just the most common way to
+get there. Fix is relay-side: `_provider_keepalive_loop` in `broker.py`, a
+per-connection task appending ~100ms of silent, never-committed PCM after
+`RELAY_VOICE_PROVIDER_KEEPALIVE_MS` of quiet (default 240s ⇒ 3 pings per 900s
+window; `0` disables; runs through detached periods). Append-only
+deliberately — a buffer `clear` could race a user utterance; uncommitted
+silence merely prefixes the next utterance by a sliver. Activity is stamped
+at two chokepoints only: the client-append path and once per provider event
+in `_pump_provider_events`. A residual idle-close is now classified
+(`_is_provider_idle_timeout`) into a human-readable "voice session expired"
+error instead of raw provider text. ADR 33 Phase 0's xAI verdict revised to
+`needs-keepalive` ≥900s (`docs/realtime-voice-poc.md` revision + decisions.md
+note) — the 2026-05-24 verdict was scoped to between-turn idle and never
+probed the 15-minute scale. The idle probe gained `--keepalive-ms` for the
+relay-host repro/fix check, which also settles the one remaining empirical
+unknown (does an uncommitted append reset xAI's timer). Verification:
+`plugin/tests/test_realtime_keepalive.py` 11/11 new; existing 54 realtime
+tests green. Relay deploy + probe run pending (owner).
+
+**2. Realtime turn-sync durability — gateway drain + provenance badge.**
+Provider-answered realtime turns sync into the Hermes session as synthetic
+messages on the next chat/run request, but gateway `prompt.submit` can't
+carry them — on a gateway-primary phone "next SSE turn" meant never. A
+gateway turn with unsynced traces now forces itself onto the sessions SSE
+route, guarded narrowly (existing session id + sessions fallback + default
+profile — a non-default profile's gateway session is invisible to the shared
+api_server surface, so the POST would 404 and fail the user's turn). The
+synced-mark guard now checks the route actually dispatched on
+(`effectiveEndpoint`), fixing a latent duplicate re-send for voice turns
+forced onto SSE by their interface context. On reload,
+`RealtimeTurnSyncBuilder.stripProvenanceMarker()` turns the synced
+`[Realtime Agent provider-native voice turn: …]` marker into the quiet
+"Realtime Agent" badge (bracket noise stripped) and the superseded local
+clientOnly bubble is dropped instead of rendering the exchange twice;
+unsynced traces remain preserved. Verification: 4 new `ChatHandlerTest` +
+4 new `RealtimeTurnSyncBuilderTest` cases; filtered
+`:app:testSideloadDebugUnitTest` run green. App-restart persistence of
+unsynced traces remains open (scoped in TODO).
+
+**3. Standard voice: background-delegation nudge.** The
+`STABLE_VOICE_INTERFACE_CONTEXT` ephemeral prompt now tells the model the
+user is waiting in a live voice session and to delegate clearly-long asks
+via `delegate_task(background=true)`, announcing that in the spoken reply;
+hedged so quick questions keep answering directly. Rides the per-turn SSE
+`system_message` — nothing persisted, text chat unaffected. On-device
+behavior verify pending.
+
 ## 2026-07-07 — Realtime voice result-injection: drop the fake-user-message hack
 
 **What changed.** The realtime voice broker (`plugin/relay/realtime_agent/broker.py`)
