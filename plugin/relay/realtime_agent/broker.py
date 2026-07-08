@@ -153,6 +153,11 @@ _FORCED_SUMMARY_EARLY_COMMIT_MIN_CHARS = 40
 # committed-streaming) spoken summary within this window, else the answer is
 # force-emitted as text so it can never be silently lost.
 _DELIVERY_CONFIRM_SECONDS = 30.0
+# A delivery must not speak over the USER: live mic chunks stream in as
+# input_audio.append while they talk, so "user quiet for this long" gates
+# result delivery alongside the floor (observed live: a task finishing
+# mid-utterance ended the user's recording).
+_DELIVERY_INPUT_QUIET_SECONDS = 1.5
 # Background task queue: a long second ask while the slot is busy is queued
 # (FIFO) instead of refused; bounded so the model can't pile up unbounded work.
 _BACKGROUND_QUEUE_MAX = 3
@@ -242,6 +247,9 @@ class RealtimeAgentSession:
     # it will claim the task is unfinished (observed live). Attached to the
     # NEXT user turn's per-response instructions, then cleared.
     native_pending_delivery_note: str | None = None
+    # time.monotonic() of the last LIVE mic chunk from the client — while
+    # this is fresh the user is mid-utterance and deliveries must hold.
+    native_last_input_audio_at: float = 0.0
     native_hermes_required_transcript: str | None = None
     native_hermes_required_reason: str | None = None
     hermes_run_id: str | None = None
@@ -721,6 +729,7 @@ class RealtimeAgentHandler:
                         continue
                     await connection.send_audio(chunk, sample_rate)
                     session.native_last_provider_activity = time.monotonic()
+                    session.native_last_input_audio_at = time.monotonic()
                     session.native_input_audio_bytes += len(chunk)
                     session.input_chunk_seq = max(session.input_chunk_seq, chunk_id)
                     await self._send(
@@ -3227,7 +3236,15 @@ class RealtimeAgentHandler:
     ) -> bool:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if session.floor.consume_result_if_idle():
+            # The user is mid-utterance while live mic chunks are fresh — a
+            # delivery starting now would speak over them (and ended their
+            # recording, observed live). Hold until they've been quiet a
+            # beat; the deadline still bounds the wait.
+            input_quiet = (
+                time.monotonic() - session.native_last_input_audio_at
+                >= _DELIVERY_INPUT_QUIET_SECONDS
+            )
+            if input_quiet and session.floor.consume_result_if_idle():
                 return True
             await asyncio.sleep(0.05)
         # Timed out waiting for the floor; deliver anyway.

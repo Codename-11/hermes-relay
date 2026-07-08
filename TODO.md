@@ -85,6 +85,31 @@ green. Needs relay deploy + APK install + live verify.
   (`--keepalive-mode session_update`, probe run launched); if it fails, a
   scheduled provider-socket reopen before the 900s deadline (needs context
   reseed design). Update `_provider_keepalive_loop` to whichever works.
+- **Delivery input-quiet gate — SHIPPED (2026-07-08 PM, round-5 finding).**
+  A background task finishing while the user was mid-utterance delivered
+  over them and ended their recording. The relay now knows the user is
+  speaking (live `input_audio.append` chunks stamp
+  `native_last_input_audio_at`) and `_await_floor_idle_for_result` holds
+  delivery until they've been quiet ≥1.5s (bounded by the existing floor
+  timeout). Covers summary/fallback/queued-transition. **Client half still
+  open:** the app should also not END the recording when output audio
+  arrives mid-capture (belt-and-braces if a delivery slips through the
+  bounded wait) — check `VoiceViewModel`'s Listening-state handling of
+  `voice.response.started`.
+- **Audio tail cut at end of response (round-5 repro).** Final word ("you?")
+  cut hard instead of finishing smoothly — end-of-response is likely
+  truncating the last buffered PCM instead of draining. Suspects:
+  `flushBufferedPlayback()` on `voice.output_audio.done` and the
+  `RealtimePcmPlayer` end-of-stream path. Merge with the existing
+  "tap/static click between sentences" investigation; consider a short
+  end-of-response fade-out once drained-not-truncated is confirmed.
+- **Fallback speech says file paths (round-5 polish).** The fallback spoke
+  "Source: 1. Personal/Household/Househol…" — `_provider_safe_answer_for_speech`
+  should trim source/path lines harder for TTS.
+- **grok-voice fails the delivery instruction ~always (4/4 live rounds).**
+  Every observed forced summary was deferral filler; the validator+fallback
+  carried every delivery. Elevates the verbatim-delivery idea below from
+  idea to likely default.
 - **NEW IDEA (from live rounds — consider next): verbatim delivery mode.**
   grok-voice answered the final-delivery instruction with deferral chatter
   in BOTH live rounds — the relay-TTS fallback is carrying real delivery

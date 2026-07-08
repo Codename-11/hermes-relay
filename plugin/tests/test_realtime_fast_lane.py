@@ -327,5 +327,33 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
                 pass
 
 
+class DeliveryInputQuietGateTest(unittest.IsolatedAsyncioTestCase):
+    """Result delivery must hold while the user is mid-utterance."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.handler = RealtimeAgentHandler(RelayConfig())
+        self.session = _make_session(self._tmp.name)
+
+    async def test_holds_while_input_audio_is_fresh(self) -> None:
+        self.session.floor.note_result_ready()
+        self.session.native_last_input_audio_at = time.monotonic()  # speaking NOW
+        ok = await self.handler._await_floor_idle_for_result(
+            self.session, timeout=0.3
+        )
+        # Bounded wait expires without consuming the floor — delivery
+        # proceeds only via the timed-out path, never over fresh speech.
+        self.assertFalse(ok)
+
+    async def test_proceeds_when_input_quiet(self) -> None:
+        self.session.floor.note_result_ready()
+        self.session.native_last_input_audio_at = time.monotonic() - 10.0
+        ok = await self.handler._await_floor_idle_for_result(
+            self.session, timeout=1.0
+        )
+        self.assertTrue(ok)
+
+
 if __name__ == "__main__":
     unittest.main()
