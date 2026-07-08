@@ -37,12 +37,27 @@ The v1 shape shipped in plugin-v1.3.0 (single durable run, free floor during
 background work, busy answer, deliver-on-reattach, exit-detaches / chip-✕-
 cancels). Ranked next increments, in value-per-complexity order:
 
-1. **Fast lane** — while one durable run is detached, allow a second
-   `hermes_run_task` *inline only*: run it on a separate ephemeral session
-   (context injected the same way turns pass `realtimeAgentContextMessages`),
-   normal grace window; if it would promote, fall through to the busy/queue
-   answer. Fixes the real gap: today ANY second Hermes-backed request is
-   refused during a background run, even a 2-second lookup.
+1. **Fast lane — SHIPPED in code (2026-07-08; needs relay deploy + live voice
+   verify).** `_run_fast_lane_task` in `broker.py`: while a detached
+   (promoted/durable) run holds the background slot, a second
+   `hermes_run_task` first runs INLINE on a separate ephemeral Hermes session
+   (`session_id=None`) within the normal grace window; grace-elapse, a
+   known-long tool start (`_long_tool_hints`), explicit `mode=background`, or
+   promotion-off all abandon it and fall through to the (reworded) busy
+   answer. Touches NONE of the session's `hermes_*` run state — run_id/
+   status/progress/chip stay owned by the in-flight run — and emits no client
+   events of its own (bounded by grace; a chip would fight the detached
+   run's). Events: `voice.hermes_fast_lane.completed/abandoned/error` in the
+   session log. Tests: `plugin/tests/test_realtime_fast_lane.py` (7) +
+   updated `test_second_run_task_answers_busy_without_orphaning_first`
+   (per-stream cancellation tracking). **Residuals:** (a) context injection —
+   the ephemeral session gets only the task text + interface context, not
+   rolling conversation context (broker keeps no per-turn transcript; the
+   model is instructed to pass self-contained task text); (b) an abandoned
+   attempt may still finish server-side into the ephemeral session
+   (at-least-once, unread) — same property as promotion; (c) live verify:
+   during a long background run, ask a quick second question → answered
+   inline; ask a second long thing → busy answer unchanged.
 2. **Task queue** — upgrade the busy answer from refusal to offer ("want me
    to queue it?"): small FIFO in the broker session, start-next-on-completion
    with a spoken handoff, chip shows "+1 queued". Pairs with (1).

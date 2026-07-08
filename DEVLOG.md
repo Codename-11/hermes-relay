@@ -1,5 +1,46 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Background-run fast lane; stale voice-prefs TODO closed; dev deployed to device
+
+**Fast lane (background-run v2 §1).** While a detached (promoted/durable)
+run holds the single background slot, a second `hermes_run_task` used to get
+an unconditional busy answer — even for a two-second lookup. New
+`_run_fast_lane_task` (`broker.py`) first tries the request INLINE on a
+separate ephemeral Hermes session (`session_id=None`) within the normal
+grace window; grace-elapse, a known-long tool start, explicit
+`mode=background`, or promotion-off abandon the attempt and fall through to
+the (reworded) busy answer. Design constraints honored: the fast lane keeps
+every observation in locals and touches none of the session's `hermes_*` run
+state (run_id/status/progress/chip stay owned by the in-flight run), emits
+no client events of its own, and the fast-lane gate additionally requires
+the existing run to actually be detached (`hermes_run_tier` promoted/
+durable). Session-log events: `voice.hermes_fast_lane.completed` /
+`.abandoned` / `.error`. Verification: new
+`plugin/tests/test_realtime_fast_lane.py` (7 — inline answer + state
+non-interference, grace fall-through with client-side stream cancellation,
+long-tool fall-through, background-mode skip, promotion-off skip,
+foreground-tier skip, error reporting);
+`test_second_run_task_answers_busy_without_orphaning_first` updated to
+per-stream cancellation tracking (the abandoned fast-lane stream is the
+designed fall-through, the first run's stream must stay uncancelled); full
+realtime batch 64/64 green. Relay deploy + live voice verify pending.
+Residuals (TODO): no rolling-context injection into the ephemeral session;
+an abandoned attempt may finish server-side unread.
+
+**Stale TODO closed — voice-prefs connectionId namespacing.** The deferred
+item asked to wire `setVoicePrefsConnection` to
+`ConnectionViewModel.activeConnectionId`; verification showed the wiring
+shipped in `0aa1b38` (2026-06-21) — RelayApp's (connection, profile) effect
+already sets the connection id before `onProfileChanged`, and
+`applyVoicePrefsScope` pushes both into
+`VoicePreferencesRepository.setActiveScope`. Entry crossed off; the
+VoiceViewModel KDoc still describing the pre-wiring state corrected.
+
+**Device deploy.** `dev` pushed to origin (`16133ff..7569144`) and
+`hermes-relay-1.4.0-sideload-debug` built + installed to the test device
+over wireless ADB (`assembleSideloadDebug`, install Success) — carries the
+full 2026-07-08 batch for the on-device voice pass.
+
 ## 2026-07-08 — Realtime keepalive (xAI 900s idle-close), turn-sync durability, voice delegate nudge
 
 Three-voice-item batch on `dev` (`c7de0da`, `c079a63`, `5c214a2`, `a660b38`).

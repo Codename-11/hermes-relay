@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Server-backed session cleanup plumbing.** The dashboard client now supports single-session export, the upstream `/api/sessions/prune` route with a mandatory dry-run preview before destructive apply, plus soft archive/restore helpers and an `archived` session-list filter for the Manage surface.
 - **Notification triggers MVP.** Settings → Notifications now has explicit opt-in proactive rules for the Notification companion: match by app package plus optional title/text filters, post a safe local "Ask Hermes?" prompt, show the latest trigger activity, and pause everything instantly with a kill switch.
 - **Android bridge: multi-device targeting.** The relay can keep multiple Android bridge clients connected at once, route commands by `device` selector (`phone`, `pixel`, `fold`, `boox`, `note`, `notemax`, `tablet`, or device ID), expose `/bridge/devices` and `/bridge/select-active`, and advertise an optional `device` argument on the `android_*` tool schemas.
+- **Voice: quick questions answered while a background task runs.** Realtime voice used to refuse *any* second request while a long task ran in the background — even a two-second lookup. A quick second ask is now answered inline on a side session (within the same few-second window that decides backgrounding); anything that turns out to be long still gets the "a task is already running" answer, and the running task is never disturbed.
 
 ### Fixed
 
