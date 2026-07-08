@@ -39,14 +39,20 @@ import {
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
-import { RelayTransport } from '../transport/RelayTransport.js'
+import { PROMPT_SUBMIT_REQUEST_TIMEOUT_MS, RelayTransport } from '../transport/RelayTransport.js'
 
 // (getSession is imported above with the other remoteSessions exports so we
 // can render the endpoint-role banner without changing the saveSession/auth
 // persistence path.)
 
 const READY_TIMEOUT_MS = 60_000
-const TURN_TIMEOUT_MS = 10 * 60_000
+// Idle-progress watchdog, NOT a hard turn cap: the timer is re-armed on every
+// gateway event, so a turn only dies after this long with NO events at all.
+// A long MoA/tool-heavy turn that keeps streaming lives indefinitely —
+// upstream treats prompt.submit as fire-and-forget (completion arrives via
+// message.complete, not the RPC ack), so wall-clock capping a healthy turn
+// killed legitimate work.
+const TURN_IDLE_TIMEOUT_MS = 10 * 60_000
 
 function flag(args: ParsedArgs, name: string): string | null {
   const v = args.flags[name]
@@ -193,21 +199,32 @@ function runOneTurn(
   let detach: (() => void) | null = null
 
   const promise = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      if (settled) {
-        return
-      }
-      settled = true
-      detach?.()
-      reject(new Error(`turn timeout after ${TURN_TIMEOUT_MS}ms`))
-    }, TURN_TIMEOUT_MS)
-    timer.unref?.()
+    // Idle-progress watchdog: re-armed on every gateway event below. Fires
+    // only when the stream has gone completely silent for the window.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const armIdleTimer = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        if (settled) {
+          return
+        }
+        settled = true
+        detach?.()
+        reject(new Error(`turn idle timeout — no gateway events for ${TURN_IDLE_TIMEOUT_MS}ms`))
+      }, TURN_IDLE_TIMEOUT_MS)
+      timer.unref?.()
+    }
+    armIdleTimer()
 
     const handler = (ev: GatewayEvent) => {
       renderer.handle(ev)
       if (settled) {
         return
       }
+
+      // Any event (delta, tool progress, status, heartbeat) proves the turn
+      // is alive — push the idle deadline out.
+      armIdleTimer()
 
       if (ev.type === 'message.complete') {
         settled = true
@@ -232,7 +249,13 @@ function runOneTurn(
     detach = () => gw.off('event', handler)
     gw.on('event', handler)
 
-    gw.request<PromptSubmitResponse>('prompt.submit', { session_id: sessionId, text: prompt }).catch((e: unknown) => {
+    // Long-running RPC: the ack can trail the turn by minutes (see
+    // PROMPT_SUBMIT_REQUEST_TIMEOUT_MS) — liveness is the idle watchdog's job.
+    gw.request<PromptSubmitResponse>(
+      'prompt.submit',
+      { session_id: sessionId, text: prompt },
+      PROMPT_SUBMIT_REQUEST_TIMEOUT_MS
+    ).catch((e: unknown) => {
       if (settled) {
         return
       }
