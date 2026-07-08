@@ -123,7 +123,94 @@ green. Needs relay deploy + APK install + live verify.
   background deliveries spoken in the provider voice with no deferral
   filler and no fallback. If it still defers every time, delivery degrades
   to fallback TTS with one failed provider response of added latency per
-  result (i.e., the previous default behavior).
+  result (i.e., the previous default behavior). Post-audit hardening is in:
+  provider-death TTS fallback on all three delivery paths, confirm alarm on
+  all three, barge-in preemption-as-text, blocklist answer-exemption,
+  structured-answer prompt routing.
+- **Audit leftovers (deliberate, small).** (1) DONE-chip respeak always
+  renders via relay TTS — intentional determinism, but it voice-mismatches
+  the exact mode's promise; candidate: provider-voiced respeak with TTS
+  fallback. (2) Exact-mode answers >1400 chars are truncated with an
+  appended "…" (and machine-looking text gets "…" even under the cap) —
+  silent for a mode promising completeness; consider a visual "full answer
+  in chat" cue on truncation.
+
+## Voice observability (2026-07-08 assessment) — pre-RC hardening
+
+The realtime flight recorder (per-session JSONL under
+`realtime-agent-runs/`, decision-point events with reasons, task-failure
+wrappers, Android `DiagnosticsLog` Voice category) is in good shape — it
+carried every live-round forensics session. Three gaps before the release
+candidate:
+
+- **Run-dir retention + wav tap gating.** `realtime-agent-runs/` grows
+  unbounded (237 files / 22MB observed) and `_render_provider_audio`
+  writes a `.wav` of every relay-TTS render next to the session log
+  (single session observed at 5.6MB). JSONL also carries transcripts, so
+  retention is privacy hygiene too. Fix: age/count cap swept at session
+  create (e.g. keep N days or last M sessions), wav tap behind an opt-in
+  debug flag (default off). Success bar: a long-running relay host holds a
+  bounded run dir with no operator action.
+- **Delivery-outcome rollup.** All evidence is single-session forensics;
+  answering "what's the exact-mode fallback rate?" means hand-grepping.
+  Add a small scanner (script or `hermes relay doctor` section) that
+  tallies recent deliveries: provider-spoken / early-committed /
+  fallback(reason) / alarm-fired / text-only. Success bar: one command
+  answers the exact-mode compliance question after a live round.
+- **Buffered flight-recorder writes (minor).** `_log` open/appends per
+  event on the event loop, including one line per audio chunk. Fine so
+  far; switch to a buffered writer if voice sessions ever stutter under
+  load — measure before optimizing.
+
+## OpenAI realtime provider — next-RC roadmap (2026-07-08 research)
+
+Full findings with sources in
+`docs/plans/2026-07-08-openai-realtime-notes.md`. Headline: the OpenAI
+provider already exists and is broker-wired
+(`plugin/relay/realtime_agent/providers/openai.py`) but has never had a
+live round and defaults to a superseded model. Key provider contrasts vs
+xAI: hard 60-min wall-clock session cap (not an inactivity timer),
+out-of-band responses (`conversation:"none"` + explicit `input`), async
+function calls, per-token pricing (2.1 audio $32/$64 per 1M; mini $10/$20)
+vs grok's flat $0.05/min.
+
+- **Bump OpenAI realtime default `gpt-realtime-2` → `gpt-realtime-2.1`
+  (+ expose `2.1-mini`).** `providers/openai.py:27`,
+  `voice_lab/providers/openai_realtime.py:23`, model-option list. Drop-in
+  protocol, −25% p95, better interruption handling; mini is the cheap
+  tier. Success bar: an `openai_realtime` session connects on 2.1,
+  completes a Hermes-routed turn, and 2.1-mini is selectable.
+- **Live-verify the OpenAI provider end-to-end.** Code-complete but no
+  recorded live round (all forensics are grok-voice). Run the xAI
+  on-device battery (pair → voice turn → `hermes_run_task` →
+  exact-delivery → queue → respeak) on 2.1. Success bar: a
+  `realtime-agent-runs/` log shows a clean OpenAI session reproducing the
+  flows with provider-voiced Hermes delivery.
+- **Handle OpenAI's 60-min hard cap.** Distinct failure mode from xAI's
+  900s inactivity close — it can cut an ACTIVE session. First confirm how
+  a cap-close currently surfaces (idle-close handling is xAI-shaped, e.g.
+  `_PROVIDER_IDLE_CLOSE_WS_REASON`), then add wall-clock-aware proactive
+  reconnect/reseed. Success bar: a >60-min OpenAI session survives the
+  cap with a proactive reseed, no user-visible break.
+- **Spike out-of-band exact delivery on OpenAI
+  (`conversation:"none"` + answer as `input`).** Supply the Hermes answer
+  as explicit input context instead of an instructions injection the
+  model may ignore. Success bar: measurably lower deferral/filler rate
+  than grok forced-summary in repeated live deliveries, demoting the
+  validator to a safety net.
+- **Async function-call delivery on OpenAI.** OpenAI GA allows the
+  session to continue while a function call is pending — a promoted
+  `hermes_run_task` could complete with a real late
+  `function_call_output` instead of interim-ack + synthetic
+  instructions, retiring `native_pending_delivery_note`. Success bar:
+  provider history reads "done" (never "still running") after a promoted
+  run, verified live.
+- **Guardrail test: only `hermes_*` tools advertised on OpenAI
+  realtime.** Assert `session.update` never advertises hosted-MCP or
+  non-Hermes tools. Success bar: test fails if any such tool appears.
+- **(Defer/eval-only) provider `semantic_vad` vs relay-owned floor.**
+  Better turn-taking naturalness but moves barge-in ownership off
+  `RealtimeFloor` — re-architecture, not RC scope.
 
 ## Voice — on-device findings (2026-07-08 e2e realtime test)
 
