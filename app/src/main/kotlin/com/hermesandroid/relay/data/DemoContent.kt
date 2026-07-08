@@ -108,8 +108,35 @@ object DemoContent {
         ),
     )
 
+    /**
+     * Assistant reply appended when the user sends a message INSIDE demo
+     * mode. The composer must not be a silent no-op (it reads as broken —
+     * see the demo-polish TODO), but there is no server to answer, so the
+     * "reply" is an honest notice pointing at the exit path. Same content
+     * contract as the transcript: clientOnly, terminal, zero network.
+     *
+     * @param id unique message id supplied by the caller (UUID-based; two
+     *   rapid sends must not collide on LazyColumn keys).
+     * @param nowMs wall-clock timestamp for the bubble.
+     */
+    fun composerReply(id: String, nowMs: Long): ChatMessage = ChatMessage(
+        id = id,
+        role = MessageRole.ASSISTANT,
+        content = COMPOSER_REPLY,
+        timestamp = nowMs,
+        agentName = DEMO_AGENT_NAME,
+        badges = listOf("Demo"),
+        clientOnly = true,
+    )
+
     // --- Message bodies (Markdown). Kept as constants so the content is easy
     // to scan and the [transcript] builder stays readable. ---
+
+    private val COMPOSER_REPLY: String = """
+        This is the offline demo, so I can't answer for real — nothing here talks to a server.
+
+        Connect your own Hermes server to chat live: tap **Connect** in the demo banner above.
+    """.trimIndent()
 
     private val ASSISTANT_TOUR: String = """
         I'm **Hermes**, the agent running on *your* server. Here's a quick tour of what this app surfaces:

@@ -11,6 +11,7 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
@@ -1146,6 +1147,23 @@ class ChatViewModel : ViewModel() {
      * Default provider returns `null` so a fresh VM (before RelayApp has
      * wired the flow) behaves identically to pre-profile-picker installs.
      */
+    /**
+     * Demo / Explore mode wiring. [demoModeProvider] reads
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.isDemoMode];
+     * [demoChatHandlerProvider] supplies the shared [ChatHandler] carrying
+     * the canned transcript. Both are needed because in demo there is no API
+     * client, so [initialize] never runs and this VM's own [chatHandler]
+     * stays null. Wired unconditionally from RelayApp (not inside the
+     * client-gated init effect).
+     */
+    private var demoModeProvider: () -> Boolean = { false }
+    private var demoChatHandlerProvider: () -> ChatHandler? = { chatHandler }
+
+    fun setDemoModeWiring(isDemo: () -> Boolean, handler: () -> ChatHandler?) {
+        demoModeProvider = isDemo
+        demoChatHandlerProvider = handler
+    }
+
     private var selectedProfileProvider: () -> Profile? = { null }
     private var effectiveProfileProvider: () -> Profile? = { selectedProfileProvider() }
     private var displayProfileProvider: () -> Profile? = {
@@ -2251,6 +2269,32 @@ class ChatViewModel : ViewModel() {
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         recordRecentPrompt(text)
+
+        // Demo / Explore mode: there is no server, but a silently dead Send
+        // button reads as broken. Echo the user's text and answer with an
+        // honest canned notice through the real pipeline — clientOnly
+        // bubbles, zero network, wiped with the rest of the transcript on
+        // demo exit (exitDemoMode → clearMessages).
+        if (demoModeProvider()) {
+            val demoHandler = demoChatHandlerProvider() ?: return
+            val now = System.currentTimeMillis()
+            demoHandler.addUserMessage(
+                ChatMessage(
+                    id = "demo-composer-user-${java.util.UUID.randomUUID()}",
+                    role = MessageRole.USER,
+                    content = text.trim(),
+                    timestamp = now,
+                    clientOnly = true,
+                ),
+            )
+            demoHandler.addUserMessage(
+                DemoContent.composerReply(
+                    id = "demo-composer-reply-${java.util.UUID.randomUUID()}",
+                    nowMs = now + 1L,
+                ),
+            )
+            return
+        }
 
         val client = apiClient ?: return
         val handler = chatHandler ?: return

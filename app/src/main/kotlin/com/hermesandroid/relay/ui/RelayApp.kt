@@ -791,6 +791,17 @@ fun RelayApp() {
         chatViewModel.notifyOnTurnComplete = notifyTurnComplete
     }
 
+    // Demo-mode composer wiring: unconditional — a demo session has no API
+    // client, so the client-gated chat init effect above never runs and
+    // ChatViewModel's own handler stays null. Lambdas read live state on
+    // every send.
+    LaunchedEffect(Unit) {
+        chatViewModel.setDemoModeWiring(
+            isDemo = { connectionViewModel.isDemoMode.value },
+            handler = { connectionViewModel.chatHandler },
+        )
+    }
+
     // Sync tool annotation parsing toggle to ChatHandler
     val parseAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
     LaunchedEffect(parseAnnotations) {
