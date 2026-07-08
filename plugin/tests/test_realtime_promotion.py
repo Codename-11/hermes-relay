@@ -43,6 +43,10 @@ class FakeNativeConnection:
         self.request_response_count = 0
         self.cancelled = False
         self.closed = False
+        # When set, summary/exact delivery injections (recognizable by their
+        # "final spoken answer" instructions) raise — simulates the provider
+        # socket dying between run completion and result delivery.
+        self.fail_summary_requests = False
         self._events: asyncio.Queue[ProviderEvent | None] = asyncio.Queue()
 
     async def send_audio(self, pcm: bytes, sample_rate: int) -> None:
@@ -64,6 +68,12 @@ class FakeNativeConnection:
         self.tool_results.append((call_id, output))
 
     async def request_response(self, *, instructions: str | None = None) -> None:
+        if (
+            self.fail_summary_requests
+            and instructions
+            and "final spoken answer" in instructions
+        ):
+            raise RuntimeError("provider socket dead")
         self.request_response_count += 1
         if instructions:
             # Per-response instructions replace the old fake-user-message
@@ -383,6 +393,76 @@ class RealtimePromotionTests(AioHTTPTestCase):
                 await asyncio.sleep(0.02)
             self.assertEqual(len(exact), 1)
             self.assertIn("Background answer ready.", exact[0])
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_injection_failure_falls_back_to_relay_tts(self) -> None:
+        """Provider socket dies between run completion and delivery: the
+        answer must still land as spoken relay-TTS audio, not vanish until
+        the confirm alarm's text emit."""
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        provider.connection.fail_summary_requests = True
+        try:
+            await self._emit_tool_call(provider, call_id="call-1")
+            await self._read_until(ws, "hermes.run.promoted")
+            await broker.started.wait()
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            events = await self._read_until(ws, "voice.response.delta")
+            fallback_delta = next(
+                e for e in events if e["type"] == "voice.response.delta"
+            )
+            self.assertEqual("hermes", fallback_delta.get("source"))
+            self.assertIn(
+                "Background answer ready", str(fallback_delta.get("delta"))
+            )
+            log_text = session.event_log_path.read_text(encoding="utf-8")
+            self.assertIn("voice.realtime_agent.summary_send_failed", log_text)
+            self.assertIn("voice.response.delivery_fallback", log_text)
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_barge_in_preempts_pending_delivery_as_text(self) -> None:
+        """A new user utterance while a delivery is injected-but-unspoken must
+        cancel the stale response and land the answer as text — never drop it
+        silently (the pre-fix behavior wiped the state with no record)."""
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        try:
+            await self._emit_tool_call(provider, call_id="call-1")
+            await self._read_until(ws, "hermes.run.promoted")
+            await broker.started.wait()
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            for _ in range(100):
+                if any(
+                    "final spoken answer step" in t
+                    for t in provider.connection.text_inputs
+                ):
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                self.fail("forced-summary injection never reached the provider")
+
+            # User talks over the pending (never-started) delivery.
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.INPUT_TRANSCRIPT_FINAL,
+                    payload={"text": "actually tell me a joke instead"},
+                )
+            )
+            events = await self._read_until(ws, "voice.response.done")
+            visual = [e for e in events if e.get("delivery") == "visual_only"]
+            self.assertTrue(visual, [e["type"] for e in events])
+            delta = next(e for e in events if e["type"] == "voice.response.delta")
+            self.assertIn("Background answer ready", str(delta.get("delta")))
+            log_text = session.event_log_path.read_text(encoding="utf-8")
+            self.assertIn("voice.realtime_agent.delivery_preempted", log_text)
         finally:
             broker.release.set()
             await ws.close()

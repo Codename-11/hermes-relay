@@ -248,6 +248,40 @@ class ResultDeliveryPromptTest(unittest.TestCase):
         prompt = _forced_hermes_exact_prompt("do the thing", {})
         self.assertIn("did not return a spoken summary", prompt)
 
+    def test_structured_answer_routes_to_summary_prompt(self) -> None:
+        # A JSON answer has no meaningful word-for-word reading —
+        # `_provider_safe_answer_for_speech` rewrites it into a summarize-this
+        # meta-instruction, which would contradict the exact framing.
+        result = {"answer": '{"status": "ok", "open_issues": 3}'}
+        prompt = _result_delivery_prompt("speak_verbatim", "check the tracker", result)
+        self.assertIn("concise natural summary", prompt)
+        self.assertNotIn("word for word", prompt)
+
+
+class BlocklistAnswerExemptionTest(unittest.TestCase):
+    """Blocklist phrases present in the AUTHORITATIVE ANSWER must not flag a
+    faithful reading — only phrases the model added on its own count."""
+
+    def test_phrase_from_answer_is_exempt(self) -> None:
+        answer = "Your order is queued for Friday pickup at the depot."
+        self.assertIsNone(_bad_forced_summary_reason(answer, answer))
+
+    def test_same_phrase_without_answer_support_still_flags(self) -> None:
+        self.assertEqual(
+            "acknowledgement_not_summary",
+            _bad_forced_summary_reason(
+                "It's queued and will start automatically once the current "
+                "check finishes.",
+                "The Minnesota forecast is sunny and 75 tomorrow.",
+            ),
+        )
+
+    def test_no_answer_context_keeps_old_behavior(self) -> None:
+        self.assertEqual(
+            "acknowledgement_not_summary",
+            _bad_forced_summary_reason("Your order is queued for Friday pickup."),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,43 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Delivery-pipeline audit: five confirmed gaps fixed
+
+An adversarial audit of the provider-voiced delivery rework (below) confirmed
+that moving `speak_verbatim` from the synchronous TTS render onto the async
+provider pipeline opened failure windows the old path couldn't have. All five
+findings fixed:
+
+1. **Foreground delivery had no provider-death handling.** The forced-turn
+   `request_response` was bare; a dead provider socket lost the answer and
+   wedged `native_forced_summary_active`. Now wrapped: on failure the new
+   shared `_speak_fallback_answer` mouth delivers the authoritative answer
+   through relay TTS (same semantics as the validator's off-script fallback).
+2. **Delivered-or-alarm covered 1 of 3 delivery paths.** The confirm alarm
+   was only spawned for attached-background deliveries; foreground and
+   deferred-resume injections could stall silently. Both now spawn it.
+3. **Barge-in mid-delivery silently dropped the pending answer.** A new user
+   utterance wiped forced-summary state with no `cancel_response()` and no
+   record — stale deltas could leak past the validator and an undelivered
+   result vanished. New `_preempt_pending_forced_summary`: cancels the stale
+   response, logs `delivery_preempted`, and lands a never-spoken answer as
+   text (speaking would collide with the user's new turn).
+4. **Blocklist false positives on faithful readings.** Phrases present in the
+   authoritative answer itself ("your order is queued…") no longer count as
+   deferral evidence; only phrases the model added on its own flag.
+5. **Structured JSON answers contradicted the exact prompt.**
+   `_provider_safe_answer_for_speech` rewrites JSON into a summarize-this
+   meta-instruction, which the exact prompt then framed as "read word for
+   word". Structured answers now route to the summary prompt.
+
+Also: an injection failure on the attached background path now falls back to
+spoken TTS immediately instead of waiting 30s for the text-only alarm.
+
+Verification: 102 realtime tests green, including five new — injection-failure
+TTS fallback, barge-in preemption-as-text, blocklist answer-exemption (both
+directions plus no-context behavior), and structured-answer prompt routing.
+Deliberately unfixed (recorded in TODO): DONE-chip respeak stays relay-TTS by
+design, and exact-mode's 1400-char truncation semantics.
+
 ## 2026-07-08 — Upstream-watch P1 batch (HRUI-001/002/014/015/016/022)
 
 Cleared every open P1 item from the upstream-impact watch ledger in one
