@@ -126,8 +126,9 @@ POST /api/sessions/{session_id}/fork
 ```
 
 The native upstream list envelope is `{"object":"list","data":[...]}`.
-Older fork/bootstrap builds may return `items`, `sessions`, or `messages`;
-clients should continue accepting those as compatibility shapes.
+Older fork builds and pre-retirement bootstrap versions (the current bootstrap
+no longer injects session CRUD at all) may return `items`, `sessions`, or
+`messages`; clients should continue accepting those as compatibility shapes.
 
 ### Chat (Non-Streaming)
 ```
@@ -287,10 +288,11 @@ GET /api/memory?target=memory    // or target=user
 ```
 GET /v1/skills           # native upstream read-only list
 GET /v1/toolsets         # native upstream toolset inventory
-GET /api/skills          # legacy compatibility list, optional ?category= filter
-GET /api/skills/{name}
+GET /api/skills/{name}   # legacy detail view (bootstrap compatibility)
 ```
-> `/api/skills/categories` was removed from upstream as dead code (commit 8d023e43) and is not re-injected by the bootstrap.
+> The legacy `GET /api/skills` list was retired from the bootstrap — use native
+> `/v1/skills`. `/api/skills/categories` was removed from upstream as dead code
+> (commit 8d023e43) and is not re-injected by the bootstrap.
 
 ## Capability Detection
 

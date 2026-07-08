@@ -4,6 +4,11 @@ The doctor command is intentionally local and read-only. It gives operators and
 agents one stable surface for checking which parts of the Relay install are
 plugin-owned, which standard upstream Hermes routes are reachable, and whether
 the legacy bootstrap monkeypatch is still installed.
+
+The bootstrap it reports on is compatibility-only: session search, memory,
+legacy skill detail/toggle, config, available-models, and slash middleware.
+Sessions CRUD/messages/fork and read-only skill/toolset lists are native
+upstream (PR #33134 / #33016) and are no longer bootstrap-provided.
 """
 
 from __future__ import annotations
@@ -467,7 +472,8 @@ def collect_doctor_report(
         checks,
         "legacy-bootstrap",
         "warn" if bootstrap["installed"] else "ok",
-        "legacy bootstrap monkeypatch is installed"
+        "legacy bootstrap monkeypatch is installed (compatibility-only "
+        "surfaces; sessions and skill/toolset lists are native upstream)"
         if bootstrap["installed"]
         else "legacy bootstrap monkeypatch is not installed",
     )

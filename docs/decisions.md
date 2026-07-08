@@ -569,14 +569,17 @@ We considered four options:
 - `install.sh` step 2 — copies the `.pth` into the venv site-packages
 
 **Removal path** is now per surface:
-1. Sessions: once the supported Hermes baseline includes #33134, remove the
-   sessions compatibility handlers and any docs that require bootstrap for
-   history/chat. Until then, verify native `/api/sessions/*` routes win.
-2. Read-only skills/toolsets: clients should prefer native `/v1/skills` and
-   `/v1/toolsets` from #33016. Retire `/api/skills` list dependence; keep legacy
-   detail/toggle only if the UI still needs it.
-3. Config/memory/available-models: remove those compatibility handlers only
-   after stable core APIs exist or the dependent Android surfaces are redesigned.
+1. Sessions: **done (2026-07-08, HRUI-002).** The sessions CRUD/messages/fork
+   handlers were removed from the bootstrap with no pre-#33134 fallback kept;
+   native `/api/sessions/*` (#33134) is the only provider. Older core builds
+   degrade via the client capability probe to `/v1/chat/completions`/`/v1/runs`.
+2. Read-only skills/toolsets: **done (2026-07-08, HRUI-002).** The legacy
+   `GET /api/skills` list handler was removed; clients use native `/v1/skills`
+   and `/v1/toolsets` (#33016). Legacy detail (`/api/skills/{name}`) and the
+   501 toggle stub remain — no native equivalent exists.
+3. Config/memory/available-models/session search: remove those compatibility
+   handlers only after stable core APIs exist or the dependent Android surfaces
+   are redesigned.
 4. Slash middleware: remove after native API-server slash preprocessing exists.
 5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update
