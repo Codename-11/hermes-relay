@@ -209,8 +209,14 @@ class OpenAIRealtimeAgentConnection:
             }
         )
 
-    async def request_response(self) -> None:
-        await self.socket.send_json({"type": "response.create"})
+    async def request_response(self, *, instructions: str | None = None) -> None:
+        payload: dict[str, Any] = {"type": "response.create"}
+        if instructions:
+            # Per-response instructions override the session-level system
+            # prompt for this response only — see xai.py's matching method
+            # for why this replaces the fake-user-message injection hack.
+            payload["response"] = {"instructions": instructions}
+        await self.socket.send_json(payload)
 
     async def close(self) -> None:
         await self.socket.close()

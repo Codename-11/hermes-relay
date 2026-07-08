@@ -1241,7 +1241,9 @@ class RealtimeAgentHandler:
         )
         with contextlib.suppress(Exception):
             await connection.cancel_response()
-        await connection.send_text(_forced_hermes_preamble_prompt(transcript))
+        await connection.request_response(
+            instructions=_forced_hermes_preamble_prompt(transcript)
+        )
 
     def _should_forward_forced_preamble_event(
         self,
@@ -2108,7 +2110,9 @@ class RealtimeAgentHandler:
             session.native_forced_summary_text_parts.clear()
             with contextlib.suppress(Exception):
                 await connection.cancel_response()
-            await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+            await connection.request_response(
+                instructions=_forced_hermes_summary_prompt(transcript, result)
+            )
         finally:
             session.native_forced_hermes_turn_active = False
 
@@ -2345,7 +2349,9 @@ class RealtimeAgentHandler:
                     await self._request_provider_response(ws, session, connection, call_id)
         elif origin == "forced" and speak:
             with contextlib.suppress(Exception):
-                await connection.send_text(_background_handoff_prompt(transcript))
+                await connection.request_response(
+                    instructions=_background_handoff_prompt(transcript)
+                )
 
         if (
             session.background_delivery_task is not None
@@ -2551,7 +2557,9 @@ class RealtimeAgentHandler:
             with contextlib.suppress(Exception):
                 await connection.cancel_response()
         try:
-            await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+            await connection.request_response(
+                instructions=_forced_hermes_summary_prompt(transcript, result)
+            )
         except Exception as exc:  # noqa: BLE001
             # The background_completed event + result are already recorded in the
             # event ring, so a resume will replay them; don't let a dead provider

@@ -333,10 +333,12 @@ class FakeNativeConnection:
             raise ConnectionError("Cannot write to closing transport")
         self.tool_results.append((call_id, output))
 
-    async def request_response(self) -> None:
+    async def request_response(self, *, instructions: str | None = None) -> None:
         if self.fail_request_response:
             raise ConnectionError("Cannot write to closing transport")
         self.request_response_count += 1
+        if instructions:
+            self.text_inputs.append(instructions)
 
     async def close(self) -> None:
         self.closed = True

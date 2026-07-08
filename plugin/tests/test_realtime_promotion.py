@@ -63,8 +63,14 @@ class FakeNativeConnection:
     async def send_tool_result(self, call_id: str, output: dict[str, Any]) -> None:
         self.tool_results.append((call_id, output))
 
-    async def request_response(self) -> None:
+    async def request_response(self, *, instructions: str | None = None) -> None:
         self.request_response_count += 1
+        if instructions:
+            # Per-response instructions replace the old fake-user-message
+            # injection (send_text) as the summary-delivery mechanism; keep
+            # them in text_inputs so existing "what got spoken" assertions
+            # don't need to know which transport carried it.
+            self.text_inputs.append(instructions)
 
     async def close(self) -> None:
         self.closed = True

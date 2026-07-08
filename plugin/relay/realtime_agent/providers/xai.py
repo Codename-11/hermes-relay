@@ -200,8 +200,18 @@ class XAIRealtimeAgentConnection:
             }
         )
 
-    async def request_response(self) -> None:
-        await self.socket.send_json({"type": "response.create"})
+    async def request_response(self, *, instructions: str | None = None) -> None:
+        payload: dict[str, Any] = {"type": "response.create"}
+        if instructions:
+            # Per-response instructions override the session-level system
+            # prompt for this response only — confirmed supported by both
+            # xAI and OpenAI's realtime protocol (docs.x.ai Voice Agent API).
+            # Lets the broker steer a spoken turn (e.g. speak a Hermes
+            # background result) without fabricating a fake conversation
+            # item, so the transcript never contains a synthetic message
+            # attributed to a role that didn't actually say it.
+            payload["response"] = {"instructions": instructions}
+        await self.socket.send_json(payload)
 
     async def close(self) -> None:
         await self.socket.close()
