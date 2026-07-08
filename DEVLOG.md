@@ -1,5 +1,74 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-07 — Realtime voice result-injection: drop the fake-user-message hack
+
+**What changed.** The realtime voice broker (`plugin/relay/realtime_agent/broker.py`)
+delivered three kinds of broker-authored instructions — the forced-Hermes preamble,
+the background-task handoff acknowledgement, and the completed background-task
+summary — by injecting a synthetic *user* message (`connection.send_text()` →
+`conversation.item.create` with `role: "user"`) and then requesting a response. The
+model's conversation history ended up with fake turns like "the user" saying "Hermes
+has already handled the user's previous voice request..." — an existing TODO item
+flagged this as needing a cleaner mechanism but noted xAI support was unverified.
+
+**Research.** OpenAI's Realtime API and xAI's Voice Agent API (confirmed directly
+from `docs.x.ai`) both support `response.create` with a per-response `instructions`
+field that overrides the session system prompt for exactly one response, without
+creating any conversation item. `conversation: "none"` (fully out-of-band, excluded
+from history) is OpenAI-only and was deliberately not used, since the spoken summary
+should remain real conversation history for follow-up turns to reference.
+
+**Implementation.** `RealtimeAgentConnection.request_response()` gained an optional
+`instructions: str | None` kwarg (`providers/base.py`); both `providers/openai.py`
+and `providers/xai.py` send `{"type": "response.create", "response": {"instructions":
+...}}` when instructions are supplied, otherwise the original bare `response.create`.
+All 4 broker-authored injection sites now call `request_response(instructions=...)`
+instead of `send_text(...)`; the one genuine passthrough (real client-supplied text,
+`broker.py:699`) is untouched. Updated the three affected test fixtures
+(`FakeNativeConnection` / `FakeConnection` in `test_realtime_promotion.py` and
+`test_realtime_agent_routes.py`) to record `instructions` the same way they recorded
+`send_text` calls, and added direct wire-shape assertions to both provider test files.
+
+**Verification.** `python -m unittest discover -s plugin/tests` — 1073/1074 green;
+the one failure (`test_reads_hermes_xai_oauth_credential_pool`) is the pre-existing,
+already-documented local-fixture gap, unrelated to this change. **Not yet
+deployed or live-verified** — this is relay/plugin code, and per project policy
+automation does not deploy to or restart the live relay host. Needs an owner-driven
+deploy + a real on-device voice session to confirm the model still produces a
+natural spoken summary when driven by `instructions` alone.
+
+## 2026-07-07 — Voice tool-call ordering/stuck-chip fix + screen-wake-lock
+
+**Voice tool-call chip stuck + ordering (on-device realtime test).** Diagnosed
+in the prior entry below and now fixed. Root cause was narrower than first
+suspected: `VoiceUiState.responseText` turned out to be write-only (nothing
+renders it for the realtime path — the only read site is the unrelated
+brokered-tool-loop narrator), so the "stuck" symptom was the `BackgroundRunChip`
+pinning its `statusLine` on the just-finished tool (`phase=RUNNING`) because
+`VoiceViewModel`'s realtime event handler had no `hermes.tool.completed`/`failed`
+branch — the chip showed a stale "Running command." until the next unrelated
+event happened to overwrite it. Added that branch (`VoiceViewModel.kt:2619`):
+clears the finished tool's `statusLine`, advances `completedToolCount`, never
+touches a chip already in `DELIVERING`. Separately, `CompactTranscriptRow` in
+`VoiceModeOverlay.kt` rendered the assistant's reply text above the tool-call
+rows that produced it — reversed from chronology; reordered so tool rows render
+first. The per-message `ToolCall` transcript rows (`ChatViewModel.applyRealtimeAgentEvent`)
+were already correct and untouched. `:app:compileSideloadDebugKotlin` green;
+on-device re-verify still pending (release cut is on hold for it — see TODO).
+
+**Screen-wake-lock for chat/voice.** The app relied entirely on the OS screen
+timeout during both surfaces. Added `KeepScreenOnWhile(enabled)`
+(`ui/components/OrientationOverride.kt`, `Window.FLAG_KEEP_SCREEN_ON` via a
+`DisposableEffect` — the visible-surface mechanism `power/WakeLockManager.kt`'s
+doc comment already pointed at), wired as a single call site at the `ChatScreen`
+root: `enabled = voiceUiState.voiceMode || isStreaming`. Voice mode holds the
+screen on for the whole session (call/Assistant-style, including silent gaps);
+chat holds it only while a reply is actively streaming (video-playback-style),
+falling back to the OS default while idle — matching WhatsApp/Telegram/Signal
+norms rather than pinning a static transcript. Deliberately single-owner: the
+window flag isn't reference-counted, so two independent callers could clear
+each other's hold.
+
 ## 2026-07-07 — Relay URL-guard sweep + voice error-recovery UX
 
 **Relay URL guards (finishing the #131 relay class).** Extended the malformed-URL
