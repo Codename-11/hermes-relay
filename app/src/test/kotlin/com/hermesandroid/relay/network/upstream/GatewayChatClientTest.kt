@@ -63,6 +63,14 @@ class GatewayClientHarness(
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /** One withheld JSON-RPC ack, capturable for delayed release via [releaseAck]. */
+    class PendingAck(val ws: WebSocket, val method: String, val id: Long)
+
+    /** Methods whose ack is WITHHELD (queued in [pendingAcks]) instead of auto-answered —
+     * models upstream's fire-and-forget `prompt.submit`, whose ack can trail the turn. */
+    val suppressAckMethods: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    val pendingAcks = LinkedBlockingQueue<PendingAck>()
+
     private val wsListener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
             serverSockets.add(webSocket)
@@ -77,6 +85,10 @@ class GatewayClientHarness(
             val params = frame["params"] as? JsonObject ?: JsonObject(emptyMap())
             rpcLog.add(method to params)
             if (!autoRespondEnabled) return
+            if (method in suppressAckMethods) {
+                pendingAcks.add(PendingAck(webSocket, method, id.toLong()))
+                return
+            }
             if (method in methodNotFound) {
                 webSocket.send(
                     buildJsonObject {
@@ -230,6 +242,20 @@ class GatewayClientHarness(
         error("rpc $method never arrived; saw ${rpcLog.map { it.first }}")
     }
 
+    fun awaitPendingAck(): PendingAck =
+        pendingAcks.poll(5, TimeUnit.SECONDS) ?: error("suppressed ack never captured")
+
+    /** Release a withheld ack with a generic success result. */
+    fun releaseAck(ack: PendingAck) {
+        ack.ws.send(
+            buildJsonObject {
+                put("jsonrpc", "2.0")
+                put("id", ack.id)
+                put("result", buildJsonObject { put("ok", true) })
+            }.toString(),
+        )
+    }
+
     /** Waits until [method] has been seen at least [count] times; returns the params in arrival order. */
     fun awaitRpcCount(method: String, count: Int): List<JsonObject> {
         val deadline = System.currentTimeMillis() + 5_000
@@ -297,24 +323,48 @@ class GatewayChatClientTest {
         )
     }
 
+    private fun buildClient(
+        rpcTimeoutMs: Long = 15_000L,
+        promptSubmitTimeoutMs: Long = 1_800_000L,
+        turnIdleTimeoutMs: Long = 180_000L,
+    ) = GatewayChatClient(
+        initialDashboardClient = DashboardApiClient(
+            baseUrl = harness.server.url("/").toString().trimEnd('/'),
+            okHttpClient = OkHttpClient(),
+        ),
+        okHttpClient = OkHttpClient(),
+        callbackDispatcher = { it() },
+        onGatewayUnsupported = { unsupportedMarked = true },
+        scope = scope,
+        // Keep the mid-turn reconnect window short so `failed rejoin`
+        // surfaces its error well within the test's await budget.
+        midTurnRejoinWindowMs = 3_000L,
+        rpcTimeoutMs = rpcTimeoutMs,
+        promptSubmitTimeoutMs = promptSubmitTimeoutMs,
+        turnIdleTimeoutMs = turnIdleTimeoutMs,
+    )
+
+    /**
+     * Swap in a client with shortened timeout seams. Mints a FRESH scope:
+     * shutdown() cancels the scope's Job, and the replacement client must
+     * still be able to launch its sendTurn coroutines.
+     */
+    private fun rebuildClient(
+        rpcTimeoutMs: Long = 15_000L,
+        promptSubmitTimeoutMs: Long = 1_800_000L,
+        turnIdleTimeoutMs: Long = 180_000L,
+    ) {
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        client = buildClient(rpcTimeoutMs, promptSubmitTimeoutMs, turnIdleTimeoutMs)
+    }
+
     @Before
     fun setUp() {
         harness = GatewayClientHarness()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         unsupportedMarked = false
-        client = GatewayChatClient(
-            initialDashboardClient = DashboardApiClient(
-                baseUrl = harness.server.url("/").toString().trimEnd('/'),
-                okHttpClient = OkHttpClient(),
-            ),
-            okHttpClient = OkHttpClient(),
-            callbackDispatcher = { it() },
-            onGatewayUnsupported = { unsupportedMarked = true },
-            scope = scope,
-            // Keep the mid-turn reconnect window short so `failed rejoin`
-            // surfaces its error well within the test's await budget.
-            midTurnRejoinWindowMs = 3_000L,
-        )
+        client = buildClient()
     }
 
     @After
@@ -1022,5 +1072,106 @@ class GatewayChatClientTest {
         client.sendTurn(null, "plain", null, r.callbacks) { r.preflightFailures += it }
         val submit = harness.awaitRpc("prompt.submit")
         assertFalse(submit.containsKey("truncate_before_user_ordinal"))
+    }
+
+    // --- HRUI-016: long / fire-and-forget prompt.submit ack semantics.
+    // Upstream treats prompt.submit as a long-running RPC (desktop passes a
+    // 30-min PROMPT_SUBMIT_REQUEST_TIMEOUT_MS at every call site) because the
+    // ack can trail a MoA/deep-reasoning/tool-heavy turn by minutes. A short
+    // ack timeout used to preflight-fail into the SSE fallback → the same
+    // prompt ran twice. ---
+
+    @Test
+    fun `slow prompt submit ack outlives the generic rpc timeout without SSE fallback`() {
+        // Shrink the GENERIC rpc timeout below the ack delay: if prompt.submit
+        // (wrongly) rode the generic timeout again, the submit would fail at
+        // 500ms and the preflight fallback would fire — failing this test.
+        rebuildClient(rpcTimeoutMs = 500L)
+        harness.suppressAckMethods.add("prompt.submit")
+        val r = Recorder()
+        client.sendTurn(null, "deep thought", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        val ack = harness.awaitPendingAck()
+
+        // Ack arrives well after the generic rpc timeout would have fired.
+        Thread.sleep(1_500)
+        harness.releaseAck(ack)
+
+        serverWs.send(harness.eventFrame("message.delta", buildJsonObject { put("text", "42") }, "live-1"))
+        serverWs.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "42") }, "live-1"))
+
+        assertTrue("turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("42"), r.textDeltas.toList())
+        assertTrue("slow ack must not preflight-fail (duplicate turn)", r.preflightFailures.isEmpty())
+        assertTrue("slow ack must not surface a stream error, got ${r.errors}", r.errors.isEmpty())
+        assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `turn completes when the ack never arrives and the late ack timeout does not fall back`() {
+        // Shrink the SUBMIT timeout so its late failure fires inside the test
+        // budget — after the turn has already completed via stream events.
+        rebuildClient(promptSubmitTimeoutMs = 1_000L)
+        harness.suppressAckMethods.add("prompt.submit")
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(harness.eventFrame("message.delta", buildJsonObject { put("text", "Hi!") }, "live-1"))
+        serverWs.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "Hi!") }, "live-1"))
+        assertTrue("turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+
+        // Let the shortened ack timeout fire AFTER completion — the late
+        // failure must not resurrect the finished turn on the SSE fallback.
+        Thread.sleep(1_500)
+        assertTrue("late ack timeout fired the SSE fallback (duplicate turn)", r.preflightFailures.isEmpty())
+        assertTrue(r.errors.isEmpty())
+        assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `idle watchdog does not fire while events keep arriving slowly`() {
+        rebuildClient(turnIdleTimeoutMs = 1_000L)
+        val r = Recorder()
+        client.sendTurn(null, "slow drip", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        // Each event lands inside the (shortened) idle window but the run's
+        // TOTAL wall-clock far exceeds it — an idle-progress watchdog stays
+        // quiet; a hard turn cap would have killed the turn.
+        repeat(8) { i ->
+            serverWs.send(
+                harness.eventFrame("message.delta", buildJsonObject { put("text", "d$i ") }, "live-1"),
+            )
+            Thread.sleep(250)
+        }
+        serverWs.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "done") }, "live-1"))
+
+        assertTrue("turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue("watchdog fired despite live events: ${r.errors}", r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(
+            "watchdog must not have interrupted a live turn",
+            harness.rpcLog.none { it.first == "session.interrupt" },
+        )
+    }
+
+    @Test
+    fun `idle watchdog fires when events stop flowing`() {
+        rebuildClient(turnIdleTimeoutMs = 500L)
+        val r = Recorder()
+        client.sendTurn(null, "stalls", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(harness.eventFrame("message.delta", buildJsonObject { put("text", "partial") }, "live-1"))
+        // …then silence: the idle watchdog must fail the turn as a STREAM
+        // error (never a preflight fallback — the turn started server-side)
+        // and interrupt the server so it stops generating.
+        assertTrue("watchdog never fired", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue("expected a stream error from the watchdog", r.errors.isNotEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        harness.awaitRpc("session.interrupt")
     }
 }
