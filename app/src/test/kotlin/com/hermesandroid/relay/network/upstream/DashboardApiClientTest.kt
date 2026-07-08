@@ -60,7 +60,11 @@ class DashboardApiClientTest {
     }
 
     @Test
-    fun getModelOptions_usesCachedPathUnlessRefreshRequested() = runTest {
+    fun getModelOptions_alwaysRequestsUnconfiguredProviders() = runTest {
+        // HRUI-022: newer upstream hides unconfigured provider skeleton rows
+        // unless the client opts in — without include_unconfigured=1 the
+        // Manage picker loses its Keys-setup affordance. Both the cached and
+        // the refresh path must carry the opt-in.
         val body = """{"providers": []}"""
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(body))
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(body))
@@ -68,10 +72,16 @@ class DashboardApiClientTest {
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
 
         client.getModelOptions().getOrThrow()
-        assertEquals("/api/model/options", server.takeRequest().path)
+        val bare = server.takeRequest().requestUrl!!
+        assertEquals("/api/model/options", bare.encodedPath)
+        assertEquals("1", bare.queryParameter("include_unconfigured"))
+        assertEquals(null, bare.queryParameter("refresh"))
 
         client.getModelOptions(refresh = true).getOrThrow()
-        assertEquals("/api/model/options?refresh=1", server.takeRequest().path)
+        val refreshed = server.takeRequest().requestUrl!!
+        assertEquals("/api/model/options", refreshed.encodedPath)
+        assertEquals("1", refreshed.queryParameter("include_unconfigured"))
+        assertEquals("1", refreshed.queryParameter("refresh"))
     }
 
     @Test
