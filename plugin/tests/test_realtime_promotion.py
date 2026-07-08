@@ -106,8 +106,14 @@ class GatedHermesToolBroker:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.cancelled = asyncio.Event()
+        # Which stream_task call (0-based) was cancelled. The fast lane
+        # (background-run v2) legitimately opens-and-abandons a SECOND stream
+        # while the first run blocks, so orphaning assertions must check the
+        # first stream specifically, not "any stream cancelled".
+        self.cancelled_indices: list[int] = []
 
     async def stream_task(self, request: HermesTaskRequest):
+        index = len(self.requests)
         self.requests.append(request)
         session_id = request.session_id or "created-hermes-session"
         yield {
@@ -121,6 +127,7 @@ class GatedHermesToolBroker:
             await self.release.wait()
         except asyncio.CancelledError:
             self.cancelled.set()
+            self.cancelled_indices.append(index)
             raise
         yield {
             "type": "voice.response.delta",
@@ -619,8 +626,11 @@ class RealtimePromotionTests(AioHTTPTestCase):
                 await asyncio.sleep(0.02)
             self.assertTrue(busy)
             self.assertEqual(busy[0][1].get("status"), "already_running")
-            # First run untouched: not cancelled, still deliverable.
-            self.assertFalse(broker.cancelled.is_set())
+            # First run untouched: ITS stream (call index 0) was never
+            # cancelled, so it stays deliverable. The fast-lane attempt for
+            # call-2 (index 1) is expected to be opened and abandoned —
+            # that cancellation is the designed fall-through to busy.
+            self.assertNotIn(0, broker.cancelled_indices)
 
             broker.release.set()
             done = await self._read_until(ws, "hermes.run.background_completed")

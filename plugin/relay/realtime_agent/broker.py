@@ -2294,19 +2294,33 @@ class RealtimeAgentHandler:
         # max_background_runs=1: a second hermes_run_task while one is still in
         # flight must NOT create a new task — that would overwrite the
         # session.hermes_task reference and cancel the first run's delivery,
-        # orphaning it. Answer with a speakable busy result instead.
+        # orphaning it.
+        #
+        # Fast lane (background-run v2 §1): when the in-flight run is DETACHED
+        # (promoted/durable — the only way a second call can arrive while one
+        # is running), first try the new request INLINE on a separate
+        # ephemeral Hermes session within the normal grace window. A quick
+        # lookup ("what time is it in Tokyo?") answers immediately instead of
+        # being refused; anything that would promote (grace elapsed, known-long
+        # tool started) is abandoned and falls through to the busy answer —
+        # the single background slot stays owned by the in-flight run.
         existing = session.hermes_task
         if existing is not None and not existing.done():
+            if session.hermes_run_tier in ("promoted", "durable"):
+                fast = await self._run_fast_lane_task(session, call)
+                if fast is not None:
+                    return fast
             return {
                 "ok": True,
                 "status": "already_running",
                 "run_id": session.hermes_run_id,
                 "session_id": session.chat_session_id,
                 "instruction": (
-                    "A previous task is still running in the background. Tell "
-                    "the user it's still in progress; they can wait, ask for "
-                    "status, or cancel it (hermes_cancel) before starting "
-                    "something new."
+                    "A previous task is still running in the background, and "
+                    "this new request needs more than a quick inline answer. "
+                    "Tell the user the earlier task is still in progress; they "
+                    "can wait, ask for status, or cancel it (hermes_cancel) "
+                    "before starting something new."
                 ),
                 "interface": _interface_context(session),
             }
@@ -2400,6 +2414,158 @@ class RealtimeAgentHandler:
             # A promoted task is still running; keep it referenced for delivery.
             if session.hermes_task is task and task.done():
                 session.hermes_task = None
+
+    async def _run_fast_lane_task(
+        self,
+        session: RealtimeAgentSession,
+        call: ToolCallEvent,
+    ) -> dict[str, Any] | None:
+        """Inline-only second ``hermes_run_task`` while a durable run is detached.
+
+        Background-run v2 §1 ("fast lane"). Runs the request on a SEPARATE
+        ephemeral Hermes session (``session_id=None`` — a fresh api_server
+        session) so it cannot interleave with the detached run's gateway
+        session, and keeps every observation in locals so it touches NONE of
+        the session's ``hermes_*`` run state — run_id, status, progress
+        counters, and the chip all stay owned by the in-flight run.
+
+        Returns the tool result dict when the task completes inside the grace
+        window, an error dict on a fast-lane failure, or ``None`` when the
+        request would promote — grace elapsed, a known-long tool started,
+        explicit ``mode=background``, or promotion disabled — in which case
+        the caller falls through to the busy answer. An abandoned attempt is
+        cancelled client-side; the server side may still finish it into the
+        ephemeral session (at-least-once, same property as promotion), where
+        it is simply never read.
+
+        Deliberately silent on the client event stream: a fast-lane answer is
+        bounded by the grace window (a few seconds), so it needs no chip or
+        progress events of its own — and emitting them would fight the
+        detached run's chip.
+        """
+        promote_after = self._promote_after_seconds(session)
+        if promote_after is None or promote_after <= 0:
+            # Promotion off ⇒ runs are inline-forever; an unbounded second
+            # inline run is exactly the collision the busy answer prevents.
+            return None
+        if str(call.arguments.get("mode") or "").strip().lower() == "background":
+            return None  # explicit background request needs the (occupied) slot
+        text = str(call.arguments.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "hermes_run_task requires text"}
+        profile = str(call.arguments.get("profile") or session.profile or "").strip() or None
+        interface_context = _interface_context(session)
+        long_tool_hints = _long_tool_hints()
+
+        final_parts: list[str] = []
+        error_message: str | None = None
+        long_tool_name: str | None = None
+        tool_count = 0
+
+        async def _consume() -> None:
+            nonlocal error_message, long_tool_name, tool_count
+            async for hermes_event in self.hermes.stream_task(
+                HermesTaskRequest(
+                    text=text[:5000],
+                    profile=profile,
+                    session_id=None,
+                    bearer_token=session.bearer_token,
+                    interface_context=interface_context,
+                )
+            ):
+                etype = str(hermes_event.get("type") or "")
+                if etype == "hermes.tool.started":
+                    tool_name = str(hermes_event.get("tool_name") or "")
+                    lowered = tool_name.lower()
+                    if any(hint in lowered for hint in long_tool_hints):
+                        # This request is now expected to be long — it would
+                        # promote on the main lane, so the fast lane abandons
+                        # it instead of racing the grace window.
+                        long_tool_name = tool_name
+                        return
+                elif etype == SERVER_EVT_RESPONSE_DELTA:
+                    final_parts.append(str(hermes_event.get("delta") or ""))
+                elif etype == "voice.response.turn_completed":
+                    content = str(hermes_event.get("content") or "")
+                    if content and not final_parts:
+                        final_parts.append(content)
+                elif etype == "hermes.tool.completed":
+                    tool_count += 1
+                elif etype == "voice.error":
+                    error_message = str(hermes_event.get("message") or "Hermes error")
+
+        consume_task = asyncio.create_task(_consume())
+        try:
+            await asyncio.wait_for(consume_task, timeout=promote_after)
+        except asyncio.TimeoutError:
+            self._log(
+                session,
+                "voice.hermes_fast_lane.abandoned",
+                {
+                    "type": "voice.hermes_fast_lane.abandoned",
+                    "reason": "grace_elapsed",
+                    "grace_ms": int(promote_after * 1000),
+                },
+            )
+            return None
+        except Exception as exc:  # infrastructure failure — report, don't busy
+            self._log(
+                session,
+                "voice.hermes_fast_lane.error",
+                {
+                    "type": "voice.hermes_fast_lane.error",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                },
+            )
+            return {
+                "ok": False,
+                "error": f"fast-lane task failed: {exc}",
+                "interface": interface_context,
+            }
+        if long_tool_name is not None:
+            self._log(
+                session,
+                "voice.hermes_fast_lane.abandoned",
+                {
+                    "type": "voice.hermes_fast_lane.abandoned",
+                    "reason": "long_tool_started",
+                    "tool_name": long_tool_name,
+                },
+            )
+            return None
+        if error_message:
+            return {"ok": False, "error": error_message, "interface": interface_context}
+        final_text = "".join(final_parts).strip()
+        speech_safe_text = _provider_safe_answer_for_speech(final_text)
+        self._log(
+            session,
+            "voice.hermes_fast_lane.completed",
+            {
+                "type": "voice.hermes_fast_lane.completed",
+                "tool_count": tool_count,
+                "answer_chars": len(speech_safe_text),
+            },
+        )
+        return {
+            "ok": True,
+            "status": "completed",
+            "fast_lane": True,
+            "text": speech_safe_text,
+            "answer": speech_safe_text,
+            "summary": speech_safe_text[:1200],
+            "tool_count": tool_count,
+            "interface": interface_context,
+            "note": (
+                "Answered inline on a side session; the earlier background "
+                "task is still running and will report separately."
+            ),
+            "spoken_response": "provider_generated_after_hermes_result",
+            "provider_instruction": (
+                "Use the Hermes text/answer fields as the authoritative context "
+                "for the spoken reply. Summarize naturally; do not say you lack context. "
+                "Do not read raw JSON, logs, tables, IDs, or command output verbatim."
+            ),
+        }
 
     def _promote_after_seconds(self, session: RealtimeAgentSession) -> float | None:
         """Grace window before a run is promoted, or None when promotion is off."""
