@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
+import android.content.Context
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -55,9 +56,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
@@ -65,18 +69,18 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class SessionDrawerFilter(val label: String) {
-    All("All"),
-    Threads("Threads"),
-    Pinned("Pinned"),
-    Archive("Archive"),
+private enum class SessionDrawerFilter {
+    All,
+    Threads,
+    Pinned,
+    Archive,
 }
 
 @Composable
 fun SessionDrawerContent(
     sessions: List<ChatSession>,
     currentSessionId: String?,
-    scopeTitle: String = "Sessions",
+    scopeTitle: String = "",
     scopeSubtitle: String? = null,
     isLoading: Boolean = false,
     isOpen: Boolean = true,
@@ -204,7 +208,7 @@ fun SessionDrawerContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = scopeTitle,
+                    text = scopeTitle.ifBlank { stringResource(R.string.drawer_filter_sessions) },
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )
@@ -218,7 +222,7 @@ fun SessionDrawerContent(
                         ) {
                             Icon(
                                 Icons.Filled.FilterList,
-                                contentDescription = "Filter by source",
+                                contentDescription = stringResource(R.string.drawer_filter_by_source),
                                 tint = if (presentSources.any { it in hiddenSources }) {
                                     RelayRefresh.Relay
                                 } else {
@@ -232,7 +236,7 @@ fun SessionDrawerContent(
                             onDismissRequest = { sourceFilterOpen = false },
                         ) {
                             Text(
-                                text = "Show sources",
+                                text = stringResource(R.string.drawer_show_sources),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -299,7 +303,7 @@ fun SessionDrawerContent(
                     IconButton(onClick = refresh, modifier = Modifier.size(36.dp)) {
                         Icon(
                             Icons.Filled.Refresh,
-                            contentDescription = "Refresh sessions",
+                            contentDescription = stringResource(R.string.drawer_refresh_sessions),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp),
                         )
@@ -326,7 +330,7 @@ fun SessionDrawerContent(
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("New Chat")
+                Text(stringResource(R.string.drawer_new_chat))
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -338,7 +342,7 @@ fun SessionDrawerContent(
                 leadingIcon = {
                     Icon(Icons.Filled.Search, contentDescription = null)
                 },
-                placeholder = { Text("Search sessions or id...") },
+                placeholder = { Text(stringResource(R.string.drawer_search_placeholder)) },
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -357,11 +361,21 @@ fun SessionDrawerContent(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                                     ) {
-                                        Text(text = item.label, style = relayMetadataStyle())
+                                        Text(text = when (item) {
+                                            SessionDrawerFilter.All -> stringResource(R.string.drawer_filter_all)
+                                            SessionDrawerFilter.Threads -> stringResource(R.string.drawer_filter_threads)
+                                            SessionDrawerFilter.Pinned -> stringResource(R.string.drawer_filter_pinned)
+                                            SessionDrawerFilter.Archive -> stringResource(R.string.drawer_filter_archive)
+                                        }, style = relayMetadataStyle())
                                         BetaChip()
                                     }
                                 } else {
-                                    Text(text = item.label, style = relayMetadataStyle())
+                                    Text(text = when (item) {
+                                        SessionDrawerFilter.All -> stringResource(R.string.drawer_filter_all)
+                                        SessionDrawerFilter.Threads -> stringResource(R.string.drawer_filter_threads)
+                                        SessionDrawerFilter.Pinned -> stringResource(R.string.drawer_filter_pinned)
+                                        SessionDrawerFilter.Archive -> stringResource(R.string.drawer_filter_archive)
+                                    }, style = relayMetadataStyle())
                                 }
                             },
                         )
@@ -380,7 +394,7 @@ fun SessionDrawerContent(
                         tint = MaterialTheme.colorScheme.primary,
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("New Thread")
+                    Text(stringResource(R.string.drawer_new_thread))
                 }
             }
             if (!autoTitlesSupported) {
@@ -390,7 +404,7 @@ fun SessionDrawerContent(
                 // rather than broken — rename is one tap away via ⋮. (issue #133)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Chats aren't auto-named on this connection — use ⋮ → Rename.",
+                    text = stringResource(R.string.drawer_chats_not_named),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -422,7 +436,7 @@ fun SessionDrawerContent(
                     strokeWidth = 2.dp,
                 )
                 Text(
-                    text = "Loading sessions…",
+                    text = stringResource(R.string.drawer_loading_sessions),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -435,12 +449,12 @@ fun SessionDrawerContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = if (sessions.isEmpty()) "No sessions yet" else "No matching sessions",
+                    text = if (sessions.isEmpty()) stringResource(R.string.drawer_no_sessions) else stringResource(R.string.drawer_no_matching_sessions),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Start a conversation to see it here",
+                    text = stringResource(R.string.drawer_start_conversation),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -482,12 +496,12 @@ fun SessionDrawerContent(
         var threadName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { newThreadDialog = false },
-            title = { Text("New Thread") },
+            title = { Text(stringResource(R.string.drawer_new_thread)) },
             text = {
                 OutlinedTextField(
                     value = threadName,
                     onValueChange = { threadName = it },
-                    label = { Text("Thread name") },
+                    label = { Text(stringResource(R.string.drawer_thread_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -500,12 +514,12 @@ fun SessionDrawerContent(
                         newThreadDialog = false
                     }
                 }) {
-                    Text("Create")
+                    Text(stringResource(R.string.drawer_create))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { newThreadDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.drawer_cancel))
                 }
             },
         )
@@ -516,12 +530,12 @@ fun SessionDrawerContent(
         var newTitle by remember(session) { mutableStateOf(session.title ?: "") }
         AlertDialog(
             onDismissRequest = { renameDialogSession = null },
-            title = { Text("Rename Session") },
+            title = { Text(stringResource(R.string.drawer_rename_session)) },
             text = {
                 OutlinedTextField(
                     value = newTitle,
                     onValueChange = { newTitle = it },
-                    label = { Text("Title") },
+                    label = { Text(stringResource(R.string.drawer_title)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -533,12 +547,12 @@ fun SessionDrawerContent(
                     }
                     renameDialogSession = null
                 }) {
-                    Text("Rename")
+                    Text(stringResource(R.string.drawer_rename))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { renameDialogSession = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.drawer_cancel))
                 }
             }
         )
@@ -548,21 +562,21 @@ fun SessionDrawerContent(
     deleteDialogSession?.let { session ->
         AlertDialog(
             onDismissRequest = { deleteDialogSession = null },
-            title = { Text("Delete Session?") },
+            title = { Text(stringResource(R.string.drawer_delete_session_title)) },
             text = {
-                Text("This will permanently delete \"${session.title ?: "Untitled"}\" and its message history.")
+                Text(stringResource(R.string.drawer_delete_session_prefix) + (session.title ?: stringResource(R.string.drawer_untitled)) + stringResource(R.string.drawer_delete_session_suffix))
             },
             confirmButton = {
                 TextButton(onClick = {
                     onDeleteSession(session.sessionId)
                     deleteDialogSession = null
                 }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.drawer_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { deleteDialogSession = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.drawer_cancel))
                 }
             }
         )
@@ -583,6 +597,8 @@ private fun SessionItem(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val locale = LocalLocale.current.platformLocale
+    val context = LocalContext.current
+    val untitledLabel = stringResource(R.string.drawer_untitled)
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
     } else {
@@ -603,7 +619,7 @@ private fun SessionItem(
                 .padding(end = 8.dp),
         ) {
             Text(
-                text = session.title ?: "Untitled",
+                text = session.title ?: untitledLabel,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -633,7 +649,7 @@ private fun SessionItem(
                             tint = RelayRefresh.Relay,
                         )
                         Text(
-                            text = "Thread",
+                            text = stringResource(R.string.drawer_thread),
                             style = relayMetadataStyle(),
                             color = RelayRefresh.Relay,
                             maxLines = 1,
@@ -645,7 +661,7 @@ private fun SessionItem(
                 sourceBadge(session.source)?.let { badge ->
                     SourceChip(badge)
                 }
-                sessionTimestampText(session, locale)?.let { timestamp ->
+                sessionTimestampText(session, locale, context)?.let { timestamp ->
                     Text(
                         text = timestamp,
                         style = MaterialTheme.typography.bodySmall,
@@ -657,7 +673,7 @@ private fun SessionItem(
                 }
                 if (session.messageCount > 0) {
                     Text(
-                        text = "${session.messageCount} msgs",
+                        text = "${session.messageCount}" + stringResource(R.string.drawer_msgs),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -673,7 +689,7 @@ private fun SessionItem(
         ) {
             Icon(
                 Icons.Filled.Star,
-                contentDescription = if (pinned) "Unpin session" else "Pin session",
+                contentDescription = if (pinned) stringResource(R.string.drawer_unpin_session) else stringResource(R.string.drawer_pin_session),
                 tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(19.dp),
             )
@@ -686,7 +702,7 @@ private fun SessionItem(
             ) {
                 Icon(
                     Icons.Filled.MoreVert,
-                    contentDescription = "Session actions",
+                    contentDescription = stringResource(R.string.drawer_session_actions),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(19.dp),
                 )
@@ -696,7 +712,7 @@ private fun SessionItem(
                 onDismissRequest = { menuOpen = false },
             ) {
                 DropdownMenuItem(
-                    text = { Text("Rename") },
+                    text = { Text(stringResource(R.string.drawer_rename)) },
                     leadingIcon = {
                         Icon(Icons.Filled.Edit, contentDescription = null)
                     },
@@ -706,7 +722,7 @@ private fun SessionItem(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text(if (archived) "Restore" else "Archive") },
+                    text = { Text(if (archived) stringResource(R.string.drawer_restore) else stringResource(R.string.drawer_archive)) },
                     leadingIcon = {
                         Icon(
                             Icons.Filled.Archive,
@@ -726,7 +742,7 @@ private fun SessionItem(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            text = "Delete",
+                            text = stringResource(R.string.drawer_delete),
                             color = MaterialTheme.colorScheme.error,
                         )
                     },
@@ -747,22 +763,22 @@ private fun SessionItem(
     }
 }
 
-private fun sessionTimestampText(session: ChatSession, locale: Locale): String? {
+private fun sessionTimestampText(session: ChatSession, locale: Locale, context: Context): String? {
     val timestamp = session.activityTimestamp
     if (timestamp <= 0L) return null
     val hasDistinctActivity =
         session.lastActivityAt > 0L &&
             session.startTimestamp > 0L &&
             session.lastActivityAt != session.startTimestamp
-    val prefix = if (hasDistinctActivity) "Active" else "Started"
-    return "$prefix ${formatTimestamp(timestamp, locale)}"
+    val prefix = if (hasDistinctActivity) context.getString(R.string.drawer_timestamp_active) else context.getString(R.string.drawer_timestamp_started)
+    return "$prefix ${formatTimestamp(timestamp, locale, context)}"
 }
 
-private fun formatTimestamp(millis: Long, locale: Locale): String {
+private fun formatTimestamp(millis: Long, locale: Locale, context: Context): String {
     val now = System.currentTimeMillis()
     val diff = now - millis
     return when {
-        diff < 60_000 -> "Just now"
+        diff < 60_000 -> context.getString(R.string.drawer_just_now)
         diff < 3_600_000 -> "${diff / 60_000}m ago"
         diff < 86_400_000 -> SimpleDateFormat("h:mm a", locale).format(Date(millis))
         else -> SimpleDateFormat("MMM d", locale).format(Date(millis))
