@@ -207,4 +207,5 @@
     <string name="cw_sign_in_to_dashboard">登录到仪表盘</string>
     <string name="cw_open_dashboard">打开仪表盘</string>
     <string name="cw_sign_in_hint">打开仪表盘网页以完成登录。</string>
+</resources>
 

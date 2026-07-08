@@ -207,4 +207,5 @@
     <string name="cw_sign_in_to_dashboard">Sign in to dashboard</string>
     <string name="cw_open_dashboard">Open dashboard</string>
     <string name="cw_sign_in_hint">Opens the dashboard web UI to complete sign-in.</string>
+</resources>
 
