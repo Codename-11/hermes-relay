@@ -664,6 +664,10 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             self.assertIn("User (hermes_chat): Tell me about the Bitwarden integration.", instructions)
             self.assertIn("Assistant (realtime_agent): It syncs vault metadata through Hermes.", instructions)
             self.assertIn("Use that seeded context for follow-up references", instructions)
+            # Re-route-bias fix: a follow-up that only recalls an
+            # already-delivered result must be answerable from history without
+            # re-running the completed task.
+            self.assertIn("do NOT re-run a task you already completed", instructions)
         finally:
             await ws.close()
             await handler._close_native_session(handler.sessions[body["session_id"]], "test cleanup")

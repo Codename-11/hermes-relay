@@ -1,5 +1,26 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Recall of an already-delivered result no longer re-runs the task
+
+Follow-on to the fallback-seeding fix below. Live verify confirmed the seeding
+cured the "can't you see we ran the task?" confusion — but the provider still did a
+full `hermes_run_task` round-trip on a pure-recall follow-up ("what did that say?")
+instead of answering from the now-seeded history. Root cause was one over-broad word
+in `_native_instructions`: "If the needed context is missing, stale, **tool-derived**,
+or requires verification, call hermes_run_task." A delivered background result IS
+tool-derived, so recall follow-ups re-routed.
+
+Rewrote the clause to distinguish recall from new work: a Hermes result already
+delivered earlier in the conversation is in history, so if the user only wants to
+hear it again / quote / reference it, answer directly and do NOT re-run; call
+hermes_run_task again only for new, updated, deeper, or re-verified information.
+Dropped the blanket "tool-derived → re-route" (kept "fresh data or verification you
+do not already have → re-route"). Instruction-only change; grok's instruction
+adherence is imperfect (same theme as the deferral), so needs live verify.
+
+Verification: `test_provider_native_instructions_include_recent_context` extended to
+assert the recall carve-out; realtime route + promotion suites green.
+
 ## 2026-07-09 — Fallback deliveries seed the answer into provider history
 
 Live e2e surfaced a follow-up failure: after a background result fell back to relay
