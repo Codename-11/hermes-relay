@@ -1,4 +1,11 @@
 <p align="center">
+  <strong>🇨🇳 中文本地化修改版本</strong><br>
+  <sub>基于 Hermes-Relay 官方源码，完整中文本地化界面。聊天、管理、语音、设置全面汉化，方便中文用户使用。</sub>
+</p>
+
+---
+
+<p align="center">
   <img src="assets/play-store-feature-1024x500.png" alt="Hermes-Relay — your Hermes agent, in your pocket" width="800">
 </p>
 
@@ -148,6 +155,16 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
     <td align="center" width="25%"><img src="assets/screenshots/06_manage.png" alt="Manage your agent" width="100%"><br><sub><b>Manage your agent</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/07_connections.png" alt="Connections and routes" width="100%"><br><sub><b>Connections &amp; routes</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/08_appearance.png" alt="Agent avatar &amp; skins" width="100%"><br><sub><b>Avatars &amp; skins</b></sub></td>
+  </tr>
+</table>
+
+### 中文本地化截图
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="assets/screenshots/Zh01.jpg" alt="中文设置界面" width="100%"><br><sub><b>设置 — 全面汉化</b></sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/Zh02.jpg" alt="中文管理界面" width="100%"><br><sub><b>管理 — 仪表盘汉化</b></sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/Zh03.jpg" alt="中文舵界面" width="100%"><br><sub><b>舵菜单 — 全面汉化</b></sub></td>
   </tr>
 </table>
 

@@ -1,9 +1,18 @@
-# 自定义工作流：push 时自动编译中文版 debug APK 并上传为 artifact
-# 用法：
-#   1. 把本仓库推到你自己的 GitHub fork
-#   2. 在 GitHub 仓库的 Actions 标签页手动触发 "Build CN Debug APK"，或推送代码到任何分支自动触发
-#   3. 构建完成后在 Actions → 对应 run → Artifacts 下载 debug-apk.zip
-name: Build CN Debug APK
+# 自定义工作流：编译中文版 APK 并发布到 GitHub Releases
+#
+# 触发方式：
+#   1. 推送代码到任何分支 → 自动编译 debug APK 并上传为 artifact
+#   2. 手动触发（Actions → Build CN APK → Run workflow）→ 可选发布到 Releases
+#
+# Release 签名（可选，但强烈建议配置）：
+#   在仓库 Settings → Secrets and variables → Actions 中配置：
+#   - HERMES_KEYSTORE_BASE64  (base64 编码的 keystore 文件)
+#   - HERMES_KEYSTORE_PASSWORD
+#   - HERMES_KEY_ALIAS
+#   - HERMES_KEY_PASSWORD
+#
+#   如果未配置签名密钥，Release 将降级为 debug 签名（可正常安装使用，但不可用于 Play Store）
+name: Build CN APK
 
 on:
   push:
@@ -18,17 +27,28 @@ on:
       - "gradlew.bat"
       - ".github/workflows/build-cn-debug-apk.yml"
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: "发布到 GitHub Releases"
+        type: boolean
+        default: true
+        required: true
+      release_tag:
+        description: "Release 标签（如 android-v1.3.0-cn.1，留空自动生成）"
+        required: false
+        type: string
 
-# 同一分支后一次推送取消前一次运行
 concurrency:
-  group: build-cn-debug-apk-${{ github.ref }}
+  group: build-cn-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build debug APK (both flavors)
+    name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.create_release.outputs.tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,23 +64,134 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: Build debug APK (both flavors)
+      # ─── 检测签名密钥是否存在 ──────────────────────────────────────────
+      # 注意：Gradle 的 release signingConfig 指向 /nonexistent（见 app/build.gradle.kts），
+      # 如果未设置 HERMES_KEYSTORE_PATH，assembleRelease 会失败。
+      # 因此：无密钥 → 强制使用 debug 构建；有密钥 → 使用 release 构建
+      - name: Check keystore secret availability
+        id: check_keystore
+        env:
+          HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$HERMES_KEYSTORE_BASE64" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decode release keystore
+        if: steps.check_keystore.outputs.available == 'true'
+        env:
+          HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
+        run: |
+          echo "$HERMES_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "HERMES_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          echo "✅ Release keystore 已解码"
+
+      - name: Determine Gradle task
+        id: gradle_task
+        run: |
+          IS_RELEASE="${{ github.event_name == 'workflow_dispatch' && inputs.create_release }}"
+          HAS_KEYSTORE="${{ steps.check_keystore.outputs.available }}"
+          if [ "$IS_RELEASE" = "true" ] && [ "$HAS_KEYSTORE" = "true" ]; then
+            echo "task=assembleRelease" >> "$GITHUB_OUTPUT"
+            echo "signing=release" >> "$GITHUB_OUTPUT"
+            echo "🔐 发布构建（已签名）"
+          elif [ "$IS_RELEASE" = "true" ] && [ "$HAS_KEYSTORE" != "true" ]; then
+            echo "task=assembleDebug" >> "$GITHUB_OUTPUT"
+            echo "signing=debug" >> "$GITHUB_OUTPUT"
+            echo "⚠️  发布构建（无签名密钥，使用 debug 签名）"
+          else
+            echo "task=assembleDebug" >> "$GITHUB_OUTPUT"
+            echo "signing=debug" >> "$GITHUB_OUTPUT"
+            echo "🔧 调试构建"
+          fi
+
+      - name: Build APK
+        env:
+          HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
+          HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
+          HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
         run: |
           ./gradlew clean
-          ./gradlew assembleDebug --console=plain
+          ./gradlew ${{ steps.gradle_task.outputs.task }} --console=plain
 
-      - name: Upload debug APK (sideload)
+      - name: Print APK outputs
+        run: |
+          echo "=== 构建输出 ==="
+          find app/build/outputs/apk -name '*.apk' -print 2>/dev/null || echo "(无 APK 文件)"
+          echo "=== 文件大小 ==="
+          find app/build/outputs/apk -name '*.apk' -exec ls -lh {} \; 2>/dev/null || true
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cn-debug-apk-sideload
-          path: app/build/outputs/apk/sideload/debug/*.apk
+          name: cn-apk-${{ steps.gradle_task.outputs.signing }}
+          path: |
+            app/build/outputs/apk/sideload/*/*.apk
+            app/build/outputs/apk/googlePlay/*/*.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload debug APK (googlePlay)
-        uses: actions/upload-artifact@v4
-        with:
-          name: cn-debug-apk-googleplay
-          path: app/build/outputs/apk/googlePlay/debug/*.apk
-          if-no-files-found: error
-          retention-days: 30
+      # ─── Release 到 GitHub Releases ──────────────────────────────────────
+      - name: Generate SHA256 checksums
+        if: steps.gradle_task.outputs.signing == 'release'
+        run: |
+          cd app/build/outputs
+          find apk -name '*.apk' -exec sha256sum {} \; > SHA256SUMS.txt
+          echo "=== SHA256 校验和 ==="
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        id: create_release
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="android-v1.3.0-cn.$(date +%Y%m%d%H%M%S)"
+          fi
+
+          # 收集 APK 文件（兼容 debug 和 release 输出目录）
+          FILES=""
+          for f in app/build/outputs/apk/sideload/debug/*.apk app/build/outputs/apk/googlePlay/debug/*.apk app/build/outputs/apk/sideload/release/*.apk app/build/outputs/apk/googlePlay/release/*.apk; do
+            [ -f "$f" ] && FILES="$FILES \"$f\""
+          done
+          SHA_FILE="app/build/outputs/SHA256SUMS.txt"
+          [ -f "$SHA_FILE" ] && FILES="$FILES \"$SHA_FILE\""
+
+          SIGN_MSG="${{ steps.gradle_task.outputs.signing }} 签名"
+          if [ "$SIGN_MSG" = "release 签名" ]; then
+            SIGN_MSG="✅ Release 签名（正式密钥）"
+          else
+            SIGN_MSG="⚠️ Debug 签名（仅测试用途；如需正式签名，请在仓库 Secrets 中添加 HERMES_KEYSTORE_BASE64）"
+          fi
+
+          cat > _RELEASE_NOTES.md <<-ENDNOTES
+          ## Hermes-Relay CN 中文本地化版本
+
+          - **签名**: ${SIGN_MSG}
+          - **版本**: 1.3.0
+          - **构建时间**: $(date -u '+%Y-%m-%d %H:%M UTC')
+          - **分支**: feat/i18n-zh
+
+          ### 功能
+          - 完整中文本地化界面（聊天、管理、语音、设置全面汉化）
+          - 保留上游所有功能
+          - 两个版本：\`sideload\`（完整功能，含 Device Control）和 \`googlePlay\`（Play Store 兼容版）
+
+          > 手动触发构建
+          ENDNOTES
+
+          # shellcheck disable=SC2086
+          eval gh release create "$TAG" $FILES \
+            --repo "${{ github.repository }}" \
+            --title "Hermes-Relay CN v1.3.0 (${TAG#android-v})" \
+            --notes-file _RELEASE_NOTES.md \
+            --prerelease
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "✅ Release 已创建: $TAG"
+          echo "   链接: https://github.com/${{ github.repository }}/releases/tag/$TAG"
