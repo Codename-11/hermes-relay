@@ -141,6 +141,9 @@ class VoiceRecorder(
     fun stopRecording(): File {
         val file = currentOutputFile
             ?: throw IllegalStateException("stopRecording called with no active recording")
+        // Claim the capture exactly once. A stale UI stop must not repackage
+        // the previous PCM as a second voice turn.
+        currentOutputFile = null
 
         val record = audioRecord
         stopRequested.set(true)
@@ -207,8 +210,15 @@ class VoiceRecorder(
                     }
                 }
                 updateAmplitude(buffer, read)
+            } else if (read < 0) {
+                Log.w(TAG, "AudioRecord.read ended with error code $read")
+                break
             }
         }
+        // Android can terminate capture while the app is backgrounded without
+        // stopRecording() running. Reflect that loss in isRecording() so the
+        // foreground UI can recover instead of remaining stuck on Listening.
+        stopRequested.set(true)
     }
 
     private fun updateAmplitude(buffer: ByteArray, read: Int) {

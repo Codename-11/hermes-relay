@@ -631,9 +631,17 @@ class RealtimeAgentHandler:
     ) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=2 * 1024 * 1024)
         await ws.prepare(request)
-        was_detached = session.detached_at is not None
-        session.attached_ws = ws
-        if not was_detached:
+        initial_attach = (
+            session.attached_ws is None
+            and session.detached_at is None
+            and session.native_connection is None
+        )
+        # A resumed or already-active session treats a new HTTP upgrade as an
+        # unclaimed candidate. It becomes the owner only after presenting the
+        # resume token; otherwise a slower stale handshake can evict the socket
+        # that already resumed successfully.
+        if initial_attach:
+            session.attached_ws = ws
             session.detached_at = None
             session.resume_deadline = None
             if session.native_close_task is not None and not session.native_close_task.done():
@@ -641,11 +649,27 @@ class RealtimeAgentHandler:
 
         connection = session.native_connection
         if connection is None:
+            if not initial_attach:
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                        "session_id": session.session_id,
+                        "reason": "session_initializing",
+                    },
+                    record=False,
+                    direct=True,
+                )
+                await ws.close(code=1013, message=b"session initializing")
+                return ws
             provider = self.native_providers[session.provider]
             try:
                 connection = await provider.connect(self._native_session_config(session))
             except (ProviderUnavailable, ProviderRunError) as exc:
                 await self._send_error(ws, session, str(exc), provider=session.provider)
+                if session.attached_ws is ws:
+                    session.attached_ws = None
                 await ws.close()
                 return ws
             except Exception as exc:
@@ -655,6 +679,8 @@ class RealtimeAgentHandler:
                     f"realtime agent provider connection failed: {exc.__class__.__name__}: {exc}",
                     provider=session.provider,
                 )
+                if session.attached_ws is ws:
+                    session.attached_ws = None
                 await ws.close()
                 return ws
             session.native_connection = connection
@@ -668,7 +694,7 @@ class RealtimeAgentHandler:
                 )
             )
 
-        if not was_detached:
+        if initial_attach:
             await self._send(ws, session, self._ready_event(session))
         provider_task = session.native_provider_task
         intentional_close = False
@@ -677,18 +703,54 @@ class RealtimeAgentHandler:
                 if msg.type == WSMsgType.ERROR:
                     break
                 if msg.type != WSMsgType.TEXT:
-                    await self._send_error(ws, session, "unsupported websocket frame")
+                    await self._send_error(
+                        ws,
+                        session,
+                        "unsupported websocket frame",
+                        direct=session.attached_ws is not ws,
+                    )
                     continue
                 try:
                     payload = json.loads(msg.data)
                 except json.JSONDecodeError:
-                    await self._send_error(ws, session, "invalid JSON message")
+                    await self._send_error(
+                        ws,
+                        session,
+                        "invalid JSON message",
+                        direct=session.attached_ws is not ws,
+                    )
                     continue
                 if not isinstance(payload, dict):
-                    await self._send_error(ws, session, "message must be a JSON object")
+                    await self._send_error(
+                        ws,
+                        session,
+                        "message must be a JSON object",
+                        direct=session.attached_ws is not ws,
+                    )
                     continue
 
                 msg_type = str(payload.get("type", "")).strip()
+                is_resume_claim = msg_type == CLIENT_MSG_SESSION_RESUME or (
+                    msg_type == CLIENT_MSG_SESSION_START
+                    and (
+                        _str_option(payload, "resume_token")
+                        or session.detached_at is not None
+                    )
+                )
+                if session.attached_ws is not ws and not is_resume_claim:
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                            "session_id": session.session_id,
+                            "reason": "session_not_claimed",
+                        },
+                        record=False,
+                        direct=True,
+                    )
+                    await ws.close(code=4009, message=b"session not claimed")
+                    break
                 if await self._handle_common_client_message(ws, session, msg_type, payload):
                     pass
                 elif msg_type == CLIENT_MSG_INPUT_AUDIO_APPEND:
@@ -1082,6 +1144,20 @@ class RealtimeAgentHandler:
         session: RealtimeAgentSession,
         payload: dict[str, Any],
     ) -> None:
+        if session.closed:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                    "session_id": session.session_id,
+                    "reason": "session_closed",
+                },
+                record=False,
+                direct=True,
+            )
+            await ws.close(code=4008, message=b"session closed")
+            return
         if not self._resume_token_matches(session, _str_option(payload, "resume_token")):
             await self._send(
                 ws,
@@ -1092,6 +1168,7 @@ class RealtimeAgentHandler:
                     "reason": "invalid_resume_token",
                 },
                 record=False,
+                direct=True,
             )
             await ws.close(code=4003, message=b"invalid resume token")
             return
@@ -1105,10 +1182,19 @@ class RealtimeAgentHandler:
                     "reason": "resume_expired",
                 },
                 record=False,
+                direct=True,
             )
             await ws.close(code=4008, message=b"resume expired")
             await self._close_native_session(session, "resume_expired")
             return
+
+        previous_ws = session.attached_ws
+        session.attached_ws = ws
+        if previous_ws is not None and previous_ws is not ws and not previous_ws.closed:
+            asyncio.create_task(
+                self._close_superseded_websocket(previous_ws),
+                name=f"realtime-close-superseded-{session.session_id}",
+            )
 
         last_event_id = _int_option(payload, "last_event_id", 0)
         last_audio_event_id = _int_option(payload, "last_audio_event_id", 0)
@@ -4464,6 +4550,11 @@ class RealtimeAgentHandler:
             "interface": _interface_context(session),
         }
 
+    @staticmethod
+    async def _close_superseded_websocket(ws: web.WebSocketResponse) -> None:
+        with contextlib.suppress(Exception):
+            await ws.close(code=4000, message=b"superseded by resumed route")
+
     async def _send(
         self,
         ws: web.WebSocketResponse | None,
@@ -4471,6 +4562,7 @@ class RealtimeAgentHandler:
         event: dict[str, Any],
         *,
         record: bool = True,
+        direct: bool = False,
     ) -> None:
         if "event_id" not in event:
             session.event_seq += 1
@@ -4485,7 +4577,7 @@ class RealtimeAgentHandler:
             if "audio_event_id" in snapshot:
                 session.audio_ring.append(snapshot)
         self._log(session, str(event["type"]), event)
-        target = session.attached_ws
+        target = ws if direct else session.attached_ws
         await self._send_json_best_effort(target, session, event)
 
     async def _send_json_best_effort(
@@ -4512,9 +4604,17 @@ class RealtimeAgentHandler:
         ws: web.WebSocketResponse,
         session: RealtimeAgentSession,
         message: str,
+        *,
+        direct: bool = False,
         **data: Any,
     ) -> None:
-        await self._send(ws, session, {"type": "voice.error", "message": message, **data})
+        await self._send(
+            ws,
+            session,
+            {"type": "voice.error", "message": message, **data},
+            record=not direct,
+            direct=direct,
+        )
 
     def _log(
         self,

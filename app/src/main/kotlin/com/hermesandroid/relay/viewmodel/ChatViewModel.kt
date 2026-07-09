@@ -152,6 +152,8 @@ class ChatViewModel : ViewModel() {
     private val realtimeAgentModels = mutableMapOf<String, String>()
     private val realtimeAgentVoices = mutableMapOf<String, String>()
     private val realtimeAgentProgressKeys = mutableMapOf<String, String>()
+    private val terminalRealtimeAgentTurnIdsLock = Any()
+    private val terminalRealtimeAgentTurnIds = LinkedHashSet<String>()
     private var nextInterfaceContextPrompt: String? = null
 
     // --- Media dependencies (wired via initializeMedia from RelayApp) ---
@@ -3261,6 +3263,9 @@ class ChatViewModel : ViewModel() {
         val trimmed = userText.trim().ifBlank { "Listening..." }
         val userMessageId = UUID.randomUUID().toString()
         val assistantMessageId = "realtime-agent-${UUID.randomUUID()}"
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            terminalRealtimeAgentTurnIds.remove(assistantMessageId)
+        }
         realtimeAgentUserMessages[assistantMessageId] = userMessageId
         realtimeAgentInputTranscripts[assistantMessageId] = StringBuilder()
         realtimeAgentToolCallIds[assistantMessageId] = mutableSetOf()
@@ -3292,6 +3297,94 @@ class ChatViewModel : ViewModel() {
             )
         )
         return assistantMessageId
+    }
+
+    /**
+     * Settle a realtime turn that failed before the relay could emit a
+     * `voice.error`. Transport submission failures happen below the event
+     * layer, so without this explicit terminal path the placeholder remains
+     * streaming forever.
+     */
+    fun failRealtimeAgentTurn(assistantMessageId: String, message: String) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            val handler = chatHandler ?: return
+            removeRealtimeAgentUserPlaceholder(
+                handler = handler,
+                assistantMessageId = assistantMessageId,
+            )
+            clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
+            val existing = handler.messages.value
+                .firstOrNull { it.id == assistantMessageId }
+                ?.content
+                ?.trim()
+                .orEmpty()
+            if (existing.isBlank()) {
+                handler.replaceMessageContent(assistantMessageId, message)
+            }
+            handler.markError(assistantMessageId)
+            handler.onStreamError(message)
+            activeStream = null
+        }
+    }
+
+    /** Locally settle the realtime placeholder when the voice stop action wins. */
+    fun cancelRealtimeAgentTurnLocally(assistantMessageId: String) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            val handler = chatHandler ?: return
+            removeRealtimeAgentUserPlaceholder(
+                handler = handler,
+                assistantMessageId = assistantMessageId,
+            )
+            clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
+            val existing = handler.messages.value
+                .firstOrNull { it.id == assistantMessageId }
+                ?.content
+                ?.trim()
+                .orEmpty()
+            if (existing.isBlank()) {
+                handler.replaceMessageContent(assistantMessageId, "Cancelled.")
+            } else {
+                handler.markStopped(assistantMessageId)
+            }
+            handler.onStreamComplete(assistantMessageId)
+            activeStream = null
+        }
+    }
+
+    private fun removeRealtimeAgentUserPlaceholder(
+        handler: ChatHandler,
+        assistantMessageId: String,
+    ) {
+        val userMessageId = realtimeAgentUserMessages[assistantMessageId] ?: return
+        val current = handler.messages.value
+            .firstOrNull { it.id == userMessageId }
+            ?.content
+            ?.trim()
+        if (current == "Listening...") {
+            handler.removeMessage(userMessageId)
+        }
+    }
+
+    private fun clearRealtimeAgentTurnTracking(
+        assistantMessageId: String,
+        quarantine: Boolean = false,
+    ) {
+        if (quarantine) synchronized(terminalRealtimeAgentTurnIdsLock) {
+            terminalRealtimeAgentTurnIds.add(assistantMessageId)
+            while (terminalRealtimeAgentTurnIds.size > 64) {
+                val oldest = terminalRealtimeAgentTurnIds.iterator().next()
+                terminalRealtimeAgentTurnIds.remove(oldest)
+            }
+        }
+        realtimeAgentUserMessages.remove(assistantMessageId)
+        realtimeAgentInputTranscripts.remove(assistantMessageId)
+        realtimeAgentProviderBadges.remove(assistantMessageId)
+        realtimeAgentToolCallIds.remove(assistantMessageId)
+        realtimeAgentHermesBacked.remove(assistantMessageId)
+        realtimeAgentProviderIds.remove(assistantMessageId)
+        realtimeAgentModels.remove(assistantMessageId)
+        realtimeAgentVoices.remove(assistantMessageId)
+        realtimeAgentProgressKeys.remove(assistantMessageId)
     }
 
     private fun realtimeBadges(
@@ -3328,6 +3421,17 @@ class ChatViewModel : ViewModel() {
         assistantMessageId: String,
         event: RealtimeVoiceEvent,
         showDetailedTrace: Boolean = false,
+    ) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            if (assistantMessageId in terminalRealtimeAgentTurnIds) return
+            applyRealtimeAgentEventLocked(assistantMessageId, event, showDetailedTrace)
+        }
+    }
+
+    private fun applyRealtimeAgentEventLocked(
+        assistantMessageId: String,
+        event: RealtimeVoiceEvent,
+        showDetailedTrace: Boolean,
     ) {
         val handler = chatHandler ?: return
         val hermesSessionId = when {
@@ -3559,10 +3663,8 @@ class ChatViewModel : ViewModel() {
                     handler.onThinkingDelta(assistantMessageId, prompt)
                 }
             }
-            "hermes.run.completed" -> {
-                // Hermes completion means the tool result is ready; provider narration ends the turn.
-                Unit
-            }
+            // Hermes completion means the tool result is ready; provider narration ends the turn.
+            "hermes.run.completed" -> Unit
             "voice.response.done" -> {
                 if (realtimeAgentHermesBacked[assistantMessageId] != true) {
                     val userMessageId = realtimeAgentUserMessages[assistantMessageId]
@@ -3589,14 +3691,7 @@ class ChatViewModel : ViewModel() {
                     }
                 }
                 handler.onStreamComplete(assistantMessageId)
-                realtimeAgentUserMessages.remove(assistantMessageId)
-                realtimeAgentInputTranscripts.remove(assistantMessageId)
-                realtimeAgentProviderBadges.remove(assistantMessageId)
-                realtimeAgentToolCallIds.remove(assistantMessageId)
-                realtimeAgentHermesBacked.remove(assistantMessageId)
-                realtimeAgentProviderIds.remove(assistantMessageId)
-                realtimeAgentModels.remove(assistantMessageId)
-                realtimeAgentVoices.remove(assistantMessageId)
+                clearRealtimeAgentTurnTracking(assistantMessageId)
                 activeStream = null
             }
             "hermes.run.cancelled" -> {
@@ -3605,6 +3700,10 @@ class ChatViewModel : ViewModel() {
                 // (chip-cancel racing completion, or a stale confirm). Only a
                 // bubble with no real content becomes "Cancelled."; anything
                 // else keeps its text and gets the Stopped badge instead.
+                removeRealtimeAgentUserPlaceholder(
+                    handler = handler,
+                    assistantMessageId = assistantMessageId,
+                )
                 val existingContent = handler.messages.value
                     .firstOrNull { it.id == assistantMessageId }
                     ?.content
@@ -3616,26 +3715,16 @@ class ChatViewModel : ViewModel() {
                     handler.markStopped(assistantMessageId)
                 }
                 handler.onStreamComplete(assistantMessageId)
-                realtimeAgentUserMessages.remove(assistantMessageId)
-                realtimeAgentInputTranscripts.remove(assistantMessageId)
-                realtimeAgentProviderBadges.remove(assistantMessageId)
-                realtimeAgentToolCallIds.remove(assistantMessageId)
-                realtimeAgentHermesBacked.remove(assistantMessageId)
-                realtimeAgentProviderIds.remove(assistantMessageId)
-                realtimeAgentModels.remove(assistantMessageId)
-                realtimeAgentVoices.remove(assistantMessageId)
+                clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }
             "voice.error" -> {
+                removeRealtimeAgentUserPlaceholder(
+                    handler = handler,
+                    assistantMessageId = assistantMessageId,
+                )
                 handler.onStreamError(event.message ?: "Realtime agent failed")
-                realtimeAgentUserMessages.remove(assistantMessageId)
-                realtimeAgentInputTranscripts.remove(assistantMessageId)
-                realtimeAgentProviderBadges.remove(assistantMessageId)
-                realtimeAgentToolCallIds.remove(assistantMessageId)
-                realtimeAgentHermesBacked.remove(assistantMessageId)
-                realtimeAgentProviderIds.remove(assistantMessageId)
-                realtimeAgentModels.remove(assistantMessageId)
-                realtimeAgentVoices.remove(assistantMessageId)
+                clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }
         }

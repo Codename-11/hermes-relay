@@ -1,5 +1,48 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Android realtime turns survive background route loss
+
+An on-device foreground/resume failure left a realtime turn showing
+`Listening...` with a blank streaming assistant row even though recording had
+already stopped. The captured PCM was valid, but the persistent-session channel
+fed it to a WebSocket whose background resume attempts had failed. Channel
+enqueue therefore reported success while no relay event was produced, and the
+90-second idle guard was the first component able to detect the loss.
+
+Persistent turns now wait for an `onOpen`-ready socket and trigger an immediate
+resume when a recording arrives during route recovery. Each submission carries
+a delivery result back to `VoiceViewModel`; rejected or unavailable transports
+settle the chat placeholder and return the overlay to a usable error state.
+Unacknowledged follow-up PCM is retained with stable chunk IDs and replayed on a
+replacement socket, while explicit `voice.input_audio.received` events remain
+the acknowledgement authority. A locally cancelled queued turn is discarded
+instead of being transmitted after connectivity returns.
+
+The first installed reproduction recovered recording and completed the Hermes
+run, but exposed a second route race at delivery: overlapping 10-second resume
+retries allowed a slower WebSocket handshake to finish 250 ms after the valid
+resume. The client correctly rejected that stale generation, but the relay had
+already assigned ownership at HTTP upgrade, so closing the stale socket detached
+the session immediately before the forced answer. Android now coalesces an
+in-flight handshake. The relay keeps later upgrades unclaimed until a valid
+`session.resume`, routes handshake failures only to that candidate, and changes
+ownership before closing the prior socket asynchronously. Provider-connect
+failures and resume-TTL closure also leave the session in a retryable, coherent
+state.
+
+The UI state machine now reserves `Listening` for a live `AudioRecord`.
+Provider transcript deltas render as `Transcribing`, output suppression checks
+`VoiceRecorder.isRecording()`, and foreground resume reconciles a recorder that
+ended in the background. Stop/failure paths terminally settle the assistant row,
+remove an untranscribed provisional user row, and quarantine late deltas without
+blocking later provider responses that belong to the same background turn.
+
+Verification covers resume-before-submit, delayed and coalesced socket readiness,
+atomic mid-send replay, rejected WebSocket sends, cancelled queued input,
+candidate ownership/error isolation, provider-connect retry, closed-session
+rejection, provider STT state, local terminal cleanup, late-event quarantine,
+and multi-response background delivery on one chat turn.
+
 ## 2026-07-09 — Background promotion reuses the provider acknowledgement
 
 The exact-delivery signoff trace reproduced the reported duplicate status speech,

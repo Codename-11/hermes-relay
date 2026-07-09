@@ -107,6 +107,7 @@ class RelayVoiceClient(
         private const val REALTIME_AGENT_IDLE_TIMEOUT_MS = 90_000L
         private const val REALTIME_AGENT_MAX_TURN_MS = 5 * 60_000L
         private const val REALTIME_AGENT_WAIT_SLICE_MS = 1_000L
+        private const val REALTIME_TURN_SOCKET_READY_TIMEOUT_MS = 17_000L
         private const val REALTIME_INPUT_CHUNK_BYTES = 6_400
         private const val SESSION_CALL_TIMEOUT_SECONDS = 15L
 
@@ -118,6 +119,7 @@ class RelayVoiceClient(
          */
         private const val REALTIME_RESUME_RETRY_INTERVAL_MS = 10_000L
         private const val REALTIME_RESUME_RETRY_WINDOW_MS = 5 * 60_000L
+        private const val REALTIME_TURN_RESUME_RETRY_THROTTLE_MS = 750L
 
         /**
          * Provider "errors" that must NOT end a live realtime turn. Cancelling a
@@ -1296,8 +1298,10 @@ class RelayVoiceClient(
         val resumeAttempted = AtomicBoolean(false)
         val routeProbeRequested = AtomicBoolean(false)
         val currentSocket = AtomicReference<WebSocket?>()
+        val readySocket = AtomicReference<WebSocket?>()
         val socketGeneration = AtomicLong(0L)
         val activeSocketGeneration = AtomicLong(0L)
+        val openingSocketGeneration = AtomicLong(0L)
         val lastEventId = AtomicLong(0L)
         val lastAudioEventId = AtomicLong(0L)
         val lastPlayedAudioEventId = AtomicLong(0L)
@@ -1320,16 +1324,28 @@ class RelayVoiceClient(
         // the periodic retry loop only knocks while this is set; a successful
         // socket open clears it.
         val resumeWaiting = AtomicBoolean(false)
-        val inputChunks = buildList {
+        val inputChunks = mutableListOf<BufferedRealtimeInputChunk>().apply {
             var offset = 0
             var chunkId = 1L
             while (offset < inputPcm.size) {
                 val end = (offset + REALTIME_INPUT_CHUNK_BYTES).coerceAtMost(inputPcm.size)
-                add(chunkId to inputPcm.copyOfRange(offset, end))
+                add(
+                    BufferedRealtimeInputChunk(
+                        id = chunkId,
+                        pcm = inputPcm.copyOfRange(offset, end),
+                        sampleRate = inputSampleRate,
+                    )
+                )
                 chunkId += 1
                 offset = end
             }
         }
+        val inputChunksLock = Any()
+        // Serializes buffer replacement and socket setup/replay. A reconnect
+        // must never snapshot a follow-up utterance while it is only partially
+        // buffered.
+        val inputSendLock = Any()
+        val inputCommitPending = AtomicBoolean(inputChunks.isNotEmpty())
         // Highest input chunk id sent on this session. The relay dedups by
         // input_chunk_seq, so subsequent turns must continue past this.
         val sessionMaxChunkId = AtomicLong(inputChunks.size.toLong())
@@ -1337,26 +1353,77 @@ class RelayVoiceClient(
         var audioBytes = 0
 
         // Persistent-mode: chunk + send one more utterance on the open socket.
-        fun sendTurnPcm(webSocket: WebSocket, pcm: ByteArray, sampleRate: Int) {
+        fun sendTurnPcm(
+            webSocket: WebSocket,
+            pcm: ByteArray,
+            sampleRate: Int,
+        ): BufferedRealtimeTurnSendResult {
+            val turnChunks = mutableListOf<BufferedRealtimeInputChunk>()
             var offset = 0
-            var sentAny = false
             while (offset < pcm.size) {
                 val end = (offset + REALTIME_INPUT_CHUNK_BYTES).coerceAtMost(pcm.size)
                 val chunkId = sessionMaxChunkId.incrementAndGet()
-                val encoded = Base64.getEncoder().encodeToString(pcm.copyOfRange(offset, end))
-                webSocket.send(
-                    """{"type":"input_audio.append","chunk_id":$chunkId,"sample_rate":$sampleRate,"audio_base64":"$encoded"}"""
+                turnChunks.add(
+                    BufferedRealtimeInputChunk(
+                        id = chunkId,
+                        pcm = pcm.copyOfRange(offset, end),
+                        sampleRate = sampleRate,
+                    )
                 )
-                sentAny = true
                 offset = end
             }
-            if (sentAny) {
-                webSocket.send("""{"type":"input_audio.commit"}""")
+
+            return synchronized(inputSendLock) {
+                // The previous turn is already far enough along for the UI to
+                // accept another utterance. Install the complete new buffer in
+                // one critical section so any resume sees all or none of it.
+                synchronized(inputChunksLock) {
+                    inputChunks.clear()
+                    inputChunks.addAll(turnChunks)
+                }
+                inputCommitPending.set(turnChunks.isNotEmpty())
+
+                // A replacement socket may have become ready after the turn
+                // reader captured [webSocket]. Prefer the current ready route.
+                val targetSocket = readySocket.get()
+                    ?.takeIf { !resumeWaiting.get() }
+                    ?: webSocket.takeIf {
+                        currentSocket.get() === it && !resumeWaiting.get()
+                    }
+                if (targetSocket == null) {
+                    return@synchronized BufferedRealtimeTurnSendResult(
+                        accepted = false,
+                        routeChanged = true,
+                    )
+                }
+
+                var accepted = true
+                for (chunk in turnChunks) {
+                    val encoded = Base64.getEncoder().encodeToString(chunk.pcm)
+                    if (!targetSocket.send(
+                            """{"type":"input_audio.append","chunk_id":${chunk.id},"sample_rate":${chunk.sampleRate},"audio_base64":"$encoded"}"""
+                        )
+                    ) {
+                        accepted = false
+                        break
+                    }
+                }
+                if (accepted && turnChunks.isNotEmpty()) {
+                    accepted = targetSocket.send("""{"type":"input_audio.commit"}""")
+                }
+                if (accepted) {
+                    turnStartedAtMs.set(System.currentTimeMillis())
+                    lastEventAtMs.set(System.currentTimeMillis())
+                    activeTurn.set(true)
+                    longRunningTurn.set(false)
+                }
+                BufferedRealtimeTurnSendResult(
+                    accepted = accepted,
+                    routeChanged = currentSocket.get() !== targetSocket ||
+                        readySocket.get() !== targetSocket ||
+                        resumeWaiting.get(),
+                )
             }
-            turnStartedAtMs.set(System.currentTimeMillis())
-            lastEventAtMs.set(System.currentTimeMillis())
-            activeTurn.set(true)
-            longRunningTurn.set(false)
         }
         fun activateSocket(webSocket: WebSocket, generation: Long): Boolean {
             while (true) {
@@ -1371,19 +1438,25 @@ class RelayVoiceClient(
             }
         }
 
-        fun sendInputChunks(webSocket: WebSocket, afterChunkId: Long) {
-            var sentAny = false
-            for ((chunkId, chunk) in inputChunks) {
-                if (chunkId <= afterChunkId) continue
-                val encoded = Base64.getEncoder().encodeToString(chunk)
-                webSocket.send(
-                    """{"type":"input_audio.append","chunk_id":$chunkId,"sample_rate":$inputSampleRate,"audio_base64":"$encoded"}"""
-                )
-                sentAny = true
+        fun sendInputChunks(webSocket: WebSocket, afterChunkId: Long): Boolean {
+            val pending = synchronized(inputChunksLock) {
+                inputChunks.filter { it.id > afterChunkId }
             }
-            if (sentAny || inputChunks.isNotEmpty()) {
-                webSocket.send("""{"type":"input_audio.commit"}""")
+            for (chunk in pending) {
+                val encoded = Base64.getEncoder().encodeToString(chunk.pcm)
+                if (!webSocket.send(
+                        """{"type":"input_audio.append","chunk_id":${chunk.id},"sample_rate":${chunk.sampleRate},"audio_base64":"$encoded"}"""
+                    )
+                ) {
+                    return false
+                }
             }
+            if ((pending.isNotEmpty() || inputCommitPending.get()) &&
+                !webSocket.send("""{"type":"input_audio.commit"}""")
+            ) {
+                return false
+            }
+            return true
         }
 
         fun completeFailure(message: String, throwable: Throwable? = null) {
@@ -1401,26 +1474,43 @@ class RelayVoiceClient(
             }
         }
 
-        fun openSocket(resume: Boolean, overrideWsBase: String? = null): WebSocket {
+        fun openSocket(resume: Boolean, overrideWsBase: String? = null): WebSocket? {
             val generation = socketGeneration.incrementAndGet()
-            val currentWsBase = overrideWsBase ?: resolveWebSocketBase()
-                ?: throw IOException("Relay URL not configured")
-            val request = Request.Builder()
-                .url("$currentWsBase${session.websocketPath}")
-                .header("Authorization", "Bearer $token")
-                .build()
-            Log.i(
-                TAG,
-                "Realtime agent websocket opening resume=$resume url=${request.url}",
-            )
-            if (resume) {
-                onHandoff(
-                    VoiceHandoffEvent(
-                        label = "Trying voice route",
-                        route = routeLabel(currentWsBase),
-                        active = true,
-                    )
+            if (!openingSocketGeneration.compareAndSet(0L, generation)) {
+                Log.i(TAG, "Realtime agent websocket open coalesced; handshake already pending")
+                return null
+            }
+            val (currentWsBase, request) = try {
+                if (resume) {
+                    // A WebSocket returned by OkHttp is only an opening attempt.
+                    // Do not let persistent turns use it until onOpen has queued
+                    // session.resume successfully.
+                    resumeWaiting.set(true)
+                    readySocket.set(null)
+                }
+                val base = overrideWsBase ?: resolveWebSocketBase()
+                    ?: throw IOException("Relay URL not configured")
+                val socketRequest = Request.Builder()
+                    .url("$base${session.websocketPath}")
+                    .header("Authorization", "Bearer $token")
+                    .build()
+                Log.i(
+                    TAG,
+                    "Realtime agent websocket opening resume=$resume url=${socketRequest.url}",
                 )
+                if (resume) {
+                    onHandoff(
+                        VoiceHandoffEvent(
+                            label = "Trying voice route",
+                            route = routeLabel(base),
+                            active = true,
+                        )
+                    )
+                }
+                base to socketRequest
+            } catch (e: Exception) {
+                openingSocketGeneration.compareAndSet(generation, 0L)
+                throw e
             }
             fun isStaleSocket(webSocket: WebSocket): Boolean {
                 val activeSocket = currentSocket.get()
@@ -1428,45 +1518,66 @@ class RelayVoiceClient(
             }
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    if (!activateSocket(webSocket, generation)) {
-                        Log.i(TAG, "Realtime agent stale websocket opened; closing")
-                        webSocket.close(1000, "stale route")
-                        return
-                    }
-                    resumeWaiting.set(false)
-                    if (resume) {
-                        val resumeToken = session.resumeToken.orEmpty()
-                        Log.i(
-                            TAG,
-                            "Realtime agent sending session.resume session=${session.session_id} " +
-                                "lastEvent=${lastEventId.get()} lastAudio=${lastAudioEventId.get()} " +
-                                "lastPlayed=${lastPlayedAudioEventId.get()} " +
-                                "lastInput=${lastInputChunkId.get()}",
-                        )
-                        onHandoff(
-                            VoiceHandoffEvent(
-                                label = "Resume sent",
-                                route = routeLabel(webSocket.request().url.toString()),
-                                active = true,
-                            )
-                        )
-                        webSocket.send(
-                            """{"type":"session.resume","resume_token":"${escapeJson(resumeToken)}","last_event_id":${lastEventId.get()},"last_audio_event_id":${lastAudioEventId.get()},"last_played_audio_event_id":${lastPlayedAudioEventId.get()},"last_input_chunk_id":${lastInputChunkId.get()}}"""
-                        )
-                        sendInputChunks(webSocket, lastInputChunkId.get())
-                    } else {
-                        webSocket.send("""{"type":"session.start"}""")
-                        if (inputChunks.isNotEmpty()) {
-                            sendInputChunks(webSocket, afterChunkId = 0L)
-                        } else if (prompt.isNotBlank()) {
-                            webSocket.send(
-                                buildRealtimeResponseCreate(
-                                    text = prompt,
-                                    toolScaffold = false,
-                                    renderMode = "verbatim",
+                    try {
+                        synchronized(inputSendLock) {
+                            if (!activateSocket(webSocket, generation)) {
+                                Log.i(TAG, "Realtime agent stale websocket opened; closing")
+                                webSocket.close(1000, "stale route")
+                                return
+                            }
+                            val ready = if (resume) {
+                                val resumeToken = session.resumeToken.orEmpty()
+                                Log.i(
+                                    TAG,
+                                    "Realtime agent sending session.resume session=${session.session_id} " +
+                                        "lastEvent=${lastEventId.get()} lastAudio=${lastAudioEventId.get()} " +
+                                        "lastPlayed=${lastPlayedAudioEventId.get()} " +
+                                        "lastInput=${lastInputChunkId.get()}",
                                 )
-                            )
+                                onHandoff(
+                                    VoiceHandoffEvent(
+                                        label = "Resume sent",
+                                        route = routeLabel(webSocket.request().url.toString()),
+                                        active = true,
+                                    )
+                                )
+                                val resumeSent = webSocket.send(
+                                    """{"type":"session.resume","resume_token":"${escapeJson(resumeToken)}","last_event_id":${lastEventId.get()},"last_audio_event_id":${lastAudioEventId.get()},"last_played_audio_event_id":${lastPlayedAudioEventId.get()},"last_input_chunk_id":${lastInputChunkId.get()}}"""
+                                )
+                                resumeSent && sendInputChunks(webSocket, lastInputChunkId.get())
+                            } else {
+                                val started = webSocket.send("""{"type":"session.start"}""")
+                                if (!started) {
+                                    false
+                                } else if (synchronized(inputChunksLock) { inputChunks.isNotEmpty() }) {
+                                    sendInputChunks(webSocket, afterChunkId = 0L)
+                                } else if (prompt.isNotBlank()) {
+                                    webSocket.send(
+                                        buildRealtimeResponseCreate(
+                                            text = prompt,
+                                            toolScaffold = false,
+                                            renderMode = "verbatim",
+                                        )
+                                    )
+                                } else {
+                                    true
+                                }
+                            }
+                            if (!ready) {
+                                // A synchronous failure callback can replace this
+                                // socket while setup sends are still unwinding. A
+                                // stale attempt must not terminate the newer route.
+                                if (currentSocket.get() !== webSocket || completed.get()) return
+                                completeFailure("Realtime agent websocket rejected session setup")
+                                webSocket.close(1011, "session setup failed")
+                                return
+                            }
+                            if (currentSocket.get() !== webSocket || completed.get()) return
+                            resumeWaiting.set(false)
+                            readySocket.set(webSocket)
                         }
+                    } finally {
+                        openingSocketGeneration.compareAndSet(generation, 0L)
                     }
                 }
 
@@ -1485,8 +1596,17 @@ class RelayVoiceClient(
                     event.audioEventId?.let {
                         lastAudioEventId.updateAndGet { current -> maxOf(current, it) }
                     }
-                    event.inputChunkId?.let {
-                        lastInputChunkId.updateAndGet { current -> maxOf(current, it) }
+                    event.inputChunkId?.let { acknowledgedChunkId ->
+                        lastInputChunkId.updateAndGet { current -> maxOf(current, acknowledgedChunkId) }
+                        synchronized(inputChunksLock) {
+                            inputChunks.removeAll { it.id <= acknowledgedChunkId }
+                        }
+                    }
+                    if (event.type.startsWith("voice.input_transcript") && !event.replayed) {
+                        // A provider transcript proves input_audio.commit was
+                        // processed. Response events are intentionally excluded:
+                        // a replayed background summary can overlap a newer turn.
+                        inputCommitPending.set(false)
                     }
                     val control = RealtimeAgentSessionControl(webSocket) { playedAudioEventId ->
                         lastPlayedAudioEventId.updateAndGet { current -> maxOf(current, playedAudioEventId) }
@@ -1554,7 +1674,9 @@ class RelayVoiceClient(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    openingSocketGeneration.compareAndSet(generation, 0L)
                     if (completed.get()) return
+                    readySocket.compareAndSet(webSocket, null)
                     val activeSocket = currentSocket.get()
                     if (resumeAttempted.get() && activeSocket != null && activeSocket !== webSocket) {
                         Log.i(TAG, "Realtime agent previous websocket failed during resume; ignoring: ${t.message}")
@@ -1597,7 +1719,9 @@ class RelayVoiceClient(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    openingSocketGeneration.compareAndSet(generation, 0L)
                     if (completed.get()) return
+                    readySocket.compareAndSet(webSocket, null)
                     val activeSocket = currentSocket.get()
                     if (resumeAttempted.get() && activeSocket != null && activeSocket !== webSocket) {
                         Log.i(TAG, "Realtime agent previous websocket closed during resume; ignoring: $code $reason")
@@ -1667,9 +1791,38 @@ class RelayVoiceClient(
                     completeFailure("Realtime agent websocket closed before completion: $code $reason")
                 }
             }
-            val webSocket = openWebSocket(request, listener)
+            val webSocket = try {
+                openWebSocket(request, listener)
+            } catch (e: Exception) {
+                openingSocketGeneration.compareAndSet(generation, 0L)
+                throw e
+            }
             activateSocket(webSocket, generation)
             return webSocket
+        }
+
+        suspend fun awaitReadyTurnSocket(): WebSocket {
+            readySocket.get()?.takeIf { !resumeWaiting.get() }?.let { return it }
+            val deadline = System.currentTimeMillis() + REALTIME_TURN_SOCKET_READY_TIMEOUT_MS
+            var nextResumeAttemptAtMs = 0L
+            while (!completed.get() && System.currentTimeMillis() < deadline) {
+                readySocket.get()?.takeIf { !resumeWaiting.get() }?.let { return it }
+                val now = System.currentTimeMillis()
+                if (resumeWaiting.get() &&
+                    openingSocketGeneration.get() == 0L &&
+                    now >= nextResumeAttemptAtMs
+                ) {
+                    nextResumeAttemptAtMs = now + REALTIME_TURN_RESUME_RETRY_THROTTLE_MS
+                    try {
+                        Log.i(TAG, "Realtime turn waiting for route; requesting resume")
+                        openSocket(resume = true)
+                    } catch (e: Exception) {
+                        Log.i(TAG, "Realtime turn resume attempt failed: ${e.message}")
+                    }
+                }
+                delay(25L)
+            }
+            throw IOException("Realtime voice connection was not ready for the recorded turn")
         }
 
         suspend fun awaitRealtimeAgentCompletion(): Result<RealtimeVoiceSummary> {
@@ -1724,22 +1877,57 @@ class RelayVoiceClient(
             launch {
                 try {
                     for (turn in turnInputs) {
-                        val ws = currentSocket.get() ?: continue
-                        if (turn.prompt.isNotBlank() && turn.inputPcm.isEmpty()) {
-                            ws.send(
+                        if (turn.deliveryResult?.isCancelled == true) continue
+                        val ws = try {
+                            awaitReadyTurnSocket()
+                        } catch (e: Exception) {
+                            if (turn.deliveryResult?.isCancelled == true) continue
+                            val failure = IOException(e.message ?: "Realtime voice connection unavailable", e)
+                            turn.deliveryResult?.complete(Result.failure(failure))
+                            completeFailure(failure.message.orEmpty(), failure)
+                            return@launch
+                        }
+                        // Stop can cancel the ViewModel submission while this
+                        // reader waits for a replacement route. Never send that
+                        // abandoned recording after connectivity returns.
+                        if (turn.deliveryResult?.isCancelled == true) continue
+                        val sent = if (turn.prompt.isNotBlank() && turn.inputPcm.isEmpty()) {
+                            val accepted = ws.send(
                                 buildRealtimeResponseCreate(
                                     text = turn.prompt,
                                     toolScaffold = false,
                                     renderMode = "verbatim",
                                 )
                             )
-                            turnStartedAtMs.set(System.currentTimeMillis())
-                            lastEventAtMs.set(System.currentTimeMillis())
-                            activeTurn.set(true)
-                            longRunningTurn.set(false)
+                            if (accepted) {
+                                turnStartedAtMs.set(System.currentTimeMillis())
+                                lastEventAtMs.set(System.currentTimeMillis())
+                                activeTurn.set(true)
+                                longRunningTurn.set(false)
+                            }
+                            accepted
                         } else {
-                            sendTurnPcm(ws, turn.inputPcm, turn.sampleRate)
+                            val sendResult = sendTurnPcm(ws, turn.inputPcm, turn.sampleRate)
+                            if (sendResult.routeChanged) {
+                                try {
+                                    // Socket setup replays the atomically
+                                    // buffered turn before publishing ready.
+                                    awaitReadyTurnSocket()
+                                    true
+                                } catch (_: Exception) {
+                                    false
+                                }
+                            } else {
+                                sendResult.accepted
+                            }
                         }
+                        if (!sent) {
+                            val failure = IOException("Realtime voice connection rejected the recorded turn")
+                            turn.deliveryResult?.complete(Result.failure(failure))
+                            completeFailure(failure.message.orEmpty(), failure)
+                            return@launch
+                        }
+                        turn.deliveryResult?.complete(Result.success(Unit))
                     }
                 } finally {
                     // Channel closed -> end the persistent session cleanly.
@@ -1768,6 +1956,7 @@ class RelayVoiceClient(
         }
 
         val socket = openSocket(resume = false)
+            ?: throw IOException("Realtime agent websocket handshake was already pending")
         val routeWatcher = startRouteResumeWatcher(
             surface = "Realtime agent",
             completed = completed,
@@ -1821,7 +2010,7 @@ class RelayVoiceClient(
         resumeSupported: Boolean,
         resumeToken: String?,
         currentSocket: AtomicReference<WebSocket?>,
-        openResumeSocket: (String?) -> WebSocket,
+        openResumeSocket: (String?) -> WebSocket?,
         onHandoff: (VoiceHandoffEvent) -> Unit,
         completeFailure: (String, Throwable?) -> Unit,
     ): Job? {
@@ -1857,8 +2046,10 @@ class RelayVoiceClient(
                 )
                 val oldSocket = currentSocket.get()
                 try {
-                    openResumeSocket(nextWsBase)
-                    oldSocket?.cancel()
+                    val newSocket = openResumeSocket(nextWsBase)
+                    if (newSocket != null && oldSocket !== newSocket) {
+                        oldSocket?.cancel()
+                    }
                 } catch (e: Exception) {
                     completeFailure("$surface resume failed after route change: ${e.message ?: "network error"}", e)
                 }
@@ -2882,6 +3073,17 @@ data class RealtimeVoiceSummary(
     val eventLogPath: String?,
 )
 
+private data class BufferedRealtimeInputChunk(
+    val id: Long,
+    val pcm: ByteArray,
+    val sampleRate: Int,
+)
+
+private data class BufferedRealtimeTurnSendResult(
+    val accepted: Boolean,
+    val routeChanged: Boolean,
+)
+
 /**
  * One utterance fed into a persistent Realtime Agent session
  * (see [RelayVoiceClient.runRealtimeAgent] persistent mode). A blank [inputPcm]
@@ -2892,6 +3094,7 @@ data class RealtimeTurnInput(
     val inputPcm: ByteArray,
     val sampleRate: Int = 16_000,
     val prompt: String = "",
+    val deliveryResult: CompletableDeferred<Result<Unit>>? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

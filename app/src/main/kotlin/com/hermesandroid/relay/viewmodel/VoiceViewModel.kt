@@ -44,6 +44,7 @@ import com.hermesandroid.relay.voice.VoiceBridgeIntentHandler
 import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
 // === END PHASE3-voice-intents ===
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -75,6 +76,9 @@ import com.hermesandroid.relay.data.VoiceAudioRoute
  * overlay + MorphingSphere state in V2b/V3.
  */
 enum class VoiceState { Idle, Listening, Transcribing, Thinking, Speaking, Error }
+
+internal fun realtimeTranscriptState(micCaptureActive: Boolean): VoiceState =
+    if (micCaptureActive) VoiceState.Listening else VoiceState.Transcribing
 
 /**
  * Tap-to-talk vs hold-to-talk vs always-listening. Persisted via Settings
@@ -187,6 +191,15 @@ enum class BackgroundRunPhase {
      */
     DONE,
 }
+
+internal fun realtimeTurnActiveAfterResponseDone(backgroundPhase: BackgroundRunPhase?): Boolean =
+    backgroundPhase == BackgroundRunPhase.RUNNING ||
+        backgroundPhase == BackgroundRunPhase.RECONNECTING
+
+internal fun preserveRealtimeTurnOnStop(backgroundPhase: BackgroundRunPhase?): Boolean =
+    backgroundPhase == BackgroundRunPhase.RUNNING ||
+        backgroundPhase == BackgroundRunPhase.RECONNECTING ||
+        backgroundPhase == BackgroundRunPhase.DELIVERING
 
 data class VoiceHandoffStatus(
     val title: String,
@@ -324,6 +337,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         /** How long the DONE background-run chip lingers before auto-dismiss. */
         private const val DONE_CHIP_LINGER_MS = 10_000L
+        private const val REALTIME_TURN_DELIVERY_TIMEOUT_MS = 20_000L
         private const val MAX_BROKERED_TOOL_STATUS_PER_MESSAGE = 2
         private const val STABLE_VOICE_INTERFACE_CONTEXT =
             "Hermes Android voice interface context for this turn:\n" +
@@ -1570,7 +1584,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             setError("Recorder not initialized")
             return
         }
-        if (_uiState.value.state == VoiceState.Listening) return
+        if (rec.isRecording()) return
+        if (_uiState.value.state == VoiceState.Listening) {
+            // Listening is reserved for a live AudioRecord. Reconcile a stale
+            // UI state before starting again instead of letting VoiceRecorder
+            // reuse the previous capture.
+            try { rec.cancel() } catch (_: Exception) { /* ignore */ }
+        }
         continuousResumeJob?.cancel()
         continuousResumeJob = null
         continuousLoopArmed = _uiState.value.interactionMode == InteractionMode.Continuous
@@ -1621,7 +1641,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopListening() {
         val rec = recorder ?: return
-        if (_uiState.value.state != VoiceState.Listening) return
+        if (!rec.isRecording()) {
+            if (_uiState.value.state == VoiceState.Listening) {
+                Log.w(TAG, "Stop requested from stale Listening state; cancelling provider turn")
+                try { rec.cancel() } catch (_: Exception) { /* ignore */ }
+                interruptSpeaking()
+            }
+            return
+        }
 
         // 2026-04-18: cancel the silence watchdog first so it can't race
         // a concurrent stop from another path (barge-in, overlay X button).
@@ -1696,6 +1723,25 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
         }
     }
+
+    /** Reconcile microphone state after the Activity returns to foreground. */
+    fun onAppResumed() {
+        if (_uiState.value.state != VoiceState.Listening || recorder?.isRecording() == true) return
+        Log.w(TAG, "Foreground resume found Listening without an active recorder; recovering voice controls")
+        silenceWatchdogJob?.cancel()
+        silenceWatchdogJob = null
+        listeningStartedAtMs = 0L
+        try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
+        _uiState.update {
+            it.copy(
+                state = if (providerRealtimeAgentTurnActive.get()) VoiceState.Thinking else VoiceState.Idle,
+                amplitude = 0f,
+                outputAudioActive = false,
+            )
+        }
+    }
+
+    private fun isMicCaptureActive(): Boolean = recorder?.isRecording() == true
 
     /**
      * Pause the Continuous-mode loop without changing the selected mode or
@@ -1820,10 +1866,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Stop = "stop talking", not "kill my task": with a background run
         // active, silence the audio pipeline below but leave the run alive —
         // the chip's ✕ is the explicit cancel affordance.
-        if (_uiState.value.backgroundRun != null) {
+        val realtimeTurnWasActive =
+            voiceEngineMode == VoiceEngineMode.RealtimeAgent && providerRealtimeAgentTurnActive.get()
+        val backgroundPhase = _uiState.value.backgroundRun?.phase
+        val backgroundRunActive = preserveRealtimeTurnOnStop(backgroundPhase)
+        if (backgroundRunActive) {
             Log.i(TAG, "Interrupt with background run active — stopping audio only")
         } else {
             cancelRealtimeAgentTurn("interrupt")
+        }
+        if (realtimeTurnWasActive && rtAssistantMessageId.isNotBlank() && !backgroundRunActive) {
+            chatViewModel?.cancelRealtimeAgentTurnLocally(rtAssistantMessageId)
+            providerRealtimeAgentTurnActive.set(false)
         }
         // Drop realtime audio deltas still in flight on the open socket so a
         // stopped turn's tail can't re-create the player and resume playback.
@@ -2647,6 +2701,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        var hadActiveTurnWhenSessionEnded = false
         val result = try {
             client.runRealtimeAgent(
                 prompt = userText,
@@ -2672,7 +2727,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     event.delta?.let { inputTranscript.append(it) }
                     _uiState.update {
                         it.copy(
-                            state = VoiceState.Listening,
+                            state = realtimeTranscriptState(isMicCaptureActive()),
                             outputAudioActive = false,
                             transcribedText = inputTranscript.toString().ifBlank { rtUserText },
                         )
@@ -2690,6 +2745,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.response.started", "hermes.run.started" -> {
+                    providerRealtimeAgentTurnActive.set(true)
                     if (event.type == "hermes.run.started") {
                         Log.i(
                             TAG,
@@ -2697,9 +2753,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                                 "session=${event.chatSessionId ?: "?"}",
                         )
                     }
-                    if (event.type == "voice.response.started" &&
-                        _uiState.value.state == VoiceState.Listening
-                    ) {
+                    if (event.type == "voice.response.started" && isMicCaptureActive()) {
                         Log.i(TAG, "Ignoring realtime response start while mic capture is active")
                         return@runRealtimeAgent
                     }
@@ -2717,7 +2771,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     if (event.source == "hermes" && event.delivery == null) {
                         return@runRealtimeAgent
                     }
-                    if (_uiState.value.state == VoiceState.Listening) {
+                    if (isMicCaptureActive()) {
                         Log.i(TAG, "Ignoring realtime response text while mic capture is active")
                         return@runRealtimeAgent
                     }
@@ -2864,6 +2918,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "hermes.run.promoted" -> {
+                    providerRealtimeAgentTurnActive.set(true)
                     // The run detached to the background; the provider speaks the
                     // handoff. Surface a persistent chip so the user knows a long
                     // task is still in flight (ADR 33 Tier B/C).
@@ -3002,7 +3057,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.output_audio.delta" -> {
-                    if (_uiState.value.state == VoiceState.Listening) {
+                    if (isMicCaptureActive()) {
                         Log.i(TAG, "Dropping realtime output audio while mic capture is active")
                         return@runRealtimeAgent
                     }
@@ -3020,7 +3075,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.output_audio.done" -> {
-                    if (_uiState.value.state == VoiceState.Listening) {
+                    if (isMicCaptureActive()) {
                         Log.i(TAG, "Ignoring realtime output done while mic capture is active")
                         return@runRealtimeAgent
                     }
@@ -3043,7 +3098,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.response.done" -> {
-                    if (_uiState.value.state == VoiceState.Listening) {
+                    if (isMicCaptureActive()) {
                         Log.i(TAG, "Ignoring realtime response done while mic capture is active")
                         return@runRealtimeAgent
                     }
@@ -3058,6 +3113,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             hermesConfirmation = null,
                         )
                     }
+                    providerRealtimeAgentTurnActive.set(
+                        realtimeTurnActiveAfterResponseDone(_uiState.value.backgroundRun?.phase)
+                    )
                 }
                 "voice.error" -> {
                     realtimeConfirmationControl = null
@@ -3081,6 +3139,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         } finally {
+            hadActiveTurnWhenSessionEnded = providerRealtimeAgentTurnActive.get()
             providerRealtimeAgentTurnActive.set(false)
             realtimeAgentControl = null
             realtimeConfirmationControl = null
@@ -3110,7 +3169,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         closeRealtimeSession()
         // A failed warm-up must stay silent: no user action happened, and the
         // first real utterance will simply open a fresh session.
-        if (!prewarm) {
+        if (!prewarm || hadActiveTurnWhenSessionEnded) {
+            if (rtAssistantMessageId.isNotBlank()) {
+                chatVm.failRealtimeAgentTurn(
+                    rtAssistantMessageId,
+                    "Voice connection was interrupted. Tap the mic to try again.",
+                )
+            }
             surfaceError(err, context = "voice_config")
         }
     }
@@ -3139,8 +3204,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * Submit a follow-up utterance onto the already-open persistent session
      * (turns 2+). Mirrors the per-turn reset the open path does for turn 1.
      */
-    private fun submitRealtimeTurn(chatVm: ChatViewModel, inputPcm: ByteArray, inputSampleRate: Int) {
-        val channel = realtimeTurnChannel ?: return
+    private suspend fun submitRealtimeTurn(chatVm: ChatViewModel, inputPcm: ByteArray, inputSampleRate: Int) {
+        val channel = realtimeTurnChannel
+        if (channel == null) {
+            failRealtimeTurnSubmission(
+                chatVm = chatVm,
+                assistantMessageId = null,
+                detail = "Realtime voice session was not available",
+            )
+            return
+        }
         // A new turn while a background task runs: remind visually that the
         // earlier task is still going (the agent also says so if the user asks
         // for another task — the relay answers busy rather than orphaning it).
@@ -3168,10 +3241,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         spokenStatusCount = 0
         rtUserText = ""
         rtConversationContext = chatVm.realtimeAgentContextMessages()
-        rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
+        val assistantMessageId = chatVm.startRealtimeAgentTurn(
             userText = "",
             chatSessionId = chatVm.currentSessionId.value,
         )
+        rtAssistantMessageId = assistantMessageId
         providerRealtimeAgentTurnActive.set(true)
         _uiState.update {
             it.copy(
@@ -3181,8 +3255,58 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 responseText = "",
             )
         }
-        val sent = channel.trySend(RealtimeTurnInput(inputPcm, inputSampleRate)).isSuccess
-        Log.i(TAG, "Realtime persistent turn submitted sent=$sent pcmBytes=${inputPcm.size}")
+        val deliveryResult = CompletableDeferred<Result<Unit>>()
+        val queued = channel.trySend(
+            RealtimeTurnInput(
+                inputPcm = inputPcm,
+                sampleRate = inputSampleRate,
+                deliveryResult = deliveryResult,
+            )
+        ).isSuccess
+        if (!queued) {
+            failRealtimeTurnSubmission(
+                chatVm = chatVm,
+                assistantMessageId = assistantMessageId,
+                detail = "Realtime voice session was not available",
+            )
+            return
+        }
+        val delivered = try {
+            withTimeoutOrNull(REALTIME_TURN_DELIVERY_TIMEOUT_MS) {
+                deliveryResult.await()
+            } ?: Result.failure(java.io.IOException("Realtime voice connection did not accept the recorded turn"))
+        } catch (e: CancellationException) {
+            deliveryResult.cancel(e)
+            throw e
+        }
+        Log.i(
+            TAG,
+            "Realtime persistent turn submitted delivered=${delivered.isSuccess} pcmBytes=${inputPcm.size}",
+        )
+        if (delivered.isFailure) {
+            failRealtimeTurnSubmission(
+                chatVm = chatVm,
+                assistantMessageId = assistantMessageId,
+                detail = delivered.exceptionOrNull()?.message ?: "Realtime voice connection was interrupted",
+            )
+        }
+    }
+
+    private fun failRealtimeTurnSubmission(
+        chatVm: ChatViewModel,
+        assistantMessageId: String?,
+        detail: String,
+    ) {
+        Log.w(TAG, "Realtime persistent turn delivery failed: $detail")
+        providerRealtimeAgentTurnActive.set(false)
+        if (!assistantMessageId.isNullOrBlank()) {
+            chatVm.failRealtimeAgentTurn(
+                assistantMessageId,
+                "Voice connection was interrupted. Tap the mic to try again.",
+            )
+        }
+        closeRealtimeSession()
+        surfaceError(java.io.IOException(detail), context = "voice_config")
     }
 
     /** Tear down the persistent realtime session (voice-mode exit / engine switch). */
@@ -4113,9 +4237,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             delay(initialDelayMs.coerceIn(AUDIO_COMPLETION_RETRY_MS, AUDIO_COMPLETION_MAX_SLEEP_MS))
             repeat(120) {
                 val state = _uiState.value
-                if (!state.voiceMode ||
-                    state.state == VoiceState.Listening
-                ) {
+                if (!state.voiceMode || isMicCaptureActive()) {
                     return@launch
                 }
 

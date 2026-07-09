@@ -16,8 +16,9 @@ Compaction-safe snapshot of where we are; details in the linked sections below.
   3. Merge `dev`→`main` `--no-ff` + tag `android-v1.4.0` and `plugin-v1.4.0`. Plugin is a **MINOR** (it carries #165 native-loader + installer-venv, #170 doctor guardrails, #171 multi-device bridge, #178 dedup guard — not the 1.3.1 patch originally queued).
   4. Discard the 1.3.0 Play Console draft and upload the 1.4.0 AAB.
 - **Voice bugs being worked now** — see "Voice — on-device findings" below for full detail:
-  1. Tool-call status pills/ordering + stuck "Thinking" — **in progress** (root cause confirmed, fix underway 2026-07-07).
-  2. Tap/static click between sentences (`RealtimePcmPlayer` boundary) — still needs an on-device audio repro before fixing.
+  1. Background/resume turn stuck on `Listening...` / `Still working...` — **fixed in code; installed repro re-test pending** (2026-07-09).
+  2. Tool-call status pills/ordering + stuck "Thinking" — fixed in code; final visual ordering re-check remains.
+  3. Tap/static click between sentences (`RealtimePcmPlayer` boundary) — still needs an on-device audio repro before fixing.
 - **Screen-wake-lock — SHIPPED (2026-07-07).** See "Voice — on-device findings" below.
 - **Owner / Mizu — GitHub triage.** Close #64 as superseded, plus the queued open-issue comment/close/label batch (see "Open-issue resolution batch" below).
 - **Voice exact-mode signoff — PASSED (2026-07-09 e2e).** Both `grok-voice-latest` and the pinned `grok-voice-think-fast-1.0` deferred on model-generated exact delivery, so xAI exact mode now bypasses inference through provider-native `force_message`. The full on-device background path spoke the authoritative answer through xAI with no fallback, and a pure-recall follow-up repeated it from history without a second Hermes route/run. OpenAI's separate out-of-band delivery spike remains on its next-RC roadmap. Full detail + the background-tasks-as-chat UX asks + remaining audio/UI gaps are below.
@@ -31,6 +32,7 @@ Live on-device e2e (relay through `8ebb21b`, app `1.4.0-sideload` build 22, prov
 against live data during this test.
 
 ### Findings
+- **Background route loss could strand a recorded turn — FIXED IN CODE; SECOND LIVE RE-TEST PENDING (2026-07-09).** Initial logs showed valid PCM accepted by the persistent turn channel after foregrounding, but the socket had failed during background route retries and no new relay event arrived. The first fixed APK restored submission and let the background Hermes run finish, then exposed the delivery race: a slower overlapping resume handshake connected 250 ms after the valid resume, claimed relay ownership before the Android generation check, and detached the session just before the forced answer. Android now coalesces pending handshakes, waits for an `onOpen`-ready socket, retains unacknowledged chunks for atomic replay, and returns a per-turn delivery result. The relay now requires a valid resume claim before changing ownership and isolates invalid/stale candidate failures from the active phone socket. Provider STT stays in `Transcribing` unless `VoiceRecorder.isRecording()` is true; Stop/failure settles local placeholders, late terminal deltas are ignored, and stale capture state is reconciled on resume. Route, promotion, ownership, UI-state, and chat-terminal regressions are green; repeat the exact record → background/route loss → foreground flow on the newly deployed relay and APK before release sign-off.
 - **Model-generated exact delivery is inconsistent and deferral is model-agnostic; xAI now has a deterministic path.**
   A background turn ("what do you
   think about our notes so far?") delivered `forced_summary_streaming`
@@ -159,12 +161,11 @@ green. Needs relay deploy + APK install + live verify.
   speaking (live `input_audio.append` chunks stamp
   `native_last_input_audio_at`) and `_await_floor_idle_for_result` holds
   delivery until they've been quiet ≥1.5s (bounded by the existing floor
-  timeout). Covers summary/fallback/queued-transition. **Client half still
-  open:** the app should also not END the recording when output audio
-  arrives mid-capture (belt-and-braces if a delivery slips through the
-  bounded wait). **SHIPPED IN CLIENT (2026-07-08 PM):** `VoiceViewModel`
-  now ignores realtime response/audio/done events while still in
-  `Listening`.
+  timeout). Covers summary/fallback/queued-transition. **Client half shipped:**
+  `VoiceViewModel` suppresses realtime response/audio/done only while
+  `VoiceRecorder.isRecording()` is actually true. Provider STT uses
+  `Transcribing`, not the capture-owned `Listening` state, so a partial
+  transcript cannot wedge the mic controls or suppress its own response.
 - **Audio tail cut at end of response (round-5 repro) — MITIGATED IN CODE.**
   Final word ("you?") cut hard instead of finishing smoothly. The client
   output resume tail guard is raised from 350ms to 650ms so the final

@@ -477,6 +477,11 @@ class ChatHandler {
         }
     }
 
+    /** Remove a provisional client-side message that never became a real turn. */
+    fun removeMessage(messageId: String) {
+        _messages.update { messages -> messages.filterNot { it.id == messageId } }
+    }
+
     /**
      * Append a local-only voice-intent trace to the chat scroll. Used by
      * the sideload voice intent flow (`RealVoiceBridgeIntentHandler`) so

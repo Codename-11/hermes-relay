@@ -421,6 +421,7 @@ fun RelayApp() {
                         System.currentTimeMillis() - lastPausedAtMs.value
                     }
                     connectionViewModel.revalidateOnResume(awayMs)
+                    voiceViewModel.onAppResumed()
                 }
                 else -> {}
             }

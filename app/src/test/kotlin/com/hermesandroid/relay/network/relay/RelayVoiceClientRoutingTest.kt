@@ -5,6 +5,8 @@ import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -28,6 +30,7 @@ import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -558,6 +561,606 @@ class RelayVoiceClientRoutingTest {
     }
 
     @Test
+    fun persistentRealtimeTurnWaitsForResumedSocketAfterBackgroundRouteLoss() = runBlocking {
+        val openedUrls = Collections.synchronizedList(mutableListOf<String>())
+        val sentBySocket = Collections.synchronizedList(mutableListOf<MutableList<String>>())
+        val firstOpened = CountDownLatch(1)
+        val secondOpened = CountDownLatch(1)
+        val thirdOpened = CountDownLatch(1)
+        val resumedTurnCommitted = CountDownLatch(1)
+        val turnCompleted = CompletableDeferred<Unit>()
+        val abandonedDelivery = CompletableDeferred<Result<Unit>>()
+        val turnDelivered = CompletableDeferred<Result<Unit>>()
+        val turns = Channel<RealtimeTurnInput>(Channel.UNLIMITED)
+        lateinit var firstSocket: ScriptedWebSocket
+        lateinit var firstListener: WebSocketListener
+        lateinit var secondSocket: ScriptedWebSocket
+        lateinit var secondListener: WebSocketListener
+        lateinit var thirdSocket: ScriptedWebSocket
+        lateinit var thirdListener: WebSocketListener
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-agent-background-resume-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "resume_token": "realtime-background-token-1",
+                  "resume_supported": true,
+                  "resume_ttl_ms": 300000,
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            webSocketFactory = { request, listener ->
+                val index = openedUrls.size
+                val messages = Collections.synchronizedList(mutableListOf<String>())
+                sentBySocket.add(messages)
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(request, listener) { message ->
+                    messages.add(message)
+                    if (index == 2 && message.contains("input_audio.commit")) {
+                        resumedTurnCommitted.countDown()
+                    }
+                }
+                openedUrls.add(request.url.toString())
+                when (index) {
+                    0 -> {
+                        firstSocket = socket
+                        firstListener = listener
+                        listener.onOpen(socket, mockk(relaxed = true))
+                        firstOpened.countDown()
+                    }
+                    1 -> {
+                        secondSocket = socket
+                        secondListener = listener
+                        listener.onOpen(socket, mockk(relaxed = true))
+                        secondOpened.countDown()
+                    }
+                    else -> {
+                        thirdSocket = socket
+                        thirdListener = listener
+                        thirdOpened.countDown()
+                    }
+                }
+                socket
+            },
+        )
+
+        val sessionJob = async(Dispatchers.IO) {
+            client.runRealtimeAgent(
+                prompt = "",
+                inputPcm = ByteArray(0),
+                turnInputs = turns,
+                prewarm = true,
+                onTurnComplete = { turnCompleted.complete(Unit) },
+            ) { _, _ -> }
+        }
+
+        try {
+            assertTrue(firstOpened.await(2, TimeUnit.SECONDS))
+            firstListener.onFailure(firstSocket, IOException("background route lost"), null)
+            assertTrue(secondOpened.await(2, TimeUnit.SECONDS))
+            secondListener.onFailure(secondSocket, IOException("route unavailable while backgrounded"), null)
+
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(6_400) { 7 },
+                    deliveryResult = abandonedDelivery,
+                )
+            )
+
+            assertTrue(
+                "A foreground turn must trigger an immediate resume instead of using the failed socket",
+                thirdOpened.await(2, TimeUnit.SECONDS),
+            )
+            assertTrue("Turn delivery must wait for replacement onOpen", !abandonedDelivery.isCompleted)
+            abandonedDelivery.cancel()
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(6_400) { 9 },
+                    deliveryResult = turnDelivered,
+                )
+            )
+            thirdListener.onOpen(thirdSocket, mockk(relaxed = true))
+            assertTrue(
+                "The queued turn must be committed on the replacement socket",
+                resumedTurnCommitted.await(2, TimeUnit.SECONDS),
+            )
+            assertTrue(withTimeout(2_000) { turnDelivered.await() }.isSuccess)
+            thirdListener.onMessage(
+                thirdSocket,
+                """{"type":"voice.response.done","provider":"xai_realtime","model":"grok-voice-latest","voice":"leo"}""",
+            )
+            withTimeout(2_000) { turnCompleted.await() }
+
+            assertTrue(sentBySocket[2].any { it.contains("session.resume") })
+            assertEquals(1, sentBySocket[2].count { it.contains("input_audio.append") })
+            assertTrue(sentBySocket[2].any { it.contains("input_audio.commit") })
+            assertTrue(sentBySocket[1].none { it.contains("input_audio.append") })
+        } finally {
+            turns.close()
+            withTimeout(2_000) { sessionJob.await() }
+        }
+    }
+
+    @Test
+    fun persistentRealtimeTurnCoalescesWhileResumeHandshakeIsPending() = runBlocking {
+        val sentBySocket = Collections.synchronizedList(mutableListOf<MutableList<String>>())
+        val firstOpened = CountDownLatch(1)
+        val pendingResumeCreated = CountDownLatch(1)
+        val unexpectedOverlap = CountDownLatch(1)
+        val turns = Channel<RealtimeTurnInput>(Channel.UNLIMITED)
+        val delivered = CompletableDeferred<Result<Unit>>()
+        val turnCompleted = CompletableDeferred<Unit>()
+        lateinit var firstSocket: ScriptedWebSocket
+        lateinit var firstListener: WebSocketListener
+        lateinit var pendingSocket: ScriptedWebSocket
+        lateinit var pendingListener: WebSocketListener
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-agent-pending-resume-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "resume_token": "realtime-pending-resume-token",
+                  "resume_supported": true,
+                  "resume_ttl_ms": 300000,
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            webSocketFactory = { request, listener ->
+                val index = sentBySocket.size
+                val messages = Collections.synchronizedList(mutableListOf<String>())
+                sentBySocket.add(messages)
+                val socket = ScriptedWebSocket(request, listener) { messages.add(it) }
+                when (index) {
+                    0 -> {
+                        firstSocket = socket
+                        firstListener = listener
+                        listener.onOpen(socket, mockk(relaxed = true))
+                        firstOpened.countDown()
+                    }
+                    1 -> {
+                        pendingSocket = socket
+                        pendingListener = listener
+                        pendingResumeCreated.countDown()
+                    }
+                    else -> unexpectedOverlap.countDown()
+                }
+                socket
+            },
+        )
+        val sessionJob = async(Dispatchers.IO) {
+            client.runRealtimeAgent(
+                prompt = "",
+                inputPcm = ByteArray(0),
+                turnInputs = turns,
+                prewarm = true,
+                onTurnComplete = { turnCompleted.complete(Unit) },
+            ) { _, _ -> }
+        }
+
+        try {
+            assertTrue(firstOpened.await(2, TimeUnit.SECONDS))
+            firstListener.onFailure(firstSocket, IOException("route lost"), null)
+            assertTrue(pendingResumeCreated.await(2, TimeUnit.SECONDS))
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(6_400) { 8 },
+                    deliveryResult = delivered,
+                )
+            )
+
+            delay(250)
+            assertTrue("A waiting turn must not open a competing resume", unexpectedOverlap.count == 1L)
+            assertEquals(2, sentBySocket.size)
+            assertTrue(!delivered.isCompleted)
+
+            pendingListener.onOpen(pendingSocket, mockk(relaxed = true))
+            assertTrue(withTimeout(2_000) { delivered.await() }.isSuccess)
+            assertEquals(1, sentBySocket[1].count { it.contains("session.resume") })
+            assertEquals(1, sentBySocket[1].count { it.contains("input_audio.append") })
+            assertEquals(1, sentBySocket[1].count { it.contains("input_audio.commit") })
+            pendingListener.onMessage(
+                pendingSocket,
+                """{"type":"voice.response.done","provider":"xai_realtime","model":"grok-voice-latest","voice":"leo"}""",
+            )
+            withTimeout(2_000) { turnCompleted.await() }
+        } finally {
+            turns.close()
+            withTimeout(2_000) { sessionJob.await() }
+        }
+    }
+
+    @Test
+    fun persistentRealtimeTurnRetriesWhenCoalescedResumeLaterFails() = runBlocking {
+        val sentBySocket = Collections.synchronizedList(mutableListOf<MutableList<String>>())
+        val firstOpened = CountDownLatch(1)
+        val pendingResumeCreated = CountDownLatch(1)
+        val replacementResumeCreated = CountDownLatch(1)
+        val turns = Channel<RealtimeTurnInput>()
+        val delivered = CompletableDeferred<Result<Unit>>()
+        val turnCompleted = CompletableDeferred<Unit>()
+        lateinit var firstSocket: ScriptedWebSocket
+        lateinit var firstListener: WebSocketListener
+        lateinit var pendingSocket: ScriptedWebSocket
+        lateinit var pendingListener: WebSocketListener
+        lateinit var replacementSocket: ScriptedWebSocket
+        lateinit var replacementListener: WebSocketListener
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-agent-coalesced-failure-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "resume_token": "realtime-coalesced-failure-token",
+                  "resume_supported": true,
+                  "resume_ttl_ms": 300000,
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            webSocketFactory = { request, listener ->
+                val index = sentBySocket.size
+                val messages = Collections.synchronizedList(mutableListOf<String>())
+                sentBySocket.add(messages)
+                val socket = ScriptedWebSocket(request, listener) { messages.add(it) }
+                when (index) {
+                    0 -> {
+                        firstSocket = socket
+                        firstListener = listener
+                        listener.onOpen(socket, mockk(relaxed = true))
+                        firstOpened.countDown()
+                    }
+                    1 -> {
+                        pendingSocket = socket
+                        pendingListener = listener
+                        pendingResumeCreated.countDown()
+                    }
+                    else -> {
+                        replacementSocket = socket
+                        replacementListener = listener
+                        replacementResumeCreated.countDown()
+                    }
+                }
+                socket
+            },
+        )
+        val sessionJob = async(Dispatchers.IO) {
+            client.runRealtimeAgent(
+                prompt = "",
+                inputPcm = ByteArray(0),
+                turnInputs = turns,
+                prewarm = true,
+                onTurnComplete = { turnCompleted.complete(Unit) },
+            ) { _, _ -> }
+        }
+
+        try {
+            assertTrue(firstOpened.await(2, TimeUnit.SECONDS))
+            firstListener.onFailure(firstSocket, IOException("route lost"), null)
+            assertTrue(pendingResumeCreated.await(2, TimeUnit.SECONDS))
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(6_400) { 6 },
+                    deliveryResult = delivered,
+                )
+            )
+            delay(100)
+            assertEquals(2, sentBySocket.size)
+
+            pendingListener.onFailure(pendingSocket, IOException("pending route failed"), null)
+            assertTrue(
+                "The waiting turn must retry as soon as the handshake gate clears",
+                replacementResumeCreated.await(2, TimeUnit.SECONDS),
+            )
+            replacementListener.onOpen(replacementSocket, mockk(relaxed = true))
+            assertTrue(withTimeout(2_000) { delivered.await() }.isSuccess)
+            assertEquals(1, sentBySocket[2].count { it.contains("session.resume") })
+            assertEquals(1, sentBySocket[2].count { it.contains("input_audio.append") })
+            assertEquals(1, sentBySocket[2].count { it.contains("input_audio.commit") })
+            replacementListener.onMessage(
+                replacementSocket,
+                """{"type":"voice.response.done","provider":"xai_realtime","model":"grok-voice-latest","voice":"leo"}""",
+            )
+            withTimeout(2_000) { turnCompleted.await() }
+        } finally {
+            turns.close()
+            withTimeout(2_000) { sessionJob.await() }
+        }
+    }
+
+    @Test
+    fun persistentRealtimeTurnReportsRejectedSocketSend() = runBlocking {
+        val opened = CountDownLatch(1)
+        val turns = Channel<RealtimeTurnInput>(Channel.UNLIMITED)
+        val delivery = CompletableDeferred<Result<Unit>>()
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-agent-rejected-send-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "resume_token": "realtime-rejected-send-token",
+                  "resume_supported": true,
+                  "resume_ttl_ms": 300000,
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            webSocketFactory = { request, listener ->
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(
+                    request = request,
+                    listener = listener,
+                    onText = { },
+                    sendAccepted = { message -> !message.contains("input_audio.append") },
+                )
+                listener.onOpen(socket, mockk(relaxed = true))
+                opened.countDown()
+                socket
+            },
+        )
+        val sessionJob = async(Dispatchers.IO) {
+            client.runRealtimeAgent(
+                prompt = "",
+                inputPcm = ByteArray(0),
+                turnInputs = turns,
+                prewarm = true,
+            ) { _, _ -> }
+        }
+
+        try {
+            assertTrue(opened.await(2, TimeUnit.SECONDS))
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(6_400) { 3 },
+                    deliveryResult = delivery,
+                )
+            )
+
+            val deliveryResult = withTimeout(2_000) { delivery.await() }
+            val sessionResult = withTimeout(2_000) { sessionJob.await() }
+            assertTrue(deliveryResult.isFailure)
+            assertTrue(sessionResult.isFailure)
+            assertTrue(
+                deliveryResult.exceptionOrNull()?.message?.contains("rejected the recorded turn") == true,
+            )
+        } finally {
+            turns.close()
+        }
+    }
+
+    @Test
+    fun persistentRealtimeTurnReplaysUnacknowledgedFollowUpAfterRouteLoss() = runBlocking {
+        val firstOpened = CountDownLatch(1)
+        val resumedOpened = CountDownLatch(1)
+        val firstTurnCommitted = CountDownLatch(1)
+        val sentBySocket = Collections.synchronizedList(mutableListOf<MutableList<String>>())
+        val turns = Channel<RealtimeTurnInput>(Channel.UNLIMITED)
+        val delivered = CompletableDeferred<Result<Unit>>()
+        val turnCompleted = CompletableDeferred<Unit>()
+        lateinit var firstSocket: ScriptedWebSocket
+        lateinit var firstListener: WebSocketListener
+        lateinit var resumedSocket: ScriptedWebSocket
+        lateinit var resumedListener: WebSocketListener
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-agent-follow-up-replay-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "resume_token": "realtime-follow-up-replay-token",
+                  "resume_supported": true,
+                  "resume_ttl_ms": 300000,
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            webSocketFactory = { request, listener ->
+                val index = sentBySocket.size
+                val messages = Collections.synchronizedList(mutableListOf<String>())
+                sentBySocket.add(messages)
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(request, listener) { message ->
+                    messages.add(message)
+                    if (index == 0 && message.contains("input_audio.commit")) {
+                        firstTurnCommitted.countDown()
+                    }
+                }
+                if (index == 0) {
+                    firstSocket = socket
+                    firstListener = listener
+                } else {
+                    resumedSocket = socket
+                    resumedListener = listener
+                }
+                listener.onOpen(socket, mockk(relaxed = true))
+                if (index == 0) firstOpened.countDown() else resumedOpened.countDown()
+                socket
+            },
+        )
+        val sessionJob = async(Dispatchers.IO) {
+            client.runRealtimeAgent(
+                prompt = "",
+                inputPcm = ByteArray(0),
+                turnInputs = turns,
+                prewarm = true,
+                onTurnComplete = { turnCompleted.complete(Unit) },
+            ) { _, _ -> }
+        }
+
+        try {
+            assertTrue(firstOpened.await(2, TimeUnit.SECONDS))
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(6_400) { 5 },
+                    deliveryResult = delivered,
+                )
+            )
+            assertTrue(firstTurnCommitted.await(2, TimeUnit.SECONDS))
+            assertTrue(withTimeout(2_000) { delivered.await() }.isSuccess)
+
+            firstListener.onFailure(firstSocket, IOException("route lost after commit enqueue"), null)
+
+            assertTrue(resumedOpened.await(2, TimeUnit.SECONDS))
+            assertTrue(sentBySocket[1].any { it.contains("session.resume") })
+            assertTrue(sentBySocket[1].any { it.contains("input_audio.append") })
+            assertTrue(sentBySocket[1].any { it.contains("input_audio.commit") })
+            resumedListener.onMessage(
+                resumedSocket,
+                """{"type":"voice.response.done","provider":"xai_realtime","model":"grok-voice-latest","voice":"leo"}""",
+            )
+            withTimeout(2_000) { turnCompleted.await() }
+        } finally {
+            turns.close()
+            withTimeout(2_000) { sessionJob.await() }
+        }
+    }
+
+    @Test
+    fun persistentRealtimeTurnBuffersWholeUtteranceBeforeResumeReplay() = runBlocking {
+        val firstOpened = CountDownLatch(1)
+        val resumedOpened = CountDownLatch(1)
+        val resumedTurnCommitted = CountDownLatch(1)
+        val routeLost = AtomicBoolean(false)
+        val sentBySocket = Collections.synchronizedList(mutableListOf<MutableList<String>>())
+        val turns = Channel<RealtimeTurnInput>(Channel.UNLIMITED)
+        val delivered = CompletableDeferred<Result<Unit>>()
+        val turnCompleted = CompletableDeferred<Unit>()
+        lateinit var resumedSocket: ScriptedWebSocket
+        lateinit var resumedListener: WebSocketListener
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-agent-atomic-input-replay-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "resume_token": "realtime-atomic-input-token",
+                  "resume_supported": true,
+                  "resume_ttl_ms": 300000,
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            webSocketFactory = { request, listener ->
+                val index = sentBySocket.size
+                val messages = Collections.synchronizedList(mutableListOf<String>())
+                sentBySocket.add(messages)
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(request, listener) { message ->
+                    messages.add(message)
+                    if (index == 0 &&
+                        message.contains("input_audio.append") &&
+                        routeLost.compareAndSet(false, true)
+                    ) {
+                        // Reconnect exactly while the first chunk send is
+                        // unwinding. Resume must still see both buffered chunks.
+                        listener.onFailure(socket, IOException("route changed during input send"), null)
+                    }
+                    if (index == 1 && message.contains("input_audio.commit")) {
+                        resumedTurnCommitted.countDown()
+                    }
+                }
+                if (index == 1) {
+                    resumedSocket = socket
+                    resumedListener = listener
+                }
+                listener.onOpen(socket, mockk(relaxed = true))
+                if (index == 0) firstOpened.countDown() else resumedOpened.countDown()
+                socket
+            },
+        )
+        val sessionJob = async(Dispatchers.IO) {
+            client.runRealtimeAgent(
+                prompt = "",
+                inputPcm = ByteArray(0),
+                turnInputs = turns,
+                prewarm = true,
+                onTurnComplete = { turnCompleted.complete(Unit) },
+            ) { _, _ -> }
+        }
+
+        try {
+            assertTrue(firstOpened.await(2, TimeUnit.SECONDS))
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(12_800) { 5 },
+                    deliveryResult = delivered,
+                )
+            )
+
+            assertTrue(resumedOpened.await(2, TimeUnit.SECONDS))
+            assertTrue(resumedTurnCommitted.await(2, TimeUnit.SECONDS))
+            assertTrue(withTimeout(2_000) { delivered.await() }.isSuccess)
+            assertEquals(2, sentBySocket[1].count { it.contains("input_audio.append") })
+            resumedListener.onMessage(
+                resumedSocket,
+                """{"type":"voice.response.done","provider":"xai_realtime","model":"grok-voice-latest","voice":"leo"}""",
+            )
+            withTimeout(2_000) { turnCompleted.await() }
+        } finally {
+            turns.close()
+            withTimeout(2_000) { sessionJob.await() }
+        }
+    }
+
+    @Test
     fun realtimeAgentResumeCursorIgnoresReplayControlEventsDuringRouteChurn() = runBlocking {
         var activeRelayUrl = relayUrl(lanServer)
         val routeSwitch = CompletableDeferred<String>()
@@ -822,6 +1425,7 @@ class RelayVoiceClientRoutingTest {
     private class ScriptedWebSocket(
         private val request: Request,
         private val listener: WebSocketListener,
+        private val sendAccepted: (String) -> Boolean = { true },
         private val onText: (String) -> Unit,
     ) : WebSocket {
         override fun request(): Request = request
@@ -830,7 +1434,7 @@ class RelayVoiceClientRoutingTest {
 
         override fun send(text: String): Boolean {
             onText(text)
-            return true
+            return sendAccepted(text)
         }
 
         override fun send(bytes: ByteString): Boolean = true
