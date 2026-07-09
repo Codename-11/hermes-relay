@@ -212,6 +212,37 @@ vs grok's flat $0.05/min.
   Better turn-taking naturalness but moves barge-in ownership off
   `RealtimeFloor` — re-architecture, not RC scope.
 
+## xAI voice platform moved (2026-07) — re-baseline items
+
+xAI shipped `grok-voice-think-fast-1.0` (reasoning voice model, built for
+tool-calling precision) as the new flagship; `grok-voice-fast-1.0` is
+deprecated and the `grok-voice-latest` ALIAS NOW RESOLVES TO THINK-FAST.
+We default to the alias everywhere (`config.py:106`,
+`providers/xai.py:31`), so the live model may have changed under us —
+xAI's docs explicitly say to pin versioned models in production. July also
+added 21 multilingual voices, speech tags, voice cloning, session
+resumption (30-min inactivity history retention), and a
+`turn_detection.idle_timeout_ms` re-engagement knob.
+
+- **Decide pin-vs-alias, then re-baseline the live delivery rounds.** The
+  4/4 deferral-filler verdicts may predate the alias flip — a reasoning
+  voice model may comply with the exact-reading instruction where fast-1.0
+  didn't. Check whether provider session events record the RESOLVED model
+  id (the flight recorder logs our requested alias); if not, log it.
+  Success bar: we know which model each live round actually ran on, and
+  production pins a versioned id (or documents why the alias is accepted).
+- **Re-probe session lifecycle on think-fast.** The 900s
+  conversation-inactivity close and the keepalive-negative verdict were
+  measured pre-think-fast; xAI now documents session resumption and
+  `idle_timeout_ms`. Re-run `scripts/realtime-provider-idle-probe.py`;
+  if resumption is real, the idle-close-and-reseed handling can become
+  reconnect-and-resume. Success bar: fresh empirical timeout/resume
+  verdicts recorded in the POC doc.
+- **Surface the new voices + speech tags.** `provider_options.py` carries
+  a static grok voice list; refresh or fetch dynamically, and evaluate
+  speech tags against the enhanced-voice config contract. Success bar:
+  new voices selectable in Voice Settings against a live relay.
+
 ## Voice — on-device findings (2026-07-08 e2e realtime test)
 
 Live e2e test (phone on 1.4.0 dev APK, relay at `789f32c`) surfaced a chained
