@@ -61,9 +61,9 @@ jobs:
       # 解码后把路径写入 HERMES_KEYSTORE_PATH，app/build.gradle.kts 的 debug
       # 构建类型会据此使用固定密钥签名（详见 app/build.gradle.kts）。
       - name: Decode release keystore (fixed signing)
-        if: ${{ secrets.HERMES_KEYSTORE_BASE64 != '' }}
         env:
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
+        if: ${{ env.HERMES_KEYSTORE_BASE64 != '' }}
         run: |
           echo "$HERMES_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "HERMES_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
