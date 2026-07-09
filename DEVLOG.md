@@ -1,5 +1,32 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Realtime model and voice picks now own new sessions
+
+The Realtime Agent model picker displayed a new selection but session creation
+sent only `profile`, `chat_session_id`, and recent context. The relay therefore
+resolved every session from its saved config, and the picker only took effect
+after **Save realtime agent** PATCHed that server config.
+
+Model and voice are now per-connection/per-profile DataStore overrides. The
+settings controls persist them, `VoiceViewModel` closes any stale prewarmed
+socket when either changes, and `RelayVoiceClient` includes non-blank overrides
+in the next session POST. Voice summaries and the active overlay read the same
+selection instead of continuing to label the relay default.
+
+Live verification selected `grok-voice-think-fast-1.0` without tapping Save:
+the overlay showed the pin, the relay session requested it, the provider's final
+model-resolution event reported it, and force-stop/relaunch restored the same
+selection. Focused Android request/persistence tests and the broader voice unit
+slice are green; the full Android lint and sideload APK build are green.
+
+The same live round exposed duplicate `voice.session.ready` events. A fresh
+socket already receives ready before the relay enters its receive loop, then
+Android sends the required `session.start`; the shared handler incorrectly sent
+ready again. Fresh `session.start` is now idempotent while detached/resume
+handling is unchanged. The realtime relay battery is 151/151 green; its xAI
+OAuth credential-pool fixture now carries an explicit future expiry instead of
+depending on a machine-local credential fallback.
+
 ## 2026-07-09 — Recall of an already-delivered result no longer re-runs the task
 
 Follow-on to the fallback-seeding fix below. Live verify confirmed the seeding

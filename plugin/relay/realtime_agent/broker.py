@@ -495,8 +495,10 @@ class RealtimeAgentHandler:
         if msg_type == CLIENT_MSG_SESSION_START:
             if _str_option(payload, "resume_token") or session.detached_at is not None:
                 await self._handle_resume_message(ws, session, payload)
-            else:
-                await self._send(ws, session, self._ready_event(session))
+            # A fresh attach sends voice.session.ready before entering the
+            # receive loop. Android follows with session.start, so treating it
+            # as another ready request duplicated the event and advanced the
+            # replay cursor twice on every new session.
             return True
         if msg_type == CLIENT_MSG_SESSION_RESUME:
             await self._handle_resume_message(ws, session, payload)

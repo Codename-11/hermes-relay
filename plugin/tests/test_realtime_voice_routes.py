@@ -369,6 +369,7 @@ class RealtimeVoiceAuthStoreTests(unittest.TestCase):
                                 {
                                     "access_token": "pool-token",
                                     "base_url": "https://api.x.ai/v1",
+                                    "expires_at_ms": int(time.time() * 1000) + 3_600_000,
                                 }
                             ]
                         },

@@ -20,7 +20,7 @@ Compaction-safe snapshot of where we are; details in the linked sections below.
   2. Tap/static click between sentences (`RealtimePcmPlayer` boundary) — still needs an on-device audio repro before fixing.
 - **Screen-wake-lock — SHIPPED (2026-07-07).** See "Voice — on-device findings" below.
 - **Owner / Mizu — GitHub triage.** Close #64 as superseded, plus the queued open-issue comment/close/label batch (see "Open-issue resolution batch" below).
-- **Voice exact-mode signoff — IN PROGRESS (2026-07-09 e2e).** First confirmed provider-voiced background delivery landed, but it's inconsistent on `grok-voice-latest` (1 win + 1 TTS fallback in one session) and `grok-voice-think-fast-1.0` is still untested (session resolved to the alias). Full detail + owner's background-tasks-as-chat UX asks + a duplicate-status bug + a status-speak logging gap in "Voice background-tasks — live findings + UX vision (2026-07-09)" below.
+- **Voice exact-mode signoff — IN PROGRESS (2026-07-09 e2e).** Both `grok-voice-latest` and the pinned `grok-voice-think-fast-1.0` are live-tested; both can defer instead of reading an injected completed answer, so the validator + relay-TTS fallback is catching a real, model-agnostic provider behavior. Fallback context seeding is live-confirmed. Remaining signoff: verify a pure-recall follow-up does not re-run Hermes after `92f9683`, then spike out-of-band exact delivery. Full detail + the background-tasks-as-chat UX asks + duplicate-status/logging gaps are below.
 
 ---
 
@@ -31,20 +31,22 @@ Live on-device e2e (relay `2968a17`, app `1.4.0-sideload` build 22, provider
 against live data during this test.
 
 ### Findings
-- **First confirmed provider-voiced delivery.** A background turn ("what do you
+- **Provider-native exact delivery is inconsistent and deferral is model-agnostic.**
+  A background turn ("what do you
   think about our notes so far?") delivered `forced_summary_streaming`
   (provider-voiced, early-commit) — grok read the answer in its own voice and
   passed validation. BUT the same session's earlier turn ("check Hermes for what
   we know about Minnesota") fell back to relay TTS (`acknowledgement_not_summary`).
-  So `grok-voice-latest` is **inconsistent** at the exact-reading instruction:
-  1 win + 1 fallback in one session — reinforces the "pin
-  `grok-voice-think-fast-1.0` and measure" plan (see "xAI voice platform moved"
-  re-baseline items).
-- **think-fast never engaged.** `resolved_model=grok-voice-latest` on both turns —
-  the app requested the provider default. `grok-voice-think-fast-1.0` is advertised
-  in `provider_options` but was not selected. The next signoff round MUST force the
-  session onto think-fast (voice-settings model pick, or relay default) or the new
-  model stays untested. Ties directly to the pin-vs-alias decision.
+  A later forced-summary round on `grok-voice-think-fast-1.0` also spoke a genuine
+  deferral ("one moment ... I'll let you know") rather than the completed answer.
+  Validator fallback is therefore correct; model choice alone does not solve the
+  delivery-voice problem.
+- **think-fast selection bug fixed + live-verified.** The app's session POST omitted
+  model/voice, so the settings dropdown was only a transient server-config editor
+  until **Save realtime agent** was tapped. Model/voice now persist per
+  connection/profile and ride every new session. On-device verification selected
+  think-fast without Save, saw the relay request it and the provider's final
+  resolution report it, then force-stop/relaunch restored the selection.
 - **Duplicate "background task is running" + voice mismatch (BUG).** User heard the
   "working on it" status TWICE, the second sounding like relay TTS. The provider's
   own acknowledgement and the relay's restrained-status-while-Hermes-runs speak can
@@ -74,14 +76,15 @@ chat/history rather than the voice chip; unify rather than build twice.
   the full run detail like a normal chat message / tool timeline (reuse
   `SubagentLane`). Same intent as v2 items 3+4 — build once.
 - **Realtime agent retains background-result context in-session — FALLBACK PATH
-  DONE (2026-07-09), needs live verify.** On a FALLBACK delivery the broker now
+  DONE + SEEDING LIVE-VERIFIED (2026-07-09); NO-RERUN VERIFY PENDING.** On a FALLBACK delivery the broker now
   seeds the delivered answer into the provider's history as an assistant turn
   (`append_context_item` → silent `conversation.item.create`, no `response.create`),
   so a follow-up ("what did that say?", "expand on that") finds it durably — fixing
-  the live "can't you see we ran the task?" failure. Provider-VOICED success already
+  the live "can't you see we ran the task?" failure; live follow-up confirmed the
+  provider knew the delivered context. Provider-VOICED success already
   had its own turn in history, so it's untouched (no double-record). **Remaining:**
-  (a) live on-device verify that a post-fallback follow-up is answered from context
-  without a re-run; (b) the detached/promoted delivery (`_deliver_pending_background_result`)
+  (a) live on-device verify that a pure-recall post-fallback follow-up is answered
+  without a re-run after the `92f9683` instruction fix; (b) the detached/promoted delivery (`_deliver_pending_background_result`)
   and the DONE-chip respeak weren't in scope — confirm whether they leave the same
   gap; (c) decide if the one-shot `native_pending_delivery_note` is now redundant
   with durable seeding or still earns its keep as an explicit correction.

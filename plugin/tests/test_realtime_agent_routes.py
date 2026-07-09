@@ -858,6 +858,11 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             ready = await self._next_ws_event(ws)
             self.assertEqual(ready["type"], "voice.session.ready")
 
+            # Fresh sockets already receive ready on attach. Android then sends
+            # session.start; it must be idempotent rather than enqueueing a
+            # second ready event ahead of the next real reply.
+            await ws.send_json({"type": "session.start"})
+
             # Acks that produce no reply on the non-native path. Before the fix,
             # playback.drained and input_audio.clear hit the else→voice.error
             # branch instead of being accepted.
