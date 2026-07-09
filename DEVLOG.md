@@ -1,5 +1,36 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Flight recorder records the provider's spoken delivery text
+
+Live e2e voice testing (relay `2968a17`, `grok-voice-latest` then
+`grok-voice-think-fast-1.0`) surfaced a diagnosis gap: when a background-result
+delivery fell back to relay TTS, the flight recorder recorded the `reason` but
+the outcome couldn't be told apart from the outside — was it a real provider
+deferral, or the validator over-flagging a faithful reading? The
+`forced_summary_fallback` event already carried `provider_text_preview`, but the
+SUCCESS paths (`forced_summary_streaming` early-commit, `forced_summary_delivered`
+end-validated) logged only char counts, and the pre-run acknowledgement
+(`hermes_forced_preamble.finished`) logged only metadata — so a clean delivery
+couldn't be confirmed verbatim and the "I'll check" preamble was invisible.
+
+Three `_log` payloads now carry a `_compact_status_text` (≤120 char) preview of
+what was actually spoken: `transcript_preview` on the preamble (pre-run
+acknowledgement), `prefix_preview` on the early-commit stream (committed prefix),
+and `provider_text_preview` on the end-validated delivery (full reading). Reuses
+the 120-char compaction already applied to the fallback path; no new session
+state; bounded by the existing 14-day run-dir retention sweep.
+
+This closed the live diagnosis directly: think-fast spoke "One moment while I pull
+that up. I'll let you know as soon as I have it." — a genuine deferral, correctly
+caught, not a validator false positive. The deferral is model-agnostic (both grok
+variants defer against the exact-reading instruction), so the fix belongs in the
+injection strategy, not model choice or validator tuning.
+
+Verification: 104 realtime tests green; `test_realtime_summary_validation` extended
+to assert `prefix_preview` / `provider_text_preview` carry the delivered text. The
+live delivery watcher (`report.py` + the ops flight-log watcher) surfaces the
+previews inline so a fallback vs. verbatim success is legible without a manual query.
+
 ## 2026-07-08 — Fallback deliveries no longer play into a dead overlay
 
 Live observation: a fallback-TTS delivery played audibly while the voice

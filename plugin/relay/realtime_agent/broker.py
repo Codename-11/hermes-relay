@@ -1437,6 +1437,10 @@ class RealtimeAgentHandler:
                 "response_id": None if response_id == "__blank_response_id__" else response_id,
                 "audio_seen": audio_seen,
                 "provider": session.provider,
+                # The acknowledgement the user hears before the Hermes run
+                # ("I'll check Hermes"). Logged so the pre-injection speech is
+                # reconstructable (duplicate-status / deferral diagnosis).
+                "transcript_preview": _compact_status_text(transcript),
             },
         )
         await self._run_forced_hermes_turn_from_transcript(
@@ -1961,6 +1965,10 @@ class RealtimeAgentHandler:
                 "type": "voice.response.forced_summary_streaming",
                 "prefix_chars": len(text),
                 "buffered_events": len(buffered),
+                # What the provider actually committed to reading — lets the
+                # signoff confirm a provider-voiced delivery was verbatim, not
+                # a paraphrase that merely cleared the overlap check.
+                "prefix_preview": _compact_status_text(text),
             },
         )
         for buffered_event in buffered:
@@ -2069,6 +2077,9 @@ class RealtimeAgentHandler:
                 "type": "voice.response.forced_summary_delivered",
                 "response_id": None if response_id == "__blank_response_id__" else response_id,
                 "chars": len(provider_text),
+                # The full provider-spoken delivery text — confirms an
+                # end-validated delivery was a verbatim reading of the answer.
+                "provider_text_preview": _compact_status_text(provider_text),
             },
         )
         await self._send(

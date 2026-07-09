@@ -10,6 +10,7 @@ info." was spoken instead of a completed result, and the user never heard it).
 
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -188,6 +189,15 @@ class EarlyCommitTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(ring_deltas))
         log_text = self.session.event_log_path.read_text(encoding="utf-8")
         self.assertIn("voice.response.forced_summary_streaming", log_text)
+        # The committed prefix text is logged so the signoff can confirm a
+        # provider-voiced delivery read the answer verbatim (not paraphrased).
+        streaming = [
+            ev
+            for ev in (json.loads(line) for line in log_text.splitlines() if line.strip())
+            if ev.get("type") == "voice.response.forced_summary_streaming"
+        ]
+        self.assertTrue(streaming)
+        self.assertIn("Tokyo", streaming[0].get("prefix_preview", ""))
 
     async def test_never_commits_deferral_filler(self) -> None:
         self._buffer("One moment while I look that up. I'll report back soon, ")
@@ -219,6 +229,15 @@ class EarlyCommitTest(unittest.IsolatedAsyncioTestCase):
         log_text = self.session.event_log_path.read_text(encoding="utf-8")
         self.assertIn("voice.response.forced_summary_delivered", log_text)
         self.assertNotIn("voice.response.forced_summary_fallback", log_text)
+        # The delivered text is logged so a clean provider-voiced delivery is
+        # confirmable as a verbatim reading, not just a char count.
+        delivered = [
+            ev
+            for ev in (json.loads(line) for line in log_text.splitlines() if line.strip())
+            if ev.get("type") == "voice.response.forced_summary_delivered"
+        ]
+        self.assertTrue(delivered)
+        self.assertIn("Tokyo", delivered[0].get("provider_text_preview", ""))
 
     async def test_single_weak_hit_does_not_commit_early(self) -> None:
         # Early commit is irreversible, so it needs TWO whole-word evidence
