@@ -435,7 +435,7 @@ fun DashboardManagementScreen(
                 targetSection = targetSection,
                 preamble = preamble,
                 context = context,
-                recordStatus = { status: DashboardStatus?, session: DashboardAuthSession?, gatewayTicketAvailable: Boolean ->
+                recordStatus = { status: DashboardStatus?, session: DashboardAuthSession?, gatewayTicketAvailable: Boolean? ->
                 if (preamble == null) {
                     connectionViewModel.recordDashboardStatus(
                         status = status,
@@ -445,7 +445,7 @@ fun DashboardManagementScreen(
                     )
                 }
                 }
-            }
+            )
             val latestState = payloadStates[targetKey]
             if (
                 foreground &&
