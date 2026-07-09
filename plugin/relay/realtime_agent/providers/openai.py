@@ -24,7 +24,7 @@ from ..models import (
 )
 from .base import RealtimeAgentProviderAdapter
 
-DEFAULT_MODEL = "gpt-realtime-2"
+DEFAULT_MODEL = "gpt-realtime-2.1"
 DEFAULT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper"
 DEFAULT_URL = "wss://api.openai.com/v1/realtime"
 DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -366,10 +366,21 @@ def _provider_event(
     event_type = str(event.get("type") or "").strip()
     response_id = _response_id(event)
     if event_type in {"session.created", "session.updated", "conversation.created"}:
+        # Surface the RESOLVED model id so session logs record which model
+        # actually served (aliases/snapshots can move server-side).
+        session_info = event.get("session")
+        resolved_model = (
+            str(session_info.get("model") or "").strip()
+            if isinstance(session_info, dict)
+            else ""
+        )
         return ProviderEvent(
             ProviderEventKind.READY,
             response_id=response_id,
-            payload={"provider_event_type": event_type},
+            payload={
+                "provider_event_type": event_type,
+                "resolved_model": resolved_model or None,
+            },
         )
     if event_type in {"response.created", "response.output_item.added"}:
         return ProviderEvent(

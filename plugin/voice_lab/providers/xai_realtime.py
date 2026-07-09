@@ -73,7 +73,10 @@ class XAIRealtimeProvider(VoiceProvider):
             "Server-side WebSocket adapter for the xAI/Grok Voice Agent API. "
             "Uses direct xAI auth or the lab-owned OAuth store for SuperGrok."
         ),
-        models=(DEFAULT_MODEL,),
+        # grok-voice-latest is an ALIAS xAI moves (currently resolving to
+        # grok-voice-think-fast-1.0); the versioned id is exposed for
+        # production pinning per xAI's own guidance.
+        models=("grok-voice-latest", "grok-voice-think-fast-1.0"),
         voices=("eve", "ara", "rex", "sal", "leo"),
         sample_rates=(24000,),
         supports_tts=True,

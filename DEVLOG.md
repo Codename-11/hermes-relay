@@ -1,5 +1,38 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Pre-RC observability hardening + realtime model updates
+
+**Flight-recorder hygiene.** Session JSONL logs and wav taps under
+`realtime-agent-runs/` are now swept past `realtime_voice.run_retention_days`
+(default 14 days, 0 disables) whenever a new session log is created — the
+logs carry conversation transcripts, so bounded retention is privacy hygiene
+as much as disk hygiene. The relay-TTS render wav is now a debug-only tap
+(`debug_audio_tap`, default off): the artifact is deleted once the PCM has
+streamed and `voice.response.done.audio_path` is blank (a single session's
+renders were observed at 5.6MB before).
+
+**Delivery-outcome rollup.** `python -m plugin.relay.realtime_agent.report
+[--run-dir] [--days N] [--json]` tallies deliveries across recent session
+logs: provider-spoken (early-commit / end-validated) vs validator fallback vs
+provider-death fallback, with reasons, plus preemptions, alarms, and deferred
+results. A new `voice.response.forced_summary_delivered` marker makes clean
+end-validated deliveries visible — they previously had no distinct event. One
+command now answers the exact-mode compliance question after a live round.
+
+**Realtime model updates.** OpenAI realtime default bumped
+`gpt-realtime-2` → `gpt-realtime-2.1` with `gpt-realtime-2.1-mini` (cheap
+tier) and `gpt-realtime-2` (rollback) selectable; xAI options expose the
+versioned `grok-voice-think-fast-1.0` pin alongside the default
+`grok-voice-latest` alias. Both providers now surface the RESOLVED model id
+from `session.created` echoes, logged once per session as
+`voice.realtime_agent.provider_model_resolved` — without it, live-round
+verdicts are unattributable across alias flips (xAI moved the alias to
+think-fast in July).
+
+Verification: 191 tests green across the realtime battery plus new
+hygiene/report suites; the routes test was updated to the new
+blank-audio-path contract.
+
 ## 2026-07-08 — Delivery-pipeline audit: five confirmed gaps fixed
 
 An adversarial audit of the provider-voiced delivery rework (below) confirmed

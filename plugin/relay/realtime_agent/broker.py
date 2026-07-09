@@ -242,6 +242,9 @@ class RealtimeAgentSession:
     native_last_input_audio_at: float = 0.0
     native_hermes_required_transcript: str | None = None
     native_hermes_required_reason: str | None = None
+    # Model id the provider reported actually serving (session.created echo);
+    # aliases like grok-voice-latest resolve server-side and can move.
+    native_resolved_model: str | None = None
     hermes_run_id: str | None = None
     hermes_run_status: str = "idle"
     hermes_run_tier: str = "foreground"
@@ -1452,6 +1455,22 @@ class RealtimeAgentHandler:
     ) -> None:
         async for event in connection.events():
             if event.kind == ProviderEventKind.READY:
+                # Record which model ACTUALLY served: aliases like
+                # grok-voice-latest move server-side, and without this the
+                # flight recorder only shows what we requested — live-round
+                # verdicts become unattributable across alias flips.
+                resolved = str(event.payload.get("resolved_model") or "").strip()
+                if resolved and resolved != session.native_resolved_model:
+                    session.native_resolved_model = resolved
+                    self._log(
+                        session,
+                        "voice.realtime_agent.provider_model_resolved",
+                        {
+                            "type": "voice.realtime_agent.provider_model_resolved",
+                            "requested_model": session.model,
+                            "resolved_model": resolved,
+                        },
+                    )
                 continue
             if event.kind == ProviderEventKind.INPUT_TRANSCRIPT_DELTA:
                 await self._send(
@@ -2035,6 +2054,19 @@ class RealtimeAgentHandler:
         buffered = list(session.native_forced_summary_buffer)
         for buffered_event in buffered:
             await self._send(ws, session, buffered_event)
+        # Rollup marker: an end-validated provider-spoken delivery has no
+        # other distinct event (early commits log forced_summary_streaming,
+        # fallbacks log their own reasons) — without this, clean deliveries
+        # are invisible to the delivery-outcome report.
+        self._log(
+            session,
+            "voice.response.forced_summary_delivered",
+            {
+                "type": "voice.response.forced_summary_delivered",
+                "response_id": None if response_id == "__blank_response_id__" else response_id,
+                "chars": len(provider_text),
+            },
+        )
         await self._send(
             ws,
             session,
@@ -4138,6 +4170,16 @@ class RealtimeAgentHandler:
                 "response_id": response_id,
             },
         )
+        # The wav artifact is a debug tap: the audio already streamed to the
+        # client as PCM, and a single session's renders were observed at
+        # multiple MB. Keep it only when explicitly enabled; the retention
+        # sweep bounds even the kept ones.
+        keep_tap = bool(
+            getattr(self.config, "realtime_voice_debug_audio_tap", False)
+        )
+        if not keep_tap:
+            with contextlib.suppress(OSError):
+                Path(response.audio_path).unlink()
         await self._send(
             ws,
             session,
@@ -4146,7 +4188,7 @@ class RealtimeAgentHandler:
                 "provider": response.provider,
                 "model": response.model,
                 "voice": response.voice,
-                "audio_path": str(response.audio_path),
+                "audio_path": str(response.audio_path) if keep_tap else "",
                 "event_log_path": str(session.event_log_path),
                 "chat_session_id": session.chat_session_id,
                 "final_text": text,
@@ -4293,6 +4335,12 @@ class RealtimeAgentHandler:
     def _new_event_log_path(self, session_id: str) -> Path:
         run_dir = _run_dir(self.config)
         run_dir.mkdir(parents=True, exist_ok=True)
+        _sweep_run_dir(
+            run_dir,
+            retention_days=getattr(
+                self.config, "realtime_voice_run_retention_days", 14
+            ),
+        )
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
         safe_id = "".join(ch for ch in session_id if ch.isalnum())[:12]
         return run_dir / f"realtime-agent-{stamp}-{safe_id}.jsonl"
@@ -5480,6 +5528,37 @@ def _run_dir(config: RelayConfig) -> Path:
         return Path(configured).expanduser()
     home = Path(os.getenv("HERMES_RELAY_HOME", str(Path.home() / ".hermes-relay")))
     return home / "realtime-agent-runs"
+
+
+def _sweep_run_dir(run_dir: Path, *, retention_days: int) -> None:
+    """Drop session artifacts (JSONL flight logs + wav taps) past retention.
+
+    Runs at session-log creation, so a busy relay sweeps often and an idle
+    one accumulates nothing new. The logs carry conversation transcripts —
+    bounded retention is privacy hygiene as much as disk hygiene. 0 disables.
+    Best-effort: a sweep failure must never block a new voice session.
+    """
+    if retention_days <= 0:
+        return
+    cutoff = time.time() - retention_days * 86400
+    try:
+        candidates = list(run_dir.glob("realtime-agent-*"))
+    except OSError:
+        return
+    removed = 0
+    for path in candidates:
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        logger.info(
+            "Realtime-agent run sweep removed %d artifact(s) older than %d day(s)",
+            removed,
+            retention_days,
+        )
 
 
 def _config_path_for_payload(config: RelayConfig) -> Path:

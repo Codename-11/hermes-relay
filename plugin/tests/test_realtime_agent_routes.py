@@ -812,8 +812,12 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             self.assertEqual(fake_broker.requests[0].interface_context["provider"], "stub")
             done = next(event for event in events if event["type"] == "voice.response.done")
             self.assertEqual(done["provider"], "stub")
-            self.assertTrue(os.path.isfile(done["audio_path"]))
+            # The wav render tap is debug-only (off by default): the artifact
+            # is deleted after the PCM streamed and audio_path is blank.
+            self.assertEqual(done["audio_path"], "")
             self.assertTrue(os.path.isfile(done["event_log_path"]))
+            wav_path = done["event_log_path"].rsplit(".", 1)[0] + ".wav"
+            self.assertFalse(os.path.exists(wav_path))
         finally:
             await ws.close()
 

@@ -201,6 +201,25 @@ class EarlyCommitTest(unittest.IsolatedAsyncioTestCase):
         await self.handler._maybe_commit_forced_summary_early(None, self.session)
         self.assertFalse(self.session.native_forced_summary_committed)
 
+    async def test_end_validated_delivery_logs_rollup_marker(self) -> None:
+        # A clean end-validated delivery has no other distinct event — the
+        # forced_summary_delivered marker is what makes it visible to the
+        # delivery-outcome report (python -m plugin.relay.realtime_agent.report).
+        from plugin.relay.realtime_agent.models import (
+            ProviderEvent,
+            ProviderEventKind,
+        )
+
+        self._buffer("It's 1:26 in the morning in Tokyo right now.")
+        await self.handler._finish_forced_summary_provider_response(
+            None,
+            self.session,
+            ProviderEvent(ProviderEventKind.RESPONSE_DONE, response_id="resp-ok"),
+        )
+        log_text = self.session.event_log_path.read_text(encoding="utf-8")
+        self.assertIn("voice.response.forced_summary_delivered", log_text)
+        self.assertNotIn("voice.response.forced_summary_fallback", log_text)
+
     async def test_single_weak_hit_does_not_commit_early(self) -> None:
         # Early commit is irreversible, so it needs TWO whole-word evidence
         # hits. The live regression prefix ("It's queued and will start

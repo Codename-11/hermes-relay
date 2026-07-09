@@ -292,6 +292,7 @@ def _fetch_xai_provider_options(
                 "model_voice_compatibility": {
                     "xai-tts": voices,
                     "grok-voice-latest": voices,
+                    "grok-voice-think-fast-1.0": voices,
                 },
                 "recommended_voices": list(XAI_RECOMMENDED_VOICES),
                 "requires_manual_id": False,
@@ -386,6 +387,7 @@ def _fetch_xai_provider_options(
         provider["model_voice_compatibility"] = {
             "xai-tts": list(provider.get("voices", [])),
             "grok-voice-latest": list(provider.get("voices", [])),
+            "grok-voice-think-fast-1.0": list(provider.get("voices", [])),
         }
 
     status = "ok" if provider.get("voices") else "error"

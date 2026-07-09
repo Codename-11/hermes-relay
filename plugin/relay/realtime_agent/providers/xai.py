@@ -324,10 +324,21 @@ def _provider_event(event: dict[str, Any]) -> ProviderEvent | None:
     event_type = str(event.get("type") or "").strip()
     response_id = _response_id(event)
     if event_type in {"session.created", "session.updated", "conversation.created"}:
+        # Surface the RESOLVED model id: "grok-voice-latest" is an alias xAI
+        # moves, so the echo is the only record of which model actually served.
+        session_info = event.get("session")
+        resolved_model = (
+            str(session_info.get("model") or "").strip()
+            if isinstance(session_info, dict)
+            else ""
+        )
         return ProviderEvent(
             ProviderEventKind.READY,
             response_id=response_id,
-            payload={"provider_event_type": event_type},
+            payload={
+                "provider_event_type": event_type,
+                "resolved_model": resolved_model or None,
+            },
         )
     if event_type in {"response.created", "response.output_item.added"}:
         return ProviderEvent(

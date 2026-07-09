@@ -143,20 +143,14 @@ wrappers, Android `DiagnosticsLog` Voice category) is in good shape — it
 carried every live-round forensics session. Three gaps before the release
 candidate:
 
-- **Run-dir retention + wav tap gating.** `realtime-agent-runs/` grows
-  unbounded (237 files / 22MB observed) and `_render_provider_audio`
-  writes a `.wav` of every relay-TTS render next to the session log
-  (single session observed at 5.6MB). JSONL also carries transcripts, so
-  retention is privacy hygiene too. Fix: age/count cap swept at session
-  create (e.g. keep N days or last M sessions), wav tap behind an opt-in
-  debug flag (default off). Success bar: a long-running relay host holds a
-  bounded run dir with no operator action.
-- **Delivery-outcome rollup.** All evidence is single-session forensics;
-  answering "what's the exact-mode fallback rate?" means hand-grepping.
-  Add a small scanner (script or `hermes relay doctor` section) that
-  tallies recent deliveries: provider-spoken / early-committed /
-  fallback(reason) / alarm-fired / text-only. Success bar: one command
-  answers the exact-mode compliance question after a live round.
+- **Run-dir retention + wav tap gating — DONE (2026-07-08).**
+  `run_retention_days` (default 14, 0 disables) sweeps JSONL + wav
+  artifacts at session-log creation; the render wav is a debug-only tap
+  (`debug_audio_tap`, default off) deleted after PCM streams.
+- **Delivery-outcome rollup — DONE (2026-07-08).**
+  `python -m plugin.relay.realtime_agent.report [--days N] [--json]`
+  tallies provider-spoken vs fallback deliveries with reasons; new
+  `forced_summary_delivered` marker makes clean deliveries countable.
 - **Buffered flight-recorder writes (minor).** `_log` open/appends per
   event on the event loop, including one line per audio chunk. Fine so
   far; switch to a buffered writer if voice sessions ever stutter under
@@ -174,12 +168,10 @@ out-of-band responses (`conversation:"none"` + explicit `input`), async
 function calls, per-token pricing (2.1 audio $32/$64 per 1M; mini $10/$20)
 vs grok's flat $0.05/min.
 
-- **Bump OpenAI realtime default `gpt-realtime-2` → `gpt-realtime-2.1`
-  (+ expose `2.1-mini`).** `providers/openai.py:27`,
-  `voice_lab/providers/openai_realtime.py:23`, model-option list. Drop-in
-  protocol, −25% p95, better interruption handling; mini is the cheap
-  tier. Success bar: an `openai_realtime` session connects on 2.1,
-  completes a Hermes-routed turn, and 2.1-mini is selectable.
+- **Bump OpenAI realtime default to `gpt-realtime-2.1` — CODE DONE
+  (2026-07-08).** Default bumped, `2.1-mini` + rollback `2` in the model
+  options. Remaining: live connect on 2.1 (covered by the live-verify
+  item below).
 - **Live-verify the OpenAI provider end-to-end.** Code-complete but no
   recorded live round (all forensics are grok-voice). Run the xAI
   on-device battery (pair → voice turn → `hermes_run_task` →
@@ -227,10 +219,12 @@ resumption (30-min inactivity history retention), and a
 - **Decide pin-vs-alias, then re-baseline the live delivery rounds.** The
   4/4 deferral-filler verdicts may predate the alias flip — a reasoning
   voice model may comply with the exact-reading instruction where fast-1.0
-  didn't. Check whether provider session events record the RESOLVED model
-  id (the flight recorder logs our requested alias); if not, log it.
-  Success bar: we know which model each live round actually ran on, and
-  production pins a versioned id (or documents why the alias is accepted).
+  didn't. Resolved-model logging is DONE (2026-07-08):
+  `provider_model_resolved` records the session.created echo, the delivery
+  report prefers it, and `grok-voice-think-fast-1.0` is a selectable pin.
+  Remaining: run the live rounds, read the resolved ids, and decide
+  pin-vs-alias for production. Success bar: we know which model each live
+  round actually ran on, and the default is a deliberate choice.
 - **Re-probe session lifecycle on think-fast.** The 900s
   conversation-inactivity close and the keepalive-negative verdict were
   measured pre-think-fast; xAI now documents session resumption and
