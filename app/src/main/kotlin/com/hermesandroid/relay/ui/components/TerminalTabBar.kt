@@ -26,9 +26,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 
 /**
@@ -88,7 +90,7 @@ fun TerminalTabBar(
         ) {
             Icon(
                 imageVector = Icons.Filled.Add,
-                contentDescription = "New terminal tab",
+                contentDescription = stringResource(R.string.cd_new_terminal_tab),
                 tint = if (canAddMore) {
                     MaterialTheme.colorScheme.onSurface
                 } else {
@@ -188,7 +190,7 @@ private fun TerminalTabChip(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "Close tab ${tab.tabId}",
+                    contentDescription = stringResource(R.string.cd_close_tab, tab.tabId),
                     tint = fg,
                     modifier = Modifier.size(12.dp),
                 )

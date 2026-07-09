@@ -1,8 +1,11 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.BrandPalette
 import com.hermesandroid.relay.ui.theme.BrandPalettes
 
@@ -36,16 +39,42 @@ data class SphereReactivity(
      *  renderer feeds it (the chat/voice [MorphingSphere] does not). */
     val gaze: Boolean = false,
 ) {
-    /** Human-readable capability list for the picker ("Voice · Tools"). */
+    /** Ordered list of enabled capability flags (locale-independent so test
+     *  assertions stay stable). The UI maps each flag to a localized label via
+     *  [reactivityLabels]. */
+    fun flags(): List<ReactivityFlag> = buildList {
+        if (voice) add(ReactivityFlag.VOICE)
+        if (tools) add(ReactivityFlag.TOOLS)
+        if (intensity) add(ReactivityFlag.ACTIVITY)
+        if (gaze) add(ReactivityFlag.GAZE)
+    }
+
+    /** Legacy locale-independent summary for backward compat. Prefer [flags] +
+     *  [reactivityLabels] in UI code. */
     fun summary(): String {
-        val on = buildList {
-            if (voice) add("Voice")
-            if (tools) add("Tools")
-            if (intensity) add("Activity")
-            if (gaze) add("Gaze")
-        }
+        val on = flags().map { it.name.lowercase().replaceFirstChar { c -> c.uppercase() } }
         return if (on.isEmpty()) "Static" else on.joinToString(" · ")
     }
+}
+
+/** Individual capability flags exposed by a [SphereReactivity]. Used as
+ *  locale-independent keys; the UI maps each to a localized label. */
+enum class ReactivityFlag { VOICE, TOOLS, ACTIVITY, GAZE }
+
+/** Pre-composed localized summary string from a list of [ReactivityFlag],
+ *  joined with the middle-dot separator. */
+@androidx.compose.runtime.Composable
+fun reactivityLabels(flags: List<ReactivityFlag>): String {
+    if (flags.isEmpty()) return stringResource(R.string.sphere_reactivity_static)
+    val labels = flags.map { flag ->
+        when (flag) {
+            ReactivityFlag.VOICE -> stringResource(R.string.sphere_reactivity_voice)
+            ReactivityFlag.TOOLS -> stringResource(R.string.sphere_reactivity_tools)
+            ReactivityFlag.ACTIVITY -> stringResource(R.string.sphere_reactivity_activity)
+            ReactivityFlag.GAZE -> stringResource(R.string.sphere_reactivity_gaze)
+        }
+    }
+    return labels.joinToString(" · ")
 }
 
 enum class SphereSkinSource { ADAPTIVE, BUILT_IN, USER }

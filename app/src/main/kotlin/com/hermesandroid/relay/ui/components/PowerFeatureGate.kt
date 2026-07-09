@@ -26,38 +26,38 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.hermesandroid.relay.R
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 
 enum class PowerFeatureGateStatus(
-    val label: String,
-    val actionLabel: String,
-    val explanation: String,
+    val labelRes: Int,
+    val actionLabelRes: Int,
+    val explanationRes: Int,
 ) {
     RequiresPairing(
-        label = "Requires pairing",
-        actionLabel = "Pair to unlock",
-        explanation = "This feature requires the Relay plugin. Make sure it is installed " +
-            "and running on your Hermes server, then pair this device to unlock it.",
+        labelRes = R.string.power_feature_requires_pairing_label,
+        actionLabelRes = R.string.power_feature_requires_pairing_action,
+        explanationRes = R.string.power_feature_requires_pairing_explain,
     ),
     PairingExpired(
-        label = "Pairing expired",
-        actionLabel = "Pair again",
-        explanation = "Your relay session is no longer accepted. Pair again to get a fresh grant.",
+        labelRes = R.string.power_feature_pairing_expired_label,
+        actionLabelRes = R.string.power_feature_pairing_expired_action,
+        explanationRes = R.string.power_feature_pairing_expired_explain,
     ),
     Unavailable(
-        label = "Unavailable on this server",
-        actionLabel = "View connection",
-        explanation = "This Hermes server isn't exposing the Relay plugin (or it's an older " +
-            "version). Install or update the Relay plugin on the server to use this feature.",
+        labelRes = R.string.power_feature_unavailable_label,
+        actionLabelRes = R.string.power_feature_unavailable_action,
+        explanationRes = R.string.power_feature_unavailable_explain,
     ),
     DashboardSignInRequired(
-        label = "Dashboard sign-in required",
-        actionLabel = "Open sign-in",
-        explanation = "This standard dashboard feature needs a dashboard session before it can load.",
+        labelRes = R.string.power_feature_dashboard_signin_label,
+        actionLabelRes = R.string.power_feature_dashboard_signin_action,
+        explanationRes = R.string.power_feature_dashboard_signin_explain,
     );
 
     companion object {
@@ -90,6 +90,7 @@ fun PowerFeatureGateScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
+            val backDesc = stringResource(R.string.power_feature_back_desc)
             TopAppBar(
                 title = { Text(title) },
                 navigationIcon = {
@@ -97,7 +98,7 @@ fun PowerFeatureGateScreen(
                         IconButton(onClick = onBack) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
+                                contentDescription = backDesc,
                             )
                         }
                     }
@@ -134,6 +135,9 @@ fun PowerFeatureGateCard(
     onPrimaryAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val resolvedLabel = stringResource(status.labelRes)
+    val resolvedExplanation = stringResource(status.explanationRes)
+    val resolvedActionLabel = stringResource(status.actionLabelRes)
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -161,7 +165,7 @@ fun PowerFeatureGateCard(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = status.label,
+                        text = resolvedLabel,
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold,
@@ -178,7 +182,7 @@ fun PowerFeatureGateCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = status.explanation,
+                text = resolvedExplanation,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -187,7 +191,7 @@ fun PowerFeatureGateCard(
                 onClick = onPrimaryAction,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(status.actionLabel)
+                Text(resolvedActionLabel)
             }
         }
     }

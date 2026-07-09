@@ -23,8 +23,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 
 /**
  * One-time acknowledgment dialog shown the first time the user flips
@@ -50,10 +52,13 @@ fun InsecureConnectionAckDialog(
 ) {
     var selectedReason by remember { mutableStateOf<String?>(null) }
 
+    val reasonLan = stringResource(R.string.insecure_ack_reason_lan)
+    val reasonTailscale = stringResource(R.string.insecure_ack_reason_tailscale)
+    val reasonDev = stringResource(R.string.insecure_ack_reason_dev)
     val reasonOptions = listOf(
-        "lan_only" to "LAN only (trusted network)",
-        "tailscale_vpn" to "Tailscale or VPN",
-        "local_dev" to "Local development only",
+        "lan_only" to reasonLan,
+        "tailscale_vpn" to reasonTailscale,
+        "local_dev" to reasonDev,
     )
 
     AlertDialog(
@@ -67,7 +72,7 @@ fun InsecureConnectionAckDialog(
         },
         title = {
             Text(
-                text = "Allow insecure connections?",
+                text = stringResource(R.string.insecure_ack_title),
                 style = MaterialTheme.typography.titleLarge
             )
         },
@@ -77,16 +82,12 @@ fun InsecureConnectionAckDialog(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Insecure mode lets this app connect over plain " +
-                        "ws:// and http://. Anyone on the network between " +
-                        "your phone and the server can read your chat " +
-                        "messages, session tokens, and terminal traffic.",
+                    text = stringResource(R.string.insecure_ack_body_1),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Only use this on networks you control. Pick " +
-                        "the reason that best describes your setup:",
+                    text = stringResource(R.string.insecure_ack_body_2),
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -124,12 +125,12 @@ fun InsecureConnectionAckDialog(
                 enabled = selectedReason != null,
                 onClick = { selectedReason?.let(onConfirm) }
             ) {
-                Text("I understand")
+                Text(stringResource(R.string.insecure_ack_confirm))
             }
         },
         dismissButton = {
             TextButton(onClick = onCancel) {
-                Text("Cancel")
+                Text(stringResource(R.string.insecure_ack_cancel))
             }
         }
     )

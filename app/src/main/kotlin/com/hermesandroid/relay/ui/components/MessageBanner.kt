@@ -44,8 +44,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.UiMessage
 import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.ui.UiMessageSeverity
@@ -197,7 +199,7 @@ private fun MessageBannerContent(
                                 )
                                 Icon(
                                     imageVector = Icons.Filled.KeyboardArrowDown,
-                                    contentDescription = "Show recent messages",
+                                    contentDescription = stringResource(R.string.cd_show_recent),
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
@@ -229,7 +231,7 @@ private fun MessageBannerContent(
                                 if (index == 0) {
                                     Icon(
                                         imageVector = Icons.Filled.KeyboardArrowUp,
-                                        contentDescription = "Collapse",
+                                        contentDescription = stringResource(R.string.cd_collapse),
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }

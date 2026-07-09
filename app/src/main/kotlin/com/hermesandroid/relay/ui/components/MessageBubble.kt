@@ -53,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,6 +61,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
@@ -330,7 +332,7 @@ fun MessageBubble(
                 onDismissRequest = { showMessageActions = false },
             ) {
                 DropdownMenuItem(
-                    text = { Text("Copy") },
+                    text = { Text(stringResource(R.string.msg_bubble_copy)) },
                     onClick = {
                         showMessageActions = false
                         onCopyMessage(message.content)
@@ -338,7 +340,7 @@ fun MessageBubble(
                 )
                 if (onQuoteMessage != null) {
                     DropdownMenuItem(
-                        text = { Text("Quote in reply") },
+                        text = { Text(stringResource(R.string.msg_bubble_quote)) },
                         onClick = {
                             showMessageActions = false
                             onQuoteMessage(message.content)
@@ -347,7 +349,7 @@ fun MessageBubble(
                 }
                 if (showEditAction) {
                     DropdownMenuItem(
-                        text = { Text("Edit & resend") },
+                        text = { Text(stringResource(R.string.msg_bubble_edit)) },
                         onClick = {
                             showMessageActions = false
                             onEditMessage(message)
@@ -514,9 +516,9 @@ fun MessageBubble(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (recoveringAnswer) {
-                                    "Reconnecting to your answer…"
+                                    stringResource(R.string.msg_bubble_reconnecting)
                                 } else {
-                                    "Still working…"
+                                    stringResource(R.string.msg_bubble_still_working)
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = textColor.copy(alpha = 0.6f),
@@ -543,10 +545,17 @@ fun MessageBubble(
                 // message routed over the relay proactive channel). Null on every
                 // ordinary chat message, which render nothing here.
                 message.deliveryStatus?.takeIf { isUser }?.let { status ->
-                    val (label, alpha) = when (status) {
-                        MessageDeliveryStatus.SENDING -> "Sending…" to 0.5f
-                        MessageDeliveryStatus.DELIVERED -> "Delivered" to 0.5f
-                        MessageDeliveryStatus.FAILED -> "Not sent" to 0.7f
+                    val label = stringResource(
+                        when (status) {
+                            MessageDeliveryStatus.SENDING -> R.string.msg_bubble_sending
+                            MessageDeliveryStatus.DELIVERED -> R.string.msg_bubble_delivered
+                            MessageDeliveryStatus.FAILED -> R.string.msg_bubble_not_sent
+                        }
+                    )
+                    val alpha = when (status) {
+                        MessageDeliveryStatus.SENDING -> 0.5f
+                        MessageDeliveryStatus.DELIVERED -> 0.5f
+                        MessageDeliveryStatus.FAILED -> 0.7f
                     }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(

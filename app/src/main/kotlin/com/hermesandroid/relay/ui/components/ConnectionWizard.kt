@@ -328,7 +328,7 @@ fun ConnectionWizard(
                     )
                     verifyError = terminal.reason
                 }
-                else -> verifyError = "Pairing did not complete"
+                else -> verifyError = context.getString(R.string.cw_pairing_did_not_complete)
             }
         } catch (_: TimeoutCancellationException) {
             android.util.Log.w(
@@ -947,14 +947,14 @@ private fun WizardStepIndicator(currentStep: Int, method: PairMethod) {
     Spacer(Modifier.height(4.dp))
     Text(
         text = when (currentStep) {
-            0 -> "Step 1 of 3 — Choose setup"
+            0 -> stringResource(R.string.cw_step_1_3)
             1 -> when (method) {
-                PairMethod.Standard -> "Step 2 of 3 — Connect API/dashboard"
-                PairMethod.Scan -> "Step 2 of 3 — Confirm QR details"
-                PairMethod.EnterCode -> "Step 2 of 3 — Enter Relay pairing code"
-                PairMethod.ShowCode -> "Step 2 of 3 — Show Relay code on host"
+                PairMethod.Standard -> stringResource(R.string.cw_step_2_3_standard)
+                PairMethod.Scan -> stringResource(R.string.cw_step_2_3_scan)
+                PairMethod.EnterCode -> stringResource(R.string.cw_step_2_3_enter_code)
+                PairMethod.ShowCode -> stringResource(R.string.cw_step_2_3_show_code)
             }
-            else -> "Step 3 of 3 — Verify Relay"
+            else -> stringResource(R.string.cw_step_3_3)
         },
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1197,23 +1197,26 @@ private fun MethodTile(
  * The API server is HTTP/SSE; the relay is WSS — mixing them silently used
  * to land in the Confirm preview as a mislabeled line.
  */
-private fun apiUrlSchemeError(url: String): String? {
+private fun apiUrlSchemeError(url: String, context: android.content.Context): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     // Wrong-scheme paste gets a precise message first…
     if (trimmed.startsWith("ws://", ignoreCase = true) ||
         trimmed.startsWith("wss://", ignoreCase = true)
     ) {
-        return "Looks like a relay URL — API server expects http:// or https://"
+        return context.getString(R.string.cw_api_url_scheme_error)
     }
     // …then reject anything that won't actually parse as a host/URL. Without
     // this, a non-address such as "Manage sign-in and admin screens" passed
     // validation, was normalized to http://<spaces> at save, and crashed the
     // app when okhttp's url(String) threw on the malformed host (issue #131).
-    return ServerAddress.fieldError(trimmed, "API server URL")
+    return ServerAddress.fieldError(trimmed, context.getString(R.string.cw_field_api_url))
 }
 
-private fun optionalHttpUrlError(url: String, fieldLabel: String): String? {
+private fun optionalHttpUrlError(
+    url: String,
+    context: android.content.Context,
+): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     // Bare hosts/IPs are fine — save paths run them through
@@ -1223,21 +1226,24 @@ private fun optionalHttpUrlError(url: String, fieldLabel: String): String? {
     val scheme = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://").find(trimmed)
         ?.groupValues?.get(1)?.lowercase()
     if (scheme != null && scheme != "http" && scheme != "https") {
-        return "$fieldLabel expects http:// or https:// (bare hosts get http://)"
+        return context.getString(
+            R.string.cw_http_url_scheme_error,
+            context.getString(R.string.cw_http_url_field_label),
+        )
     }
     // …and a value that won't parse as a real http(s) host (spaces, junk) is
     // rejected here rather than reaching a request builder that throws (#131).
-    return ServerAddress.fieldError(trimmed, fieldLabel)
+    return ServerAddress.fieldError(trimmed, context.getString(R.string.cw_http_url_field_label))
 }
 
 /** Mirror of [apiUrlSchemeError] for the relay field. */
-private fun relayUrlSchemeError(url: String): String? {
+private fun relayUrlSchemeError(url: String, context: android.content.Context): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     return when {
         trimmed.startsWith("http://", ignoreCase = true) ||
             trimmed.startsWith("https://", ignoreCase = true) ->
-            "Looks like an API URL — relay expects wss:// (or ws:// for local)"
+            context.getString(R.string.cw_relay_url_scheme_error)
         else -> null
     }
 }
@@ -1265,9 +1271,9 @@ private fun StandardEntryStep(
 ) {
     val context = LocalContext.current
     val scanScope = rememberCoroutineScope()
-    val apiError = apiUrlSchemeError(apiUrl)
-    val tailscaleError = optionalHttpUrlError(tailscaleApiUrl, "Tailscale API URL")
-    val dashboardError = optionalHttpUrlError(dashboardUrl, "Dashboard URL")
+    val apiError = apiUrlSchemeError(apiUrl, context)
+    val tailscaleError = optionalHttpUrlError(tailscaleApiUrl, context)
+    val dashboardError = optionalHttpUrlError(dashboardUrl, context)
     var advancedExpanded by remember { mutableStateOf(false) }
     var scanBusy by remember { mutableStateOf(false) }
     var scanResults by remember { mutableStateOf<List<HermesLanDiscoveryResult>>(emptyList()) }
@@ -1340,10 +1346,10 @@ private fun StandardEntryStep(
                     }
                     results.onSuccess { found ->
                         scanResults = found
-                        scanMessage = scanSummary(found)
+                        scanMessage = scanSummary(found, context)
                     }.onFailure { failure ->
                         scanResults = emptyList()
-                        scanMessage = "LAN scan failed: ${failure.message ?: failure.javaClass.simpleName}"
+                        scanMessage = context.getString(R.string.cw_scan_failed) + ": ${failure.message ?: failure.javaClass.simpleName}"
                     }
                     scanBusy = false
                 }
@@ -1367,7 +1373,7 @@ private fun StandardEntryStep(
                 )
             }
             Spacer(Modifier.size(8.dp))
-            Text(if (scanBusy) "Scanning LAN" else "Scan for Hermes on LAN")
+            Text(if (scanBusy) stringResource(R.string.cw_scanning_lan) else stringResource(R.string.cw_scan_lan))
         }
 
         scanMessage?.let { message ->
@@ -1395,12 +1401,26 @@ private fun StandardEntryStep(
                     )
                     scanMessage = when {
                         candidate.apiReachable && candidate.dashboardReachable ->
-                            "Selected ${candidate.host}. API and dashboard were reachable on LAN."
+                            context.getString(
+                                R.string.cw_scan_result_api_dashboard,
+                                candidate.host,
+                            )
                         candidate.apiReachable ->
-                            "Selected ${candidate.host}. API was reachable; dashboard was not found on :${parsedScanDashboardPort ?: Connection.DEFAULT_DASHBOARD_PORT}."
+                            context.getString(
+                                R.string.cw_scan_result_api_only,
+                                candidate.host,
+                                parsedScanDashboardPort ?: Connection.DEFAULT_DASHBOARD_PORT,
+                            )
                         candidate.dashboardReachable ->
-                            "Selected ${candidate.host}. Dashboard was found, but API was not reachable on :${parsedScanApiPort ?: 8642}."
-                        else -> "Selected ${candidate.host}. Enter your API key, then connect."
+                            context.getString(
+                                R.string.cw_scan_result_dashboard_only,
+                                candidate.host,
+                                parsedScanApiPort ?: 8642,
+                            )
+                        else -> context.getString(
+                            R.string.cw_scan_result_unknown,
+                            candidate.host,
+                        )
                     }
                 },
             )
@@ -1428,7 +1448,11 @@ private fun StandardEntryStep(
                         } else {
                             Icons.Filled.Visibility
                         },
-                        contentDescription = if (apiKeyVisible) "Hide API key" else "Show API key",
+                        contentDescription = if (apiKeyVisible) {
+                            stringResource(R.string.cw_hide_api_key)
+                        } else {
+                            stringResource(R.string.cw_show_api_key)
+                        },
                     )
                 }
             },
@@ -1449,21 +1473,15 @@ private fun StandardEntryStep(
             value = tailscaleApiUrl,
             onValueChange = onTailscaleApiUrlChange,
             label = { Text(stringResource(R.string.cw_tailscale_label)) },
-            placeholder = { Text("100.x.y.z or http://your-host.ts.net:8642") },
+            placeholder = { Text(stringResource(R.string.cw_tailscale_placeholder)) },
             singleLine = true,
             isError = tailscaleError != null,
             supportingText = {
                 Text(
                     tailscaleError ?: if (isTailscaleDetected) {
-                        "Tailscale detected on this phone — add your server's " +
-                            "Tailscale IP or hostname so Hermes keeps working " +
-                            "away from home. API port 8642 and http:// are " +
-                            "assumed; use https:// only if your server has TLS."
+                        stringResource(R.string.cw_tailscale_supporting_detected)
                     } else {
-                        "Lets the phone switch to this URL automatically when it " +
-                            "leaves your server's network (API port 8642 and " +
-                            "http:// assumed). Editable later in Settings → " +
-                            "Connections → Routes."
+                        stringResource(R.string.cw_tailscale_supporting_other)
                     },
                 )
             },
@@ -1489,15 +1507,15 @@ private fun StandardEntryStep(
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    text = effectiveDashboardUrl ?: "Derived after a valid API URL is saved",
+                    text = effectiveDashboardUrl ?: stringResource(R.string.cw_dashboard_derived),
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     text = if (dashboardUrl.isBlank()) {
-                        "Manage uses dashboard cookies. Blank means same host on :${Connection.DEFAULT_DASHBOARD_PORT}."
+                        stringResource(R.string.cw_dashboard_blank_hint, Connection.DEFAULT_DASHBOARD_PORT)
                     } else {
-                        "Manage will use this custom dashboard URL for login and dashboard actions."
+                        stringResource(R.string.cw_dashboard_custom_hint)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1625,18 +1643,27 @@ private fun StandardEntryStep(
     }
 }
 
-private fun scanSummary(found: List<HermesLanDiscoveryResult>): String {
+private fun scanSummary(
+    found: List<HermesLanDiscoveryResult>,
+    context: android.content.Context,
+): String {
     if (found.isEmpty()) {
-        return "No Hermes dashboard/API found on this LAN. Check host firewall and ports; Tailscale URLs can be added under Advanced."
+        return context.getString(R.string.cw_scan_summary_empty)
     }
     val both = found.count { it.apiReachable && it.dashboardReachable }
     val apiOnly = found.count { it.apiReachable && !it.dashboardReachable }
     val dashboardOnly = found.count { !it.apiReachable && it.dashboardReachable }
     return buildList {
-        add("Found ${found.size} possible Hermes host${if (found.size == 1) "" else "s"}")
-        if (both > 0) add("$both with API + dashboard")
-        if (apiOnly > 0) add("$apiOnly API only")
-        if (dashboardOnly > 0) add("$dashboardOnly dashboard only")
+        add(
+            context.getString(
+                R.string.cw_scan_summary_hosts,
+                found.size,
+                if (found.size == 1) "" else "s",
+            )
+        )
+        if (both > 0) add(context.getString(R.string.cw_scan_summary_both, both))
+        if (apiOnly > 0) add(context.getString(R.string.cw_scan_summary_api_only, apiOnly))
+        if (dashboardOnly > 0) add(context.getString(R.string.cw_scan_summary_dashboard_only, dashboardOnly))
     }.joinToString(". ") + "."
 }
 
@@ -1813,12 +1840,12 @@ private fun LanDiscoveryResultRow(
                 Text(
                     text = when {
                         candidate.apiReachable && candidate.dashboardReachable ->
-                            "API + Dashboard reachable"
+                            stringResource(R.string.cw_lan_api_dashboard)
                         candidate.apiReachable ->
-                            "API reachable · Dashboard not found"
+                            stringResource(R.string.cw_lan_api_only)
                         candidate.dashboardReachable ->
-                            "Dashboard reachable · API not found"
-                        else -> "Reachability unknown"
+                            stringResource(R.string.cw_lan_dashboard_only)
+                        else -> stringResource(R.string.cw_lan_unknown)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (candidate.apiReachable) {
@@ -1855,8 +1882,9 @@ private fun ManualEntryStep(
 ) {
     val trimmedCode = code.trim().uppercase()
     val codeValid = trimmedCode.length in 4..12 && trimmedCode.all { it.isLetterOrDigit() }
-    val apiError = apiUrlSchemeError(apiUrl)
-    val relayError = relayUrlSchemeError(relayUrl)
+    val context = LocalContext.current
+    val apiError = apiUrlSchemeError(apiUrl, context)
+    val relayError = relayUrlSchemeError(relayUrl, context)
     val canSubmit = codeValid &&
         relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
         apiError == null && relayError == null
@@ -1954,8 +1982,9 @@ private fun ShowCodeStep(
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    val apiError = apiUrlSchemeError(apiUrl)
-    val relayError = relayUrlSchemeError(relayUrl)
+    val context = LocalContext.current
+    val apiError = apiUrlSchemeError(apiUrl, context)
+    val relayError = relayUrlSchemeError(relayUrl, context)
     val canConnect = pairingCode.isNotBlank() &&
         relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
         apiError == null && relayError == null
@@ -2205,14 +2234,18 @@ private fun ConfirmStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = if (relayUrl == null) "Confirm Hermes connection" else "Confirm Relay pairing",
+            text = if (relayUrl == null) {
+                stringResource(R.string.cw_confirm_title_hermes)
+            } else {
+                stringResource(R.string.cw_confirm_title_relay)
+            },
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
             text = if (relayUrl == null) {
-                "This QR configures the standard API/dashboard connection. Pair Relay later for Terminal and Bridge."
+                stringResource(R.string.cw_confirm_desc_hermes)
             } else {
-                "Review the scanned details and choose how long this Relay pairing should last."
+                stringResource(R.string.cw_confirm_desc_relay)
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2230,35 +2263,39 @@ private fun ConfirmStep(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 LabeledLine(
-                    label = "API server",
+                    label = stringResource(R.string.cw_label_api_server),
                     value = payload.serverUrl,
-                    hint = "chat & sessions",
+                    hint = stringResource(R.string.cw_hint_chat),
                 )
                 if (relayUrl == null) {
                     LabeledLine(
-                        label = "Dashboard",
+                        label = stringResource(R.string.cw_label_dashboard),
                         value = payload.dashboardUrl
                             ?.trim()
                             ?.takeIf { it.isNotBlank() }
                             ?: Connection.deriveDefaultDashboardUrl(payload.serverUrl)
-                            ?: "Derived from API URL",
-                        hint = "Manage",
+                            ?: stringResource(R.string.cw_value_derived),
+                        hint = stringResource(R.string.cw_hint_manage),
                     )
                     LabeledLine(
-                        label = "API key",
-                        value = if (payload.key.isBlank()) "Not included" else "Included",
+                        label = stringResource(R.string.cw_label_api_key),
+                        value = if (payload.key.isBlank()) {
+                            stringResource(R.string.cw_value_not_included)
+                        } else {
+                            stringResource(R.string.cw_value_included)
+                        },
                     )
                 }
                 if (relayUrl != null) {
                     LabeledLine(
-                        label = "Relay",
+                        label = stringResource(R.string.cw_label_relay),
                         value = relayUrl,
-                        hint = "bridge, voice, terminal",
+                        hint = stringResource(R.string.cw_hint_bridge),
                     )
                 }
                 if (payload.relay?.grants?.isNotEmpty() == true) {
                     LabeledLine(
-                        label = "Grants",
+                        label = stringResource(R.string.cw_label_grants),
                         value = payload.relay.grants.keys.sorted().joinToString(", "),
                     )
                 }
@@ -2326,7 +2363,7 @@ private fun ConfirmStep(
                                 TextButton(onClick = { preferMenuOpen = true }) {
                                     Text(
                                         text = preferRole?.let { roleLabel(it) }
-                                            ?: "Natural order",
+                                            ?: stringResource(R.string.cw_natural_order),
                                     )
                                     Icon(
                                         imageVector = Icons.Filled.ArrowDropDown,
@@ -2456,8 +2493,8 @@ private fun ConfirmStep(
                     // Amber-tinted informational card. The secure route is the
                     // safety net — spell that out explicitly so users stop
                     // reading "some plain" as "all plain".
-                    val plainLabel = firstInsecureLabel ?: "LAN"
-                    val secureLabel = firstSecureLabel ?: "Tailscale"
+                    val plainLabel = firstInsecureLabel ?: stringResource(R.string.cw_role_lan)
+                    val secureLabel = firstSecureLabel ?: stringResource(R.string.cw_role_tailscale)
                     Card(
                         colors = CardDefaults.cardColors(
                             containerColor = Color(0xFFF9A825).copy(alpha = 0.12f),
@@ -2703,9 +2740,9 @@ private fun EndpointPreviewRow(
         candidate.api.tls ||
         candidate.relay.transportHint.equals("wss", ignoreCase = true)
     val ordinalLabel = when (index) {
-        0 -> "1st choice"
-        1 -> "Fallback"
-        else -> "Fallback $index"
+        0 -> stringResource(R.string.cw_ordinal_first)
+        1 -> stringResource(R.string.cw_ordinal_fallback)
+        else -> stringResource(R.string.cw_ordinal_fallback_n, index)
     }
 
     Row(
@@ -2723,12 +2760,12 @@ private fun EndpointPreviewRow(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 SoftPill(
-                    text = if (isSecure) "Secure" else "Plain",
+                    text = if (isSecure) stringResource(R.string.cw_secure_label) else stringResource(R.string.cw_plain_label),
                     fg = if (isSecure) Color(0xFF2E7D32) else Color(0xFFF9A825),
                 )
                 if (isPreferred) {
                     SoftPill(
-                        text = "Preferred",
+                        text = stringResource(R.string.cw_preferred_label),
                         fg = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -2798,9 +2835,10 @@ private fun reorderByPreferredRole(
 }
 
 /** Role → user-facing label used inside the Prefer dropdown menu. */
+@Composable
 private fun roleLabel(role: String): String = when (role.lowercase()) {
-    "lan" -> "LAN"
-    "tailscale" -> "Tailscale"
-    "public" -> "Public"
+    "lan" -> stringResource(R.string.cw_role_lan)
+    "tailscale" -> stringResource(R.string.cw_role_tailscale)
+    "public" -> stringResource(R.string.cw_role_public)
     else -> role
 }

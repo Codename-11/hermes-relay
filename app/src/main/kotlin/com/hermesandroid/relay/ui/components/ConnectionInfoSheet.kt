@@ -1792,7 +1792,7 @@ private fun DisplayAliasSection(
                 onClick = { onSave(normalizedDraft) },
                 enabled = hasChange,
             ) {
-                Text("Save")
+                Text(saveText)
             }
         }
     }

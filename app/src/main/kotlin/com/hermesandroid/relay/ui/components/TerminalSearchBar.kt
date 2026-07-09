@@ -26,10 +26,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import com.hermesandroid.relay.R
 
 /**
  * Inline search row that appears below the terminal top app bar.
@@ -85,7 +87,7 @@ fun TerminalSearchBar(
             modifier = Modifier
                 .weight(1f)
                 .focusRequester(focusRequester),
-            placeholder = { Text("Search scrollback") },
+            placeholder = { Text(stringResource(R.string.term_search_placeholder)) },
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Filled.Search,
@@ -106,7 +108,7 @@ fun TerminalSearchBar(
         ) {
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowUp,
-                contentDescription = "Previous match",
+                contentDescription = stringResource(R.string.term_search_cd_previous),
             )
         }
         IconButton(
@@ -115,13 +117,13 @@ fun TerminalSearchBar(
         ) {
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = "Next match",
+                contentDescription = stringResource(R.string.term_search_cd_next),
             )
         }
         IconButton(onClick = onClose) {
             Icon(
                 imageVector = Icons.Filled.Close,
-                contentDescription = "Close search",
+                contentDescription = stringResource(R.string.term_search_cd_close),
             )
         }
     }

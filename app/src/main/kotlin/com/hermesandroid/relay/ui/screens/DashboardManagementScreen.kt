@@ -434,6 +434,7 @@ fun DashboardManagementScreen(
                 clientFactory = clientFactory,
                 targetSection = targetSection,
                 preamble = preamble,
+                context = context,
             ) { status, session, gatewayTicketAvailable ->
                 if (preamble == null) {
                     connectionViewModel.recordDashboardStatus(
@@ -1706,12 +1707,14 @@ private suspend fun fetchDashboardSectionState(
     targetSection: DashboardManagementSection,
     preamble: DashboardPreamble? = null,
     recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+    context: android.content.Context,
 ): DashboardPayloadState = withDashboardClient(clientFactory) { client ->
     fetchDashboardSectionStateWith(
         client = client,
         targetSection = targetSection,
         preamble = preamble,
         recordStatus = recordStatus,
+        context = context,
     )
 }
 
@@ -1721,11 +1724,15 @@ private suspend fun fetchDashboardSectionStateWith(
     targetSection: DashboardManagementSection,
     preamble: DashboardPreamble? = null,
     recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+    context: android.content.Context,
 ): DashboardPayloadState {
     val resolved = preamble ?: fetchDashboardPreamble(client)
     recordStatus(resolved.status, resolved.session, resolved.gatewayTicketAvailable)
     return if (resolved.signInRequired) {
-        DashboardPayloadState.Error("Dashboard sign-in required", status = resolved.status)
+        DashboardPayloadState.Error(
+            message = context.getString(R.string.dashboard_signin_required_title),
+            status = resolved.status,
+        )
     } else {
         val result = client.getJsonElement(targetSection.path)
         result.fold(
@@ -1740,7 +1747,7 @@ private suspend fun fetchDashboardSectionStateWith(
             },
             onFailure = { err ->
                 DashboardPayloadState.Error(
-                    message = err.message ?: "Dashboard request failed",
+                    message = err.message ?: context.getString(R.string.dashboard_request_failed),
                     status = resolved.status,
                 )
             },
@@ -1772,6 +1779,7 @@ internal suspend fun prewarmDashboardManage(
     dashboardUrl: String,
     /** When non-null, the sweep's results are mirrored to the disk cache. */
     cacheDir: java.io.File? = null,
+    context: android.content.Context,
 ) {
     if (dashboardUrl.isBlank()) return
     fun needsWarm(targetSection: DashboardManagementSection): Boolean {
@@ -1819,6 +1827,7 @@ internal suspend fun prewarmDashboardManage(
                             client = client,
                             targetSection = targetSection,
                             preamble = preamble,
+                            context = context,
                         )
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e

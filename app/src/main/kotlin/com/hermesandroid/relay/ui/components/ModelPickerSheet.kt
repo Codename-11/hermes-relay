@@ -34,8 +34,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 
 /**
  * Searchable model picker as a bottom sheet — a cleaner surface than the inline
@@ -98,9 +100,9 @@ fun ModelPickerSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = "Model", style = MaterialTheme.typography.titleMedium)
+                Text(text = stringResource(R.string.model_picker_title), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "${modelOptions.size} models",
+                    text = stringResource(R.string.model_picker_count, modelOptions.size),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -114,7 +116,7 @@ fun ModelPickerSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
-                placeholder = { Text("Search models or providers…") },
+                placeholder = { Text(stringResource(R.string.model_picker_search)) },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Filled.Search,
@@ -127,7 +129,7 @@ fun ModelPickerSheet(
                         IconButton(onClick = { query = "" }) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
-                                contentDescription = "Clear search",
+                                contentDescription = stringResource(R.string.model_picker_cd_clear),
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -174,7 +176,7 @@ fun ModelPickerSheet(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = "No models match your search",
+                                text = stringResource(R.string.model_picker_empty),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -224,7 +226,7 @@ private fun ModelPickerRow(
         if (option.selected) {
             Icon(
                 imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(R.string.cd_selected),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(18.dp),
             )

@@ -421,7 +421,7 @@ private fun EndpointRow(
     pinDialogText?.let { body ->
         AlertDialog(
             onDismissRequest = { pinDialogText = null },
-            title = { Text("TOFU pin · ${candidate.api.host}") },
+            title = { Text(stringResource(R.string.endpoints_pin_title, candidate.api.host)) },
             text = {
                 Text(
                     text = body,
@@ -581,9 +581,7 @@ fun RouteEditorDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "A fallback route the phone switches to when the " +
-                        "primary stops answering — e.g. your server's " +
-                        "Tailscale or public URL.",
+                    text = stringResource(R.string.endpoints_route_editor_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -609,7 +607,7 @@ fun RouteEditorDialog(
                         value = customRole,
                         onValueChange = { customRole = it },
                         label = { Text(stringResource(R.string.endpoints_route_name)) },
-                        placeholder = { Text("wireguard-home") },
+                        placeholder = { Text(stringResource(R.string.endpoints_route_name_placeholder)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -634,22 +632,20 @@ fun RouteEditorDialog(
                         errorText = null
                     },
                     label = { Text(stringResource(R.string.endpoints_api_url_host)) },
-                    placeholder = { Text("100.64.0.1 or http://host:8642") },
+                    placeholder = { Text(stringResource(R.string.endpoints_url_host_placeholder)) },
                     singleLine = true,
                     isError = errorText != null,
                     supportingText = {
+                        val supportingBlank = stringResource(R.string.endpoints_url_supporting_blank)
+                        val supportingEnter = stringResource(R.string.endpoints_url_supporting_enter)
                         Text(
                             text = errorText ?: when {
                                 url.isBlank() ->
-                                    "Use the API server port (8642 by default) — " +
-                                        "not the dashboard's 9119. http:// is " +
-                                        "assumed unless you type https://."
+                                    supportingBlank
                                 previewCandidate != null ->
-                                    "Will save: ${previewCandidate.api.url} — relay " +
-                                        "and dashboard URLs are derived from the host"
+                                    stringResource(R.string.endpoints_url_supporting_preview, previewCandidate.api.url)
                                 else ->
-                                    "Enter a host/IP or an http(s):// URL " +
-                                        "(API port 8642, not dashboard 9119)"
+                                    supportingEnter
                             },
                         )
                     },

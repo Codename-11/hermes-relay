@@ -7,6 +7,8 @@ import android.graphics.pdf.PdfRenderer
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -153,7 +155,7 @@ private fun LoadingCard(
                 val sizeHint = attachment.fileSize?.takeIf { it > 0 }
                     ?.let { " · ${formatBytes(it)}" } ?: ""
                 Text(
-                    text = if (isManualCta) "Tap to download" else "Downloading…$sizeHint",
+                    text = if (isManualCta) stringResource(R.string.inbound_attach_tap_download) else stringResource(R.string.inbound_attach_downloading, sizeHint),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -175,7 +177,7 @@ private fun LoadingCard(
                 IconButton(onClick = onCancel, modifier = Modifier.size(28.dp)) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Cancel download",
+                        contentDescription = stringResource(R.string.inbound_attach_cd_cancel),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
                     )
@@ -219,12 +221,12 @@ private fun FailedCard(
             Text(text = "\u26A0\uFE0F", style = MaterialTheme.typography.titleMedium)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = attachment.errorMessage ?: "Attachment failed",
+                    text = attachment.errorMessage ?: stringResource(R.string.inbound_attach_failed),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
                 Text(
-                    text = "Tap to retry",
+                    text = stringResource(R.string.inbound_attach_tap_retry),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
                 )
@@ -467,7 +469,7 @@ private fun FileCardRender(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Download,
-                    contentDescription = "Save",
+                    contentDescription = stringResource(R.string.inbound_attach_cd_save),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )
@@ -500,7 +502,7 @@ private fun AttachmentActionsMenu(
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         DropdownMenuItem(
-            text = { Text("Open externally") },
+            text = { Text(stringResource(R.string.inbound_attach_open)) },
             leadingIcon = { Icon(Icons.Filled.OpenInNew, contentDescription = null) },
             onClick = {
                 onDismiss()
@@ -508,14 +510,14 @@ private fun AttachmentActionsMenu(
             },
         )
         DropdownMenuItem(
-            text = { Text("Share") },
+            text = { Text(stringResource(R.string.inbound_attach_share)) },
             onClick = {
                 onDismiss()
                 scope.launch { shareAttachment(context, attachment) }
             },
         )
         DropdownMenuItem(
-            text = { Text("Save to device") },
+            text = { Text(stringResource(R.string.inbound_attach_save)) },
             leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null) },
             onClick = {
                 onDismiss()
@@ -536,7 +538,7 @@ private fun SaveOverlayButton(onClick: () -> Unit, modifier: Modifier = Modifier
         IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
             Icon(
                 imageVector = Icons.Filled.Download,
-                contentDescription = "Save",
+                contentDescription = stringResource(R.string.inbound_attach_cd_save),
                 tint = Color.White,
                 modifier = Modifier.size(18.dp),
             )
@@ -549,7 +551,7 @@ private fun SaveOverlayButton(onClick: () -> Unit, modifier: Modifier = Modifier
 private suspend fun shareAttachment(context: Context, attachment: Attachment) {
     val bytes = attachmentBytes(context, attachment)
     if (bytes == null) {
-        attachmentToast(context, "Couldn't read this file")
+        attachmentToast(context, context.getString(R.string.inbound_attach_share_failed))
         return
     }
     val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
@@ -559,7 +561,7 @@ private suspend fun shareAttachment(context: Context, attachment: Attachment) {
 private suspend fun saveAttachment(context: Context, attachment: Attachment) {
     val bytes = attachmentBytes(context, attachment)
     if (bytes == null) {
-        attachmentToast(context, "Couldn't read this file")
+        attachmentToast(context, context.getString(R.string.inbound_attach_share_failed))
         return
     }
     val result = if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
@@ -569,13 +571,13 @@ private suspend fun saveAttachment(context: Context, attachment: Attachment) {
     }
     when (result) {
         is MediaSaver.SaveResult.Saved ->
-            attachmentToast(context, "Saved to ${result.location}")
+            attachmentToast(context, context.getString(R.string.inbound_attach_saved, result.location))
         MediaSaver.SaveResult.UseShareInstead -> {
             val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
             MediaSaver.share(context, uri, attachment.contentType)
         }
         is MediaSaver.SaveResult.Failed ->
-            attachmentToast(context, "Save failed: ${result.message}")
+            attachmentToast(context, context.getString(R.string.inbound_attach_save_failed, result.message))
     }
 }
 
@@ -591,7 +593,7 @@ private suspend fun openAttachmentExternally(context: Context, attachment: Attac
     if (uri != null) {
         MediaSaver.open(context, uri, attachment.contentType)
     } else {
-        attachmentToast(context, "Couldn't open this file")
+        attachmentToast(context, context.getString(R.string.inbound_attach_open_failed))
     }
 }
 
@@ -707,16 +709,25 @@ private fun attachmentToast(context: Context, message: String) {
     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
 
+@Composable
 private fun emojiAndLabelFor(
     mode: AttachmentRenderMode,
     contentType: String
-): Pair<String, String> = when (mode) {
-    AttachmentRenderMode.IMAGE -> "\uD83D\uDDBC\uFE0F" to "Image"
-    AttachmentRenderMode.VIDEO -> "\uD83C\uDFAC" to "Video"
-    AttachmentRenderMode.AUDIO -> "\uD83C\uDFB5" to "Audio"
-    AttachmentRenderMode.PDF -> "\uD83D\uDCC4" to "PDF"
-    AttachmentRenderMode.TEXT -> "\uD83D\uDCDD" to contentTypeToLabel(contentType, fallback = "Text")
-    AttachmentRenderMode.GENERIC -> "\uD83D\uDCCE" to contentTypeToLabel(contentType, fallback = "File")
+): Pair<String, String> {
+    val imageLabel = stringResource(R.string.inbound_attach_type_image)
+    val videoLabel = stringResource(R.string.inbound_attach_type_video)
+    val audioLabel = stringResource(R.string.inbound_attach_type_audio)
+    val pdfLabel = stringResource(R.string.inbound_attach_type_pdf)
+    val textLabel = stringResource(R.string.inbound_attach_type_text)
+    val fileLabel = stringResource(R.string.inbound_attach_type_file)
+    return when (mode) {
+        AttachmentRenderMode.IMAGE -> "\uD83D\uDDBC\uFE0F" to imageLabel
+        AttachmentRenderMode.VIDEO -> "\uD83C\uDFAC" to videoLabel
+        AttachmentRenderMode.AUDIO -> "\uD83C\uDFB5" to audioLabel
+        AttachmentRenderMode.PDF -> "\uD83D\uDCC4" to pdfLabel
+        AttachmentRenderMode.TEXT -> "\uD83D\uDCDD" to contentTypeToLabel(contentType, fallback = textLabel)
+        AttachmentRenderMode.GENERIC -> "\uD83D\uDCCE" to contentTypeToLabel(contentType, fallback = fileLabel)
+    }
 }
 
 private fun contentTypeToLabel(contentType: String, fallback: String): String {

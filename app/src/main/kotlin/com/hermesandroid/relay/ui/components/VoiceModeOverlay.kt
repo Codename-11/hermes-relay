@@ -1147,23 +1147,25 @@ private fun VoiceHandoffStrip(
     }
 }
 
+@Composable
 private fun voiceProviderLabel(
     provider: String?,
     model: String?,
     voice: String?,
     outputEnabled: Boolean?,
 ): String {
-    if (outputEnabled == false) return "output off"
-    val providerPart = provider?.takeIf { it.isNotBlank() } ?: "provider ..."
+    if (outputEnabled == false) return stringResource(R.string.voice_overlay_provider_output_off)
+    val providerPart = provider?.takeIf { it.isNotBlank() } ?: stringResource(R.string.voice_overlay_provider_placeholder)
     val modelPart = model?.takeIf { it.isNotBlank() }
     val voicePart = voice?.takeIf { it.isNotBlank() }
     return listOfNotNull(providerPart, modelPart, voicePart).joinToString(" / ")
 }
 
+@Composable
 private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
-    "realtime_agent" -> "Realtime Agent"
-    "hermes_voice_output" -> "Hermes voice"
-    null, "" -> "Voice engine ..."
+    "realtime_agent" -> stringResource(R.string.voice_overlay_engine_realtime)
+    "hermes_voice_output" -> stringResource(R.string.voice_overlay_engine_hermes)
+    null, "" -> stringResource(R.string.voice_overlay_engine_placeholder)
     else -> engineMode
         .replace('_', ' ')
         .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
@@ -1212,9 +1214,9 @@ private fun CompactTranscriptRow(
     val isVoiceActionBubble = message.role == MessageRole.ASSISTANT &&
         message.id.startsWith("voice-intent-")
     val caption = when {
-        isVoiceActionBubble -> "ACTION"
-        message.role == MessageRole.USER -> "YOU"
-        else -> "AGENT"
+        isVoiceActionBubble -> stringResource(R.string.voice_overlay_caption_action)
+        message.role == MessageRole.USER -> stringResource(R.string.voice_overlay_caption_you)
+        else -> stringResource(R.string.voice_overlay_caption_agent)
     }
     val captionColor = when {
         isVoiceActionBubble -> MaterialTheme.colorScheme.tertiary
@@ -1277,12 +1279,20 @@ private fun CompactTranscriptRow(
 
 @Composable
 private fun VoiceToolStatusRow(toolCall: ToolCall) {
-    val status = when {
+    // Internal enum-style status drives both color and the localized label
+    // shown to the user. Localized text comes from stringResource() in the
+    // Composable so VoiceModeOverlay can switch locales mid-session.
+    val statusKey = when {
         toolCall.isComplete && toolCall.success == true -> "done"
         toolCall.isComplete && toolCall.success == false -> "failed"
         else -> "running"
     }
-    val statusColor = when (status) {
+    val statusLabel = when (statusKey) {
+        "done" -> stringResource(R.string.voice_overlay_tool_status_done)
+        "failed" -> stringResource(R.string.voice_overlay_tool_status_failed)
+        else -> stringResource(R.string.voice_overlay_tool_status_running)
+    }
+    val statusColor = when (statusKey) {
         "done" -> MaterialTheme.colorScheme.primary
         "failed" -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.tertiary
@@ -1324,7 +1334,7 @@ private fun VoiceToolStatusRow(toolCall: ToolCall) {
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = duration?.let { "$status $it" } ?: status,
+                    text = duration?.let { "$statusLabel $it" } ?: statusLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = statusColor,
                 )
@@ -1529,8 +1539,11 @@ private fun BackgroundRunChip(
                 ?.let { add(it.trimEnd('.', '…')) }
             if (display.completedToolCount > 0) {
                 add(
-                    stringResource(R.string.voice_overlay_steps_format, display.completedToolCount) +
-                        if (display.completedToolCount == 1) "" else "s"
+                    stringResource(
+                        if (display.completedToolCount == 1) R.string.voice_overlay_steps_one
+                        else R.string.voice_overlay_steps_many,
+                        display.completedToolCount,
+                    )
                 )
             }
             add(elapsedLabel)

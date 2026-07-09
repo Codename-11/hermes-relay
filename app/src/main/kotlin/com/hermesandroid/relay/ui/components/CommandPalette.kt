@@ -43,9 +43,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-
+import com.hermesandroid.relay.R
 /**
  * A slash command entry — built-in, personality, server skill, or (on the
  * gateway transport) a server-catalog command from `commands.catalog`.
@@ -140,11 +141,11 @@ fun CommandPalette(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Commands",
+                    text = stringResource(R.string.command_palette_header),
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = "${filtered.size} available",
+                    text = stringResource(R.string.command_palette_count, filtered.size),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -159,7 +160,7 @@ fun CommandPalette(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
-                placeholder = { Text("Search commands...") },
+                placeholder = { Text(stringResource(R.string.command_palette_search)) },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Filled.Search,
@@ -172,7 +173,7 @@ fun CommandPalette(
                         IconButton(onClick = { searchQuery = "" }) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
-                                contentDescription = "Clear search",
+                                contentDescription = stringResource(R.string.command_palette_cd_clear),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -202,7 +203,7 @@ fun CommandPalette(
                     FilterChip(
                         selected = selectedCategory == null,
                         onClick = { selectedCategory = null },
-                        label = { Text("All") },
+                        label = { Text(stringResource(R.string.command_palette_filter_all)) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
                         )
@@ -233,8 +234,8 @@ fun CommandPalette(
                         modifier = Modifier.padding(horizontal = 8.dp)
                     ) {
                         Text(
-                            text = if (categoriesExpanded) "Show less"
-                                   else "Show all (${categories.size})",
+                            text = if (categoriesExpanded) stringResource(R.string.command_palette_show_less)
+                                   else stringResource(R.string.command_palette_show_all, categories.size),
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
@@ -283,7 +284,7 @@ fun CommandPalette(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "No commands match your search",
+                                text = stringResource(R.string.command_palette_empty),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

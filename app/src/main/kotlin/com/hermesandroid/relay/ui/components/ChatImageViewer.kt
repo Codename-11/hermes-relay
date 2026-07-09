@@ -31,10 +31,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.util.MediaSaver
 import kotlinx.coroutines.launch
 
@@ -152,6 +154,10 @@ fun ChatImageViewer(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 val tint = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
+                val cdShare = stringResource(R.string.cd_share)
+                val cdSave = stringResource(R.string.cd_save)
+                val cdClose = stringResource(R.string.cd_close_viewer)
+                val errorMsg = context.getString(R.string.image_viewer_error)
                 IconButton(
                     onClick = {
                         scope.launch {
@@ -159,7 +165,7 @@ fun ChatImageViewer(
                             val bytes = runCatching { source.bytesProvider() }.getOrNull()
                             busy = false
                             if (bytes == null) {
-                                toast(context, "Couldn't load this image")
+                                toast(context, errorMsg)
                                 return@launch
                             }
                             val uri = MediaSaver.stageForShare(context, bytes, source.displayName, source.mime)
@@ -168,8 +174,10 @@ fun ChatImageViewer(
                     },
                     colors = tint,
                 ) {
-                    Icon(Icons.Filled.Share, contentDescription = "Share")
+                    Icon(Icons.Filled.Share, contentDescription = cdShare)
                 }
+                val savedFmt = context.getString(R.string.image_viewer_saved)
+                val failedFmt = context.getString(R.string.image_viewer_failed)
                 IconButton(
                     onClick = {
                         scope.launch {
@@ -177,13 +185,13 @@ fun ChatImageViewer(
                             val bytes = runCatching { source.bytesProvider() }.getOrNull()
                             if (bytes == null) {
                                 busy = false
-                                toast(context, "Couldn't load this image")
+                                toast(context, errorMsg)
                                 return@launch
                             }
                             when (val result = MediaSaver.saveImage(context, bytes, source.displayName, source.mime)) {
                                 is MediaSaver.SaveResult.Saved -> {
                                     busy = false
-                                    toast(context, "Saved to ${result.location}")
+                                    toast(context, context.getString(R.string.image_viewer_saved_template, savedFmt, result.location))
                                 }
                                 MediaSaver.SaveResult.UseShareInstead -> {
                                     busy = false
@@ -192,17 +200,17 @@ fun ChatImageViewer(
                                 }
                                 is MediaSaver.SaveResult.Failed -> {
                                     busy = false
-                                    toast(context, "Save failed: ${result.message}")
+                                    toast(context, context.getString(R.string.image_viewer_failed_template, failedFmt, result.message))
                                 }
                             }
                         }
                     },
                     colors = tint,
                 ) {
-                    Icon(Icons.Filled.Download, contentDescription = "Save")
+                    Icon(Icons.Filled.Download, contentDescription = cdSave)
                 }
                 IconButton(onClick = onDismiss, colors = tint) {
-                    Icon(Icons.Filled.Close, contentDescription = "Close")
+                    Icon(Icons.Filled.Close, contentDescription = cdClose)
                 }
             }
         }

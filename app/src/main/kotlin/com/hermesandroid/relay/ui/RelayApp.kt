@@ -1335,6 +1335,7 @@ fun RelayApp() {
                 connectionId = connection.id,
                 dashboardUrl = effectiveDashboardUrl,
                 cacheDir = hydrateContext.cacheDir,
+                context = hydrateContext,
             )
         }
 
@@ -1342,13 +1343,17 @@ fun RelayApp() {
         // so voice/chat/settings screens can call showHumanError from their
         // error-collector LaunchedEffects without threading state downwards.
         val snackbarHostState = remember { SnackbarHostState() }
+        val profilesUpdatedLabel = stringResource(R.string.relay_app_profiles_updated)
+        val reconnectingRelayLabel = stringResource(R.string.relay_app_reconnecting)
+        val renameFailedLabel = stringResource(R.string.relay_app_rename_failed)
+        val revokeOnlyActiveLabel = stringResource(R.string.relay_app_revoke_only_active)
 
         // Relay-pushed `profiles.updated` announcements. AuthManager
         // filters out idempotent pushes (same names + same count), so
         // this only fires when the profile list actually changed.
         LaunchedEffect(connectionViewModel) {
             connectionViewModel.profilesUpdatedEvents.collect {
-                UiMessageBus.success("Profiles updated")
+                UiMessageBus.success(profilesUpdatedLabel)
             }
         }
 
@@ -1748,7 +1753,7 @@ fun RelayApp() {
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Chat.route(openAgentSheet = false),
-                                label = "Chat",
+                                label = stringResource(R.string.screen_chat_label),
                             )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
@@ -1805,7 +1810,7 @@ fun RelayApp() {
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Manage.route,
-                                label = "Manage",
+                                label = stringResource(R.string.screen_manage_label),
                             )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
@@ -2032,7 +2037,7 @@ fun RelayApp() {
                         // Voice runs through the live server (transcribe /
                         // synthesize) — show the demo empty state offline.
                         DemoUnavailableContent(
-                            feature = "Voice",
+                            feature = stringResource(R.string.screen_voice_label),
                             onConnect = exitDemoToConnect,
                         )
                     } else {
@@ -2155,8 +2160,8 @@ fun RelayApp() {
                         )
                     } else {
                         PowerFeatureGateScreen(
-                            title = "Relay sessions",
-                            summary = "Review and revoke devices paired with this relay.",
+                            title = stringResource(R.string.screen_relay_sessions_label),
+                            summary = stringResource(R.string.power_gate_relay_sessions_summary),
                             status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())
@@ -2231,14 +2236,14 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         onReconnect = {
                             connectionViewModel.connectRelay()
-                            UiMessageBus.status("Reconnecting to relay…")
+                            UiMessageBus.status(reconnectingRelayLabel)
                         },
                         onRename = { id, newLabel ->
                             connectionSwitchScope.launch {
                                 connectionViewModel.renameConnection(id, newLabel)
                                     .onFailure { err ->
                                         snackbarHostState.showSnackbar(
-                                            err.message ?: "Rename failed",
+                                            err.message ?: renameFailedLabel,
                                         )
                                     }
                             }
@@ -2253,9 +2258,7 @@ fun RelayApp() {
                             connectionSwitchScope.launch {
                                 val result = connectionViewModel.revokeConnection(id)
                                 if (result.isFailure) {
-                                    snackbarHostState.showSnackbar(
-                                        "Only the active connection can be revoked right now",
-                                    )
+                                    snackbarHostState.showSnackbar(revokeOnlyActiveLabel)
                                 }
                             }
                         },
@@ -2427,8 +2430,8 @@ fun RelayApp() {
                         ?: Screen.ProfileInspector.SECTION_CONFIG
                     if (coldStartAuthState !is AuthState.Paired) {
                         PowerFeatureGateScreen(
-                            title = "Profile Inspector",
-                            summary = "Inspect relay-backed profile config, SOUL, memory files, and skills.",
+                            title = stringResource(R.string.screen_profile_inspector_label),
+                            summary = stringResource(R.string.power_gate_profile_inspector_summary),
                             status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())

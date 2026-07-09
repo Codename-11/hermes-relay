@@ -918,7 +918,7 @@ private fun SphereSkinChip(
     val poleA = swatch.getOrElse(0) { MaterialTheme.colorScheme.primary }
     val poleB = swatch.getOrElse(1) { poleA }
     val capability = buildString {
-        append(skin.reactivity.summary())
+        append(reactivityLabels(skin.reactivity.flags()))
         if (skin.source == SphereSkinSource.USER) append(stringResource(R.string.appearance_custom_suffix))
     }
     Column(
@@ -1062,7 +1062,7 @@ private fun AgentAvatarChip(
             maxLines = 1,
         )
         Text(
-            text = avatar.reactivity.summary(),
+            text = reactivityLabels(avatar.reactivity.flags()),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,

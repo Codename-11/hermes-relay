@@ -91,6 +91,8 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentRenderMode
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.util.MediaSaver
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -160,18 +162,18 @@ fun BlurredMedia(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.VisibilityOff,
-                        contentDescription = "Sensitive content",
+                        contentDescription = stringResource(R.string.attach_viewer_cd_sensitive),
                         tint = Color.White,
                         modifier = Modifier.size(28.dp),
                     )
                     Text(
-                        text = "Sensitive",
+                        text = stringResource(R.string.attachment_sensitive),
                         style = MaterialTheme.typography.labelLarge,
                         color = Color.White,
                     )
                     if (revealOnTap) {
                         Text(
-                            text = "Tap to reveal",
+                            text = stringResource(R.string.attachment_tap_reveal),
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.8f),
                         )
@@ -266,7 +268,7 @@ fun AttachmentViewer(
             shouldBlurImage(blurMode, attachment.sensitive)
 
         val title = attachment.fileName
-            ?: attachment.contentType.substringBefore(';').ifBlank { "Attachment" }
+            ?: attachment.contentType.substringBefore(';').ifBlank { stringResource(R.string.attachment_title) }
 
         // --- One shared Share / Save / Open-externally action set ----------
         fun runWithBytes(action: suspend (ByteArray) -> Unit) {
@@ -275,7 +277,7 @@ fun AttachmentViewer(
                 val bytes = attachmentBytes(context, attachment)
                 if (bytes == null) {
                     busy = false
-                    viewerToast(context, "Couldn't read this file")
+                    viewerToast(context, context.getString(R.string.inbound_attach_share_failed))
                     return@launch
                 }
                 action(bytes)
@@ -298,13 +300,13 @@ fun AttachmentViewer(
                 }
                 when (result) {
                     is MediaSaver.SaveResult.Saved ->
-                        viewerToast(context, "Saved to ${result.location}")
+                        viewerToast(context, context.getString(R.string.inbound_attach_saved, result.location))
                     MediaSaver.SaveResult.UseShareInstead -> {
                         val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
                         MediaSaver.share(context, uri, attachment.contentType)
                     }
                     is MediaSaver.SaveResult.Failed ->
-                        viewerToast(context, "Save failed: ${result.message}")
+                        viewerToast(context, context.getString(R.string.inbound_attach_save_failed, result.message))
                 }
             }
         }
@@ -376,7 +378,7 @@ private fun MediaViewerToolbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onClose, colors = tint) {
-            Icon(Icons.Filled.Close, contentDescription = "Close")
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.attach_viewer_cd_close))
         }
         Text(
             text = title,
@@ -394,13 +396,13 @@ private fun MediaViewerToolbar(
             )
         }
         IconButton(onClick = onOpenExternal, colors = tint) {
-            Icon(Icons.Filled.OpenInNew, contentDescription = "Open externally")
+            Icon(Icons.Filled.OpenInNew, contentDescription = stringResource(R.string.attach_viewer_cd_open))
         }
         IconButton(onClick = onShare, colors = tint) {
-            Icon(Icons.Filled.Share, contentDescription = "Share")
+            Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.attach_viewer_cd_share))
         }
         IconButton(onClick = onSave, colors = tint) {
-            Icon(Icons.Filled.Download, contentDescription = "Save")
+            Icon(Icons.Filled.Download, contentDescription = stringResource(R.string.attach_viewer_cd_save))
         }
     }
 }
@@ -452,7 +454,7 @@ private fun ImageBody(
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize().zoomable(),
                 )
-                failed -> CenteredNotice("Couldn't load this image")
+                failed -> CenteredNotice(stringResource(R.string.attach_viewer_load_failed))
                 else -> CircularProgressIndicator(color = Color.White)
             }
         }
@@ -468,7 +470,7 @@ private fun VideoBody(attachment: Attachment) {
     val uri = rememberPlayableUri(attachment)
 
     if (uri == null) {
-        CenteredNotice("Preparing video…", spinner = true)
+        CenteredNotice(stringResource(R.string.attach_viewer_preparing_video), spinner = true)
         return
     }
 
@@ -526,7 +528,7 @@ private fun VideoBody(attachment: Attachment) {
                 ) {
                     Icon(
                         imageVector = if (muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
-                        contentDescription = if (muted) "Unmute" else "Mute",
+                        contentDescription = if (muted) stringResource(R.string.attach_viewer_cd_unmute) else stringResource(R.string.attach_viewer_cd_mute),
                     )
                 }
             },
@@ -543,7 +545,7 @@ private fun AudioBody(attachment: Attachment) {
     val uri = rememberPlayableUri(attachment)
 
     if (uri == null) {
-        CenteredNotice("Preparing audio…", spinner = true)
+        CenteredNotice(stringResource(R.string.attach_viewer_preparing_audio), spinner = true)
         return
     }
 
@@ -605,7 +607,7 @@ private fun AudioBody(attachment: Attachment) {
         AmplitudeMeter(amplitude = amplitude, active = isPlaying)
         Spacer(Modifier.height(24.dp))
         Text(
-            text = attachment.fileName ?: "Audio",
+            text = attachment.fileName ?: stringResource(R.string.attachment_audio_label),
             style = MaterialTheme.typography.titleMedium,
             color = Color.White,
             maxLines = 2,
@@ -692,14 +694,14 @@ private fun PdfBody(attachment: Attachment) {
                 PdfDoc(PdfRenderer(pfd), pfd, Mutex())
             }.getOrNull()
         }
-        if (opened == null) pdfError = "Couldn't open this PDF" else doc = opened
+        if (opened == null) pdfError = stringResource(R.string.attach_viewer_pdf_failed) else doc = opened
     }
     DisposableEffect(doc) { onDispose { doc?.close() } }
 
     val current = doc
     when {
         pdfError != null -> CenteredNotice(pdfError!!)
-        current == null -> CenteredNotice("Rendering PDF…", spinner = true)
+        current == null -> CenteredNotice(stringResource(R.string.attach_viewer_rendering_pdf), spinner = true)
         else -> LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -747,7 +749,7 @@ private fun PdfPage(doc: PdfDoc, index: Int, widthPx: Int) {
     if (bmp != null) {
         Image(
             bitmap = bmp,
-            contentDescription = "Page ${index + 1}",
+            contentDescription = stringResource(R.string.attach_viewer_page_label, index + 1),
             contentScale = ContentScale.FillWidth,
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(2.dp)),
         )
@@ -783,7 +785,7 @@ private fun TextBody(attachment: Attachment) {
 
     val body = text
     when {
-        body == null -> CenteredNotice("Loading…", spinner = true)
+        body == null -> CenteredNotice(stringResource(R.string.attach_viewer_loading), spinner = true)
         else -> SelectionContainer(
             modifier = Modifier
                 .fillMaxSize()
@@ -812,19 +814,19 @@ private fun GenericBody(attachment: Attachment, onOpenExternal: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = attachment.fileName ?: "File",
+            text = attachment.fileName ?: stringResource(R.string.attach_viewer_file_label),
             style = MaterialTheme.typography.titleMedium,
             color = Color.White,
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "No in-app preview for this type.",
+            text = stringResource(R.string.attachment_no_preview),
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White.copy(alpha = 0.7f),
         )
         Spacer(Modifier.height(16.dp))
         androidx.compose.material3.OutlinedButton(onClick = onOpenExternal) {
-            Text("Open externally")
+            Text(stringResource(R.string.attachment_open_ext))
         }
     }
 }
@@ -862,7 +864,7 @@ private fun PlaybackControls(
             IconButton(onClick = onPlayPause, colors = tint) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    contentDescription = if (isPlaying) stringResource(R.string.attach_viewer_cd_pause) else stringResource(R.string.attach_viewer_cd_play),
                 )
             }
             Text(
