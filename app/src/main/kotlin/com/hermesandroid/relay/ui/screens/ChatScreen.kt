@@ -677,6 +677,7 @@ fun ChatScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
+    val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
         if (closeDrawerOnSend && drawerState.isOpen) {
@@ -2140,7 +2141,6 @@ fun ChatScreen(
                                     // setClipEntry call has to live inside a coroutine.
                                     // We piggyback on the same scope.launch that posts
                                     // the snackbar — they are sequential anyway.
-                                    val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
                                     scope.launch {
                                         clipboard.setClipEntry(
                                             ClipEntry(

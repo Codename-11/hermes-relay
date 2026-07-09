@@ -435,7 +435,7 @@ fun DashboardManagementScreen(
                 targetSection = targetSection,
                 preamble = preamble,
                 context = context,
-            ) { status: DashboardStatus?, session: DashboardAuthSession?, gatewayTicketAvailable: Boolean ->
+                recordStatus = { status: DashboardStatus?, session: DashboardAuthSession?, gatewayTicketAvailable: Boolean ->
                 if (preamble == null) {
                     connectionViewModel.recordDashboardStatus(
                         status = status,
@@ -443,6 +443,7 @@ fun DashboardManagementScreen(
                         reachable = status != null,
                         gatewayTicketAvailable = gatewayTicketAvailable,
                     )
+                }
                 }
             }
             val latestState = payloadStates[targetKey]
