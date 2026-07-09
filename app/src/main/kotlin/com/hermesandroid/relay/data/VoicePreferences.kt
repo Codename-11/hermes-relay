@@ -44,6 +44,9 @@ data class VoiceSettings(
      * docs/plans/2026-05-24-realtime-persistent-session.md.
      */
     val realtimePersistentSession: Boolean = true,
+    /** Per-profile Realtime Agent session overrides; blank uses relay config. */
+    val realtimeModel: String = "",
+    val realtimeVoice: String = "",
     /**
      * Enhanced-voice overrides for the relay TTS path, mapped onto the active
      * provider (Gemini / xAI). Empty string / false means "use the server's
@@ -154,9 +157,9 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         // over the hard default — see [scopedName] / [resolveString].
         //
         // Why these are per-profile: engine mode, audio route, and the
-        // enhanced-voice overrides describe *which voice the agent speaks
-        // with*, which is a property of the profile (the relay already
-        // persists `voice_output:`/`realtime_voice:` per profile and
+        // enhanced-voice and realtime-session overrides describe *which voice
+        // the agent speaks with*, which is a property of the profile (the relay
+        // already persists `voice_output:`/`realtime_voice:` per profile and
         // `RelayVoiceClient` already sends `?profile=`). Keeping them global
         // leaked one profile's voice onto every other profile.
         private const val KEY_ENGINE_MODE = "voice_engine_mode"
@@ -166,6 +169,8 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         private const val KEY_ENH_AUDIO_TAGS = "voice_enh_audio_tags"
         private const val KEY_ENH_PERSONA = "voice_enh_persona"
         private const val KEY_ENH_LANGUAGE = "voice_enh_language"
+        private const val KEY_REALTIME_MODEL = "voice_realtime_model"
+        private const val KEY_REALTIME_VOICE = "voice_realtime_voice"
 
         // --- Global keys (shared across profiles; never namespaced) ----------
         // Why these stay global: interaction-mode and silence-threshold are
@@ -214,8 +219,8 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     /**
      * Point the repository at a (connection, profile) scope. Per-profile reads
-     * and writes (engine/route/enhanced) re-target the namespaced keys for that
-     * profile; global prefs are unaffected. Passing a null/blank profile name
+     * and writes (engine/route/enhanced/realtime) re-target the namespaced keys
+     * for that profile; global prefs are unaffected. Passing a null/blank profile name
      * reverts per-profile reads/writes to the global base layer (the default
      * profile). Idempotent — a no-op when the normalized scope is unchanged.
      */
@@ -248,6 +253,8 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
             enhancedAudioTags = resolveBoolean(prefs, KEY_ENH_AUDIO_TAGS, scope, false),
             enhancedPersona = resolveString(prefs, KEY_ENH_PERSONA, scope, ""),
             enhancedLanguage = resolveString(prefs, KEY_ENH_LANGUAGE, scope, ""),
+            realtimeModel = resolveString(prefs, KEY_REALTIME_MODEL, scope, ""),
+            realtimeVoice = resolveString(prefs, KEY_REALTIME_VOICE, scope, ""),
             // --- global (shared across profiles) ---
             interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
             silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
@@ -325,6 +332,29 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
     suspend fun setEnhancedLanguage(language: String) {
         val key = stringPreferencesKey(scopedName(KEY_ENH_LANGUAGE, _scope.value))
         dataStore.edit { it[key] = language.trim() }
+    }
+
+    /** "" clears the override so new sessions use the relay's saved model. */
+    suspend fun setRealtimeModel(model: String) {
+        val key = stringPreferencesKey(scopedName(KEY_REALTIME_MODEL, _scope.value))
+        dataStore.edit { it[key] = model.trim() }
+    }
+
+    /** "" clears the override so new sessions use the relay's saved voice. */
+    suspend fun setRealtimeVoice(voice: String) {
+        val key = stringPreferencesKey(scopedName(KEY_REALTIME_VOICE, _scope.value))
+        dataStore.edit { it[key] = voice.trim() }
+    }
+
+    /** Persist a compatible model/voice pair without exposing a half-updated snapshot. */
+    suspend fun setRealtimeSelection(model: String, voice: String) {
+        val scope = _scope.value
+        val modelKey = stringPreferencesKey(scopedName(KEY_REALTIME_MODEL, scope))
+        val voiceKey = stringPreferencesKey(scopedName(KEY_REALTIME_VOICE, scope))
+        dataStore.edit {
+            it[modelKey] = model.trim()
+            it[voiceKey] = voice.trim()
+        }
     }
 
     // --- global setters (always the un-namespaced key) -----------------------

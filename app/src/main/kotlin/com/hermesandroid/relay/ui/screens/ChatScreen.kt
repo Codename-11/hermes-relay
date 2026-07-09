@@ -713,12 +713,14 @@ fun ChatScreen(
         voiceOutputConfig?.default_provider
     }
     val activeVoiceModel = if (realtimeAgentActive) {
-        realtimeAgentConfig?.default_model
+        voiceStats.realtimeModel.takeIf { it.isNotBlank() }
+            ?: realtimeAgentConfig?.default_model
     } else {
         voiceOutputConfig?.default_model
     }
     val activeVoiceName = if (realtimeAgentActive) {
-        realtimeAgentConfig?.default_voice
+        voiceStats.realtimeVoice.takeIf { it.isNotBlank() }
+            ?: realtimeAgentConfig?.default_voice
     } else {
         voiceOutputConfig?.default_voice
     }

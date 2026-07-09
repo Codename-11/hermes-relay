@@ -30,6 +30,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class RelayVoiceClientRoutingTest {
 
@@ -116,6 +118,30 @@ class RelayVoiceClientRoutingTest {
         assertEquals("resume-token-1", response.resumeToken)
         assertTrue(response.resumeSupported)
         assertEquals(30000L, response.resumeTtlMs)
+    }
+
+    @Test
+    fun realtimeAgentSessionSendsModelAndVoiceOverrides() = runTest {
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+        )
+
+        val result = client.runRealtimeAgent(
+            prompt = "Use my selected realtime voice",
+            inputPcm = ByteArray(0),
+            model = "grok-voice-think-fast-1.0",
+            voice = "leo",
+        ) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        val request = lanServer.takeRequest(2, TimeUnit.SECONDS)
+            ?: error("missing realtime session request")
+        val payload = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("grok-voice-think-fast-1.0", payload["model"]?.jsonPrimitive?.content)
+        assertEquals("leo", payload["voice"]?.jsonPrimitive?.content)
     }
 
     @Test

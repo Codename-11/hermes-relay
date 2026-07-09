@@ -253,6 +253,8 @@ fun VoiceSettingsScreen(
                 currentEngine = currentEngine,
                 output = configState.voiceOutputConfig,
                 realtime = configState.realtimeConfig,
+                realtimeModel = voiceSettings.realtimeModel,
+                realtimeVoice = voiceSettings.realtimeVoice,
             )
 
             // --- Voice scope (single home; WP-V3 dedupe + WP-V4 honest label) ---
@@ -1443,16 +1445,22 @@ private fun RealtimeAgentCard(
     LaunchedEffect(
         config?.enabled,
         config?.default_provider,
-        config?.default_model,
-        config?.default_voice,
         config?.sample_rate,
     ) {
         val c = config ?: return@LaunchedEffect
         realtimeEnabled = c.enabled
         realtimeProvider = c.default_provider.orEmpty()
-        realtimeModel = c.default_model.orEmpty()
-        realtimeVoice = c.default_voice.orEmpty()
         realtimeSampleRate = c.sample_rate.toString()
+    }
+    LaunchedEffect(
+        config?.default_model,
+        config?.default_voice,
+        voiceSettings.realtimeModel,
+        voiceSettings.realtimeVoice,
+    ) {
+        val c = config ?: return@LaunchedEffect
+        realtimeModel = voiceSettings.realtimeModel.ifBlank { c.default_model.orEmpty() }
+        realtimeVoice = voiceSettings.realtimeVoice.ifBlank { c.default_voice.orEmpty() }
     }
 
     fun refreshRealtimeProviderOptions(providerId: String, applyDefaults: Boolean) {
@@ -1538,10 +1546,10 @@ private fun RealtimeAgentCard(
             value = config?.default_provider
                 ?: (configState.realtimeConfigError?.let { "unavailable" } ?: "loading..."),
         )
-        config?.default_model?.let { model ->
+        realtimeModel.takeIf { it.isNotBlank() }?.let { model ->
             ProviderRow(label = "Model", value = model)
         }
-        config?.default_voice?.let { voice ->
+        realtimeVoice.takeIf { it.isNotBlank() }?.let { voice ->
             ProviderRow(label = "Voice", value = voice)
         }
         config?.let { c ->
@@ -1748,6 +1756,9 @@ private fun RealtimeAgentCard(
                 selectedRealtimeProvider?.let { provider ->
                     realtimeVoice = voiceForModel(provider, model, realtimeVoice)
                 }
+                scope.launch {
+                    prefsRepo.setRealtimeSelection(realtimeModel, realtimeVoice)
+                }
             },
             enabled = voiceClient != null,
         )
@@ -1759,7 +1770,10 @@ private fun RealtimeAgentCard(
                 realtimeVoice,
                 realtimeModel,
             ),
-            onValueChange = { realtimeVoice = it },
+            onValueChange = { voice ->
+                realtimeVoice = voice
+                scope.launch { prefsRepo.setRealtimeVoice(voice) }
+            },
             enabled = voiceClient != null,
         )
         compatibilityNotice(
@@ -1798,14 +1812,20 @@ private fun RealtimeAgentCard(
             )
             OutlinedTextField(
                 value = realtimeModel,
-                onValueChange = { realtimeModel = it },
+                onValueChange = { model ->
+                    realtimeModel = model
+                    scope.launch { prefsRepo.setRealtimeModel(model) }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("Model ID") },
             )
             OutlinedTextField(
                 value = realtimeVoice,
-                onValueChange = { realtimeVoice = it },
+                onValueChange = { voice ->
+                    realtimeVoice = voice
+                    scope.launch { prefsRepo.setRealtimeVoice(voice) }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("Voice ID") },
@@ -1863,6 +1883,7 @@ private fun RealtimeAgentCard(
                     )
                     realtimeSaving = false
                     if (result.isSuccess) {
+                        prefsRepo.setRealtimeSelection(realtimeModel, realtimeVoice)
                         settingsViewModel.setRealtimeConfig(result.getOrNull())
                     } else {
                         val human = classifyError(
@@ -2913,6 +2934,8 @@ private fun voiceOutputSummary(
     currentEngine: VoiceEngineMode,
     output: VoiceOutputConfig?,
     realtime: RealtimeVoiceConfig?,
+    realtimeModel: String = "",
+    realtimeVoice: String = "",
 ): Pair<String, String> {
     val profileLabel = profile?.description?.takeIf { it.isNotBlank() }
         ?: profile?.name?.takeIf { it.isNotBlank() }
@@ -2925,8 +2948,12 @@ private fun voiceOutputSummary(
     } ?: "loading voice output..."
     val realtimeLabel = realtime?.let { config ->
         val provider = config.default_provider?.takeIf { it.isNotBlank() } ?: "realtime ..."
-        val voice = config.default_voice?.takeIf { it.isNotBlank() } ?: "voice ..."
-        "$provider / $voice"
+        val model = realtimeModel.takeIf { it.isNotBlank() }
+            ?: config.default_model?.takeIf { it.isNotBlank() }
+        val voice = realtimeVoice.takeIf { it.isNotBlank() }
+            ?: config.default_voice?.takeIf { it.isNotBlank() }
+            ?: "voice ..."
+        if (model == null) "$provider / $voice" else "$provider / $model / $voice"
     } ?: "realtime loading..."
     return profileLabel to when (currentEngine) {
         VoiceEngineMode.HermesVoiceOutput -> "Hermes Chat + Voice Output - $outputLabel"
@@ -2940,12 +2967,16 @@ private fun VoiceProfileSummaryCard(
     currentEngine: VoiceEngineMode,
     output: VoiceOutputConfig?,
     realtime: RealtimeVoiceConfig?,
+    realtimeModel: String,
+    realtimeVoice: String,
 ) {
     val (title, subtitle) = voiceOutputSummary(
         profile = selectedProfile,
         currentEngine = currentEngine,
         output = output,
         realtime = realtime,
+        realtimeModel = realtimeModel,
+        realtimeVoice = realtimeVoice,
     )
     Card(
         modifier = Modifier.fillMaxWidth(),

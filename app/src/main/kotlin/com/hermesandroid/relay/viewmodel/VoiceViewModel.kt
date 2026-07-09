@@ -281,6 +281,9 @@ data class VoiceStats(
     val interactionMode: String = "tap",
     /** Current voice engine ("hermes_voice_output" / "realtime_agent"). */
     val voiceEngineMode: String = VoiceEngineMode.HermesVoiceOutput.storageValue,
+    /** Per-profile Realtime Agent selections; blank means relay default. */
+    val realtimeModel: String = "",
+    val realtimeVoice: String = "",
     /** Last player state tag ("idle" / "playing" / "paused"). */
     val playerState: String = "idle",
     /** Current TTS queue depth (pending + in-synth + in-play). */
@@ -478,6 +481,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
     private var realtimeTraceDetails: Boolean = false
     private var realtimePersistentSession: Boolean = true
+    private var realtimeModel: String = ""
+    private var realtimeVoice: String = ""
     private var realtimeAgentControl: RealtimeAgentSessionControl? = null
     private var realtimeConfirmationControl: RealtimeAgentSessionControl? = null
 
@@ -1171,15 +1176,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun applyVoiceSettingsSnapshot(settings: com.hermesandroid.relay.data.VoiceSettings) {
         val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
+        val realtimeSelectionChanged =
+            realtimeModel != settings.realtimeModel || realtimeVoice != settings.realtimeVoice
         if (
             voiceEngineMode != nextEngineMode ||
-            realtimeTraceDetails != settings.realtimeTraceDetails
+            realtimeTraceDetails != settings.realtimeTraceDetails ||
+            realtimeSelectionChanged
         ) {
             Log.i(
                 TAG,
                 "Voice prefs updated engine=${nextEngineMode.storageValue} " +
                     "interaction=${settings.interactionMode} " +
-                    "realtimeTraceDetails=${settings.realtimeTraceDetails}",
+                    "realtimeTraceDetails=${settings.realtimeTraceDetails} " +
+                    "realtimeModel=${settings.realtimeModel.ifBlank { "relay-default" }} " +
+                    "realtimeVoice=${settings.realtimeVoice.ifBlank { "relay-default" }}",
             )
         }
         // Switching engine away from Realtime Agent (or disabling the
@@ -1187,13 +1197,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (
             (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
                 nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
-            (realtimePersistentSession && !settings.realtimePersistentSession)
+            (realtimePersistentSession && !settings.realtimePersistentSession) ||
+            realtimeSelectionChanged
         ) {
             closeRealtimeSession()
         }
         voiceEngineMode = nextEngineMode
         realtimeTraceDetails = settings.realtimeTraceDetails
         realtimePersistentSession = settings.realtimePersistentSession
+        realtimeModel = settings.realtimeModel
+        realtimeVoice = settings.realtimeVoice
         val mode = when (settings.interactionMode.lowercase()) {
             "hold" -> InteractionMode.HoldToTalk
             "continuous" -> InteractionMode.Continuous
@@ -1209,6 +1222,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 vadThresholdMs = settings.silenceThresholdMs,
                 interactionMode = settings.interactionMode,
                 voiceEngineMode = settings.engineMode,
+                realtimeModel = settings.realtimeModel,
+                realtimeVoice = settings.realtimeVoice,
             )
         }
     }
@@ -2048,6 +2063,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 inputPcm = ByteArray(0),
                 inputSampleRate = 16_000,
                 chatSessionId = chatViewModel?.currentSessionId?.value,
+                model = realtimeModel,
+                voice = realtimeVoice,
             ) { event, _ ->
                 if (!event.isAudioDelta) return@runRealtimeAgent
                 val encoded = event.audioBase64 ?: return@runRealtimeAgent
@@ -2637,6 +2654,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 inputSampleRate = inputSampleRate,
                 chatSessionId = chatVm.currentSessionId.value,
                 conversationContext = conversationContext,
+                model = realtimeModel,
+                voice = realtimeVoice,
                 onHandoff = ::recordVoiceHandoff,
                 turnInputs = if (persistentOpen) realtimeTurnChannel else null,
                 onTurnComplete = { summary -> onRealtimeTurnComplete(summary) },
