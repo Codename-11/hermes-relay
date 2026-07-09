@@ -411,6 +411,79 @@ class RealtimePromotionTests(AioHTTPTestCase):
             broker.release.set()
             await ws.close()
 
+    async def test_exact_delivery_forwards_one_started_event_per_response(self) -> None:
+        broker = GatedHermesToolBroker()
+        ws, provider, _ = await self._open(broker=broker)
+        try:
+            await self._emit_tool_call(provider)
+            await self._read_until(ws, "hermes.run.promoted")
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            for _ in range(50):
+                if provider.connection.exact_response_texts:
+                    break
+                await asyncio.sleep(0.02)
+
+            for _ in range(2):
+                await provider.connection.emit(
+                    ProviderEvent(
+                        ProviderEventKind.RESPONSE_STARTED,
+                        response_id="delivery-1",
+                    )
+                )
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.OUTPUT_TEXT_DELTA,
+                    response_id="delivery-1",
+                    payload={"delta": "Background answer ready."},
+                )
+            )
+            await provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_DONE, response_id="delivery-1")
+            )
+
+            events = await self._read_until(ws, "voice.response.done", limit=60)
+            starts = [
+                event
+                for event in events
+                if event.get("type") == "voice.response.started"
+                and event.get("response_id") == "delivery-1"
+            ]
+            self.assertEqual(1, len(starts), events)
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_provider_ack_suppresses_duplicate_promotion_handoff(self) -> None:
+        broker = GatedHermesToolBroker()
+        ws, provider, _ = await self._open(broker=broker)
+        try:
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.AUDIO_DELTA,
+                    response_id="resp-1",
+                    payload={"audio": b"\0\0" * 40},
+                )
+            )
+            await self._read_until(ws, "voice.output_audio.delta")
+
+            await self._emit_tool_call(provider)
+            await self._read_until(ws, "voice.playback_drain.requested")
+            await ws.send_json({"type": "playback.drained"})
+            events = await self._read_until(ws, "hermes.run.promoted")
+            promoted = next(event for event in events if event["type"] == "hermes.run.promoted")
+
+            self.assertFalse(promoted["spoken_handoff"])
+            await asyncio.sleep(0.05)
+            self.assertEqual(0, provider.connection.request_response_count)
+            self.assertEqual(
+                "running_in_background",
+                provider.connection.tool_results[0][1].get("status"),
+            )
+        finally:
+            broker.release.set()
+            await ws.close()
+
     async def test_injection_failure_falls_back_to_relay_tts(self) -> None:
         """Provider socket dies between run completion and delivery: the
         answer must still land as spoken relay-TTS audio, not vanish until

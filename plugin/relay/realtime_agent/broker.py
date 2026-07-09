@@ -1575,6 +1575,8 @@ class RealtimeAgentHandler:
                     continue
                 if session.native_forced_summary_active:
                     if self._should_forward_provider_response_event(session, event):
+                        if not self._mark_provider_response_started(session, event):
+                            continue
                         session.native_forced_summary_buffer.append(
                             {
                                 "type": SERVER_EVT_RESPONSE_STARTED,
@@ -2164,6 +2166,7 @@ class RealtimeAgentHandler:
         event: ProviderEvent,
     ) -> None:
         call = _tool_call_from_provider_event(event)
+        provider_acknowledged = False
         if call.is_hermes_tool() and event.response_id:
             session.response_ids_awaiting_tool_followup.add(event.response_id)
         if call.name == "hermes_run_task":
@@ -2181,7 +2184,10 @@ class RealtimeAgentHandler:
                 )
             session.native_hermes_required_transcript = None
             session.native_hermes_required_reason = None
-            if self._provider_response_had_audio(session, event.response_id):
+            provider_acknowledged = self._provider_response_had_audio(
+                session, event.response_id
+            )
+            if provider_acknowledged:
                 await self._request_playback_drain(
                     ws,
                     session,
@@ -2205,6 +2211,7 @@ class RealtimeAgentHandler:
                 origin="provider_tool_call",
                 call_id=call.call_id,
                 transcript=str(call.arguments.get("text") or ""),
+                provider_acknowledged=provider_acknowledged,
             )
             return
         delivered = await self._send_provider_tool_result(
@@ -2874,6 +2881,7 @@ class RealtimeAgentHandler:
         origin: str,
         call_id: str | None,
         transcript: str,
+        provider_acknowledged: bool = False,
     ) -> None:
         """Hand a promoted run off to the background and notify the client.
 
@@ -2882,6 +2890,11 @@ class RealtimeAgentHandler:
         speaks the result when the floor is clear.
         """
         session.promoted_transcript = transcript or session.promoted_transcript
+        speak = (
+            session.spoken_handoff
+            and session.result_delivery != "visual_only"
+            and not provider_acknowledged
+        )
         await self._send(
             ws,
             session,
@@ -2893,14 +2906,14 @@ class RealtimeAgentHandler:
                 "run_id": session.hermes_run_id,
                 "tier": session.hermes_run_tier if session.hermes_run_tier in ("promoted", "durable") else "promoted",
                 "promote_after_ms": session.promote_after_ms,
-                "spoken_handoff": session.spoken_handoff,
+                "spoken_handoff": speak,
+                "provider_acknowledged": provider_acknowledged,
                 "result_delivery": session.result_delivery,
                 "call_id": call_id,
                 "queued_count": len(session.background_queue),
                 "origin": origin,
             },
         )
-        speak = session.spoken_handoff and session.result_delivery != "visual_only"
         if origin == "provider_tool_call" and call_id:
             # Close the pending provider function call so the socket is not left
             # awaiting tool output for the whole background run.

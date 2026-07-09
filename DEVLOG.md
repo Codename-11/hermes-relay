@@ -1,5 +1,59 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Background promotion reuses the provider acknowledgement
+
+The exact-delivery signoff trace reproduced the reported duplicate status speech,
+but disproved the suspected voice mismatch. Both lines came from the realtime
+provider: the tool-calling response first said it would check Hermes, then the
+promotion follow-up said Hermes was running in the background. The raw
+`voice.response.delta` events contained both utterances, so the recorder was not
+missing speech and relay TTS was not involved.
+
+The broker already tracks whether a provider response emitted audio so it can
+drain playback before starting Hermes. Promotion now carries that same fact
+forward: when the tool-calling response already spoke, the interim tool result
+still closes the call as backgrounded but no second response is requested. A
+silent tool call still receives the configured spoken handoff.
+
+The same trace exposed two `voice.response.started` events for the single forced
+delivery response. xAI emits both `response.created` and
+`response.output_item.added`; ordinary turns deduplicated those normalized start
+events, but the forced-delivery buffer bypassed the guard. It now applies the
+same response-id dedupe before buffering.
+
+Verification: regressions cover an audio acknowledgement followed by promotion
+and duplicate provider start events during exact delivery; the complete realtime
+test battery is 153/153 green.
+
+## 2026-07-09 — xAI exact delivery no longer depends on model compliance
+
+The delivery health report showed only one of six recent background answers was
+spoken by the realtime provider; five fell back after the model acknowledged or
+deferred instead of reading the already-completed Hermes answer. Both the latest
+alias and the pinned think-fast model exhibited the same behavior, so further
+prompt tuning or model selection was not a reliable fix.
+
+xAI's Voice Agent API now exposes `force_message`, an assistant conversation item
+that synthesizes supplied text without model inference while emitting the normal
+response, transcript, audio, and completion lifecycle. A live protocol probe
+confirmed the event produces `response.output_audio_transcript.delta`, streamed
+audio, a completed assistant history item, and `response.done` with the supplied
+text unchanged.
+
+`RealtimeAgentConnection.request_response()` now accepts an optional exact-text
+hint. For non-structured `speak_verbatim` results, the broker supplies the same
+sanitized authoritative answer used by its fallback; xAI turns that hint into an
+interruptible `force_message`. OpenAI, structured answers, and natural-summary
+modes retain the instruction-driven response path. The existing validator,
+delivery alarm, and relay-TTS fallback remain in place.
+
+Verification: the live xAI protocol probe completed with the expected full event
+lifecycle, then the on-device background path spoke the authoritative answer in
+the selected xAI voice with no fallback. A follow-up asking to repeat the first
+three sentences answered directly from provider history without a second Hermes
+route or run. Focused provider/promotion/fallback tests and the complete realtime
+test battery are green.
+
 ## 2026-07-09 — Realtime model and voice picks now own new sessions
 
 The Realtime Agent model picker displayed a new selection but session creation

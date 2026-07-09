@@ -79,7 +79,7 @@ cached $0.30. <https://developers.openai.com/api/docs/pricing>
 | Reconnect/resume | No token; rebuild conversation items on reconnect | Session ends → reseed from the durable Hermes session (current handling) |
 | Turn detection | server_vad / semantic_vad / none | none (relay-driven) |
 | Duplex/barge-in | `speech_started` + `item.truncate` when VAD on | Provider events; relay owns the floor either way |
-| Per-response instructions | Yes, plus out-of-band `conversation:"none"` + `input` | Yes (`instructions`); no out-of-band |
+| Per-response instructions | Yes, plus out-of-band `conversation:"none"` + `input` | Yes (`instructions`); xAI-only `force_message` provides exact TTS without model inference |
 | Async function calls | Yes — session continues while a call is pending | Unverified |
 | Pricing | Per-token (see above) | Flat $0.05/min + tool/text tokens separate |
 | Reasoning control | 2.1 configurable effort; mini reasons before speaking | No exposed knob |
@@ -87,9 +87,10 @@ cached $0.30. <https://developers.openai.com/api/docs/pricing>
 ## Capabilities that could obsolete current workarounds
 
 1. **Forced-summary validation fragility** — grok-voice spoke deferral filler
-   in ~4/4 live rounds. A reasoning realtime model plus an out-of-band
-   response carrying the Hermes answer as explicit `input` context should
-   comply far better, demoting the blocklist/validator to a safety net.
+   in most live rounds. xAI Exact mode now uses its provider-native
+   `force_message` event and bypasses model compliance entirely; OpenAI still
+   needs the out-of-band response experiment carrying the Hermes answer as
+   explicit `input` context. The blocklist/validator remains a safety net.
 2. **Delivery-note hack** — async function calling makes it possible to leave
    a promoted `hermes_run_task` pending and complete it with a real late
    `function_call_output`, so the provider's own history reads "done" and

@@ -20,7 +20,7 @@ Compaction-safe snapshot of where we are; details in the linked sections below.
   2. Tap/static click between sentences (`RealtimePcmPlayer` boundary) — still needs an on-device audio repro before fixing.
 - **Screen-wake-lock — SHIPPED (2026-07-07).** See "Voice — on-device findings" below.
 - **Owner / Mizu — GitHub triage.** Close #64 as superseded, plus the queued open-issue comment/close/label batch (see "Open-issue resolution batch" below).
-- **Voice exact-mode signoff — IN PROGRESS (2026-07-09 e2e).** Both `grok-voice-latest` and the pinned `grok-voice-think-fast-1.0` are live-tested; both can defer instead of reading an injected completed answer, so the validator + relay-TTS fallback is catching a real, model-agnostic provider behavior. Fallback context seeding is live-confirmed. Remaining signoff: verify a pure-recall follow-up does not re-run Hermes after `92f9683`, then spike out-of-band exact delivery. Full detail + the background-tasks-as-chat UX asks + duplicate-status/logging gaps are below.
+- **Voice exact-mode signoff — PASSED (2026-07-09 e2e).** Both `grok-voice-latest` and the pinned `grok-voice-think-fast-1.0` deferred on model-generated exact delivery, so xAI exact mode now bypasses inference through provider-native `force_message`. The full on-device background path spoke the authoritative answer through xAI with no fallback, and a pure-recall follow-up repeated it from history without a second Hermes route/run. OpenAI's separate out-of-band delivery spike remains on its next-RC roadmap. Full detail + the background-tasks-as-chat UX asks + remaining audio/UI gaps are below.
 
 ---
 
@@ -31,7 +31,7 @@ Live on-device e2e (relay `2968a17`, app `1.4.0-sideload` build 22, provider
 against live data during this test.
 
 ### Findings
-- **Provider-native exact delivery is inconsistent and deferral is model-agnostic.**
+- **Model-generated exact delivery is inconsistent and deferral is model-agnostic; xAI now has a deterministic path.**
   A background turn ("what do you
   think about our notes so far?") delivered `forced_summary_streaming`
   (provider-voiced, early-commit) — grok read the answer in its own voice and
@@ -40,24 +40,18 @@ against live data during this test.
   A later forced-summary round on `grok-voice-think-fast-1.0` also spoke a genuine
   deferral ("one moment ... I'll let you know") rather than the completed answer.
   Validator fallback is therefore correct; model choice alone does not solve the
-  delivery-voice problem.
+  delivery-voice problem. xAI's provider-native `force_message` now handles
+  non-structured Exact deliveries without model inference. Its raw live event
+  stream and the full Android background path are verified; a recall follow-up
+  also answered from that provider history without re-running Hermes.
 - **think-fast selection bug fixed + live-verified.** The app's session POST omitted
   model/voice, so the settings dropdown was only a transient server-config editor
   until **Save realtime agent** was tapped. Model/voice now persist per
   connection/profile and ride every new session. On-device verification selected
   think-fast without Save, saw the relay request it and the provider's final
   resolution report it, then force-stop/relaunch restored the selection.
-- **Duplicate "background task is running" + voice mismatch (BUG).** User heard the
-  "working on it" status TWICE, the second sounding like relay TTS. The provider's
-  own acknowledgement and the relay's restrained-status-while-Hermes-runs speak can
-  double up, and the status mouth may not match the delivery mouth. Reproduce,
-  de-dupe, and keep the run's status utterances in ONE voice.
-- **Logging gap — status/acknowledgement speaks carry no text.** The flight recorder
-  captured the user turns and the delivery outcome, but the in-between "working on
-  it" utterances appear only as untitled `hermes.run.progress` pings, so "what did
-  the user actually hear" can't be reconstructed. Log the spoken text of provider
-  acknowledgements + restrained-status speaks (they drive real audio) so forensic
-  replay of a delivery is possible. Prereq for diagnosing the duplicate above.
+- **Duplicate "background task is running" — FIXED IN CODE (2026-07-09), deploy/live recheck pending.** The signoff trace captured both lines and disproved the suspected TTS mismatch: the provider first said it would check Hermes, then the broker requested a second provider response after promotion. Promotion now suppresses that second handoff when the original tool-calling response already emitted audio; silent calls still get one handoff. The same pass deduplicates the two normalized response-start events xAI emits (`response.created` + `response.output_item.added`) before a forced delivery is flushed.
+- **Status-speech logging gap — CLOSED / premise disproved (2026-07-09).** The raw signoff log contains both provider utterances as `voice.response.delta` text, plus the progress events; relay TTS did not speak either line. The flight recorder can reconstruct what the user heard. The real defect was redundant provider response generation, fixed above.
 
 ### Background-tasks-as-first-class-chat vision (owner ask 2026-07-09)
 Theme: stop treating a background run as an ephemeral voice-only side effect —
@@ -186,18 +180,17 @@ green. Needs relay deploy + APK install + live verify.
   was deferral filler; the validator+fallback carried every delivery.
   `speak_verbatim` was first made a direct relay-TTS default, then reworked
   to provider-voiced exact delivery (below) to keep voice continuity.
-- **Provider-voiced exact delivery — needs live verification.**
-  `speak_verbatim` now delivers through the realtime provider with a
-  word-for-word reading instruction (`_forced_hermes_exact_prompt`); relay
-  TTS speaks only as the validator fallback. Key live question: does
-  grok-voice comply with the stricter read-as-written instruction where it
-  failed the summarize instruction 4/4? Success bar: repeated live
-  background deliveries spoken in the provider voice with no deferral
-  filler and no fallback. If it still defers every time, delivery degrades
-  to fallback TTS with one failed provider response of added latency per
-  result (i.e., the previous default behavior). Post-audit hardening is in:
-  provider-death TTS fallback on all three delivery paths, confirm alarm on
-  all three, barge-in preemption-as-text, blocklist answer-exemption,
+- **Provider-voiced exact delivery — xAI direct path live-verified.**
+  Model-generated word-for-word instructions were not reliable. Non-structured
+  `speak_verbatim` now supplies the authoritative answer to xAI's `force_message`,
+  which synthesizes it in the selected realtime voice without inference and
+  records a normal assistant turn. A raw live probe confirmed the full transcript,
+  audio, history, and completion lifecycle. Structured results and summary modes
+  remain model-generated; relay TTS remains the validator fallback. The on-device
+  background path produced a clean `forced_summary_streaming` event and recall
+  reused the resulting provider history without another Hermes run. Post-audit hardening remains:
+  provider-death TTS fallback on all three delivery paths, confirm alarm on all
+  three, barge-in preemption-as-text, blocklist answer-exemption, and
   structured-answer prompt routing.
 - **Audit leftovers (deliberate, small).** (1) DONE-chip respeak always
   renders via relay TTS — intentional determinism, but it voice-mismatches
