@@ -26,7 +26,7 @@ Compaction-safe snapshot of where we are; details in the linked sections below.
 
 ## Voice background-tasks — live findings + UX vision (2026-07-09 e2e realtime test)
 
-Live on-device e2e (relay `2968a17`, app `1.4.0-sideload` build 22, provider
+Live on-device e2e (relay through `8ebb21b`, app `1.4.0-sideload` build 22, provider
 `xai_realtime`). The delivery-report tooling from `5ff78da` was confirmed working
 against live data during this test.
 
@@ -50,7 +50,7 @@ against live data during this test.
   connection/profile and ride every new session. On-device verification selected
   think-fast without Save, saw the relay request it and the provider's final
   resolution report it, then force-stop/relaunch restored the selection.
-- **Duplicate "background task is running" — FIXED IN CODE (2026-07-09), deploy/live recheck pending.** The signoff trace captured both lines and disproved the suspected TTS mismatch: the provider first said it would check Hermes, then the broker requested a second provider response after promotion. Promotion now suppresses that second handoff when the original tool-calling response already emitted audio; silent calls still get one handoff. The same pass deduplicates the two normalized response-start events xAI emits (`response.created` + `response.output_item.added`) before a forced delivery is flushed.
+- **Duplicate "background task is running" — FIXED + LIVE-VERIFIED (2026-07-09).** The signoff trace captured both lines and disproved the suspected TTS mismatch: the provider first said it would check Hermes, then the broker requested a second provider response after promotion. Promotion now suppresses that second handoff when the original tool-calling response already emitted audio; silent calls still get one handoff. A deployed on-device round recorded `provider_acknowledged: true` and `spoken_handoff: false`, with only the original acknowledgement spoken. The same round confirmed the forced delivery emits one client response-start event after deduplicating xAI's `response.created` + `response.output_item.added` pair.
 - **Status-speech logging gap — CLOSED / premise disproved (2026-07-09).** The raw signoff log contains both provider utterances as `voice.response.delta` text, plus the progress events; relay TTS did not speak either line. The flight recorder can reconstruct what the user heard. The real defect was redundant provider response generation, fixed above.
 
 ### Background-tasks-as-first-class-chat vision (owner ask 2026-07-09)

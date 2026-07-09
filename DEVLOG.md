@@ -23,7 +23,10 @@ same response-id dedupe before buffering.
 
 Verification: regressions cover an audio acknowledgement followed by promotion
 and duplicate provider start events during exact delivery; the complete realtime
-test battery is 153/153 green.
+test battery is 153/153 green. A deployed on-device round then recorded
+`provider_acknowledged: true` with `spoken_handoff: false`: the initial provider
+acknowledgement was the only pre-run status line. Its completed exact delivery
+also emitted one client response-start event.
 
 ## 2026-07-09 — xAI exact delivery no longer depends on model compliance
 
