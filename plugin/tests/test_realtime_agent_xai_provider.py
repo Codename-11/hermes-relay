@@ -219,6 +219,25 @@ class XAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
             {"type": "response.create", "response": {"instructions": "Speak this result."}},
         )
 
+        await connection.request_response(
+            instructions="Read the exact answer.",
+            exact_text="Background answer ready.",
+        )
+        self.assertEqual(
+            fake_socket.sent[-1],
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "force_message",
+                    "role": "assistant",
+                    "interruptible": True,
+                    "content": [
+                        {"type": "output_text", "text": "Background answer ready."}
+                    ],
+                },
+            },
+        )
+
         await connection.request_response()
         self.assertEqual(fake_socket.sent[-1], {"type": "response.create"})
 

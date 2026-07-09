@@ -3452,10 +3452,17 @@ class RealtimeAgentHandler:
             with contextlib.suppress(Exception):
                 await connection.cancel_response()
         try:
+            exact_text = None
+            if (
+                session.result_delivery == "speak_verbatim"
+                and not _answer_is_structured(result)
+            ):
+                exact_text = _forced_summary_fallback_text(result)
             await connection.request_response(
                 instructions=_result_delivery_prompt(
                     session.result_delivery, transcript, result
-                )
+                ),
+                exact_text=exact_text,
             )
         except Exception as exc:  # noqa: BLE001
             # The background_completed event + result are already recorded in the

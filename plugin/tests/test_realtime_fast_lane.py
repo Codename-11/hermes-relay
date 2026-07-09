@@ -305,7 +305,7 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
         self.session.native_forced_summary_active = False
 
         class NoopConnection:
-            async def request_response(self, *, instructions=None):
+            async def request_response(self, *, instructions=None, exact_text=None):
                 self.instructions = instructions
 
             async def append_context_item(self, *, role, text):

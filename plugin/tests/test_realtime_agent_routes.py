@@ -355,7 +355,12 @@ class FakeNativeConnection:
     async def append_context_item(self, *, role: str, text: str) -> None:
         self.context_items.append((role, text))
 
-    async def request_response(self, *, instructions: str | None = None) -> None:
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
         if self.fail_request_response:
             raise ConnectionError("Cannot write to closing transport")
         self.request_response_count += 1

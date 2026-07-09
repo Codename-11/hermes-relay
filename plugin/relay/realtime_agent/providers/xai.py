@@ -216,7 +216,27 @@ class XAIRealtimeAgentConnection:
             }
         )
 
-    async def request_response(self, *, instructions: str | None = None) -> None:
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
+        if exact_text:
+            # xAI's force_message bypasses model inference while preserving the
+            # normal assistant response/audio lifecycle and conversation item.
+            await self.socket.send_json(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "force_message",
+                        "role": "assistant",
+                        "interruptible": True,
+                        "content": [{"type": "output_text", "text": exact_text}],
+                    },
+                }
+            )
+            return
         payload: dict[str, Any] = {"type": "response.create"}
         if instructions:
             # Per-response instructions override the session-level system

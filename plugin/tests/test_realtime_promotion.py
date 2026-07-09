@@ -41,6 +41,7 @@ class FakeNativeConnection:
         self.text_inputs: list[str] = []
         self.tool_results: list[tuple[str, dict[str, Any]]] = []
         self.context_items: list[tuple[str, str]] = []
+        self.exact_response_texts: list[str] = []
         self.request_response_count = 0
         self.cancelled = False
         self.closed = False
@@ -71,7 +72,12 @@ class FakeNativeConnection:
     async def append_context_item(self, *, role: str, text: str) -> None:
         self.context_items.append((role, text))
 
-    async def request_response(self, *, instructions: str | None = None) -> None:
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
         if (
             self.fail_summary_requests
             and instructions
@@ -79,6 +85,8 @@ class FakeNativeConnection:
         ):
             raise RuntimeError("provider socket dead")
         self.request_response_count += 1
+        if exact_text:
+            self.exact_response_texts.append(exact_text)
         if instructions:
             # Per-response instructions replace the old fake-user-message
             # injection (send_text) as the summary-delivery mechanism; keep
@@ -372,9 +380,7 @@ class RealtimePromotionTests(AioHTTPTestCase):
             await ws.close()
 
     async def test_verbatim_delivery_injects_exact_provider_reading(self) -> None:
-        """speak_verbatim rides the provider injection path (voice continuity):
-        the result is delivered as an exact-reading response request carrying
-        the authoritative answer, not a direct relay-TTS render."""
+        """speak_verbatim supplies the provider an exact text delivery hint."""
         broker = GatedHermesToolBroker()
         ws, provider, body = await self._open(broker=broker)
         self._server().realtime_agent.sessions[body["session_id"]].result_delivery = (
@@ -397,6 +403,10 @@ class RealtimePromotionTests(AioHTTPTestCase):
                 await asyncio.sleep(0.02)
             self.assertEqual(len(exact), 1)
             self.assertIn("Background answer ready.", exact[0])
+            self.assertEqual(
+                provider.connection.exact_response_texts,
+                ["Background answer ready."],
+            )
         finally:
             broker.release.set()
             await ws.close()

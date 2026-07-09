@@ -92,7 +92,18 @@ class RealtimeAgentConnection(Protocol):
         the provider can answer follow-ups about it."""
         ...
 
-    async def request_response(self, *, instructions: str | None = None) -> None: ...
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
+        """Request provider speech, optionally using native exact-text synthesis.
+
+        Providers without an exact-text primitive may ignore ``exact_text`` and
+        follow ``instructions`` through normal model inference.
+        """
+        ...
 
     async def close(self) -> None: ...
 
