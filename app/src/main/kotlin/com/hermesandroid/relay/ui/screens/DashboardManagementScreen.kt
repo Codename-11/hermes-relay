@@ -435,7 +435,7 @@ fun DashboardManagementScreen(
                 targetSection = targetSection,
                 preamble = preamble,
                 context = context,
-            ) { status, session, gatewayTicketAvailable ->
+            ) { status: DashboardStatus?, session: DashboardAuthSession?, gatewayTicketAvailable: Boolean ->
                 if (preamble == null) {
                     connectionViewModel.recordDashboardStatus(
                         status = status,

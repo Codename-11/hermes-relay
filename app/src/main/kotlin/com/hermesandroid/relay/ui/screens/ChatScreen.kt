@@ -2140,11 +2140,12 @@ fun ChatScreen(
                                     // setClipEntry call has to live inside a coroutine.
                                     // We piggyback on the same scope.launch that posts
                                     // the snackbar — they are sequential anyway.
+                                    val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
                                     scope.launch {
                                         clipboard.setClipEntry(
                                             ClipEntry(
                                                 ClipData.newPlainText(
-                                                    stringResource(R.string.chat_hermes_message),
+                                                    hermesMessageLabel,
                                                     text
                                                 )
                                             )
@@ -2541,6 +2542,7 @@ fun ChatScreen(
             val serverDefaultLabel = stringResource(R.string.chat_server_default_sessions)
             val notOnPlanLabel = stringResource(R.string.chat_not_on_plan)
             val needsSetupLabel = stringResource(R.string.chat_needs_setup)
+            val modelDefaultLabel = stringResource(R.string.chat_model_label)
             val modelPickerOptions = remember(
                 modelProviders,
                 sseModelOptions,
@@ -2558,7 +2560,7 @@ fun ChatScreen(
                             ChatInputPickerOption(
                                 label = serverDefaultLabel,
                                 value = null,
-                                secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it) },
+                                secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it, modelDefaultLabel) },
                                 selected = selectedModelOverride == null,
                             ),
                         )
@@ -2606,17 +2608,25 @@ fun ChatScreen(
             }
             val modelControl = modelPickerOptions.takeIf { it.isNotEmpty() }?.let {
                 ChatInputPickerControl(
-                    value = compactModelChipLabel(currentModelForInput),
+                    value = compactModelChipLabel(currentModelForInput, modelDefaultLabel),
                     contentDescription = stringResource(R.string.cd_select_model),
                     options = it,
                     enabled = chatReady && !isStreaming && it.size > 1,
                 )
             }
             val normalizedEffort = normalizeReasoningEffortForInput(selectedReasoningEffort)
+            val effortLabels = mapOf(
+                "none" to stringResource(R.string.chat_reasoning_none),
+                "minimal" to stringResource(R.string.chat_reasoning_minimal),
+                "low" to stringResource(R.string.chat_reasoning_low),
+                "medium" to stringResource(R.string.chat_reasoning_medium),
+                "high" to stringResource(R.string.chat_reasoning_high),
+                "xhigh" to stringResource(R.string.chat_reasoning_high),
+            )
             val effortPickerOptions = remember(normalizedEffort) {
                 CHAT_INPUT_REASONING_EFFORTS.map { effort ->
                     ChatInputPickerOption(
-                        label = reasoningEffortChipLabel(effort),
+                        label = reasoningEffortChipLabel(effort, effortLabels),
                         value = effort,
                         selected = effort == normalizedEffort,
                     )
@@ -2633,7 +2643,7 @@ fun ChatScreen(
             // disabled-with-reason version there.
             val effortControl = if (chatGatewayAvailability != GatewayAvailability.Unreachable) {
                 ChatInputPickerControl(
-                    value = reasoningEffortChipLabel(normalizedEffort),
+                    value = reasoningEffortChipLabel(normalizedEffort, effortLabels),
                     contentDescription = stringResource(R.string.chat_select_reasoning_effort),
                     options = effortPickerOptions,
                     enabled = isGatewayTransport && chatReady && !isStreaming,
@@ -3446,10 +3456,9 @@ private fun createCameraCaptureUri(context: android.content.Context): Uri {
 
 private val CHAT_INPUT_REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
 
-@Composable
-private fun compactModelChipLabel(model: String?): String {
+private fun compactModelChipLabel(model: String?, defaultLabel: String): String {
     val raw = model?.trim().orEmpty()
-    if (raw.isBlank()) return stringResource(R.string.chat_model_label)
+    if (raw.isBlank()) return defaultLabel
     val label = raw.substringAfterLast('/').ifBlank { raw }
     return if (label.length <= 18) label else label.take(15).trimEnd() + "..."
 }
@@ -3459,16 +3468,8 @@ private fun normalizeReasoningEffortForInput(value: String?): String {
     return normalized.takeIf { it in CHAT_INPUT_REASONING_EFFORTS } ?: "medium"
 }
 
-@Composable
-private fun reasoningEffortChipLabel(value: String): String = when (value) {
-    "none" -> stringResource(R.string.chat_reasoning_none)
-    "minimal" -> stringResource(R.string.chat_reasoning_minimal)
-    "low" -> stringResource(R.string.chat_reasoning_low)
-    "medium" -> stringResource(R.string.chat_reasoning_medium)
-    "high" -> stringResource(R.string.chat_reasoning_high)
-    "xhigh" -> stringResource(R.string.chat_reasoning_high)
-    else -> stringResource(R.string.chat_reasoning_medium)
-}
+private fun reasoningEffortChipLabel(value: String, labels: Map<String, String>): String =
+    labels[value] ?: labels["medium"] ?: value
 
 private fun isSameDay(ts1: Long, ts2: Long): Boolean {
     val d1 = java.time.Instant.ofEpochMilli(ts1).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
@@ -3476,7 +3477,6 @@ private fun isSameDay(ts1: Long, ts2: Long): Boolean {
     return d1 == d2
 }
 
-@Composable
 @Composable
 private fun DateSeparator(timestamp: Long) {
     val today = java.time.LocalDate.now()

@@ -122,13 +122,15 @@ private fun ContextMeterBarContent(
     }
     val label = "$percent%$tokenSuffix"
 
+    val contextUsedDesc = stringResource(R.string.cd_context_used, percent)
+
     Row(
         modifier = modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .semantics {
-                contentDescription = stringResource(R.string.cd_context_used, percent) +
+                contentDescription = contextUsedDesc +
                     if (tokenSuffix.isNotEmpty()) ", ${fmtTokens(usedTokens!!)} of ${fmtTokens(maxTokens!!)} tokens" else ""
             },
         verticalAlignment = Alignment.CenterVertically,

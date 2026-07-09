@@ -1713,6 +1713,8 @@ fun RelayApp() {
                     val openAgentSheetArg = backStackEntry.arguments
                         ?.getBoolean(Screen.Chat.ARG_OPEN_AGENT_SHEET, false) == true
 
+                    val screenChatLabel = stringResource(R.string.screen_chat_label)
+
                     ChatScreen(
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
@@ -1753,7 +1755,7 @@ fun RelayApp() {
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Chat.route(openAgentSheet = false),
-                                label = stringResource(R.string.screen_chat_label),
+                                label = screenChatLabel,
                             )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
@@ -1795,6 +1797,7 @@ fun RelayApp() {
                             onConnect = exitDemoToConnect,
                         )
                     } else {
+                    val screenManageLabel = stringResource(R.string.screen_manage_label)
                     DashboardManagementScreen(
                         connectionViewModel = connectionViewModel,
                         onNavigateToConnections = {
@@ -1810,7 +1813,7 @@ fun RelayApp() {
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Manage.route,
-                                label = stringResource(R.string.screen_manage_label),
+                                label = screenManageLabel,
                             )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {

@@ -686,6 +686,8 @@ private fun PdfBody(attachment: Attachment) {
     var pdfError by remember(attachment.cachedUri, attachment.content) { mutableStateOf<String?>(null) }
     var widthPx by remember { mutableStateOf(0) }
 
+    val pdfFailedText = stringResource(R.string.attach_viewer_pdf_failed)
+
     LaunchedEffect(attachment.cachedUri, attachment.content) {
         val opened = withContext(Dispatchers.IO) {
             runCatching {
@@ -694,7 +696,7 @@ private fun PdfBody(attachment: Attachment) {
                 PdfDoc(PdfRenderer(pfd), pfd, Mutex())
             }.getOrNull()
         }
-        if (opened == null) pdfError = stringResource(R.string.attach_viewer_pdf_failed) else doc = opened
+        if (opened == null) pdfError = pdfFailedText else doc = opened
     }
     DisposableEffect(doc) { onDispose { doc?.close() } }
 

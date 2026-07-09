@@ -73,6 +73,7 @@ import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkin
 import com.hermesandroid.relay.ui.components.SphereSkinSource
 import com.hermesandroid.relay.ui.components.SphereState
+import com.hermesandroid.relay.ui.components.reactivityLabels
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.AvatarSource

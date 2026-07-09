@@ -62,7 +62,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BlurMode
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.HermesCardAction
