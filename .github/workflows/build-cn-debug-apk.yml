@@ -44,6 +44,22 @@ jobs:
         with:
           cache-read-only: false
 
+      - name: Debug - inspect 10 failing strings on runner
+        run: |
+          echo "=== Check for literal backslash-u in values/strings.xml ==="
+          grep -oc '\\u[0-9a-fA-F]\{4\}' app/src/main/res/values/strings.xml || true
+          echo "=== Hex dump of line 2578 (CI's update_banner_body_fmt) ==="
+          sed -n '2578p' app/src/main/res/values/strings.xml | xxd | head -10
+          echo "=== Lines 2575-2582 ==="
+          sed -n '2575,2582p' app/src/main/res/values/strings.xml
+          echo "=== Total line count ==="
+          wc -l app/src/main/res/values/strings.xml
+          echo "=== Check for non-ASCII chars in the 10 failing strings ==="
+          for key in agent_icon_description attachment_load_failed destructive_confirm_dont_ask destructive_confirm_warning inbound_attach_read_failed power_gate_explanation_unavailable qr_scanner_camera_error sphere_skin_adaptive_desc ttl_body update_banner_body_fmt; do
+            line=$(grep -n "name=\"$key\"" app/src/main/res/values/strings.xml | head -1)
+            echo "$key: $line"
+          done
+
       - name: Build debug APK (both flavors)
         run: |
           ./gradlew clean
