@@ -40,6 +40,7 @@ class FakeNativeConnection:
     def __init__(self) -> None:
         self.text_inputs: list[str] = []
         self.tool_results: list[tuple[str, dict[str, Any]]] = []
+        self.context_items: list[tuple[str, str]] = []
         self.request_response_count = 0
         self.cancelled = False
         self.closed = False
@@ -66,6 +67,9 @@ class FakeNativeConnection:
 
     async def send_tool_result(self, call_id: str, output: dict[str, Any]) -> None:
         self.tool_results.append((call_id, output))
+
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        self.context_items.append((role, text))
 
     async def request_response(self, *, instructions: str | None = None) -> None:
         if (
@@ -830,6 +834,22 @@ class RealtimePromotionTests(AioHTTPTestCase):
                 session.native_pending_delivery_note,
             )
             self.assertIn("ALREADY COMPLETED", session.native_pending_delivery_note)
+            # Durable seed: the delivered answer is now in the provider's own
+            # conversation history as an assistant turn, so a follow-up
+            # ("what did that say?") is answerable from context without a
+            # re-run — unlike the one-shot pending note above, which only lands
+            # on the next Hermes-routed turn.
+            seeded = [
+                text
+                for role, text in provider.connection.context_items
+                if role == "assistant"
+            ]
+            self.assertTrue(
+                any("Background answer ready" in t for t in seeded),
+                f"expected a seeded assistant history item; got "
+                f"{provider.connection.context_items}",
+            )
+            self.assertIn("voice.realtime_agent.result_seeded", log_text)
         finally:
             broker.release.set()
             await ws.close()

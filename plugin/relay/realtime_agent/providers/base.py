@@ -85,6 +85,13 @@ class RealtimeAgentConnection(Protocol):
 
     async def send_tool_result(self, call_id: str, output: dict[str, Any]) -> None: ...
 
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        """Add a message to the provider's conversation history WITHOUT
+        triggering a response. Used to seed a delivered background result
+        (spoken by relay TTS, so absent from the provider's own history) so
+        the provider can answer follow-ups about it."""
+        ...
+
     async def request_response(self, *, instructions: str | None = None) -> None: ...
 
     async def close(self) -> None: ...

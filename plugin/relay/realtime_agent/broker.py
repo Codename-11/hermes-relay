@@ -2027,6 +2027,11 @@ class RealtimeAgentHandler:
             # running (observed live after a fallback: "the background task
             # is still going" while the answer had already been spoken).
             session.native_pending_delivery_note = _delivery_note(fallback_text)
+            # Durably seed the delivered answer into the provider's history so
+            # ANY follow-up has it — not just the next Hermes-routed turn the
+            # pending note above depends on. The provider is alive here (it just
+            # deferred), so the seed lands.
+            await self._seed_provider_with_delivered_result(session, result)
             fallback_response_id = f"forced-summary-fallback-{session.event_seq + 1}"
             await self._send(
                 ws,
@@ -3255,6 +3260,52 @@ class RealtimeAgentHandler:
         session.floor.clear_result()
         return False
 
+    async def _seed_provider_with_delivered_result(
+        self,
+        session: RealtimeAgentSession,
+        result: dict[str, Any] | None,
+    ) -> None:
+        """Seed a relay-TTS-delivered background result into the provider's
+        conversation history so follow-ups can reference it.
+
+        Only for the fallback paths: on a provider-VOICED delivery the
+        provider's own response is already a history item, but on a fallback
+        the provider spoke a deferral ("I'll let you know") and relay TTS spoke
+        the answer — so the provider's history never contains the result, and a
+        follow-up ("what did that say?") fails or re-runs. Recording the
+        delivered answer as an assistant turn fixes that durably — unlike the
+        one-shot ``native_pending_delivery_note``, which only lands on the next
+        Hermes-routed turn. Best-effort: a dead/failing provider socket on the
+        death path is expected and swallowed.
+        """
+        connection = session.native_connection
+        if connection is None or not result:
+            return
+        answer = _forced_summary_fallback_text(result)
+        if not answer:
+            return
+        try:
+            await connection.append_context_item(role="assistant", text=answer)
+        except Exception as exc:  # noqa: BLE001 - seeding is best-effort
+            self._log(
+                session,
+                "voice.realtime_agent.result_seed_failed",
+                {
+                    "type": "voice.realtime_agent.result_seed_failed",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                },
+            )
+            return
+        self._log(
+            session,
+            "voice.realtime_agent.result_seeded",
+            {
+                "type": "voice.realtime_agent.result_seeded",
+                "chars": len(answer),
+                "preview": _compact_status_text(answer),
+            },
+        )
+
     async def _speak_fallback_answer(
         self,
         ws: web.WebSocketResponse,
@@ -3290,6 +3341,10 @@ class RealtimeAgentHandler:
                 "chars": len(fallback_text),
             },
         )
+        # Best-effort seed even here: the provider may be alive (request-failed,
+        # not socket-dead), in which case a follow-up should still find the
+        # answer in history. A truly dead socket just no-ops.
+        await self._seed_provider_with_delivered_result(session, result)
         await self._send(
             ws,
             session,

@@ -1,5 +1,32 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Fallback deliveries seed the answer into provider history
+
+Live e2e surfaced a follow-up failure: after a background result fell back to relay
+TTS ("check Hermes for Minnesota" → the provider deferred → TTS spoke the answer),
+the user asked "we already ran the task, can't you see that?" and the provider had
+no record of it. Root cause: a provider-VOICED delivery becomes a conversation item
+in the provider's own history, but a FALLBACK leaves only the provider's deferral
+("I'll let you know") there — relay TTS spoke the answer, which the provider never
+saw. The existing `native_pending_delivery_note` is a one-shot correction attached
+to the NEXT Hermes-routed response's instructions; a follow-up that doesn't route
+through that branch (a meta-question like "what did you just do?") never applies it.
+
+New `RealtimeAgentConnection.append_context_item(role, text)` injects a silent
+`conversation.item.create` (assistant → content `text`, user/system → `input_text`;
+no `response.create`) into the provider session. On the fallback paths (validator
+fallback in `_finish_forced_summary_provider_response`, provider-death/request-failed
+in `_speak_fallback_answer`) the broker seeds the delivered answer as an assistant
+turn, so ANY subsequent follow-up finds it in history — durably, independent of
+routing. Kept the pending note as a belt-and-suspenders one-shot correction. Seeding
+is best-effort (a dead socket no-ops) and only on fallbacks — a provider-voiced
+success already has its own turn, so no double-record. Logs `result_seeded` /
+`result_seed_failed` with a preview.
+
+Verification: 104 realtime tests green; `test_filler_summary_triggers_fallback_delivery`
+extended to assert the delivered answer is seeded as an assistant history item;
+`append_context_item` added to all connection fakes.
+
 ## 2026-07-09 — Flight recorder records the provider's spoken delivery text
 
 Live e2e voice testing (relay `2968a17`, `grok-voice-latest` then

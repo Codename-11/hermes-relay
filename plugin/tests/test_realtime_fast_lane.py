@@ -308,6 +308,9 @@ class FastLaneTest(unittest.IsolatedAsyncioTestCase):
             async def request_response(self, *, instructions=None):
                 self.instructions = instructions
 
+            async def append_context_item(self, *, role, text):
+                pass
+
         connection = NoopConnection()
         await self.handler._start_next_queued_run(None, self.session, connection)  # type: ignore[arg-type]
 

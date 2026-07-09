@@ -323,6 +323,7 @@ class FakeNativeConnection:
         self.audio_chunks: list[tuple[bytes, int]] = []
         self.text_inputs: list[str] = []
         self.tool_results: list[tuple[str, dict[str, Any]]] = []
+        self.context_items: list[tuple[str, str]] = []
         self.request_response_count = 0
         self.clear_count = 0
         self.cancelled = False
@@ -350,6 +351,9 @@ class FakeNativeConnection:
         if self.fail_tool_result:
             raise ConnectionError("Cannot write to closing transport")
         self.tool_results.append((call_id, output))
+
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        self.context_items.append((role, text))
 
     async def request_response(self, *, instructions: str | None = None) -> None:
         if self.fail_request_response:

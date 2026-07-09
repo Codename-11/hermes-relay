@@ -209,6 +209,22 @@ class OpenAIRealtimeAgentConnection:
             }
         )
 
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        # Seed a history message without requesting a response. Assistant
+        # items replay model output ("text"); user/system items are input
+        # ("input_text"). No response.create -> silent, no re-speak.
+        content_type = "text" if role == "assistant" else "input_text"
+        await self.socket.send_json(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": role,
+                    "content": [{"type": content_type, "text": text}],
+                },
+            }
+        )
+
     async def request_response(self, *, instructions: str | None = None) -> None:
         payload: dict[str, Any] = {"type": "response.create"}
         if instructions:

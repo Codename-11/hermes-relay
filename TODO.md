@@ -73,13 +73,18 @@ chat/history rather than the voice chip; unify rather than build twice.
 - **Detail view (expand on tap).** Tapping a background-task chat entry expands to
   the full run detail like a normal chat message / tool timeline (reuse
   `SubagentLane`). Same intent as v2 items 3+4 — build once.
-- **Realtime agent retains background-result context in-session.** After a result
-  lands, the realtime session should reference it for follow-ups without a fresh
-  Hermes round-trip. Today provider-answered turns fold into the Hermes session via
-  `RealtimeTurnSyncBuilder` on the NEXT Hermes turn, but the ephemeral provider
-  session doesn't carry the result forward on its own — a follow-up like "expand on
-  that" may lack it. Decide: seed the delivered result back into the provider
-  session context at delivery time.
+- **Realtime agent retains background-result context in-session — FALLBACK PATH
+  DONE (2026-07-09), needs live verify.** On a FALLBACK delivery the broker now
+  seeds the delivered answer into the provider's history as an assistant turn
+  (`append_context_item` → silent `conversation.item.create`, no `response.create`),
+  so a follow-up ("what did that say?", "expand on that") finds it durably — fixing
+  the live "can't you see we ran the task?" failure. Provider-VOICED success already
+  had its own turn in history, so it's untouched (no double-record). **Remaining:**
+  (a) live on-device verify that a post-fallback follow-up is answered from context
+  without a re-run; (b) the detached/promoted delivery (`_deliver_pending_background_result`)
+  and the DONE-chip respeak weren't in scope — confirm whether they leave the same
+  gap; (c) decide if the one-shot `native_pending_delivery_note` is now redundant
+  with durable seeding or still earns its keep as an explicit correction.
 - **Proper concurrent multi-task.** True N-way parallel background runs — see v2
   item 7 (deferred: needs session-per-run topology, run-id-targeted cancel,
   multi-run chip/list). Owner is now explicitly asking for it; re-rank against the
