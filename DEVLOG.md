@@ -1,5 +1,33 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-08 — Fallback deliveries no longer play into a dead overlay
+
+Live observation: a fallback-TTS delivery played audibly while the voice
+overlay sat on "Thinking" — no waveform, no live text (the answer only
+appeared via `final_text` when the response finished). The session log
+confirmed the turn was `validator_fallback: acknowledgement_not_summary`,
+and — first live data point from the new resolved-model logging — it ran on
+`grok-voice-think-fast-1.0` (xAI's alias flip confirmed live; the reasoning
+model still deferred on its first exact-prompt delivery).
+
+Two client gates caused the dead overlay: the voice view dropped every
+hermes-sourced `voice.response.delta` (a rule meant to keep mid-run Hermes
+chatter off the overlay, written before fallback TTS became a first-class
+delivery mouth), and that same handler was the only path that flipped the
+state Thinking→Speaking — so the Speaking-gated waveform envelope never fed
+even as 71 PCM chunks played.
+
+Fix, both halves: delivery responses are now tagged on the wire
+(`"delivery": "fallback" | "respeak" | "visual_only"` on started+delta), the
+overlay renders hermes-sourced deltas that carry a delivery tag (plain run
+chatter stays suppressed), and arriving output audio itself now flips
+Thinking→Speaking so the waveform tracks any spoken response regardless of
+which mouth produced it.
+
+Verification: 116 realtime tests green including new delivery-tag assertions
+on both fallback paths; `:app:assembleSideloadDebug` green. Needs an
+on-device fallback turn to confirm the overlay animates.
+
 ## 2026-07-08 — Pre-RC observability hardening + realtime model updates
 
 **Flight-recorder hygiene.** Session JSONL logs and wav taps under

@@ -2689,7 +2689,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.response.delta" -> {
-                    if (event.source == "hermes") return@runRealtimeAgent
+                    // Hermes-sourced deltas are normally run chatter (the tool
+                    // status flow owns that phase) — but DELIVERY responses
+                    // (fallback TTS / respeak / visual-only emits) carry the
+                    // actual answer and must render. Observed live: a fallback
+                    // delivery played audibly while the overlay sat on
+                    // "Thinking" with no text.
+                    if (event.source == "hermes" && event.delivery == null) {
+                        return@runRealtimeAgent
+                    }
                     if (_uiState.value.state == VoiceState.Listening) {
                         Log.i(TAG, "Ignoring realtime response text while mic capture is active")
                         return@runRealtimeAgent
@@ -3721,6 +3729,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 startupGuardMs = REALTIME_BARGE_IN_STARTUP_GUARD_MS,
             )
             startRealtimePlaybackWatchdog()
+        }
+        // Audio arriving IS the speech signal, whatever produced it: a
+        // delivery response (fallback TTS / respeak) starts PCM without any
+        // provider text delta having flipped the state, and the envelope
+        // below is gated on Speaking — without this flip the audio plays
+        // while the overlay sits on "Thinking" with a dead waveform
+        // (observed live on a fallback delivery).
+        if (_uiState.value.state == VoiceState.Thinking) {
+            _uiState.update { it.copy(state = VoiceState.Speaking) }
         }
         if (_uiState.value.state == VoiceState.Speaking) {
             // Keep feeding the visual envelope from the decoded level so the

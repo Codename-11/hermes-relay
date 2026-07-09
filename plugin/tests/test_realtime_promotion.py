@@ -416,6 +416,10 @@ class RealtimePromotionTests(AioHTTPTestCase):
                 e for e in events if e["type"] == "voice.response.delta"
             )
             self.assertEqual("hermes", fallback_delta.get("source"))
+            # The delivery tag is what lets the phone's voice overlay render
+            # hermes-sourced delivery text (plain hermes run chatter stays
+            # suppressed client-side).
+            self.assertEqual("fallback", fallback_delta.get("delivery"))
             self.assertIn(
                 "Background answer ready", str(fallback_delta.get("delta"))
             )
@@ -806,6 +810,7 @@ class RealtimePromotionTests(AioHTTPTestCase):
                 e for e in events if e["type"] == "voice.response.delta"
             )
             self.assertEqual("hermes", fallback_delta.get("source"))
+            self.assertEqual("fallback", fallback_delta.get("delivery"))
             self.assertIn("Background answer ready", str(fallback_delta.get("delta")))
             # The buffered filler was dropped — it never reached the client.
             filler_deltas = [

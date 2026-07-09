@@ -2405,6 +2405,7 @@ class RelayVoiceClient(
                 completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull,
                 elapsedMs = (obj["elapsed_ms"] as? JsonPrimitive)?.longOrNull,
                 queuedCount = (obj["queued_count"] as? JsonPrimitive)?.intOrNull,
+                delivery = (obj["delivery"] as? JsonPrimitive)?.contentOrNull,
                 raw = raw,
             )
         } catch (e: Exception) {
@@ -2784,6 +2785,10 @@ data class RealtimeVoiceEvent(
     // Background-task queue depth (hermes.run.queued / promoted /
     // background_completed) — drives the chip's "+N queued" affix.
     val queuedCount: Int? = null,
+    // Delivery responses (fallback TTS / respeak / visual-only text emit)
+    // are hermes-sourced but carry the actual answer — the overlay renders
+    // them where plain hermes run chatter stays suppressed.
+    val delivery: String? = null,
     val raw: String,
 ) {
     val isAudioDelta: Boolean

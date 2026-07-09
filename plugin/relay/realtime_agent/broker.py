@@ -831,6 +831,7 @@ class RealtimeAgentHandler:
                                 "chat_session_id": session.chat_session_id,
                                 "response_id": respeak_id,
                                 "source": "hermes",
+                                "delivery": "respeak",
                             },
                         )
                         await self._send(
@@ -841,6 +842,7 @@ class RealtimeAgentHandler:
                                 "source": "hermes",
                                 "delta": respeak_text,
                                 "response_id": respeak_id,
+                                "delivery": "respeak",
                             },
                         )
                         await self._render_provider_audio(
@@ -2030,6 +2032,7 @@ class RealtimeAgentHandler:
                     "chat_session_id": session.chat_session_id,
                     "response_id": fallback_response_id,
                     "source": "hermes",
+                    "delivery": "fallback",
                 },
             )
             await self._send(
@@ -2040,6 +2043,7 @@ class RealtimeAgentHandler:
                     "source": "hermes",
                     "delta": fallback_text,
                     "response_id": fallback_response_id,
+                    "delivery": "fallback",
                 },
             )
             await self._render_provider_audio(
@@ -3287,6 +3291,7 @@ class RealtimeAgentHandler:
                 "chat_session_id": session.chat_session_id,
                 "response_id": response_id,
                 "source": "hermes",
+                "delivery": "fallback",
             },
         )
         await self._send(
@@ -3297,6 +3302,7 @@ class RealtimeAgentHandler:
                 "source": "hermes",
                 "delta": fallback_text,
                 "response_id": response_id,
+                "delivery": "fallback",
             },
         )
         await self._render_provider_audio(
@@ -3442,6 +3448,7 @@ class RealtimeAgentHandler:
                     "source": "hermes",
                     "delta": text,
                     "response_id": response_id,
+                    "delivery": "visual_only",
                 },
             )
         await self._send(
