@@ -2414,7 +2414,7 @@
     <string name="hermes_card_chose">Chose: %1$s</string>
     <string name="hermes_card_secret_provided">Secret provided &#183; &#8226;&#8226;&#8226;&#8226;</string>
     <string name="hermes_card_answered">Answered: %1$s</string>
-    <string name="hermes_card_expired">Expired -- not granted</string>
+    <string name="hermes_card_expired">Expired &#8212; not granted</string>
 
     <!-- ModelPickerSheet -->
     <string name="model_picker_title">Model</string>
@@ -2504,7 +2504,7 @@
     <string name="timeline_header">Timeline</string>
     <string name="timeline_status_checks">Status checks</string>
     <string name="timeline_empty_activity">No activity yet</string>
-    <string name="timeline_empty_checks">No checks yet -- connect to a server to populate diagnostics.</string>
+    <string name="timeline_empty_checks">No checks yet &#8212; connect to a server to populate diagnostics.</string>
     <string name="timeline_legend_chat">Chat</string>
     <string name="timeline_legend_tool">Tool</string>
     <string name="timeline_legend_voice">Voice</string>
@@ -2530,9 +2530,9 @@
     <string name="command_palette_empty">No commands match your search</string>
 
     <!-- TransportSecurityBadge -->
-    <string name="transport_badge_secure_tls">Secure -- TLS</string>
-    <string name="transport_badge_mixed">Mixed -- secure fallback available</string>
-    <string name="transport_badge_plain">All routes plain -- dev only</string>
+    <string name="transport_badge_secure_tls">Secure &#8212; TLS</string>
+    <string name="transport_badge_mixed">Mixed &#8212; secure fallback available</string>
+    <string name="transport_badge_plain">All routes plain &#8212; dev only</string>
     <string name="transport_badge_secure_tls_short">Secure (TLS)</string>
     <string name="transport_badge_insecure_lan">Plain (on LAN)</string>
     <string name="transport_badge_insecure_tailscale">Plain (on Tailscale)</string>
@@ -2571,7 +2571,7 @@
     <!-- UpdateAvailableBanner -->
     <string name="update_banner_available">Update available</string>
     <string name="update_banner_downloading">Downloading update&#8230;</string>
-    <string name="update_banner_ready">Update ready -- restart</string>
+    <string name="update_banner_ready">Update ready &#8212; restart</string>
     <string name="update_banner_update">Update</string>
     <string name="update_banner_restart">Restart</string>
 
@@ -2611,21 +2611,21 @@
 
     <!-- AppTheme labels + descriptions -->
     <string name="theme_hermes_relay">Hermes Relay</string>
-    <string name="theme_hermes_relay_desc">The signature electric-blue brand -- follows light/dark</string>
+    <string name="theme_hermes_relay_desc">The signature electric-blue brand &#8212; follows light/dark</string>
     <string name="theme_hermes_teal">Hermes Teal</string>
-    <string name="theme_hermes_teal_desc">Classic dark teal -- the canonical Hermes look</string>
+    <string name="theme_hermes_teal_desc">Classic dark teal &#8212; the canonical Hermes look</string>
     <string name="theme_nous_blue">Nous Blue</string>
-    <string name="theme_nous_blue_desc">Light mode -- vivid Nous-blue accents on a cream canvas</string>
+    <string name="theme_nous_blue_desc">Light mode &#8212; vivid Nous-blue accents on a cream canvas</string>
     <string name="theme_midnight">Midnight</string>
     <string name="theme_midnight_desc">Deep blue-violet with cool accents</string>
     <string name="theme_ember">Ember</string>
-    <string name="theme_ember_desc">Warm crimson and bronze -- forge vibes</string>
+    <string name="theme_ember_desc">Warm crimson and bronze &#8212; forge vibes</string>
     <string name="theme_mono">Mono</string>
-    <string name="theme_mono_desc">Clean grayscale -- minimal and focused</string>
+    <string name="theme_mono_desc">Clean grayscale &#8212; minimal and focused</string>
     <string name="theme_cyberpunk">Cyberpunk</string>
-    <string name="theme_cyberpunk_desc">Neon green on black -- matrix terminal</string>
+    <string name="theme_cyberpunk_desc">Neon green on black &#8212; matrix terminal</string>
     <string name="theme_rose">Ros&#233;</string>
-    <string name="theme_rose_desc">Soft pink and warm ivory -- easy on the eyes</string>
+    <string name="theme_rose_desc">Soft pink and warm ivory &#8212; easy on the eyes</string>
 
     <!-- ChatScreen hardcoded strings -->
     <string name="chat_slash_new">Start a new session</string>
@@ -2788,7 +2788,7 @@
 
 
     <!-- UpdateBanner format strings (with version placeholders) -->
-    <string name="update_banner_available_fmt">Update available -- v%1$s</string>
+    <string name="update_banner_available_fmt">Update available &#8212; v%1$s</string>
     <string name="update_banner_body_fmt">You are on %1$s. Tap Update to download.</string>
 
 </resources>
