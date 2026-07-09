@@ -45,7 +45,9 @@ jobs:
           cache-read-only: false
 
       - name: Build debug APK (both flavors)
-        run: ./gradlew assembleDebug --console=plain
+        run: |
+          ./gradlew clean
+          ./gradlew assembleDebug --console=plain --no-build-cache
 
       - name: Upload debug APK (sideload)
         uses: actions/upload-artifact@v4
