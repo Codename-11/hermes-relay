@@ -122,6 +122,15 @@ android {
     buildTypes {
         debug {
             buildConfigField("boolean", "DEV_MODE", "true")
+            // 固定签名支持：当 CI 提供了固定 keystore（HERMES_KEYSTORE_PATH 指向有效文件）
+            // 时，debug 构建也使用固定密钥签名，使用户可在手机上直接覆盖升级旧版。
+            // 否则回退为 Android 默认 debug 签名（本地开发或无 Secrets 时）。
+            val fixedSigning = signingConfigs.getByName("release")
+            signingConfig = if (fixedSigning.storeFile?.exists() == true) {
+                fixedSigning
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         release {
             isMinifyEnabled = true
