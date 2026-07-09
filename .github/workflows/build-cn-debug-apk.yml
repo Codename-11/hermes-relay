@@ -118,54 +118,45 @@ jobs:
           echo "=== SHA256 校验和 ==="
           cat SHA256SUMS.txt
 
-      - name: Create GitHub Release (timestamped)
-        id: create_release
+      # 用编译时间戳生成 tag / 名称，区分每次构建版本
+      - name: Compute release tag
+        id: tag
         env:
-          GH_TOKEN: ${{ github.token }}
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
         shell: bash
         run: |
           TS=$(date +%Y%m%d-%H%M%S)
-          TAG="${{ inputs.release_prefix }}-${TS}"
-          GP=$(ls app/build/outputs/apk/googlePlay/debug/*.apk 2>/dev/null | head -1)
-          SL=$(ls app/build/outputs/apk/sideload/debug/*.apk 2>/dev/null | head -1)
-          SHA="app/build/outputs/SHA256SUMS.txt"
-
+          echo "tag=${{ inputs.release_prefix }}-${TS}" >> "$GITHUB_OUTPUT"
+          echo "ts=${TS}" >> "$GITHUB_OUTPUT"
           if [ -n "$HERMES_KEYSTORE_BASE64" ]; then
-            SIGN_MSG="✅ 固定签名（可覆盖升级）"
+            echo "sign=✅ 固定签名（可覆盖升级）" >> "$GITHUB_OUTPUT"
           else
-            SIGN_MSG="⚠️ 默认 debug 签名（每次密钥不同，需卸载重装；建议在 Secrets 配置 HERMES_KEYSTORE_BASE64 启用固定签名）"
+            echo "sign=⚠️ 默认 debug 签名（每次密钥不同，需卸载重装；建议在 Secrets 配置 HERMES_KEYSTORE_BASE64 启用固定签名）" >> "$GITHUB_OUTPUT"
           fi
 
-          cat > _RELEASE_NOTES.md <<-ENDNOTES
-          ## Hermes-Relay CN 中文本地化版本（Debug 构建）
+      - name: Create GitHub Release (timestamped)
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Hermes-Relay CN Debug ${{ steps.tag.outputs.ts }}
+          prerelease: true
+          files: |
+            app/build/outputs/apk/googlePlay/debug/*.apk
+            app/build/outputs/apk/sideload/debug/*.apk
+            app/build/outputs/SHA256SUMS.txt
+          body: |
+            ## Hermes-Relay CN 中文本地化版本（Debug 构建）
 
-          - **签名**: ${SIGN_MSG}
-          - **版本**: 1.3.0
-          - **构建时间**: $(date -u '+%Y-%m-%d %H:%M UTC')
-          - **分支**: feat/i18n-zh
-          - **编译序号**: ${TS}
+            - **签名**: ${{ steps.tag.outputs.sign }}
+            - **版本**: 1.3.0
+            - **构建时间**: ${{ steps.tag.outputs.ts }}
+            - **分支**: feat/i18n-zh
 
-          ### 功能
-          - 完整中文本地化界面（聊天、管理、语音、设置全面汉化）
-          - 保留上游所有功能
-          - 两个版本：\`googlePlay\`（Play 兼容）和 \`sideload\`（完整功能，含 Device Control）
+            ### 功能
+            - 完整中文本地化界面（聊天、管理、语音、设置全面汉化）
+            - 保留上游所有功能
+            - 两个版本：`googlePlay`（Play 兼容）和 `sideload`（完整功能，含 Device Control）
 
-          > 手动触发构建，自动发布
-          ENDNOTES
-
-          FILES=""
-          [ -f "$GP" ] && FILES="$FILES \"$GP\""
-          [ -f "$SL" ] && FILES="$FILES \"$SL\""
-          [ -f "$SHA" ] && FILES="$FILES \"$SHA\""
-
-          # shellcheck disable=SC2086
-          eval gh release create "$TAG" $FILES \
-            --repo "${{ github.repository }}" \
-            --title "Hermes-Relay CN Debug ${TS}" \
-            --notes-file _RELEASE_NOTES.md \
-            --prerelease
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "✅ Release 已创建: $TAG"
-          echo "   链接: https://github.com/${{ github.repository }}/releases/tag/$TAG"
+            > 手动触发构建，自动发布
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
