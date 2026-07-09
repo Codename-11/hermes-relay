@@ -259,11 +259,11 @@ private fun EndpointRow(
                     )
                     SurfaceSecurityGlyph(kind = candidate.routeSecurityKind())
                     if (isActive) {
-                        ActiveChip()
+                        ActiveChip(stringResource(R.string.endpoints_active))
                     } else if (isPreferred) {
-                        PreferredChip()
+                        PreferredChip(stringResource(R.string.endpoints_preferred_chip))
                     } else {
-                        FallbackChip()
+                        FallbackChip(stringResource(R.string.endpoints_fallback))
                     }
                     if (!candidate.isKnownRole()) {
                         // Show the raw role for custom-VPN entries so users
@@ -290,18 +290,18 @@ private fun EndpointRow(
                 )
                 when {
                     isProbing -> Text(
-                        text = "Checking…",
+                        text = stringResource(R.string.endpoints_checking),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     outcome == null -> Unit // never probed — say nothing
                     outcome.reachable -> Text(
-                        text = "Reachable",
+                        text = stringResource(R.string.endpoints_reachable),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
                     else -> Text(
-                        text = "Unreachable — ${outcome.detail ?: "no detail"}",
+                        text = stringResource(R.string.endpoints_unreachable, outcome.detail ?: stringResource(R.string.endpoints_unreachable_no_detail)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -317,14 +317,14 @@ private fun EndpointRow(
             // sticky "Prefer this route" lives in the menu below.
             if (!isActive) {
                 TextButton(onClick = onUseNow) {
-                    Text("Use now")
+                    Text(stringResource(R.string.endpoints_use_now))
                 }
             }
             Box {
                 IconButton(onClick = { menuOpen = true }) {
                     Icon(
                         imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "Endpoint actions",
+                        contentDescription = stringResource(R.string.endpoints_actions),
                     )
                 }
                 DropdownMenu(
@@ -335,13 +335,13 @@ private fun EndpointRow(
                         text = {
                             Column {
                                 Text(
-                                    if (isPreferred) "Stop preferring" else "Prefer this route",
+                                    text = if (isPreferred) stringResource(R.string.endpoints_stop_preferring_menu) else stringResource(R.string.endpoints_prefer_this_route),
                                 )
                                 Text(
                                     text = if (isPreferred) {
-                                        "Back to automatic choice"
+                                        stringResource(R.string.endpoints_back_to_automatic)
                                     } else {
-                                        "Always try this route first"
+                                        stringResource(R.string.endpoints_always_try_first)
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -354,26 +354,25 @@ private fun EndpointRow(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Probe now") },
+                        text = { Text(stringResource(R.string.endpoints_probe_now)) },
                         onClick = {
                             menuOpen = false
                             onProbeNow()
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("View pin") },
+                        text = { Text(stringResource(R.string.endpoints_view_pin)) },
                         onClick = {
                             menuOpen = false
                             scope.launch {
                                 pinDialogText = onViewPin(candidate)
-                                    ?: "No pin recorded yet — the phone will " +
-                                        "record one on first TOFU connect."
+                                    ?: stringResource(R.string.endpoints_no_pin_recorded)
                             }
                         },
                     )
                     if (onEdit != null) {
                         DropdownMenuItem(
-                            text = { Text("Edit route") },
+                            text = { Text(stringResource(R.string.endpoints_edit_route)) },
                             onClick = {
                                 menuOpen = false
                                 onEdit()
@@ -382,7 +381,7 @@ private fun EndpointRow(
                     }
                     if (onRemove != null) {
                         DropdownMenuItem(
-                            text = { Text("Remove route") },
+                            text = { Text(stringResource(R.string.endpoints_remove_route)) },
                             onClick = {
                                 menuOpen = false
                                 confirmRemove = true
@@ -397,11 +396,10 @@ private fun EndpointRow(
     if (confirmRemove && onRemove != null) {
         AlertDialog(
             onDismissRequest = { confirmRemove = false },
-            title = { Text("Remove ${candidate.displayLabel()} route?") },
+            title = { Text(stringResource(R.string.endpoints_remove_route_title, candidate.displayLabel())) },
             text = {
                 Text(
-                    text = "${candidate.api.host}:${candidate.api.port} will no longer be " +
-                        "probed as a fallback. You can add it back any time.",
+                    text = stringResource(R.string.endpoints_remove_route_body, "${candidate.api.host}:${candidate.api.port}"),
                     style = MaterialTheme.typography.bodySmall,
                 )
             },
@@ -411,10 +409,10 @@ private fun EndpointRow(
                         confirmRemove = false
                         onRemove()
                     },
-                ) { Text("Remove") }
+                ) { Text(stringResource(R.string.endpoints_remove)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmRemove = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmRemove = false }) { Text(stringResource(R.string.endpoints_cancel)) }
             },
         )
     }
@@ -431,14 +429,14 @@ private fun EndpointRow(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { pinDialogText = null }) { Text("Close") }
+                TextButton(onClick = { pinDialogText = null }) { Text(stringResource(R.string.endpoints_close)) }
             },
         )
     }
 }
 
 @Composable
-private fun ActiveChip() {
+private fun ActiveChip(label: String) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -454,7 +452,7 @@ private fun ActiveChip() {
         )
         Spacer(Modifier.size(4.dp))
         Text(
-            text = "Active",
+            text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -462,7 +460,7 @@ private fun ActiveChip() {
 }
 
 @Composable
-private fun PreferredChip() {
+private fun PreferredChip(label: String) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -470,7 +468,7 @@ private fun PreferredChip() {
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(
-            text = "Preferred",
+            text = label,
             style = MaterialTheme.typography.labelSmall,
             color = Color(0xFFB26A00),
         )
@@ -484,7 +482,7 @@ private fun PreferredChip() {
  * as "available fallback" not "something is happening here".
  */
 @Composable
-private fun FallbackChip() {
+private fun FallbackChip(label: String) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -497,7 +495,7 @@ private fun FallbackChip() {
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(
-            text = "Fallback",
+            text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -573,7 +571,12 @@ fun RouteEditorDialog(
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text(if (original == null) "Add route" else "Edit route") },
+        title = {
+            Text(
+                if (original == null) stringResource(R.string.endpoints_add_route_title)
+                else stringResource(R.string.endpoints_edit_route_title)
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
@@ -587,24 +590,24 @@ fun RouteEditorDialog(
                     FilterChip(
                         selected = selectedRole == "tailscale",
                         onClick = { selectedRole = "tailscale" },
-                        label = { Text("Tailscale") },
+                        label = { Text(stringResource(R.string.endpoints_tailscale)) },
                     )
                     FilterChip(
                         selected = selectedRole == "public",
                         onClick = { selectedRole = "public" },
-                        label = { Text("Public") },
+                        label = { Text(stringResource(R.string.endpoints_public)) },
                     )
                     FilterChip(
                         selected = selectedRole == CUSTOM_ROLE,
                         onClick = { selectedRole = CUSTOM_ROLE },
-                        label = { Text("Custom") },
+                        label = { Text(stringResource(R.string.endpoints_custom)) },
                     )
                 }
                 if (selectedRole == CUSTOM_ROLE) {
                     OutlinedTextField(
                         value = customRole,
                         onValueChange = { customRole = it },
-                        label = { Text("Route name") },
+                        label = { Text(stringResource(R.string.endpoints_route_name)) },
                         placeholder = { Text("wireguard-home") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -629,7 +632,7 @@ fun RouteEditorDialog(
                         url = it
                         errorText = null
                     },
-                    label = { Text("API server URL or host") },
+                    label = { Text(stringResource(R.string.endpoints_api_url_host)) },
                     placeholder = { Text("100.64.0.1 or http://host:8642") },
                     singleLine = true,
                     isError = errorText != null,
@@ -668,10 +671,17 @@ fun RouteEditorDialog(
                         }
                     }
                 },
-            ) { Text(if (saving) "Saving…" else "Save") }
+            ) {
+                Text(
+                    if (saving) stringResource(R.string.endpoints_saving)
+                    else stringResource(R.string.endpoints_save)
+                )
+            }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") }
+            TextButton(onClick = onDismiss, enabled = !saving) {
+                Text(stringResource(R.string.endpoints_cancel))
+            }
         },
     )
 }

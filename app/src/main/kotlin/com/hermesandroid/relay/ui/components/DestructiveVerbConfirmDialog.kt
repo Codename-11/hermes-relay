@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 
 /**
  * Phase 3 — safety-rails `bridge-safety-rails`
@@ -106,7 +108,7 @@ fun DestructiveVerbConfirmDialog(
                         tint = Color(0xFFFFA726),
                     )
                     Text(
-                        text = "Confirm destructive action",
+                        text = stringResource(R.string.destructive_confirm_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -135,7 +137,7 @@ fun DestructiveVerbConfirmDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = fullText.ifBlank { "(no text)" },
+                            text = fullText.ifBlank { stringResource(R.string.destructive_no_text) },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -143,7 +145,7 @@ fun DestructiveVerbConfirmDialog(
                 }
 
                 Text(
-                    text = "If you didn't expect this, tap Deny.",
+                    text = stringResource(R.string.destructive_confirm_warning),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -184,7 +186,7 @@ fun DestructiveVerbConfirmDialog(
                         modifier = Modifier.weight(1f),
                         onClick = onDeny,
                     ) {
-                        Text("Deny")
+                        Text(stringResource(R.string.destructive_confirm_deny))
                     }
                     // Allow is intentionally lower-emphasis (amber caution, not a
                     // loud red CTA) so proceeding with a risky action never reads
@@ -196,7 +198,7 @@ fun DestructiveVerbConfirmDialog(
                             contentColor = Color(0xFFE65100),
                         ),
                     ) {
-                        Text("Allow this action")
+                        Text(stringResource(R.string.destructive_confirm_allow))
                     }
                 }
             }
@@ -205,11 +207,12 @@ fun DestructiveVerbConfirmDialog(
 }
 
 private fun labelFor(method: String): String = when (method) {
-    "/tap_text" -> "Target text (tap)"
-    "/type" -> "Text to type"
-    else -> "Payload"
+    "/tap_text" -> stringResource(R.string.destructive_label_tap_text)
+    "/type" -> stringResource(R.string.destructive_label_type)
+    else -> stringResource(R.string.destructive_label_payload)
 }
 
+@Composable
 private fun verbPhrase(method: String, verb: String): String {
     val action = when (method) {
         "/tap_text" -> "tap a button containing"
@@ -236,7 +239,7 @@ fun BridgeStatusOverlayChip(unattended: Boolean = false) {
     // the device. Default red dot + "Hermes active" preserves the v0.4
     // appearance for the regular bridge-active path.
     val dotColor = if (unattended) Color(0xFFFFA000) else Color(0xFFE53935)
-    val label = if (unattended) "Unattended ON" else "Hermes active"
+    val label = if (unattended) stringResource(R.string.destructive_chip_unattended) else stringResource(R.string.destructive_chip_active)
     Box(
         modifier = Modifier
             .background(

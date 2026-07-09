@@ -143,7 +143,7 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
                     it.copy(voiceConfig = voiceResult.getOrNull(), voiceConfigError = null)
                 }
             } else {
-                val human = classifyError(voiceResult.exceptionOrNull(), context = "voice_config")
+                val human = classifyError(voiceResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
                 _configState.update { it.copy(voiceConfigError = human.body) }
                 _configErrorEvents.tryEmit(human)
             }
@@ -166,7 +166,7 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             } else {
-                val human = classifyError(outputResult.exceptionOrNull(), context = "voice_config")
+                val human = classifyError(outputResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
                 _configState.update { it.copy(voiceOutputConfigError = human.body) }
                 _configErrorEvents.tryEmit(human)
             }
@@ -189,7 +189,7 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             } else {
-                val human = classifyError(realtimeResult.exceptionOrNull(), context = "voice_config")
+                val human = classifyError(realtimeResult.exceptionOrNull(), context = "voice_config", ctx = getApplication())
                 _configState.update { it.copy(realtimeConfig = null, realtimeConfigError = human.body) }
             }
         }

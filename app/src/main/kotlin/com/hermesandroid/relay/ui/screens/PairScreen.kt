@@ -17,6 +17,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -61,12 +63,12 @@ fun PairScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Connect to Hermes") },
+                title = { Text(stringResource(R.string.pair_connect_to_hermes)) },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.pair_close),
                         )
                     }
                 },
@@ -82,7 +84,7 @@ fun PairScreen(
             ConnectionWizard(
                 connectionViewModel = connectionViewModel,
                 onComplete = {
-                    Toast.makeText(context, "Connection updated", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.pair_connection_updated), Toast.LENGTH_SHORT).show()
                     onComplete()
                 },
                 onCancel = onCancel,

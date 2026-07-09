@@ -46,10 +46,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.notifications.HermesNotificationCompanion
 import java.text.DateFormat
 import java.util.Date
@@ -94,12 +96,12 @@ fun NotificationCompanionSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Notification companion") },
+                title = { Text(stringResource(R.string.ncs_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.ncs_back),
                         )
                     }
                 },
@@ -119,7 +121,7 @@ fun NotificationCompanionSettingsScreen(
         ) {
 
             // --- Status --- (action first: the user came to turn it on)
-            NotifSectionCard(title = "Status") {
+            NotifSectionCard(title = stringResource(R.string.ncs_status)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -139,14 +141,14 @@ fun NotificationCompanionSettingsScreen(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (granted) "Access granted" else "Access not granted",
+                            text = if (granted) stringResource(R.string.ncs_access_granted) else stringResource(R.string.ncs_access_not_granted),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                         Text(
                             text = if (granted) {
-                                "Hermes-Relay can read posted notifications"
+                                stringResource(R.string.ncs_can_read_notifications)
                             } else {
-                                "Tap below to enable in Android Settings"
+                                stringResource(R.string.ncs_tap_to_enable)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -157,7 +159,7 @@ fun NotificationCompanionSettingsScreen(
                     }) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Refresh status",
+                            contentDescription = stringResource(R.string.ncs_refresh_status),
                         )
                     }
                 }
@@ -178,46 +180,29 @@ fun NotificationCompanionSettingsScreen(
                     )
                     Spacer(Modifier.size(8.dp))
                     Text(
-                        if (granted) "Manage in Android Settings" else "Open Android Settings",
+                        if (granted) stringResource(R.string.ncs_manage_in_settings) else stringResource(R.string.ncs_open_android_settings),
                     )
                 }
             }
 
             // --- About ---
-            NotifSectionCard(title = "About") {
+            NotifSectionCard(title = stringResource(R.string.ncs_about)) {
                 Text(
-                    text = (
-                        "Lets your Hermes assistant help you triage " +
-                            "notifications. When enabled, your phone " +
-                            "forwards each notification's app, title, " +
-                            "and text to your paired Hermes server " +
-                            "through the Relay pairing used by phone tools."
-                        ),
+                        text = stringResource(R.string.ncs_about_body1),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = (
-                        "Requires Android's notification access " +
-                            "permission. You can grant or revoke it " +
-                            "at any time in Android Settings. This is " +
-                            "the same permission Wear OS, Android " +
-                            "Auto, and Tasker use."
-                        ),
+                    text = stringResource(R.string.ncs_about_body2),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             // --- Test (last received) ---
-            NotifSectionCard(title = "Test") {
+            NotifSectionCard(title = stringResource(R.string.ncs_test)) {
                 Text(
-                    text = (
-                        "Tap below to fetch the last few notifications " +
-                            "the listener has captured this session. " +
-                            "Helpful for verifying the connection is " +
-                            "working end-to-end."
-                        ),
+                        text = stringResource(R.string.ncs_test_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -239,11 +224,9 @@ fun NotificationCompanionSettingsScreen(
                         if (service == null) {
                             lastSnapshot = emptyList()
                             lastError = if (granted) {
-                                "Listener has not bound yet. Try " +
-                                    "posting a test notification " +
-                                    "(any message) and re-tap."
+                                stringResource(R.string.ncs_listener_not_bound)
                             } else {
-                                "Notification access is not granted."
+                                stringResource(R.string.ncs_access_not_granted_err)
                             }
                         } else {
                             val active = service.activeNotifications
@@ -272,7 +255,7 @@ fun NotificationCompanionSettingsScreen(
                         contentDescription = null,
                     )
                     Spacer(Modifier.size(8.dp))
-                    Text("Fetch recent")
+                    Text(stringResource(R.string.ncs_fetch_recent))
                 }
 
                 lastError?.let { err ->
@@ -294,7 +277,7 @@ fun NotificationCompanionSettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
                                 Text(
-                                    text = line.title ?: "(no title)",
+                                    text = line.title ?: stringResource(R.string.ncs_no_title),
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                                 Text(

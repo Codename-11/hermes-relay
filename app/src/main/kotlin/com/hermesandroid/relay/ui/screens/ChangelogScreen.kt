@@ -32,7 +32,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.hermesandroid.relay.R
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.components.ChangelogStore
 import com.hermesandroid.relay.ui.components.ChangelogVersion
@@ -62,12 +64,12 @@ fun ChangelogScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("What's New") },
+                title = { Text(stringResource(R.string.changelog_title)) },
                 actions = {
                     IconButton(onClick = onClose) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.changelog_close),
                         )
                     }
                 },
@@ -85,7 +87,7 @@ fun ChangelogScreen(
                     .padding(horizontal = 16.dp, vertical = 16.dp),
             ) {
                 Text(
-                    text = "No release notes available.",
+                    text = stringResource(R.string.changelog_no_notes),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -160,7 +162,7 @@ private fun ChangelogVersionCard(
                     } else {
                         Icons.Filled.ExpandMore
                     },
-                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    contentDescription = if (expanded) stringResource(R.string.changelog_collapse) else stringResource(R.string.changelog_expand),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

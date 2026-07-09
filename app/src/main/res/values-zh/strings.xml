@@ -149,6 +149,123 @@
     <string name="cd_select_model">选择模型</string>
     <string name="chat_camera_perm_needed">需要相机权限才能拍照</string>
 
+    <!-- ConnectionViewModel 状态 -->
+    <string name="conn_status_no_hermes">未连接 Hermes</string>
+    <string name="conn_status_no_internet">无网络连接</string>
+    <string name="conn_status_api_unreachable">Hermes API 不可达</string>
+    <string name="conn_status_connecting">正在连接 Hermes</string>
+    <string name="conn_status_checking">正在检查 Hermes 连接</string>
+    <string name="conn_status_relay_unreachable">Relay 不可达</string>
+    <string name="conn_status_relay_stale">Relay 已过期</string>
+    <string name="conn_status_reconnecting">正在重连</string>
+    <string name="conn_status_connection_changed">连接已变更</string>
+    <string name="conn_status_connected">已连接到 Hermes</string>
+    <string name="conn_status_interrupted">连接中断</string>
+    <string name="conn_status_voice_signin">Vanilla Hermes 语音需要仪表盘登录</string>
+    <string name="conn_status_voice_blocked">语音被拦截</string>
+    <string name="conn_status_checking_relay_voice">正在检查 Relay 语音</string>
+    <string name="conn_status_setup_skipped">Vanilla Hermes 设置已跳过</string>
+    <string name="conn_status_testing_standard">正在测试标准 Hermes 连接</string>
+    <string name="conn_status_setup_health_failed">Vanilla Hermes 设置健康检查失败</string>
+    <string name="conn_status_api_test_skipped">API 测试已跳过</string>
+    <string name="conn_status_api_test_ok">API 连接正常</string>
+    <string name="conn_status_api_test_failed">API 认证失败</string>
+    <string name="conn_status_testing_api">正在测试 API 连接</string>
+    <string name="conn_status_api_health_failed">API 健康检查失败</string>
+    <string name="conn_status_relay_connect_skipped">Relay 连接已跳过</string>
+    <string name="conn_status_relay_connect_requested">已请求 Relay 连接</string>
+    <string name="conn_status_relay_disconnect_requested">已请求 Relay 断开</string>
+    <string name="conn_status_route_recheck_failed">路由重新检查失败</string>
+    <string name="conn_status_hermes_ok">Vanilla Hermes 连接正常</string>
+    <string name="conn_status_auth_failed">Vanilla Hermes 认证失败</string>
+
+    <!-- ConnectionViewModel 标签和详情 -->
+    <string name="conn_label_setup">设置</string>
+    <string name="conn_label_network">网络</string>
+    <string name="conn_label_routes">路由</string>
+    <string name="conn_label_api">API</string>
+    <string name="conn_label_relay">Relay</string>
+    <string name="conn_label_session">会话</string>
+    <string name="conn_label_route">路由</string>
+    <string name="conn_label_status">状态</string>
+    <string name="conn_label_connect">连接</string>
+    <string name="conn_label_connections">连接管理</string>
+    <string name="conn_detail_add_connection">添加 Vanilla Hermes API/仪表盘连接</string>
+    <string name="conn_detail_waiting_network">等待 Android 报告网络路由</string>
+    <string name="conn_detail_chat_unavailable">聊天和个人资料调用可能不可用</string>
+    <string name="conn_detail_health_check_failed">健康检查失败</string>
+    <string name="conn_detail_ready">就绪</string>
+    <string name="conn_detail_checking_health">正在检查 Hermes 健康</string>
+    <string name="conn_detail_checking_relay">正在检查 Relay 健康</string>
+    <string name="conn_detail_opening_socket">正在打开 Relay 套接字</string>
+    <string name="conn_detail_relay_path_ready">Relay 路径就绪</string>
+    <string name="conn_detail_looking_for_route">正在寻找其他路由</string>
+    <string name="conn_detail_no_paired_session">没有已配对的会话或待处理的配对码</string>
+    <string name="conn_detail_no_api_client">未配置 API 客户端</string>
+
+    <!-- VoiceViewModel 状态 -->
+    <string name="voice_status_mode_switched">语音模式已切换</string>
+    <string name="voice_status_standard_tts">Vanilla Hermes 语音使用主机的全局 TTS</string>
+    <string name="voice_status_capture_ignored">语音捕获已忽略</string>
+    <string name="voice_status_no_speech">未检测到语音</string>
+    <string name="voice_status_test_started">Realtime Agent 测试开始</string>
+    <string name="voice_status_test_failed">Realtime Agent 测试失败</string>
+    <string name="voice_status_test_complete">Realtime Agent 测试完成</string>
+    <string name="voice_status_turn_started_realtime">实时语音轮次已开始</string>
+    <string name="voice_status_turn_started">语音轮次已开始</string>
+    <string name="voice_status_transcription_failed">语音转文字失败</string>
+    <string name="voice_status_relay_check_failed">语音 Relay 检查失败</string>
+    <string name="voice_status_realtime_error">实时语音出错</string>
+    <string name="voice_status_turn_complete_realtime">实时语音轮次已完成</string>
+    <string name="voice_status_turn_failed_realtime">实时语音轮次失败</string>
+    <string name="voice_status_render_basic">语音渲染路径：基础合成</string>
+    <string name="voice_status_render_streaming">语音渲染路径：流式输出</string>
+    <string name="voice_status_realtime_audio_stuck">实时音频未启动</string>
+
+    <!-- ChatViewModel 审批 -->
+    <string name="chat_approval_title">请求审批</string>
+    <string name="chat_approval_approve">批准</string>
+    <string name="chat_approval_deny">拒绝</string>
+    <string name="chat_approval_clarify_title">Hermes 需要澄清</string>
+    <string name="chat_approval_sudo_title">请求提升权限</string>
+    <string name="chat_approval_secret_title">请求密钥</string>
+    <string name="chat_approval_skip">跳过</string>
+    <string name="chat_approval_reconnecting">正在重新连接你的回答……</string>
+    <string name="chat_approval_stream_dropped">聊天流已断开——后台正在恢复回答</string>
+
+    <!-- RelayErrorClassifier 错误标题 -->
+    <string name="error_classify_transcribe">语音转文字失败</string>
+    <string name="error_classify_synthesize">语音播放失败</string>
+    <string name="error_classify_voice_config">语音配置不可用</string>
+    <string name="error_classify_record">无法录音</string>
+    <string name="error_classify_pair">配对失败</string>
+    <string name="error_classify_save_and_test">Relay 检查失败</string>
+    <string name="error_classify_media_fetch">无法获取附件</string>
+    <string name="error_classify_send_message">无法发送消息</string>
+    <string name="error_classify_generic">出了点问题</string>
+    <string name="error_classify_relay_auth">Relay Hermes 认证失败</string>
+    <string name="error_classify_realtime_auth">实时语音提供商认证不可用</string>
+    <string name="error_classify_api_key">API 密钥被拒绝</string>
+    <string name="error_classify_session_expired">会话已过期</string>
+    <string name="error_classify_not_allowed">不允许</string>
+    <string name="error_classify_relay_update">Relay 需要更新</string>
+    <string name="error_classify_endpoint">端点未找到</string>
+    <string name="error_classify_too_large">请求过大</string>
+    <string name="error_classify_service_unavailable">服务不可用</string>
+    <string name="error_classify_server_error">服务器错误</string>
+    <string name="error_classify_cant_reach">无法访问服务器</string>
+    <string name="error_classify_conn_refused">连接被拒绝</string>
+    <string name="error_classify_timeout">网络超时</string>
+    <string name="error_classify_cert_mismatch">证书不匹配</string>
+    <string name="error_classify_perm_needed">需要权限</string>
+    <string name="error_classify_network_error">网络错误</string>
+    <string name="error_classify_unknown">未知错误</string>
+    <string name="error_classify_voice_settings">语音设置</string>
+    <string name="error_classify_settings">设置</string>
+    <string name="error_classify_repair">重新配对</string>
+    <string name="error_classify_retry">重试</string>
+    <string name="error_classify_open_settings">打开设置</string>
+
     <!-- 连接向导 —— Connect 页核心文案 -->
     <string name="cw_connect_to_hermes">连接 Hermes</string>
     <string name="cw_connect_description">先在主机上启动 Hermes API 或仪表盘，再在此连接。Relay 配对是可选的，仅在需要终端、Bridge、Relay 会话或频道授权时才使用。</string>
@@ -207,6 +324,228 @@
     <string name="cw_sign_in_to_dashboard">登录到仪表盘</string>
     <string name="cw_open_dashboard">打开仪表盘</string>
     <string name="cw_sign_in_hint">打开仪表盘网页以完成登录。</string>
+    <string name="cw_advanced_urls_hide">隐藏高级地址和端口</string>
+    <string name="cw_advanced_urls_show">高级地址和端口</string>
+    <string name="cw_dashboard_url_placeholder">http://你的服务器:%1$d</string>
+    <string name="cw_dashboard_url_supporting">留空以使用 API 主机上的标准仪表盘端口</string>
+    <string name="cw_start_chat">开始聊天</string>
+    <string name="cw_sign_in_to_manage">登录到管理</string>
+    <string name="cw_pair_code_subtitle">仅在主机已注册 Relay 配对码后使用。标准聊天和管理不需要此操作。</string>
+    <string name="cw_api_url_label_field">API 服务器地址</string>
+    <string name="cw_api_url_field_placeholder">http://你的服务器:8642</string>
+    <string name="cw_api_url_field_supporting">Hermes API——聊天和会话（默认端口 8642）</string>
+    <string name="cw_relay_url_label">Relay 地址</string>
+    <string name="cw_relay_url_placeholder">wss://你的服务器:8767</string>
+    <string name="cw_relay_url_supporting">Hermes-Relay——终端、Bridge、Relay 会话和授权</string>
+    <string name="cw_pairing_code_label">配对码</string>
+    <string name="cw_pairing_code_placeholder">例如 ABC123</string>
+    <string name="cw_pair_button">配对</string>
+    <string name="cw_show_code_subtitle">无法扫描 Relay 配对二维码时使用。设置您的地址，然后在运行 Hermes-Relay 的主机上注册下面的配对码。</string>
+    <string name="cw_step_copy_code">1. 复制此配对码</string>
+    <string name="cw_copy_pairing_code">复制配对码</string>
+    <string name="cw_generate_new_code">生成新配对码</string>
+    <string name="cw_step_register_code">2. 在运行 Hermes-Relay 的主机上运行：</string>
+    <string name="cw_copy_command">复制命令</string>
+    <string name="cw_step_connect">3. 然后返回并点击连接</string>
+    <string name="cw_routes_count">路由（%1$d）</string>
+    <string name="cw_routes_desc">您的手机按顺序尝试这些路由，并使用第一个可达的路由。当您切换网络时，它会自动切换。</string>
+    <string name="cw_prefer_label">偏好：</string>
+    <string name="cw_natural_order">自然顺序</string>
+    <string name="cw_keep_pairing_for">保留此配对…</string>
+    <string name="cw_transport_tailscale">传输：检测到 Tailscale</string>
+    <string name="cw_transport_tls">传输：TLS（wss://）</string>
+    <string name="cw_transport_plain">传输：明文 ws://</string>
+    <string name="cw_insecure_relay_warning">此 Relay 使用明文 ws://——流量未加密。</string>
+    <string name="cw_insecure_relay_trust">仅当您信任所有连接（LAN、Tailscale、VPN）的网络时才继续。</string>
+    <string name="cw_insecure_ack">我了解此配对以明文形式发送流量——网络上的任何人都可以看到。</string>
+    <string name="cw_mixed_route_plain">%1$s 使用明文 ws://——在家或办公室没问题，但不要在公共 Wi-Fi 上使用。</string>
+    <string name="cw_mixed_route_secure">%1$s 已加密（wss://），当 %2$s 不可达时，应用会自动使用它。</string>
+    <string name="cw_mixed_safe">在任何网络上您都是安全的。</string>
+    <string name="cw_connecting_to_hermes">正在连接到 Hermes</string>
+    <string name="cw_connecting_detail">正在检查 API 服务器、已保存的密钥和仪表盘。</string>
+    <string name="cw_pairing_title">正在配对…</string>
+    <string name="cw_pairing_failed">配对失败</string>
+    <string name="cw_negotiating_relay">正在与 Relay 协商…</string>
+    <string name="cw_paired_opening_chat">已配对——正在打开聊天…</string>
+    <string name="cw_connecting_to_relay">正在连接到 Relay…</string>
+    <string name="cw_hermes_connected">Hermes 已连接</string>
+    <string name="cw_chat">聊天</string>
+    <string name="cw_api_server_ready">API 服务器就绪</string>
+    <string name="cw_api_server_not_reachable">无法连接到 API 服务器</string>
+    <string name="cw_manage">管理</string>
+    <string name="cw_dashboard_signed_in">仪表盘已登录</string>
+    <string name="cw_dashboard_sign_in_required">需要登录仪表盘</string>
+    <string name="cw_dashboard_available">仪表盘可用</string>
+    <string name="cw_dashboard_not_reachable">仪表盘尚未可达</string>
+    <string name="cw_dashboard_will_check">仪表盘将在管理中检查</string>
+    <string name="cw_voice">语音</string>
+    <string name="cw_voice_ready">您的 Hermes 服务器已准备语音识别</string>
+    <string name="cw_voice_sign_in_to_unlock">登录仪表盘后解锁</string>
+    <string name="cw_voice_no_routes">Hermes 版本没有语音路由——更新或配对 Relay</string>
+    <string name="cw_voice_after_dashboard">仪表盘可达后检查</string>
+    <string name="cw_voice_after_connect">连接后检查</string>
+    <string name="cw_remote">远程</string>
+    <string name="cw_remote_fallback_ready">备用路由已准备好，可在远离家时使用</string>
+    <string name="cw_remote_lan_only">仅 LAN——在 设置 → 连接 → 路由 中添加 Tailscale 或公共路由</string>
+    <string name="cw_relay">Relay</string>
+    <string name="cw_relay_paired">高级工具已配对</string>
+    <string name="cw_relay_optional">终端和 Bridge 可选</string>
+    <string name="cw_retry">重试</string>
+    <string name="cw_cancel_button">取消</string>
+    <string name="cw_pairing_did_not_complete">配对未完成</string>
+    <string name="cw_timeout_entercode_showcode">主机尚未接受此配对码。请在 Hermes 主机上运行配对命令（或重新检查配对码），然后点击重试。</string>
+    <string name="cw_timeout_scan">在 Relay 确认配对之前超时。请检查 Relay 是否在运行且在此网络上可达，然后重试。如果配对似乎成功但仍无法访问 Hermes，则 API 服务器可能位于登录网关之后。</string>
+    <string name="cw_timeout_other">等待 Relay 超时。请检查 Relay 是否正在运行以及地址是否正确。</string>
+    <string name="cw_camera_denied">摄像头权限被拒绝。请改为手动配对——选择"用配对码配对 Relay"或输入您的服务器地址。</string>
+
+    <!-- EndpointsCard -->
+    <string name="endpoints_no_routes_stored">此连接尚未存储任何路由。</string>
+    <string name="endpoints_add_route">添加路由</string>
+    <string name="endpoints_resolving">解析中…</string>
+    <string name="endpoints_manual_until_disconnect">手动——直到断开连接</string>
+    <string name="endpoints_preferred">首选</string>
+    <string name="endpoints_automatic">自动</string>
+    <string name="endpoints_current_route">当前路由：%1$s（%2$s）</string>
+    <string name="endpoints_cancel_manual_switch">取消手动切换——恢复到 %1$s</string>
+    <string name="endpoints_stop_preferring">取消首选——恢复到自动</string>
+    <string name="endpoints_checking">检测中…</string>
+    <string name="endpoints_reachable">可达</string>
+    <string name="endpoints_unreachable">不可达——%1$s</string>
+    <string name="endpoints_unreachable_no_detail">不可达——无详情</string>
+    <string name="endpoints_use_now">立即使用</string>
+    <string name="endpoints_stop_preferring_menu">取消首选</string>
+    <string name="endpoints_prefer_this_route">首选此路由</string>
+    <string name="endpoints_back_to_automatic">恢复自动选择</string>
+    <string name="endpoints_always_try_first">始终优先尝试此路由</string>
+    <string name="endpoints_probe_now">立即探测</string>
+    <string name="endpoints_view_pin">查看证书锁定</string>
+    <string name="endpoints_edit_route">编辑路由</string>
+    <string name="endpoints_remove_route">移除路由</string>
+    <string name="endpoints_no_pin_recorded">尚未记录证书锁定信息——首次 TOFU 连接时会自动记录。</string>
+    <string name="endpoints_remove_route_title">移除 %1$s 路由？</string>
+    <string name="endpoints_remove_route_body">%1$s 将不再作为备用路由进行探测。你可以随时重新添加。</string>
+    <string name="endpoints_remove">移除</string>
+    <string name="endpoints_cancel">取消</string>
+    <string name="endpoints_active">活跃</string>
+    <string name="endpoints_preferred_chip">首选</string>
+    <string name="endpoints_fallback">备用</string>
+    <string name="endpoints_add_route_title">添加路由</string>
+    <string name="endpoints_edit_route_title">编辑路由</string>
+    <string name="endpoints_tailscale">Tailscale</string>
+    <string name="endpoints_public">公网</string>
+    <string name="endpoints_custom">自定义</string>
+    <string name="endpoints_route_name">路由名称</string>
+    <string name="endpoints_api_url_host">API 服务器地址或主机名</string>
+    <string name="endpoints_saving">保存中…</string>
+    <string name="endpoints_save">保存</string>
+    <string name="endpoints_close">关闭</string>
+    <string name="endpoints_actions">端点操作</string>
+
+    <!-- BridgeMasterToggle -->
+    <string name="bmt_agent_control">代理控制</string>
+    <string name="bmt_master_switch_on">主开关——代理可以读取屏幕并通过以下子功能进行操作。</string>
+    <string name="bmt_master_switch_off">主开关——关闭。所有 Bridge 功能（无人值守、命令、语音意图）均不活跃。</string>
+    <string name="bmt_master_switch_on_googleplay">主开关——Bridge 正在向聊天提供屏幕内容。</string>
+    <string name="bmt_master_switch_off_googleplay">主开关——关闭。Bridge 未读取屏幕内容。</string>
+    <string name="bmt_what_does_this_do">这是做什么的？</string>
+    <string name="bmt_grant_accessibility">请在下方向应用授予无障碍服务权限以启用。</string>
+    <string name="bmt_device">设备</string>
+    <string name="bmt_battery">电池</string>
+    <string name="bmt_screen">屏幕</string>
+    <string name="bmt_current_app">当前应用</string>
+    <string name="bmt_about_title">关于代理控制</string>
+    <string name="bmt_about_body1">代理控制让您的 Hermes 代理读取屏幕内容，并代表您与应用交互（点击、输入、滚动、截图）。</string>
+    <string name="bmt_about_body2">这使用 Android 的无障碍服务 API，与屏幕阅读器使用的权限相同。您必须在 Android 设置中启用它，此开关才能生效。</string>
+    <string name="bmt_about_body3">开启后，通知栏中会显示一条"Hermes 拥有设备控制权"的通知——这与此主开关绑定，与任何子功能（如无人值守访问）无关，一旦关闭此开关，通知即消失。</string>
+    <string name="bmt_about_body4">您可以随时从此界面或在 Android 设置中禁用服务来关闭代理控制。所有 Bridge 命令都记录在下面的活动日志中。</string>
+    <string name="bmt_got_it">知道了</string>
+    <string name="bmt_master">主开关</string>
+    <string name="bmt_on">开</string>
+    <string name="bmt_off">关</string>
+
+    <!-- BridgeSafetySummaryCard -->
+    <string name="bssc_safety">安全</string>
+    <string name="bssc_blocked_apps">代理无法触碰的应用</string>
+    <string name="bssc_destructive_verbs">始终需要确认的词语</string>
+    <string name="bssc_auto_disable">空闲时自动关闭</string>
+    <string name="bssc_guardrails_hint">这些护栏确保 Hermes 在边界内运行。点击调整。</string>
+    <string name="bssc_manage">管理</string>
+
+    <!-- BridgeActivityLog -->
+    <string name="bal_activity_log">活动日志</string>
+    <string name="bal_clear">清除</string>
+    <string name="bal_no_activity">尚无 Bridge 命令。代理执行的每次点击、输入和截图都会显示在此处。</string>
+    <string name="bal_has_screenshot">有截图</string>
+    <string name="bal_full_timestamp">完整时间戳：%1$s</string>
+    <string name="bal_status_label">状态：%1$s</string>
+    <string name="bal_screenshot_token">截图令牌：%1$s</string>
+
+    <!-- BridgeStatusCard -->
+    <string name="bsc_status">状态</string>
+    <string name="bsc_connected">已连接</string>
+    <string name="bsc_disconnected">已断开</string>
+    <string name="bsc_no_status">Bridge 运行时尚未报告状态。请先启用上方的代理控制以开始接收设备遥测。</string>
+    <string name="bsc_unknown">未知</string>
+    <string name="bsc_enabled">已启用</string>
+    <string name="bsc_disabled">已禁用</string>
+    <string name="bsc_accessibility_service">无障碍服务</string>
+
+    <!-- DemoModeBanner -->
+    <string name="dmb_demo_mode">演示模式——示例数据，未连接。立即连接 →</string>
+    <string name="dmb_this_is_demo">这是演示</string>
+    <string name="dmb_connect_feature">连接您的 Hermes 服务器以使用 %1$s。</string>
+    <string name="dmb_connect">连接</string>
+
+    <!-- PairScreen -->
+    <string name="pair_connect_to_hermes">连接 Hermes</string>
+    <string name="pair_close">关闭</string>
+    <string name="pair_connection_updated">连接已更新</string>
+
+    <!-- AnalyticsScreen -->
+    <string name="analytics_title">分析</string>
+    <string name="analytics_back">返回</string>
+    <string name="analytics_section_title">技术统计</string>
+    <string name="analytics_section_subtitle">本地设备端性能和用量指标。</string>
+
+    <!-- ChangelogScreen -->
+    <string name="changelog_title">新功能</string>
+    <string name="changelog_close">关闭</string>
+    <string name="changelog_no_notes">暂无发行说明。</string>
+    <string name="changelog_collapse">收起</string>
+    <string name="changelog_expand">展开</string>
+
+    <!-- DiagnosticsScreen -->
+    <string name="diag_title">诊断</string>
+    <string name="diag_back">返回</string>
+    <string name="diag_status">状态</string>
+    <string name="diag_recent_diagnostics">最近诊断</string>
+    <string name="diag_recent_desc">最近的应用级连接和语音事件。机密信息和原始数据包已隐藏。</string>
+    <string name="diag_activity_log">活动日志</string>
+
+    <!-- NotificationCompanionSettingsScreen -->
+    <string name="ncs_title">通知助手</string>
+    <string name="ncs_back">返回</string>
+    <string name="ncs_status">状态</string>
+    <string name="ncs_access_granted">已授予访问权限</string>
+    <string name="ncs_access_not_granted">未授予访问权限</string>
+    <string name="ncs_can_read_notifications">Hermes-Relay 可以读取已发布的通知</string>
+    <string name="ncs_tap_to_enable">点击下方以在 Android 设置中启用</string>
+    <string name="ncs_refresh_status">刷新状态</string>
+    <string name="ncs_manage_in_settings">在 Android 设置中管理</string>
+    <string name="ncs_open_android_settings">打开 Android 设置</string>
+    <string name="ncs_about">关于</string>
+    <string name="ncs_test">测试</string>
+    <string name="ncs_fetch_recent">获取最近通知</string>
+    <string name="ncs_no_title">（无标题）</string>
+    <string name="ncs_about_body1">让您的 Hermes 助手帮助您处理通知。启用后，您的手机将通过电话工具使用的 Relay 配对，将每一条通知的应用、标题和文本转发给配对的 Hermes 服务器。</string>
+    <string name="ncs_about_body2">需要 Android 的通知访问权限。您可以随时在 Android 设置中授予或撤销该权限。这与 Wear OS、Android Auto 和 Tasker 使用的权限相同。</string>
+    <string name="ncs_test_desc">点击下方获取监听器在此会话中捕获的最后几条通知。有助于验证端到端连接是否正常工作。</string>
+    <string name="ncs_listener_not_bound">监听器尚未绑定。请尝试发送一条测试通知（任意消息），然后重新点击。</string>
+    <string name="ncs_access_not_granted_err">通知访问权限尚未授予。</string>
+
+    <!-- DemoContent -->
+    <string name="demo_badge">演示</string>
+    <string name="demo_footer">示例数据——演示模式</string>
 
     <!-- P0: SettingsScreen -->
     <string name="settings_back">返回</string>
@@ -1903,14 +2242,493 @@
     <string name="conn_info_yolo_mode_title">YOLO 模式</string>
 
     <!-- EndpointsCard -->
-    <string name="endpoints_no_routes_stored">尚未保存任何路由</string>
-    <string name="endpoints_add_route">添加路由</string>
-    <string name="endpoints_resolving">解析中</string>
-    <string name="endpoints_manual_until_disconnect">手动（断开前）</string>
-    <string name="endpoints_preferred">首选</string>
-    <string name="endpoints_automatic">自动</string>
-    <string name="endpoints_current_route">当前路由</string>
-    <string name="endpoints_cancel_manual_switch">取消手动切换</string>
-    <string name="endpoints_stop_preferring">取消首选</string>
-</resources>
 
+    <!-- RelayVoiceClient diagnostics (voice_diag_) -->
+    <string name="voice_diag_agent_provider_options">实时代理提供商选项</string>
+    <string name="voice_diag_agent_provider_validation">实时代理提供商验证</string>
+    <string name="voice_diag_agent_config_update">实时代理配置更新</string>
+    <string name="voice_diag_handoff_failed">语音交接失败</string>
+    <string name="voice_diag_trying_route">正在尝试语音路由</string>
+    <string name="voice_diag_resume_sent">已发送恢复请求</string>
+    <string name="voice_diag_waiting_for_route">正在等待路由</string>
+    <string name="voice_diag_connection_changed">连接已变更</string>
+    <string name="voice_diag_route_changed">路由已变更</string>
+    <string name="voice_diag_reconnected">语音已重新连接</string>
+    <string name="voice_diag_replaying_audio">正在回放丢失的音频</string>
+    <string name="voice_diag_caught_up">已追赶完成</string>
+    <string name="voice_diag_resume_rejected">恢复被拒绝</string>
+
+    <!-- ConnectionManager diagnostics (conn_diag_) -->
+    <string name="conn_diag_insecure_mode">已启用不安全的中继模式</string>
+    <string name="conn_diag_route_selected">已选择中继路由</string>
+    <string name="conn_diag_using_configured_url">正在使用配置的中继 URL</string>
+    <string name="conn_diag_socket_blocked">中继套接字已被阻止</string>
+    <string name="conn_diag_url_invalid">中继套接字 URL 无效</string>
+    <string name="conn_diag_opening_insecure">正在打开不安全的中继套接字</string>
+    <string name="conn_diag_opening_socket">正在打开中继套接字</string>
+    <string name="conn_diag_connected">中继套接字已连接</string>
+    <string name="conn_diag_disconnect_requested">已请求断开中继套接字</string>
+    <string name="conn_diag_closed">中继套接字已关闭</string>
+    <string name="conn_diag_failed">中继套接字失败</string>
+    <string name="conn_diag_reconnect_skipped">已跳过中继重连</string>
+    <string name="conn_diag_reconnect_delayed">中继重连已延迟</string>
+    <string name="conn_diag_reconnect_slow_poll">中继重连慢速轮询中</string>
+    <string name="conn_diag_reconnect_scheduled">中继重连已安排</string>
+
+    <!-- RelayHttpClient diagnostics (http_diag_) -->
+    <string name="http_diag_url_invalid">中继 URL 无效</string>
+    <string name="http_diag_health_failed">中继健康检查失败</string>
+    <string name="http_diag_health_ok">中继健康检查正常</string>
+    <string name="http_diag_health_timeout">中继健康检查超时</string>
+    <string name="http_diag_conn_refused">中继连接被拒绝</string>
+
+    <!-- EndpointResolver diagnostics (endpoint_diag_) -->
+    <string name="endpoint_diag_selected">已选择端点</string>
+    <string name="endpoint_diag_no_reachable">无可达端点</string>
+    <string name="endpoint_diag_probe_invalid">端点探测无效</string>
+    <string name="endpoint_diag_probe_ok">端点探测正常</string>
+    <string name="endpoint_diag_probe_failed">端点探测失败</string>
+    <string name="endpoint_diag_probe_timeout">端点探测超时</string>
+
+    <!-- RealtimePcmPlayer diagnostics (audio_diag_) -->
+    <string name="audio_diag_started">实时音频已启动</string>
+    <string name="audio_diag_not_starting">实时音频未能启动</string>
+    <string name="audio_diag_stream_gap">实时音频流中断</string>
+    <string name="audio_diag_volume_muted">实时语音已静音</string>
+
+
+
+    <!-- DestructiveVerbConfirmDialog -->
+    <string name="destructive_confirm_title">确认危险操作</string>
+    <string name="destructive_confirm_warning">如果您没有预料到此操作，请点击拒绝。</string>
+    <string name="destructive_confirm_dont_ask">不再询问 &quot;%1$s&quot;</string>
+    <string name="destructive_confirm_deny">拒绝</string>
+    <string name="destructive_confirm_allow">允许此操作</string>
+    <string name="destructive_label_tap_text">目标文本（点击）</string>
+    <string name="destructive_label_type">要输入的文本</string>
+    <string name="destructive_label_payload">载荷</string>
+    <string name="destructive_phrase_tap">点击包含以下内容的按钮</string>
+    <string name="destructive_phrase_type">输入包含以下内容的文本</string>
+    <string name="destructive_phrase_action">执行带有以下内容的操作</string>
+    <string name="destructive_phrase_keyword">一个危险关键词</string>
+    <string name="destructive_phrase_word">词语 &quot;%1$s&quot;</string>
+    <string name="destructive_body_format">%1$s %2$s</string>
+    <string name="destructive_no_text">（无文本）</string>
+    <string name="destructive_chip_unattended">无人值守 ON</string>
+    <string name="destructive_chip_active">Hermes 活跃</string>
+
+    <!-- InsecureConnectionAckDialog -->
+    <string name="insecure_ack_title">允许不安全连接？</string>
+    <string name="insecure_ack_body_1">不安全模式允许此应用通过明文 ws:// 和 http:// 进行连接。您手机与服务器之间网络上的任何人都可以读取您的聊天消息、会话令牌和终端流量。</string>
+    <string name="insecure_ack_body_2">仅在您控制的网络上使用。选择最能描述您配置的原因：</string>
+    <string name="insecure_ack_confirm">我了解</string>
+    <string name="insecure_ack_cancel">取消</string>
+    <string name="insecure_ack_reason_lan">仅局域网（可信网络）</string>
+    <string name="insecure_ack_reason_tailscale">Tailscale 或 VPN</string>
+    <string name="insecure_ack_reason_dev">仅本地开发</string>
+
+    <!-- SessionTtlPickerDialog -->
+    <string name="ttl_title">将此配对保持…</string>
+    <string name="ttl_body">您的手机将在此窗口内自动重新连接。到期后，您需要重新配对才能使用 Relay 功能。</string>
+    <string name="ttl_pair">配对</string>
+    <string name="ttl_cancel">取消</string>
+    <string name="ttl_option_1d">1 天</string>
+    <string name="ttl_option_7d">7 天</string>
+    <string name="ttl_option_30d">30 天</string>
+    <string name="ttl_option_90d">90 天</string>
+    <string name="ttl_option_1y">1 年</string>
+    <string name="ttl_option_never">永不过期</string>
+    <string name="ttl_never_expire_warning">此设备将保持配对状态，直到您手动撤销。</string>
+    <string name="ttl_helper_tailscale">传输：检测到 Tailscale</string>
+    <string name="ttl_helper_tls">传输：TLS（wss://）</string>
+    <string name="ttl_helper_plain">传输：明文 ws://</string>
+
+    <!-- PowerFeatureGate -->
+    <string name="power_gate_requires_pairing">需要配对</string>
+    <string name="power_gate_pair_to_unlock">配对以解锁</string>
+    <string name="power_gate_pairing_expired">配对已过期</string>
+    <string name="power_gate_pair_again">重新配对</string>
+    <string name="power_gate_unavailable">此服务器上不可用</string>
+    <string name="power_gate_view_connection">查看连接</string>
+    <string name="power_gate_signin_required">需要仪表盘登录</string>
+    <string name="power_gate_open_signin">打开登录</string>
+    <string name="power_gate_explanation_pairing">此功能需要在您的 Hermes 服务器上安装 Relay 插件。</string>
+    <string name="power_gate_explanation_expired">您的 Relay 会话已不被服务器接受。打开连接重新配对。</string>
+    <string name="power_gate_explanation_unavailable">此 Hermes 服务器未暴露此功能所需的接口。</string>
+    <string name="power_gate_explanation_signin">此标准仪表盘功能需要在登录后才能使用。</string>
+
+    <!-- AgentTextFlow / CleanModeComposer -->
+    <string name="agent_text_placeholder">消息</string>
+
+    <!-- ExtraKeysToolbar -->
+    <string name="extra_keys_esc">ESC</string>
+    <string name="extra_keys_tab">TAB</string>
+    <string name="extra_keys_ctrl">CTRL</string>
+    <string name="extra_keys_alt">ALT</string>
+    <string name="extra_keys_copy">复制</string>
+    <string name="extra_keys_paste">粘贴</string>
+
+    <!-- ToolProgressCard -->
+    <string name="tool_progress_preparing">正在准备工具…</string>
+    <string name="tool_progress_arguments">参数：</string>
+    <string name="tool_progress_error">错误：</string>
+    <string name="tool_progress_result">结果：</string>
+    <string name="tool_progress_status_completed">已完成</string>
+    <string name="tool_progress_status_failed">失败</string>
+    <string name="tool_progress_status_running">运行中</string>
+    <string name="tool_progress_cd_collapse">折叠</string>
+    <string name="tool_progress_cd_expand">展开</string>
+
+    <!-- AgentIconRow -->
+    <string name="agent_icon_title">代理图标</string>
+    <string name="agent_icon_set">设置图像</string>
+    <string name="agent_icon_change">更改</string>
+    <string name="agent_icon_clear">清除</string>
+    <string name="agent_icon_description">显示在此配置文件名称旁边。仅保留在此设备上，不会发送到 Hermes。</string>
+
+    <!-- ConnectionSecuritySheet -->
+    <string name="conn_security_title">连接安全</string>
+    <string name="conn_security_empty">尚无活动路由。连接到服务器以查看连接的各个部分如何受到保护。</string>
+    <string name="conn_security_learn_more">了解连接安全 →</string>
+
+    <!-- ConnectionSwitcherSheet -->
+    <string name="conn_switcher_title">切换连接</string>
+    <string name="conn_switcher_empty">尚无连接</string>
+    <string name="conn_switcher_manage">管理连接…</string>
+
+    <!-- DiagnosticsLogPanel -->
+    <string name="diagnostics_title">最近活动</string>
+    <string name="diagnostics_clear">清除</string>
+    <string name="diagnostics_all">全部</string>
+    <string name="diagnostics_empty">暂无最近活动</string>
+
+    <!-- HermesCardBubble -->
+    <string name="hermes_card_hide_value">隐藏值</string>
+    <string name="hermes_card_reveal_value">显示值</string>
+    <string name="hermes_card_not_stored">不存储在聊天历史中</string>
+    <string name="hermes_card_send_answer">发送回答</string>
+    <string name="hermes_card_submit">提交</string>
+    <string name="hermes_card_hold_confirm">长按确认</string>
+    <string name="hermes_card_type_answer">输入答案…</string>
+    <string name="hermes_card_chose">选择了：%1$s</string>
+    <string name="hermes_card_secret_provided">已提供密钥 · ••••</string>
+    <string name="hermes_card_answered">已回答：%1$s</string>
+    <string name="hermes_card_expired">已过期 — 未授权</string>
+
+    <!-- ModelPickerSheet -->
+    <string name="model_picker_title">模型</string>
+    <string name="model_picker_search">搜索模型或提供商…</string>
+    <string name="model_picker_empty">没有匹配您搜索的模型</string>
+
+    <!-- InjectedContextSheet -->
+    <string name="context_sheet_agent_sees">代理看到的内容</string>
+    <string name="context_sheet_transparency">为透明起见，附加到您下一轮对话前的确切额外上下文。</string>
+    <string name="context_sheet_persona">角色 / 配置文件</string>
+    <string name="context_sheet_phone_status">手机状态</string>
+    <string name="context_sheet_media_capability">媒体能力</string>
+    <string name="context_sheet_relay_context">Relay 上下文（服务端）</string>
+    <string name="context_sheet_this_turn">本轮</string>
+    <string name="context_sheet_transport_desc">传输：%1$s。</string>
+
+    <!-- InboundAttachmentCard -->
+    <string name="inbound_attach_tap_download">点击下载</string>
+    <string name="inbound_attach_downloading">正在下载…%1$s</string>
+    <string name="inbound_attach_failed">附件失败</string>
+    <string name="inbound_attach_tap_retry">点击重试</string>
+    <string name="inbound_attach_open">外部打开</string>
+    <string name="inbound_attach_share">分享</string>
+    <string name="inbound_attach_save">保存到设备</string>
+    <string name="inbound_attach_cd_save">保存</string>
+    <string name="inbound_attach_type_image">图片</string>
+    <string name="inbound_attach_type_video">视频</string>
+    <string name="inbound_attach_type_audio">音频</string>
+    <string name="inbound_attach_type_pdf">PDF</string>
+    <string name="inbound_attach_type_text">文本</string>
+    <string name="inbound_attach_type_file">文件</string>
+    <string name="inbound_attach_read_failed">无法读取此文件</string>
+    <string name="inbound_attach_saved">已保存到 %1$s</string>
+    <string name="inbound_attach_save_failed">保存失败：%1$s</string>
+
+    <!-- AttachmentViewer -->
+    <string name="attachment_sensitive">敏感内容</string>
+    <string name="attachment_tap_reveal">点击显示</string>
+    <string name="attachment_cd_close">关闭</string>
+    <string name="attachment_cd_open">外部打开</string>
+    <string name="attachment_cd_share">分享</string>
+    <string name="attachment_cd_save">保存</string>
+    <string name="attachment_no_preview">此类型不支持应用内预览。</string>
+    <string name="attachment_open_ext">外部打开</string>
+    <string name="attachment_load_failed">无法加载此图片</string>
+    <string name="attachment_preparing_video">正在准备视频…</string>
+    <string name="attachment_preparing_audio">正在准备音频…</string>
+    <string name="attachment_audio_label">音频</string>
+    <string name="attachment_pause">暂停</string>
+    <string name="attachment_play">播放</string>
+    <string name="attachment_unmute">取消静音</string>
+    <string name="attachment_mute">静音</string>
+    <string name="attachment_title">附件</string>
+
+    <!-- CrashReportDialog -->
+    <string name="crash_title">Hermes-Relay 意外关闭</string>
+    <string name="crash_body">上次会话崩溃了。发送此报告有助于更快修复问题。</string>
+    <string name="crash_dismiss">忽略</string>
+    <string name="crash_copy">复制</string>
+    <string name="crash_share">分享</string>
+    <string name="crash_report">报告</string>
+    <string name="crash_toast_copied">崩溃报告已复制</string>
+
+    <!-- QrPairingScanner -->
+    <string name="qr_scanner_title">扫描 Hermes QR</string>
+    <string name="qr_scanner_instruction">扫描 Hermes 设置二维码</string>
+    <string name="qr_scanner_subtext">询问 Hermes："生成一个包含我的 API URL 和 API 密钥的二维码。"</string>
+    <string name="qr_scanner_camera_error">无法在此设备上启动相机。</string>
+    <string name="qr_scanner_fallback_message">您可以在没有相机的情况下配对。</string>
+    <string name="qr_scanner_pair_manual">手动配对</string>
+
+    <!-- SphereSkin -->
+    <string name="sphere_skin_adaptive">自适应</string>
+    <string name="sphere_skin_classic">经典</string>
+    <string name="sphere_skin_aurora">极光</string>
+    <string name="sphere_skin_solar">太阳</string>
+    <string name="sphere_skin_mono">单色</string>
+    <string name="sphere_skin_adaptive_desc">跟随您的主题颜色</string>
+    <string name="sphere_skin_classic_desc">原始绿色-紫色球体</string>
+    <string name="sphere_reactivity_voice">语音</string>
+    <string name="sphere_reactivity_tools">工具</string>
+    <string name="sphere_reactivity_activity">活动</string>
+    <string name="sphere_reactivity_gaze">注视</string>
+    <string name="sphere_reactivity_static">静态</string>
+
+    <!-- TimelineView -->
+    <string name="timeline_header">时间线</string>
+    <string name="timeline_status_checks">状态检查</string>
+    <string name="timeline_empty_activity">暂无活动</string>
+    <string name="timeline_empty_checks">尚无检查 — 连接到服务器以填充诊断信息。</string>
+    <string name="timeline_legend_chat">聊天</string>
+    <string name="timeline_legend_tool">工具</string>
+    <string name="timeline_legend_voice">语音</string>
+    <string name="timeline_legend_profile">配置文件</string>
+    <string name="timeline_legend_conn">连接</string>
+    <string name="timeline_legend_pass">通过</string>
+    <string name="timeline_legend_warn">警告</string>
+    <string name="timeline_legend_fail">失败</string>
+    <string name="timeline_legend_unknown">未知</string>
+    <string name="timeline_tap_detail">点击查看日志详情</string>
+    <string name="timeline_pass">通过</string>
+    <string name="timeline_warn">警告</string>
+    <string name="timeline_fail">失败</string>
+    <string name="timeline_status_unknown">未知</string>
+
+    <!-- CommandPalette -->
+    <string name="command_palette_header">命令</string>
+    <string name="command_palette_search">搜索命令…</string>
+    <string name="command_palette_cd_clear">清除搜索</string>
+    <string name="command_palette_filter_all">全部</string>
+    <string name="command_palette_show_less">显示更少</string>
+    <string name="command_palette_show_all">显示全部（%1$d）</string>
+    <string name="command_palette_empty">没有匹配您搜索的命令</string>
+
+    <!-- TransportSecurityBadge -->
+    <string name="transport_badge_secure_tls">安全 — TLS</string>
+    <string name="transport_badge_mixed">混合 — 有安全回退可用</string>
+    <string name="transport_badge_plain">所有路由均为明文 — 仅限开发</string>
+    <string name="transport_badge_secure_tls_short">安全（TLS）</string>
+    <string name="transport_badge_insecure_lan">明文（在局域网）</string>
+    <string name="transport_badge_insecure_tailscale">明文（在 Tailscale）</string>
+    <string name="transport_badge_insecure_public">明文（在公网 URL）</string>
+    <string name="transport_badge_insecure_lan_only">明文（仅局域网）</string>
+    <string name="transport_badge_encrypted_tls">已加密 · TLS</string>
+    <string name="transport_badge_encrypted_tailscale">已加密 · Tailscale</string>
+    <string name="transport_badge_mixed_routes">混合路由</string>
+    <string name="transport_badge_not_encrypted">未加密</string>
+    <string name="transport_badge_checking">检查中…</string>
+    <string name="transport_badge_glyph_tls">已加密（TLS）</string>
+    <string name="transport_badge_glyph_encrypted">已加密</string>
+    <string name="transport_badge_glyph_not_encrypted">未加密</string>
+
+    <!-- MessageBubble -->
+    <string name="msg_bubble_copy">复制</string>
+    <string name="msg_bubble_quote">引用回复</string>
+    <string name="msg_bubble_edit">编辑并重新发送</string>
+    <string name="msg_bubble_reconnecting">正在重新连接到您的回答…</string>
+    <string name="msg_bubble_still_working">仍在处理…</string>
+    <string name="msg_bubble_sending">发送中…</string>
+    <string name="msg_bubble_delivered">已送达</string>
+    <string name="msg_bubble_not_sent">未发送</string>
+
+    <!-- ProfileInspectorCard -->
+    <string name="profile_inspector_card_title">检查代理</string>
+    <string name="profile_inspector_card_subtitle">查看配置、SOUL、记忆、技能</string>
+    <string name="profile_inspector_card_no_agent">无活动代理</string>
+
+    <!-- TerminalSearchBar -->
+    <string name="term_search_placeholder">搜索回滚缓冲区</string>
+    <string name="term_search_cd_previous">上一个匹配</string>
+    <string name="term_search_cd_next">下一个匹配</string>
+    <string name="term_search_cd_close">关闭搜索</string>
+
+    <!-- UpdateAvailableBanner -->
+    <string name="update_banner_available">有可用更新</string>
+    <string name="update_banner_downloading">正在下载更新…</string>
+    <string name="update_banner_ready">更新已就绪 — 重启</string>
+    <string name="update_banner_update">更新</string>
+    <string name="update_banner_restart">重启</string>
+
+    <!-- UpdateBanner -->
+    <string name="update_banner_cd_dismiss">忽略</string>
+
+    <!-- VoiceOverlayHost -->
+    <string name="voice_overlay_title">语音叠加</string>
+    <string name="voice_overlay_minimize">最小化</string>
+    <string name="voice_overlay_hermes">Hermes</string>
+    <string name="voice_overlay_hide">隐藏</string>
+    <string name="voice_overlay_cd_exit">退出语音模式</string>
+    <string name="voice_overlay_cd_mic">语音叠加麦克风</string>
+    <string name="voice_overlay_state_ready">就绪</string>
+    <string name="voice_overlay_state_listening">正在聆听</string>
+    <string name="voice_overlay_state_transcribing">正在转录</string>
+    <string name="voice_overlay_state_thinking">正在思考</string>
+    <string name="voice_overlay_state_speaking">正在说话</string>
+    <string name="voice_overlay_state_error">错误</string>
+    <string name="voice_overlay_bubble_label_ready">就绪</string>
+    <string name="voice_overlay_bubble_label_listen">聆听</string>
+    <string name="voice_overlay_bubble_label_stt">语音转文字</string>
+    <string name="voice_overlay_bubble_label_think">思考</string>
+    <string name="voice_overlay_bubble_label_speak">说话</string>
+    <string name="voice_overlay_bubble_label_error">错误</string>
+    <string name="voice_overlay_tap_action_idle">开始聆听</string>
+    <string name="voice_overlay_tap_action_listening">停止聆听</string>
+    <string name="voice_overlay_tap_action_pause">暂停自动模式</string>
+    <string name="voice_overlay_tap_action_interrupt">中断</string>
+    <string name="voice_overlay_cd_description">语音叠加 %1$s。点击 %2$s，双击展开。</string>
+    <string name="voice_overlay_label_default_profile">默认配置文件</string>
+    <string name="voice_overlay_provider_output_off">输出关闭</string>
+    <string name="voice_overlay_provider_placeholder">提供商 ...</string>
+    <string name="voice_overlay_engine_realtime">实时代理</string>
+    <string name="voice_overlay_engine_hermes">Hermes 语音</string>
+    <string name="voice_overlay_engine_placeholder">语音引擎 ...</string>
+
+    <!-- AppTheme labels + descriptions -->
+    <string name="theme_hermes_relay">Hermes Relay</string>
+    <string name="theme_hermes_relay_desc">标志性的电蓝色品牌 — 跟随明/暗</string>
+    <string name="theme_hermes_teal">Hermes Teal</string>
+    <string name="theme_hermes_teal_desc">经典深青色 — 规范 Hermes 外观</string>
+    <string name="theme_nous_blue">Nous Blue</string>
+    <string name="theme_nous_blue_desc">明亮模式 — 奶油色画布上生动的 Nous 蓝色强调色</string>
+    <string name="theme_midnight">午夜</string>
+    <string name="theme_midnight_desc">深蓝紫色配冷色调</string>
+    <string name="theme_ember">余烬</string>
+    <string name="theme_ember_desc">暖深红和古铜色 — 炉火氛围</string>
+    <string name="theme_mono">单色</string>
+    <string name="theme_mono_desc">干净灰度 — 简约专注</string>
+    <string name="theme_cyberpunk">赛博朋克</string>
+    <string name="theme_cyberpunk_desc">黑色背景上的霓虹绿 — 矩阵终端</string>
+    <string name="theme_rose">玫瑰</string>
+    <string name="theme_rose_desc">柔粉色和暖象牙色 — 舒适护眼</string>
+
+    <!-- ChatScreen hardcoded strings -->
+    <string name="chat_slash_new">开始新会话</string>
+    <string name="chat_slash_retry_label">重试上一条消息</string>
+    <string name="chat_slash_undo">删除最后一次交换</string>
+    <string name="chat_slash_title_txt">为此会话设置标题</string>
+    <string name="chat_slash_branch">分支/分叉当前会话</string>
+    <string name="chat_slash_compress">压缩对话上下文</string>
+    <string name="chat_slash_rollback">列出或恢复检查点</string>
+    <string name="chat_slash_stop">终止正在运行的后台进程</string>
+    <string name="chat_slash_resume">恢复之前的会话</string>
+    <string name="chat_slash_background">在后台运行提示</string>
+    <string name="chat_slash_btw">使用会话上下文的附带问题</string>
+    <string name="chat_slash_queue_label">为下一轮排队提示</string>
+    <string name="chat_slash_approve">批准待处理的命令</string>
+    <string name="chat_slash_deny">拒绝待处理的命令</string>
+    <string name="chat_slash_model_label">为此会话切换模型</string>
+    <string name="chat_slash_provider">显示可用提供商</string>
+    <string name="chat_slash_personality_label">设置预定义角色</string>
+    <string name="chat_slash_verbose">循环工具进度显示</string>
+    <string name="chat_slash_yolo">切换自动批准模式</string>
+    <string name="chat_slash_reasoning">设置推理努力级别</string>
+    <string name="chat_slash_voice_label">切换语音模式</string>
+    <string name="chat_slash_reload_mcp">重新加载 MCP 服务器</string>
+    <string name="chat_slash_help">显示可用命令</string>
+    <string name="chat_slash_status_label">显示会话信息</string>
+    <string name="chat_slash_usage">显示令牌使用情况</string>
+    <string name="chat_slash_insights">使用分析</string>
+    <string name="chat_slash_commands_label">浏览所有命令</string>
+    <string name="chat_slash_profile_label">显示活动配置文件</string>
+    <string name="chat_slash_category_session">会话</string>
+    <string name="chat_slash_category_config">配置</string>
+    <string name="chat_slash_category_info">信息</string>
+    <string name="chat_prompt_help_me_code">帮我写代码</string>
+    <string name="chat_prompt_explain">解释某件事</string>
+    <string name="chat_prompt_what_can_you_do">你能做什么？</string>
+    <string name="chat_connect_to_hermes_dots">正在连接到 Hermes…</string>
+    <string name="chat_needs_connection">连接到 Hermes</string>
+    <string name="chat_streaming">流式传输</string>
+    <string name="chat_connected_label">已连接</string>
+    <string name="chat_reconnecting_dots">正在重新连接…</string>
+    <string name="chat_connecting_dots">正在连接…</string>
+    <string name="chat_disconnected_label">已断开</string>
+    <string name="chat_server_default_sessions">服务器默认会话</string>
+    <string name="chat_active_connection">活动连接</string>
+    <string name="chat_compatibility_overlay">%1$s 上的兼容性覆盖</string>
+    <string name="chat_connection_label">连接：%1$s</string>
+    <string name="chat_file_too_large">文件过大（最大 %1$d MB）</string>
+    <string name="chat_prompt_chat_with">与 %1$s 聊天</string>
+    <string name="chat_hermes_message">Hermes 消息</string>
+    <string name="chat_start_conversation">开始对话</string>
+    <string name="chat_not_on_plan">您的套餐中不包含</string>
+    <string name="chat_needs_setup">需要设置</string>
+    <string name="chat_model_label">模型</string>
+    <string name="chat_reasoning_none">无</string>
+    <string name="chat_reasoning_minimal">最少</string>
+    <string name="chat_reasoning_low">低</string>
+    <string name="chat_reasoning_medium">中</string>
+    <string name="chat_reasoning_high">高</string>
+    <string name="chat_date_today">今天</string>
+    <string name="chat_date_yesterday">昨天</string>
+    <string name="chat_share_subject">Hermes 对话</string>
+
+    <!-- RelayApp Screen labels -->
+    <string name="screen_chat_label">聊天</string>
+    <string name="screen_terminal_label">终端</string>
+    <string name="screen_bridge_label">桥接</string>
+    <string name="screen_manage_label">管理</string>
+    <string name="screen_settings_label">设置</string>
+    <string name="screen_connections_label">连接</string>
+    <string name="screen_connection_label">连接</string>
+    <string name="screen_voice_label">语音</string>
+    <string name="screen_notification_companion_label">通知伴侣</string>
+    <string name="screen_proactive_label">线程</string>
+    <string name="screen_permissions_label">权限</string>
+    <string name="screen_bridge_safety_label">桥接安全</string>
+    <string name="screen_chat_settings_label">聊天</string>
+    <string name="screen_media_label">媒体</string>
+    <string name="screen_appearance_label">外观</string>
+    <string name="screen_analytics_label">分析</string>
+    <string name="screen_diagnostics_label">诊断</string>
+    <string name="screen_developer_label">开发者</string>
+    <string name="screen_realtime_voice_label">实时语音</string>
+    <string name="screen_about_label">关于</string>
+    <string name="screen_profile_inspector_label">配置文件检查器</string>
+    <string name="screen_relay_sessions_label">Relay 会话</string>
+
+    <!-- ChatScreen remaining strings -->
+    <string name="chat_relay_sessions_title">Relay 会话</string>
+    <string name="chat_relay_sessions_summary">查看和撤销与此继电器配对的设备。</string>
+    <string name="chat_profile_inspector_title">配置文件检查器</string>
+    <string name="chat_profile_inspector_summary">检查 Relay 支持的配置文件配置、SOUL、内存文件和技能。</string>
+    <string name="chat_reconnecting_toast">正在重新连接到 Relay…</string>
+    <string name="chat_rename_failed">重命名失败</string>
+    <string name="chat_only_active_revoke">现在只能撤销活动连接</string>
+
+    <!-- AgentTextFlow -->
+    <string name="agent_text_send_cd">发送</string>
+    <string name="agent_text_exit_clean">退出简洁模式</string>
+    <string name="agent_text_sphere_desc">代理</string>
+
+
+    <!-- UpdateBanner (format strings with version placeholders) -->
+    <string name="update_banner_available_fmt">更新可用 &#8212; v%1$s</string>
+    <string name="update_banner_body_fmt">您当前使用的是 %1$s。点击更新即可下载。</string>
+
+</resources>

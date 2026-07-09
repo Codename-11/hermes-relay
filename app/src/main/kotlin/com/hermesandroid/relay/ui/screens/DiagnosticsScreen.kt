@@ -23,7 +23,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.diagnostics.CheckStatus
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
@@ -95,12 +97,12 @@ fun DiagnosticsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Diagnostics") },
+                title = { Text(stringResource(R.string.diag_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.diag_back),
                         )
                     }
                 },
@@ -119,7 +121,7 @@ fun DiagnosticsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "Status",
+                text = stringResource(R.string.diag_status),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -136,19 +138,18 @@ fun DiagnosticsScreen(
             )
 
             Text(
-                text = "Recent diagnostics",
+                text = stringResource(R.string.diag_recent_diagnostics),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = "Recent app-level connection and voice events. Secrets and raw " +
-                    "payloads are hidden.",
+                text = stringResource(R.string.diag_recent_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             DiagnosticsLogPanel(
-                title = "Activity log",
+                title = stringResource(R.string.diag_activity_log),
                 limit = 80,
                 showCategory = true,
                 showClear = true,

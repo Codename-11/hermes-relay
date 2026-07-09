@@ -149,6 +149,123 @@
     <string name="cd_select_model">Select model</string>
     <string name="chat_camera_perm_needed">Camera permission needed to take a photo</string>
 
+    <!-- ConnectionViewModel status -->
+    <string name="conn_status_no_hermes">No Hermes connection</string>
+    <string name="conn_status_no_internet">No internet connection</string>
+    <string name="conn_status_api_unreachable">Hermes API unreachable</string>
+    <string name="conn_status_connecting">Connecting to Hermes</string>
+    <string name="conn_status_checking">Checking Hermes connection</string>
+    <string name="conn_status_relay_unreachable">Relay unreachable</string>
+    <string name="conn_status_relay_stale">Relay stale</string>
+    <string name="conn_status_reconnecting">Reconnecting</string>
+    <string name="conn_status_connection_changed">Connection changed</string>
+    <string name="conn_status_connected">Connected to Hermes</string>
+    <string name="conn_status_interrupted">Connection interrupted</string>
+    <string name="conn_status_voice_signin">Vanilla Hermes voice needs dashboard sign-in</string>
+    <string name="conn_status_voice_blocked">Voice blocked</string>
+    <string name="conn_status_checking_relay_voice">Checking relay for voice</string>
+    <string name="conn_status_setup_skipped">Vanilla Hermes setup skipped</string>
+    <string name="conn_status_testing_standard">Testing standard Hermes connection</string>
+    <string name="conn_status_setup_health_failed">Vanilla Hermes setup health failed</string>
+    <string name="conn_status_api_test_skipped">API test skipped</string>
+    <string name="conn_status_api_test_ok">API connection ok</string>
+    <string name="conn_status_api_test_failed">API auth failed</string>
+    <string name="conn_status_testing_api">Testing API connection</string>
+    <string name="conn_status_api_health_failed">API health failed</string>
+    <string name="conn_status_relay_connect_skipped">Relay connect skipped</string>
+    <string name="conn_status_relay_connect_requested">Relay connect requested</string>
+    <string name="conn_status_relay_disconnect_requested">Relay disconnect requested</string>
+    <string name="conn_status_route_recheck_failed">Route re-check failed</string>
+    <string name="conn_status_hermes_ok">Vanilla Hermes connection ok</string>
+    <string name="conn_status_auth_failed">Vanilla Hermes auth failed</string>
+
+    <!-- ConnectionViewModel labels and details -->
+    <string name="conn_label_setup">Setup</string>
+    <string name="conn_label_network">Network</string>
+    <string name="conn_label_routes">Routes</string>
+    <string name="conn_label_api">API</string>
+    <string name="conn_label_relay">Relay</string>
+    <string name="conn_label_session">Session</string>
+    <string name="conn_label_route">Route</string>
+    <string name="conn_label_status">Status</string>
+    <string name="conn_label_connect">Connect</string>
+    <string name="conn_label_connections">Connections</string>
+    <string name="conn_detail_add_connection">Add a Vanilla Hermes API/dashboard connection</string>
+    <string name="conn_detail_waiting_network">Waiting for Android to report an internet route</string>
+    <string name="conn_detail_chat_unavailable">Chat and profile calls may not be available</string>
+    <string name="conn_detail_health_check_failed">Health check failed</string>
+    <string name="conn_detail_ready">Ready</string>
+    <string name="conn_detail_checking_health">Checking Hermes health</string>
+    <string name="conn_detail_checking_relay">Checking relay health</string>
+    <string name="conn_detail_opening_socket">Opening relay socket</string>
+    <string name="conn_detail_relay_path_ready">Relay path ready</string>
+    <string name="conn_detail_looking_for_route">Looking for another route</string>
+    <string name="conn_detail_no_paired_session">No paired session or pending pair code</string>
+    <string name="conn_detail_no_api_client">No API client configured</string>
+
+    <!-- VoiceViewModel status -->
+    <string name="voice_status_mode_switched">Voice mode switched</string>
+    <string name="voice_status_standard_tts">Vanilla Hermes voice uses the host\'s global TTS</string>
+    <string name="voice_status_capture_ignored">Voice capture ignored</string>
+    <string name="voice_status_no_speech">No speech detected</string>
+    <string name="voice_status_test_started">Realtime Agent test started</string>
+    <string name="voice_status_test_failed">Realtime Agent test failed</string>
+    <string name="voice_status_test_complete">Realtime Agent test complete</string>
+    <string name="voice_status_turn_started_realtime">Realtime voice turn started</string>
+    <string name="voice_status_turn_started">Voice turn started</string>
+    <string name="voice_status_transcription_failed">Voice transcription failed</string>
+    <string name="voice_status_relay_check_failed">Voice relay check failed</string>
+    <string name="voice_status_realtime_error">Realtime voice error</string>
+    <string name="voice_status_turn_complete_realtime">Realtime voice turn complete</string>
+    <string name="voice_status_turn_failed_realtime">Realtime voice turn failed</string>
+    <string name="voice_status_render_basic">Voice render path: basic synthesize</string>
+    <string name="voice_status_render_streaming">Voice render path: streaming output</string>
+    <string name="voice_status_realtime_audio_stuck">Realtime audio not starting</string>
+
+    <!-- ChatViewModel approval -->
+    <string name="chat_approval_title">Approval requested</string>
+    <string name="chat_approval_approve">Approve</string>
+    <string name="chat_approval_deny">Deny</string>
+    <string name="chat_approval_clarify_title">Hermes needs clarification</string>
+    <string name="chat_approval_sudo_title">Elevated permission requested</string>
+    <string name="chat_approval_secret_title">Secret requested</string>
+    <string name="chat_approval_skip">Skip</string>
+    <string name="chat_approval_reconnecting">Reconnecting to your answer\u2026</string>
+    <string name="chat_approval_stream_dropped">Chat stream dropped — recovering the answer in the background</string>
+
+    <!-- RelayErrorClassifier error titles -->
+    <string name="error_classify_transcribe">Voice transcription failed</string>
+    <string name="error_classify_synthesize">Voice playback failed</string>
+    <string name="error_classify_voice_config">Voice config unavailable</string>
+    <string name="error_classify_record">Can\'t record</string>
+    <string name="error_classify_pair">Pairing failed</string>
+    <string name="error_classify_save_and_test">Relay check failed</string>
+    <string name="error_classify_media_fetch">Couldn\'t fetch attachment</string>
+    <string name="error_classify_send_message">Couldn\'t send message</string>
+    <string name="error_classify_generic">Something went wrong</string>
+    <string name="error_classify_relay_auth">Relay Hermes auth failed</string>
+    <string name="error_classify_realtime_auth">Realtime provider auth unavailable</string>
+    <string name="error_classify_api_key">API key rejected</string>
+    <string name="error_classify_session_expired">Session expired</string>
+    <string name="error_classify_not_allowed">Not allowed</string>
+    <string name="error_classify_relay_update">Relay update needed</string>
+    <string name="error_classify_endpoint">Endpoint not found</string>
+    <string name="error_classify_too_large">Too large</string>
+    <string name="error_classify_service_unavailable">Service unavailable</string>
+    <string name="error_classify_server_error">Server error</string>
+    <string name="error_classify_cant_reach">Can\'t reach server</string>
+    <string name="error_classify_conn_refused">Connection refused</string>
+    <string name="error_classify_timeout">Network timeout</string>
+    <string name="error_classify_cert_mismatch">Certificate mismatch</string>
+    <string name="error_classify_perm_needed">Permission needed</string>
+    <string name="error_classify_network_error">Network error</string>
+    <string name="error_classify_unknown">Unknown error</string>
+    <string name="error_classify_voice_settings">Voice settings</string>
+    <string name="error_classify_settings">Settings</string>
+    <string name="error_classify_repair">Re-pair</string>
+    <string name="error_classify_retry">Retry</string>
+    <string name="error_classify_open_settings">Open Settings</string>
+
     <!-- Connection wizard — Connect page essentials -->
     <string name="cw_connect_to_hermes">Connect to Hermes</string>
     <string name="cw_connect_description">Start the Hermes API/dashboard on your host, then connect this app. Relay pairing is optional and only needed for Terminal, Bridge, relay sessions, and channel grants.</string>
@@ -207,6 +324,228 @@
     <string name="cw_sign_in_to_dashboard">Sign in to dashboard</string>
     <string name="cw_open_dashboard">Open dashboard</string>
     <string name="cw_sign_in_hint">Opens the dashboard web UI to complete sign-in.</string>
+    <string name="cw_advanced_urls_hide">Hide advanced URLs and ports</string>
+    <string name="cw_advanced_urls_show">Advanced URLs and ports</string>
+    <string name="cw_dashboard_url_placeholder">http://your-server:%1$d</string>
+    <string name="cw_dashboard_url_supporting">Leave blank for the standard dashboard port on the API host</string>
+    <string name="cw_start_chat">Start Chat</string>
+    <string name="cw_sign_in_to_manage">Sign in to Manage</string>
+    <string name="cw_pair_code_subtitle">Use this only after the host has registered a Relay pairing code. Standard Chat and Manage do not require this.</string>
+    <string name="cw_api_url_label_field">API server URL</string>
+    <string name="cw_api_url_field_placeholder">http://your-server:8642</string>
+    <string name="cw_api_url_field_supporting">Hermes API — chat and sessions (default port 8642)</string>
+    <string name="cw_relay_url_label">Relay URL</string>
+    <string name="cw_relay_url_placeholder">wss://your-server:8767</string>
+    <string name="cw_relay_url_supporting">Hermes-Relay — Terminal, Bridge, relay sessions, and grants</string>
+    <string name="cw_pairing_code_label">Pairing code</string>
+    <string name="cw_pairing_code_placeholder">e.g. ABC123</string>
+    <string name="cw_pair_button">Pair</string>
+    <string name="cw_show_code_subtitle">Use this when you can\'t scan a Relay pairing QR. Set your URLs, then register the code below on the host running Hermes-Relay.</string>
+    <string name="cw_step_copy_code">1. Copy this code</string>
+    <string name="cw_copy_pairing_code">Copy pairing code</string>
+    <string name="cw_generate_new_code">Generate new code</string>
+    <string name="cw_step_register_code">2. On the host running Hermes-Relay, run:</string>
+    <string name="cw_copy_command">Copy command</string>
+    <string name="cw_step_connect">3. Then come back and tap Connect</string>
+    <string name="cw_routes_count">Routes (%1$d)</string>
+    <string name="cw_routes_desc">Your phone tries these routes in order and uses the first one it can reach. It switches automatically as you change networks.</string>
+    <string name="cw_prefer_label">Prefer:</string>
+    <string name="cw_natural_order">Natural order</string>
+    <string name="cw_keep_pairing_for">Keep this pairing for\u2026</string>
+    <string name="cw_transport_tailscale">Transport: Tailscale detected</string>
+    <string name="cw_transport_tls">Transport: TLS (wss://)</string>
+    <string name="cw_transport_plain">Transport: plain ws://</string>
+    <string name="cw_insecure_relay_warning">This relay uses plain ws:// \u2014 traffic is not encrypted.</string>
+    <string name="cw_insecure_relay_trust">Only continue if you trust the network on any connection (LAN, Tailscale, VPN).</string>
+    <string name="cw_insecure_ack">I understand this pairing sends traffic in plain text \u2014 visible to anyone on the network.</string>
+    <string name="cw_mixed_route_plain">%1$s is plain ws:// \u2014 fine at home or the office, not on public Wi-Fi.</string>
+    <string name="cw_mixed_route_secure">%1$s is encrypted (wss://) and the app uses it automatically when %2$s is unreachable.</string>
+    <string name="cw_mixed_safe">You\'re safe on any network.</string>
+    <string name="cw_connecting_to_hermes">Connecting to Hermes</string>
+    <string name="cw_connecting_detail">Checking the API server, saved key, and dashboard.</string>
+    <string name="cw_pairing_title">Pairing\u2026</string>
+    <string name="cw_pairing_failed">Pairing failed</string>
+    <string name="cw_negotiating_relay">Negotiating with the relay\u2026</string>
+    <string name="cw_paired_opening_chat">Paired \u2014 opening chat\u2026</string>
+    <string name="cw_connecting_to_relay">Connecting to the relay\u2026</string>
+    <string name="cw_hermes_connected">Hermes connected</string>
+    <string name="cw_chat">Chat</string>
+    <string name="cw_api_server_ready">API server ready</string>
+    <string name="cw_api_server_not_reachable">API server not reachable</string>
+    <string name="cw_manage">Manage</string>
+    <string name="cw_dashboard_signed_in">Dashboard signed in</string>
+    <string name="cw_dashboard_sign_in_required">Dashboard sign-in required</string>
+    <string name="cw_dashboard_available">Dashboard available</string>
+    <string name="cw_dashboard_not_reachable">Dashboard not reachable yet</string>
+    <string name="cw_dashboard_will_check">Dashboard will be checked in Manage</string>
+    <string name="cw_voice">Voice</string>
+    <string name="cw_voice_ready">Speech ready via your Hermes server</string>
+    <string name="cw_voice_sign_in_to_unlock">Unlocks with dashboard sign-in</string>
+    <string name="cw_voice_no_routes">Hermes build has no voice routes — update or pair Relay</string>
+    <string name="cw_voice_after_dashboard">Checked once the dashboard is reachable</string>
+    <string name="cw_voice_after_connect">Checked after connecting</string>
+    <string name="cw_remote">Remote</string>
+    <string name="cw_remote_fallback_ready">Fallback route ready for use away from home</string>
+    <string name="cw_remote_lan_only">LAN only — add a Tailscale or public route in Settings → Connections → Routes</string>
+    <string name="cw_relay">Relay</string>
+    <string name="cw_relay_paired">Power tools paired</string>
+    <string name="cw_relay_optional">Optional for Terminal and Bridge</string>
+    <string name="cw_cancel_button">Cancel</string>
+    <string name="cw_retry">Retry</string>
+    <string name="cw_pairing_did_not_complete">Pairing did not complete</string>
+    <string name="cw_timeout_entercode_showcode">The host hasn\'t accepted this pairing code yet. Run the pairing command on your Hermes host (or re-check the code), then tap Retry.</string>
+    <string name="cw_timeout_scan">Timed out before the relay confirmed pairing. Check the relay is running and reachable on this network, then Retry. If pairing seems to succeed but Hermes still can\'t be reached, the API server may be behind a login gateway.</string>
+    <string name="cw_timeout_other">Timed out waiting for the relay. Check that the relay is running and the URL is correct.</string>
+    <string name="cw_camera_denied">Camera permission denied. Pair manually instead — choose \"Pair Relay by code\" or enter your server URL.</string>
+
+    <!-- EndpointsCard -->
+    <string name="endpoints_no_routes_stored">No routes stored for this connection.</string>
+    <string name="endpoints_add_route">Add route</string>
+    <string name="endpoints_resolving">Resolving…</string>
+    <string name="endpoints_manual_until_disconnect">Manual — until disconnect</string>
+    <string name="endpoints_preferred">Preferred</string>
+    <string name="endpoints_automatic">Automatic</string>
+    <string name="endpoints_current_route">Current route: %1$s (%2$s)</string>
+    <string name="endpoints_cancel_manual_switch">Cancel manual switch — back to %1$s</string>
+    <string name="endpoints_stop_preferring">Stop preferring — back to automatic</string>
+    <string name="endpoints_checking">Checking…</string>
+    <string name="endpoints_reachable">Reachable</string>
+    <string name="endpoints_unreachable">Unreachable — %1$s</string>
+    <string name="endpoints_unreachable_no_detail">Unreachable — no detail</string>
+    <string name="endpoints_use_now">Use now</string>
+    <string name="endpoints_stop_preferring_menu">Stop preferring</string>
+    <string name="endpoints_prefer_this_route">Prefer this route</string>
+    <string name="endpoints_back_to_automatic">Back to automatic choice</string>
+    <string name="endpoints_always_try_first">Always try this route first</string>
+    <string name="endpoints_probe_now">Probe now</string>
+    <string name="endpoints_view_pin">View pin</string>
+    <string name="endpoints_edit_route">Edit route</string>
+    <string name="endpoints_remove_route">Remove route</string>
+    <string name="endpoints_no_pin_recorded">No pin recorded yet — the phone will record one on first TOFU connect.</string>
+    <string name="endpoints_remove_route_title">Remove %1$s route?</string>
+    <string name="endpoints_remove_route_body">%1$s will no longer be probed as a fallback. You can add it back any time.</string>
+    <string name="endpoints_remove">Remove</string>
+    <string name="endpoints_cancel">Cancel</string>
+    <string name="endpoints_active">Active</string>
+    <string name="endpoints_preferred_chip">Preferred</string>
+    <string name="endpoints_fallback">Fallback</string>
+    <string name="endpoints_add_route_title">Add route</string>
+    <string name="endpoints_edit_route_title">Edit route</string>
+    <string name="endpoints_tailscale">Tailscale</string>
+    <string name="endpoints_public">Public</string>
+    <string name="endpoints_custom">Custom</string>
+    <string name="endpoints_route_name">Route name</string>
+    <string name="endpoints_api_url_host">API server URL or host</string>
+    <string name="endpoints_saving">Saving…</string>
+    <string name="endpoints_save">Save</string>
+    <string name="endpoints_close">Close</string>
+    <string name="endpoints_actions">Endpoint actions</string>
+
+    <!-- BridgeMasterToggle -->
+    <string name="bmt_agent_control">Agent Control</string>
+    <string name="bmt_master_switch_on">Master switch — agent can read screen and act via the sub-features below.</string>
+    <string name="bmt_master_switch_off">Master switch — off. All bridge features (unattended, commands, voice intents) are inactive.</string>
+    <string name="bmt_master_switch_on_googleplay">Master switch — bridge is providing screen content to chat.</string>
+    <string name="bmt_master_switch_off_googleplay">Master switch — off. Bridge is not reading screen content.</string>
+    <string name="bmt_what_does_this_do">What does this do?</string>
+    <string name="bmt_grant_accessibility">Grant the Accessibility Service permission below to enable.</string>
+    <string name="bmt_device">Device</string>
+    <string name="bmt_battery">Battery</string>
+    <string name="bmt_screen">Screen</string>
+    <string name="bmt_current_app">Current app</string>
+    <string name="bmt_about_title">About Agent Control</string>
+    <string name="bmt_about_body1">Agent Control lets your Hermes agent read what\'s on your screen and interact with apps on your behalf (tap, type, scroll, screenshot).</string>
+    <string name="bmt_about_body2">This uses Android\'s Accessibility Service API, which is the same permission screen readers use. You must enable it in Android Settings before this switch works.</string>
+    <string name="bmt_about_body3">While this is on, a \'Hermes has device control\' notification stays in your notification shade — that\'s tied to this master switch, not to any sub-feature (like Unattended Access), and goes away the moment you turn this off.</string>
+    <string name="bmt_about_body4">You can turn Agent Control off at any time from this screen or by disabling the service in Android Settings. All bridge commands are logged in the Activity Log below.</string>
+    <string name="bmt_got_it">Got it</string>
+    <string name="bmt_master">MASTER</string>
+    <string name="bmt_on">On</string>
+    <string name="bmt_off">Off</string>
+
+    <!-- BridgeSafetySummaryCard -->
+    <string name="bssc_safety">Safety</string>
+    <string name="bssc_blocked_apps">Apps the agent can\'t touch</string>
+    <string name="bssc_destructive_verbs">Words that always ask first</string>
+    <string name="bssc_auto_disable">Turns itself off when idle</string>
+    <string name="bssc_guardrails_hint">These guardrails keep Hermes in bounds. Tap to adjust.</string>
+    <string name="bssc_manage">Manage</string>
+
+    <!-- BridgeActivityLog -->
+    <string name="bal_activity_log">Activity Log</string>
+    <string name="bal_clear">Clear</string>
+    <string name="bal_no_activity">No bridge commands yet. Every tap, type, and screenshot the agent performs will show up here.</string>
+    <string name="bal_has_screenshot">Has screenshot</string>
+    <string name="bal_full_timestamp">Full timestamp: %1$s</string>
+    <string name="bal_status_label">Status: %1$s</string>
+    <string name="bal_screenshot_token">Screenshot token: %1$s</string>
+
+    <!-- BridgeStatusCard -->
+    <string name="bsc_status">Status</string>
+    <string name="bsc_connected">Connected</string>
+    <string name="bsc_disconnected">Disconnected</string>
+    <string name="bsc_no_status">Bridge runtime not yet reporting status. Enable Agent Control above to begin receiving device telemetry.</string>
+    <string name="bsc_unknown">Unknown</string>
+    <string name="bsc_enabled">Enabled</string>
+    <string name="bsc_disabled">Disabled</string>
+    <string name="bsc_accessibility_service">Accessibility service</string>
+
+    <!-- DemoModeBanner -->
+    <string name="dmb_demo_mode">Demo mode — sample data, not connected. Connect →</string>
+    <string name="dmb_this_is_demo">This is a demo</string>
+    <string name="dmb_connect_feature">Connect your Hermes server to use %1$s.</string>
+    <string name="dmb_connect">Connect</string>
+
+    <!-- PairScreen -->
+    <string name="pair_connect_to_hermes">Connect to Hermes</string>
+    <string name="pair_close">Close</string>
+    <string name="pair_connection_updated">Connection updated</string>
+
+    <!-- AnalyticsScreen -->
+    <string name="analytics_title">Analytics</string>
+    <string name="analytics_back">Back</string>
+    <string name="analytics_section_title">Stats for Nerds</string>
+    <string name="analytics_section_subtitle">Local, on-device performance and usage metrics.</string>
+
+    <!-- ChangelogScreen -->
+    <string name="changelog_title">What\'s New</string>
+    <string name="changelog_close">Close</string>
+    <string name="changelog_no_notes">No release notes available.</string>
+    <string name="changelog_collapse">Collapse</string>
+    <string name="changelog_expand">Expand</string>
+
+    <!-- DiagnosticsScreen -->
+    <string name="diag_title">Diagnostics</string>
+    <string name="diag_back">Back</string>
+    <string name="diag_status">Status</string>
+    <string name="diag_recent_diagnostics">Recent diagnostics</string>
+    <string name="diag_recent_desc">Recent app-level connection and voice events. Secrets and raw payloads are hidden.</string>
+    <string name="diag_activity_log">Activity log</string>
+
+    <!-- NotificationCompanionSettingsScreen -->
+    <string name="ncs_title">Notification companion</string>
+    <string name="ncs_back">Back</string>
+    <string name="ncs_status">Status</string>
+    <string name="ncs_access_granted">Access granted</string>
+    <string name="ncs_access_not_granted">Access not granted</string>
+    <string name="ncs_can_read_notifications">Hermes-Relay can read posted notifications</string>
+    <string name="ncs_tap_to_enable">Tap below to enable in Android Settings</string>
+    <string name="ncs_refresh_status">Refresh status</string>
+    <string name="ncs_manage_in_settings">Manage in Android Settings</string>
+    <string name="ncs_open_android_settings">Open Android Settings</string>
+    <string name="ncs_about">About</string>
+    <string name="ncs_test">Test</string>
+    <string name="ncs_fetch_recent">Fetch recent</string>
+    <string name="ncs_no_title">(no title)</string>
+    <string name="ncs_about_body1">Lets your Hermes assistant help you triage notifications. When enabled, your phone forwards each notification\'s app, title, and text to your paired Hermes server through the Relay pairing used by phone tools.</string>
+    <string name="ncs_about_body2">Requires Android\'s notification access permission. You can grant or revoke it at any time in Android Settings. This is the same permission Wear OS, Android Auto, and Tasker use.</string>
+    <string name="ncs_test_desc">Tap below to fetch the last few notifications the listener has captured this session. Helpful for verifying the connection is working end-to-end.</string>
+    <string name="ncs_listener_not_bound">Listener has not bound yet. Try posting a test notification (any message) and re-tap.</string>
+    <string name="ncs_access_not_granted_err">Notification access is not granted.</string>
+
+    <!-- DemoContent -->
+    <string name="demo_badge">Demo</string>
+    <string name="demo_footer">Sample data — demo mode</string>
 
     <!-- P0: SettingsScreen -->
     <string name="settings_back">Back</string>
@@ -1906,14 +2245,550 @@
     <string name="conn_info_yolo_mode_title">YOLO mode</string>
 
     <!-- EndpointsCard -->
-    <string name="endpoints_no_routes_stored">No routes stored yet</string>
-    <string name="endpoints_add_route">Add route</string>
-    <string name="endpoints_resolving">Resolving</string>
-    <string name="endpoints_manual_until_disconnect">Manual until disconnect</string>
-    <string name="endpoints_preferred">Preferred</string>
-    <string name="endpoints_automatic">Automatic</string>
-    <string name="endpoints_current_route">Current route</string>
-    <string name="endpoints_cancel_manual_switch">Cancel manual switch</string>
-    <string name="endpoints_stop_preferring">Stop preferring</string>
-</resources>
 
+    <!-- RelayVoiceClient diagnostics (voice_diag_) -->
+    <string name="voice_diag_agent_provider_options">Realtime agent provider options</string>
+    <string name="voice_diag_agent_provider_validation">Realtime agent provider validation</string>
+    <string name="voice_diag_agent_config_update">Realtime agent config update</string>
+    <string name="voice_diag_handoff_failed">Voice handoff failed</string>
+    <string name="voice_diag_trying_route">Trying voice route</string>
+    <string name="voice_diag_resume_sent">Resume sent</string>
+    <string name="voice_diag_waiting_for_route">Waiting for route</string>
+    <string name="voice_diag_connection_changed">Connection changed</string>
+    <string name="voice_diag_route_changed">Route changed</string>
+    <string name="voice_diag_reconnected">Voice reconnected</string>
+    <string name="voice_diag_replaying_audio">Replaying missed audio</string>
+    <string name="voice_diag_caught_up">Caught up</string>
+    <string name="voice_diag_resume_rejected">Resume rejected</string>
+
+    <!-- ConnectionManager diagnostics (conn_diag_) -->
+    <string name="conn_diag_insecure_mode">Insecure relay mode enabled</string>
+    <string name="conn_diag_route_selected">Relay route selected</string>
+    <string name="conn_diag_using_configured_url">Using configured relay URL</string>
+    <string name="conn_diag_socket_blocked">Relay socket blocked</string>
+    <string name="conn_diag_url_invalid">Relay socket URL invalid</string>
+    <string name="conn_diag_opening_insecure">Opening insecure relay socket</string>
+    <string name="conn_diag_opening_socket">Opening relay socket</string>
+    <string name="conn_diag_connected">Relay socket connected</string>
+    <string name="conn_diag_disconnect_requested">Relay socket disconnect requested</string>
+    <string name="conn_diag_closed">Relay socket closed</string>
+    <string name="conn_diag_failed">Relay socket failed</string>
+    <string name="conn_diag_reconnect_skipped">Relay reconnect skipped</string>
+    <string name="conn_diag_reconnect_delayed">Relay reconnect delayed</string>
+    <string name="conn_diag_reconnect_slow_poll">Relay reconnect slow-polling</string>
+    <string name="conn_diag_reconnect_scheduled">Relay reconnect scheduled</string>
+
+    <!-- RelayHttpClient diagnostics (http_diag_) -->
+    <string name="http_diag_url_invalid">Relay URL invalid</string>
+    <string name="http_diag_health_failed">Relay health failed</string>
+    <string name="http_diag_health_ok">Relay health ok</string>
+    <string name="http_diag_health_timeout">Relay health timeout</string>
+    <string name="http_diag_conn_refused">Relay connection refused</string>
+
+    <!-- EndpointResolver diagnostics (endpoint_diag_) -->
+    <string name="endpoint_diag_selected">Endpoint selected</string>
+    <string name="endpoint_diag_no_reachable">No reachable endpoint</string>
+    <string name="endpoint_diag_probe_invalid">Endpoint probe invalid</string>
+    <string name="endpoint_diag_probe_ok">Endpoint probe ok</string>
+    <string name="endpoint_diag_probe_failed">Endpoint probe failed</string>
+    <string name="endpoint_diag_probe_timeout">Endpoint probe timeout</string>
+
+    <!-- RealtimePcmPlayer diagnostics (audio_diag_) -->
+    <string name="audio_diag_started">Realtime audio started</string>
+    <string name="audio_diag_not_starting">Realtime audio not starting</string>
+    <string name="audio_diag_stream_gap">Realtime audio stream gap</string>
+    <string name="audio_diag_volume_muted">Realtime voice volume muted</string>
+
+    <!-- DestructiveVerbConfirmDialog -->
+    <string name="destructive_confirm_title">Confirm destructive action</string>
+    <string name="destructive_confirm_warning">If you didn't expect this, tap Deny.</string>
+    <string name="destructive_confirm_dont_ask">Don't ask again for &quot;%1$s&quot;</string>
+    <string name="destructive_confirm_deny">Deny</string>
+    <string name="destructive_confirm_allow">Allow this action</string>
+    <string name="destructive_label_tap_text">Target text (tap)</string>
+    <string name="destructive_label_type">Text to type</string>
+    <string name="destructive_label_payload">Payload</string>
+    <string name="destructive_phrase_tap">tap a button containing</string>
+    <string name="destructive_phrase_type">type text containing</string>
+    <string name="destructive_phrase_action">perform an action with</string>
+    <string name="destructive_phrase_keyword">a destructive keyword</string>
+    <string name="destructive_phrase_word">the word &quot;%1$s&quot;</string>
+    <string name="destructive_body_format">%1$s %2$s</string>
+    <string name="destructive_no_text">(no text)</string>
+    <string name="destructive_chip_unattended">Unattended ON</string>
+    <string name="destructive_chip_active">Hermes active</string>
+
+    <!-- InsecureConnectionAckDialog -->
+    <string name="insecure_ack_title">Allow insecure connections?</string>
+    <string name="insecure_ack_body_1">Insecure mode lets this app connect over plain ws:// and http://. Anyone on the network between your phone and the server can read your chat messages, session tokens, and terminal traffic.</string>
+    <string name="insecure_ack_body_2">Only use this on networks you control. Pick the reason that best describes your setup:</string>
+    <string name="insecure_ack_confirm">I understand</string>
+    <string name="insecure_ack_cancel">Cancel</string>
+    <string name="insecure_ack_reason_lan">LAN only (trusted network)</string>
+    <string name="insecure_ack_reason_tailscale">Tailscale or VPN</string>
+    <string name="insecure_ack_reason_dev">Local development only</string>
+
+    <!-- SessionTtlPickerDialog -->
+    <string name="ttl_title">Keep this pairing for&#8230;</string>
+    <string name="ttl_body">Your phone will reconnect automatically during this window. After it expires, you'll need to pair again to use Relay features.</string>
+    <string name="ttl_pair">Pair</string>
+    <string name="ttl_cancel">Cancel</string>
+    <string name="ttl_option_1d">1 day</string>
+    <string name="ttl_option_7d">7 days</string>
+    <string name="ttl_option_30d">30 days</string>
+    <string name="ttl_option_90d">90 days</string>
+    <string name="ttl_option_1y">1 year</string>
+    <string name="ttl_option_never">Never expire</string>
+    <string name="ttl_never_expire_warning">This device will stay paired until you revoke it manually.</string>
+    <string name="ttl_helper_tailscale">Transport: Tailscale detected</string>
+    <string name="ttl_helper_tls">Transport: TLS (wss://)</string>
+    <string name="ttl_helper_plain">Transport: plain ws://</string>
+
+    <!-- PowerFeatureGate -->
+    <string name="power_gate_requires_pairing">Requires pairing</string>
+    <string name="power_gate_pair_to_unlock">Pair to unlock</string>
+    <string name="power_gate_pairing_expired">Pairing expired</string>
+    <string name="power_gate_pair_again">Pair again</string>
+    <string name="power_gate_unavailable">Unavailable on this server</string>
+    <string name="power_gate_view_connection">View connection</string>
+    <string name="power_gate_signin_required">Dashboard sign-in required</string>
+    <string name="power_gate_open_signin">Open sign-in</string>
+    <string name="power_gate_explanation_pairing">This feature requires the Relay plugin to be installed on your Hermes server.</string>
+    <string name="power_gate_explanation_expired">Your relay session is no longer accepted by the server. Open the connection to repair.</string>
+    <string name="power_gate_explanation_unavailable">This Hermes server isn't exposing the surface needed for this feature.</string>
+    <string name="power_gate_explanation_signin">This standard dashboard feature needs dashboard sign-in before it can be used.</string>
+
+    <!-- AgentTextFlow / CleanModeComposer -->
+    <string name="agent_text_placeholder">Message</string>
+
+    <!-- ExtraKeysToolbar -->
+    <string name="extra_keys_esc">ESC</string>
+    <string name="extra_keys_tab">TAB</string>
+    <string name="extra_keys_ctrl">CTRL</string>
+    <string name="extra_keys_alt">ALT</string>
+    <string name="extra_keys_copy">COPY</string>
+    <string name="extra_keys_paste">PASTE</string>
+
+    <!-- ToolProgressCard -->
+    <string name="tool_progress_preparing">Preparing tool&#8230;</string>
+    <string name="tool_progress_arguments">Arguments:</string>
+    <string name="tool_progress_error">Error:</string>
+    <string name="tool_progress_result">Result:</string>
+    <string name="tool_progress_status_completed">completed</string>
+    <string name="tool_progress_status_failed">failed</string>
+    <string name="tool_progress_status_running">running</string>
+    <string name="tool_progress_cd_collapse">Collapse</string>
+    <string name="tool_progress_cd_expand">Expand</string>
+
+    <!-- AgentIconRow -->
+    <string name="agent_icon_title">Agent icon</string>
+    <string name="agent_icon_set">Set image</string>
+    <string name="agent_icon_change">Change</string>
+    <string name="agent_icon_clear">Clear</string>
+    <string name="agent_icon_description">Shown beside this profile's name in chat. Stays on this device &#8212; never sent to Hermes.</string>
+
+    <!-- ConnectionSecuritySheet -->
+    <string name="conn_security_title">Connection security</string>
+    <string name="conn_security_empty">No active route yet. Connect to a server to see how each part of the connection is protected.</string>
+    <string name="conn_security_learn_more">Learn about connection security &#8594;</string>
+
+    <!-- ConnectionSwitcherSheet -->
+    <string name="conn_switcher_title">Switch connection</string>
+    <string name="conn_switcher_empty">No connections yet</string>
+    <string name="conn_switcher_manage">Manage connections&#8230;</string>
+
+    <!-- DiagnosticsLogPanel -->
+    <string name="diagnostics_title">Recent activity</string>
+    <string name="diagnostics_clear">Clear</string>
+    <string name="diagnostics_all">All</string>
+    <string name="diagnostics_empty">No recent activity</string>
+
+    <!-- HermesCardBubble -->
+    <string name="hermes_card_hide_value">Hide value</string>
+    <string name="hermes_card_reveal_value">Reveal value</string>
+    <string name="hermes_card_not_stored">Not stored in chat history</string>
+    <string name="hermes_card_send_answer">Send answer</string>
+    <string name="hermes_card_submit">Submit</string>
+    <string name="hermes_card_hold_confirm">Hold to confirm</string>
+    <string name="hermes_card_type_answer">Type an answer&#8230;</string>
+    <string name="hermes_card_chose">Chose: %1$s</string>
+    <string name="hermes_card_secret_provided">Secret provided &#183; &#8226;&#8226;&#8226;&#8226;</string>
+    <string name="hermes_card_answered">Answered: %1$s</string>
+    <string name="hermes_card_expired">Expired &#8212; not granted</string>
+
+    <!-- ModelPickerSheet -->
+    <string name="model_picker_title">Model</string>
+    <string name="model_picker_search">Search models or providers&#8230;</string>
+    <string name="model_picker_empty">No models match your search</string>
+
+    <!-- InjectedContextSheet -->
+    <string name="context_sheet_agent_sees">What the agent sees</string>
+    <string name="context_sheet_transparency">The exact extra context prepended to your next turn, for transparency.</string>
+    <string name="context_sheet_persona">Persona / profile</string>
+    <string name="context_sheet_phone_status">Phone status</string>
+    <string name="context_sheet_media_capability">Media capability</string>
+    <string name="context_sheet_relay_context">Relay context (server-side)</string>
+    <string name="context_sheet_this_turn">This turn</string>
+    <string name="context_sheet_transport_desc">Transport: %1$s.</string>
+
+    <!-- InboundAttachmentCard -->
+    <string name="inbound_attach_tap_download">Tap to download</string>
+    <string name="inbound_attach_downloading">Downloading&#8230;%1$s</string>
+    <string name="inbound_attach_failed">Attachment failed</string>
+    <string name="inbound_attach_tap_retry">Tap to retry</string>
+    <string name="inbound_attach_open">Open externally</string>
+    <string name="inbound_attach_share">Share</string>
+    <string name="inbound_attach_save">Save to device</string>
+    <string name="inbound_attach_cd_save">Save</string>
+    <string name="inbound_attach_type_image">Image</string>
+    <string name="inbound_attach_type_video">Video</string>
+    <string name="inbound_attach_type_audio">Audio</string>
+    <string name="inbound_attach_type_pdf">PDF</string>
+    <string name="inbound_attach_type_text">Text</string>
+    <string name="inbound_attach_type_file">File</string>
+    <string name="inbound_attach_read_failed">Couldn't read this file</string>
+    <string name="inbound_attach_saved">Saved to %1$s</string>
+    <string name="inbound_attach_save_failed">Save failed: %1$s</string>
+
+    <!-- AttachmentViewer -->
+    <string name="attachment_sensitive">Sensitive</string>
+    <string name="attachment_tap_reveal">Tap to reveal</string>
+    <string name="attachment_cd_close">Close</string>
+    <string name="attachment_cd_open">Open externally</string>
+    <string name="attachment_cd_share">Share</string>
+    <string name="attachment_cd_save">Save</string>
+    <string name="attachment_no_preview">No in-app preview for this type.</string>
+    <string name="attachment_open_ext">Open externally</string>
+    <string name="attachment_load_failed">Couldn't load this image</string>
+    <string name="attachment_preparing_video">Preparing video&#8230;</string>
+    <string name="attachment_preparing_audio">Preparing audio&#8230;</string>
+    <string name="attachment_audio_label">Audio</string>
+    <string name="attachment_pause">Pause</string>
+    <string name="attachment_play">Play</string>
+    <string name="attachment_unmute">Unmute</string>
+    <string name="attachment_mute">Mute</string>
+    <string name="attachment_title">Attachment</string>
+
+    <!-- CrashReportDialog -->
+    <string name="crash_title">Hermes-Relay closed unexpectedly</string>
+    <string name="crash_body">The last session crashed. Sending this report helps get it fixed faster.</string>
+    <string name="crash_dismiss">Dismiss</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_share">Share</string>
+    <string name="crash_report">Report</string>
+    <string name="crash_toast_copied">Crash report copied</string>
+
+    <!-- QrPairingScanner -->
+    <string name="qr_scanner_title">Scan Hermes QR</string>
+    <string name="qr_scanner_instruction">Scan a Hermes setup QR</string>
+    <string name="qr_scanner_subtext">Ask Hermes: &quot;Generate a QR code with my API URL and API key.&quot;</string>
+    <string name="qr_scanner_camera_error">Couldn't start the camera on this device.</string>
+    <string name="qr_scanner_fallback_message">You can pair without the camera.</string>
+    <string name="qr_scanner_pair_manual">Pair manually</string>
+
+    <!-- SphereSkin -->
+    <string name="sphere_skin_adaptive">Adaptive</string>
+    <string name="sphere_skin_classic">Classic</string>
+    <string name="sphere_skin_aurora">Aurora</string>
+    <string name="sphere_skin_solar">Solar</string>
+    <string name="sphere_skin_mono">Mono</string>
+    <string name="sphere_skin_adaptive_desc">Follows your theme's colors</string>
+    <string name="sphere_skin_classic_desc">The original green-violet orb</string>
+    <string name="sphere_reactivity_voice">Voice</string>
+    <string name="sphere_reactivity_tools">Tools</string>
+    <string name="sphere_reactivity_activity">Activity</string>
+    <string name="sphere_reactivity_gaze">Gaze</string>
+    <string name="sphere_reactivity_static">Static</string>
+
+    <!-- TimelineView -->
+    <string name="timeline_header">Timeline</string>
+    <string name="timeline_status_checks">Status checks</string>
+    <string name="timeline_empty_activity">No activity yet</string>
+    <string name="timeline_empty_checks">No checks yet &#8212; connect to a server to populate diagnostics.</string>
+    <string name="timeline_legend_chat">Chat</string>
+    <string name="timeline_legend_tool">Tool</string>
+    <string name="timeline_legend_voice">Voice</string>
+    <string name="timeline_legend_profile">Profile</string>
+    <string name="timeline_legend_conn">Conn</string>
+    <string name="timeline_legend_pass">Pass</string>
+    <string name="timeline_legend_warn">Warn</string>
+    <string name="timeline_legend_fail">Fail</string>
+    <string name="timeline_legend_unknown">Unknown</string>
+    <string name="timeline_tap_detail">Tap for log detail</string>
+    <string name="timeline_pass">PASS</string>
+    <string name="timeline_warn">WARN</string>
+    <string name="timeline_fail">FAIL</string>
+    <string name="timeline_status_unknown">UNKNOWN</string>
+
+    <!-- CommandPalette -->
+    <string name="command_palette_header">Commands</string>
+    <string name="command_palette_search">Search commands&#8230;</string>
+    <string name="command_palette_cd_clear">Clear search</string>
+    <string name="command_palette_filter_all">All</string>
+    <string name="command_palette_show_less">Show less</string>
+    <string name="command_palette_show_all">Show all (%1$d)</string>
+    <string name="command_palette_empty">No commands match your search</string>
+
+    <!-- TransportSecurityBadge -->
+    <string name="transport_badge_secure_tls">Secure &#8212; TLS</string>
+    <string name="transport_badge_mixed">Mixed &#8212; secure fallback available</string>
+    <string name="transport_badge_plain">All routes plain &#8212; dev only</string>
+    <string name="transport_badge_secure_tls_short">Secure (TLS)</string>
+    <string name="transport_badge_insecure_lan">Plain (on LAN)</string>
+    <string name="transport_badge_insecure_tailscale">Plain (on Tailscale)</string>
+    <string name="transport_badge_insecure_public">Plain (on public URL)</string>
+    <string name="transport_badge_insecure_lan_only">Plain (LAN only)</string>
+    <string name="transport_badge_encrypted_tls">Encrypted &#183; TLS</string>
+    <string name="transport_badge_encrypted_tailscale">Encrypted &#183; Tailscale</string>
+    <string name="transport_badge_mixed_routes">Mixed routes</string>
+    <string name="transport_badge_not_encrypted">Not encrypted</string>
+    <string name="transport_badge_checking">Checking&#8230;</string>
+    <string name="transport_badge_glyph_tls">Encrypted (TLS)</string>
+    <string name="transport_badge_glyph_encrypted">Encrypted</string>
+    <string name="transport_badge_glyph_not_encrypted">Not encrypted</string>
+
+    <!-- MessageBubble -->
+    <string name="msg_bubble_copy">Copy</string>
+    <string name="msg_bubble_quote">Quote in reply</string>
+    <string name="msg_bubble_edit">Edit &amp; resend</string>
+    <string name="msg_bubble_reconnecting">Reconnecting to your answer&#8230;</string>
+    <string name="msg_bubble_still_working">Still working&#8230;</string>
+    <string name="msg_bubble_sending">Sending&#8230;</string>
+    <string name="msg_bubble_delivered">Delivered</string>
+    <string name="msg_bubble_not_sent">Not sent</string>
+
+    <!-- ProfileInspectorCard -->
+    <string name="profile_inspector_card_title">Inspect Agent</string>
+    <string name="profile_inspector_card_subtitle">View config, SOUL, memory, skills</string>
+    <string name="profile_inspector_card_no_agent">No active agent</string>
+
+    <!-- TerminalSearchBar -->
+    <string name="term_search_placeholder">Search scrollback</string>
+    <string name="term_search_cd_previous">Previous match</string>
+    <string name="term_search_cd_next">Next match</string>
+    <string name="term_search_cd_close">Close search</string>
+
+    <!-- UpdateAvailableBanner -->
+    <string name="update_banner_available">Update available</string>
+    <string name="update_banner_downloading">Downloading update&#8230;</string>
+    <string name="update_banner_ready">Update ready &#8212; restart</string>
+    <string name="update_banner_update">Update</string>
+    <string name="update_banner_restart">Restart</string>
+
+    <!-- UpdateBanner -->
+    <string name="update_banner_cd_dismiss">Dismiss</string>
+
+    <!-- VoiceOverlayHost -->
+    <string name="voice_overlay_title">Voice Overlay</string>
+    <string name="voice_overlay_minimize">Minimize</string>
+    <string name="voice_overlay_hermes">Hermes</string>
+    <string name="voice_overlay_hide">Hide</string>
+    <string name="voice_overlay_cd_exit">Exit voice mode</string>
+    <string name="voice_overlay_cd_mic">Voice overlay mic</string>
+    <string name="voice_overlay_state_ready">Ready</string>
+    <string name="voice_overlay_state_listening">Listening</string>
+    <string name="voice_overlay_state_transcribing">Transcribing</string>
+    <string name="voice_overlay_state_thinking">Thinking</string>
+    <string name="voice_overlay_state_speaking">Speaking</string>
+    <string name="voice_overlay_state_error">Error</string>
+    <string name="voice_overlay_bubble_label_ready">Ready</string>
+    <string name="voice_overlay_bubble_label_listen">Listen</string>
+    <string name="voice_overlay_bubble_label_stt">STT</string>
+    <string name="voice_overlay_bubble_label_think">Think</string>
+    <string name="voice_overlay_bubble_label_speak">Speak</string>
+    <string name="voice_overlay_bubble_label_error">Error</string>
+    <string name="voice_overlay_tap_action_idle">start listening</string>
+    <string name="voice_overlay_tap_action_listening">stop listening</string>
+    <string name="voice_overlay_tap_action_pause">pause auto mode</string>
+    <string name="voice_overlay_tap_action_interrupt">interrupt</string>
+    <string name="voice_overlay_cd_description">Voice overlay %1$s. Tap to %2$s, double tap to expand.</string>
+    <string name="voice_overlay_label_default_profile">default profile</string>
+    <string name="voice_overlay_provider_output_off">output off</string>
+    <string name="voice_overlay_provider_placeholder">provider ...</string>
+    <string name="voice_overlay_engine_realtime">Realtime Agent</string>
+    <string name="voice_overlay_engine_hermes">Hermes voice</string>
+    <string name="voice_overlay_engine_placeholder">Voice engine ...</string>
+
+    <!-- AppTheme labels + descriptions -->
+    <string name="theme_hermes_relay">Hermes Relay</string>
+    <string name="theme_hermes_relay_desc">The signature electric-blue brand &#8212; follows light/dark</string>
+    <string name="theme_hermes_teal">Hermes Teal</string>
+    <string name="theme_hermes_teal_desc">Classic dark teal &#8212; the canonical Hermes look</string>
+    <string name="theme_nous_blue">Nous Blue</string>
+    <string name="theme_nous_blue_desc">Light mode &#8212; vivid Nous-blue accents on a cream canvas</string>
+    <string name="theme_midnight">Midnight</string>
+    <string name="theme_midnight_desc">Deep blue-violet with cool accents</string>
+    <string name="theme_ember">Ember</string>
+    <string name="theme_ember_desc">Warm crimson and bronze &#8212; forge vibes</string>
+    <string name="theme_mono">Mono</string>
+    <string name="theme_mono_desc">Clean grayscale &#8212; minimal and focused</string>
+    <string name="theme_cyberpunk">Cyberpunk</string>
+    <string name="theme_cyberpunk_desc">Neon green on black &#8212; matrix terminal</string>
+    <string name="theme_rose">Ros&#233;</string>
+    <string name="theme_rose_desc">Soft pink and warm ivory &#8212; easy on the eyes</string>
+
+    <!-- ChatScreen hardcoded strings -->
+    <string name="chat_slash_new">Start a new session</string>
+    <string name="chat_slash_retry_label">Retry the last message</string>
+    <string name="chat_slash_undo">Remove the last exchange</string>
+    <string name="chat_slash_title_txt">Set a title for this session</string>
+    <string name="chat_slash_branch">Branch/fork the current session</string>
+    <string name="chat_slash_compress">Compress conversation context</string>
+    <string name="chat_slash_rollback">List or restore checkpoints</string>
+    <string name="chat_slash_stop">Kill running background processes</string>
+    <string name="chat_slash_resume">Resume a previous session</string>
+    <string name="chat_slash_background">Run a prompt in the background</string>
+    <string name="chat_slash_btw">Side question using session context</string>
+    <string name="chat_slash_queue_label">Queue a prompt for the next turn</string>
+    <string name="chat_slash_approve">Approve a pending command</string>
+    <string name="chat_slash_deny">Deny a pending command</string>
+    <string name="chat_slash_model_label">Switch model for this session</string>
+    <string name="chat_slash_provider">Show available providers</string>
+    <string name="chat_slash_personality_label">Set a predefined personality</string>
+    <string name="chat_slash_verbose">Cycle tool progress display</string>
+    <string name="chat_slash_yolo">Toggle auto-approve mode</string>
+    <string name="chat_slash_reasoning">Set reasoning effort level</string>
+    <string name="chat_slash_voice_label">Toggle voice mode</string>
+    <string name="chat_slash_reload_mcp">Reload MCP servers</string>
+    <string name="chat_slash_help">Show available commands</string>
+    <string name="chat_slash_status_label">Show session info</string>
+    <string name="chat_slash_usage">Show token usage</string>
+    <string name="chat_slash_insights">Usage analytics</string>
+    <string name="chat_slash_commands_label">Browse all commands</string>
+    <string name="chat_slash_profile_label">Show active profile</string>
+    <string name="chat_slash_category_session">session</string>
+    <string name="chat_slash_category_config">configuration</string>
+    <string name="chat_slash_category_info">info</string>
+    <string name="chat_prompt_help_me_code">Help me code</string>
+    <string name="chat_prompt_explain">Explain something</string>
+    <string name="chat_prompt_what_can_you_do">What can you do?</string>
+    <string name="chat_connect_to_hermes_dots">Connecting to Hermes...</string>
+    <string name="chat_needs_connection">Connect to Hermes</string>
+    <string name="chat_streaming">Streaming</string>
+    <string name="chat_connected_label">Connected</string>
+    <string name="chat_reconnecting_dots">Reconnecting&#8230;</string>
+    <string name="chat_connecting_dots">Connecting&#8230;</string>
+    <string name="chat_disconnected_label">Disconnected</string>
+    <string name="chat_server_default_sessions">Server default sessions</string>
+    <string name="chat_active_connection">Active connection</string>
+    <string name="chat_compatibility_overlay">Compatibility overlay on %1$s</string>
+    <string name="chat_connection_label">Connection: %1$s</string>
+    <string name="chat_file_too_large">File too large (max %1$d MB)</string>
+    <string name="chat_prompt_chat_with">Chat with %1$s</string>
+    <string name="chat_hermes_message">Hermes message</string>
+    <string name="chat_start_conversation">Start a conversation</string>
+    <string name="chat_not_on_plan">Not on your plan</string>
+    <string name="chat_needs_setup">Needs setup</string>
+    <string name="chat_model_label">Model</string>
+    <string name="chat_reasoning_none">None</string>
+    <string name="chat_reasoning_minimal">Minimal</string>
+    <string name="chat_reasoning_low">Low</string>
+    <string name="chat_reasoning_medium">Medium</string>
+    <string name="chat_reasoning_high">High</string>
+    <string name="chat_date_today">Today</string>
+    <string name="chat_date_yesterday">Yesterday</string>
+    <string name="chat_share_subject">Hermes conversation</string>
+
+    <!-- DestructiveVerbConfirmDialog -->
+
+    <!-- InsecureConnectionAckDialog -->
+
+    <!-- SessionTtlPickerDialog -->
+
+    <!-- PowerFeatureGate -->
+
+    <!-- AgentTextFlow / CleanModeComposer -->
+
+    <!-- ExtraKeysToolbar -->
+
+    <!-- ToolProgressCard -->
+
+    <!-- AgentIconRow -->
+
+    <!-- ConnectionSecuritySheet -->
+
+    <!-- ConnectionSwitcherSheet -->
+
+    <!-- DiagnosticsLogPanel -->
+
+    <!-- HermesCardBubble -->
+
+    <!-- ModelPickerSheet -->
+
+    <!-- InjectedContextSheet -->
+
+    <!-- InboundAttachmentCard -->
+
+    <!-- AttachmentViewer -->
+
+    <!-- CrashReportDialog -->
+
+    <!-- QrPairingScanner -->
+
+    <!-- SphereSkin -->
+
+    <!-- TimelineView -->
+
+    <!-- CommandPalette -->
+
+    <!-- TransportSecurityBadge -->
+
+    <!-- MessageBubble -->
+
+    <!-- ProfileInspectorCard -->
+
+    <!-- TerminalSearchBar -->
+
+    <!-- UpdateAvailableBanner -->
+
+    <!-- UpdateBanner -->
+
+    <!-- VoiceOverlayHost -->
+
+    <!-- AppTheme labels + descriptions -->
+
+    <!-- ChatScreen hardcoded strings -->
+
+    <!-- ChatScreen overview strings (from RelayApp context) -->
+    <string name="screen_chat_label">Chat</string>
+    <string name="screen_chat_settings_label">Chat</string>
+    <string name="screen_terminal_label">Terminal</string>
+    <string name="screen_bridge_label">Bridge</string>
+    <string name="screen_manage_label">Manage</string>
+    <string name="screen_settings_label">Settings</string>
+    <string name="screen_connections_label">Connections</string>
+    <string name="screen_connection_label">Connection</string>
+    <string name="screen_voice_label">Voice</string>
+    <string name="screen_notification_companion_label">Notification companion</string>
+    <string name="screen_proactive_label">Threads</string>
+    <string name="screen_permissions_label">Permissions</string>
+    <string name="screen_bridge_safety_label">Bridge safety</string>
+    <string name="screen_media_label">Media</string>
+    <string name="screen_appearance_label">Appearance</string>
+    <string name="screen_analytics_label">Analytics</string>
+    <string name="screen_diagnostics_label">Diagnostics</string>
+    <string name="screen_developer_label">Developer</string>
+    <string name="screen_realtime_voice_label">Realtime voice</string>
+    <string name="screen_about_label">About</string>
+    <string name="screen_profile_inspector_label">Profile Inspector</string>
+    <string name="screen_relay_sessions_label">Relay sessions</string>
+    <string name="chat_only_active_revoke">Only active connections can be revoked now</string>
+    <string name="chat_profile_inspector_summary">Inspect profile configuration, SOUL, memory files, and skills configured for your Relay-supported agent.</string>
+    <string name="chat_profile_inspector_title">Profile Inspector</string>
+    <string name="chat_reconnecting_toast">Reconnecting to Relay…</string>
+    <string name="chat_relay_sessions_summary">View and revoke devices paired with this relay.</string>
+    <string name="chat_relay_sessions_title">Relay sessions</string>
+    <string name="chat_rename_failed">Rename failed</string>
+
+
+    <!-- AgentTextFlow -->
+    <string name="agent_text_send_cd">Send</string>
+    <string name="agent_text_exit_clean">Exit clean mode</string>
+    <string name="agent_text_sphere_desc">Agent</string>
+
+
+    <!-- UpdateBanner format strings (with version placeholders) -->
+    <string name="update_banner_available_fmt">Update available &#8212; v%1$s</string>
+    <string name="update_banner_body_fmt">You're on %1$s. Tap Update to download.</string>
+
+</resources>
