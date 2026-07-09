@@ -65,7 +65,15 @@ jobs:
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
         if: ${{ env.HERMES_KEYSTORE_BASE64 != '' }}
         run: |
-          echo "$HERMES_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          # 兼容两种格式：
+          #   1) 纯 base64 文本（base64 -w0 生成）
+          #   2) certutil 生成的 PEM（带 -----BEGIN/END CERTIFICATE----- 头尾行 + 换行）
+          # 做法：删掉所有非 base64 内容行（以 '-' 开头，或不含 base64 字符），
+          #       再去掉回车与换行，最后 base64 -d 解码。
+          echo "$HERMES_KEYSTORE_BASE64" \
+            | sed '/^-/d; /-----/d; /^[[:space:]]*$/d' \
+            | tr -d '\r\n' \
+            | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "HERMES_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
           echo "✅ 固定签名密钥已解码"
 
