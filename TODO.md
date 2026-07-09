@@ -20,6 +20,70 @@ Compaction-safe snapshot of where we are; details in the linked sections below.
   2. Tap/static click between sentences (`RealtimePcmPlayer` boundary) — still needs an on-device audio repro before fixing.
 - **Screen-wake-lock — SHIPPED (2026-07-07).** See "Voice — on-device findings" below.
 - **Owner / Mizu — GitHub triage.** Close #64 as superseded, plus the queued open-issue comment/close/label batch (see "Open-issue resolution batch" below).
+- **Voice exact-mode signoff — IN PROGRESS (2026-07-09 e2e).** First confirmed provider-voiced background delivery landed, but it's inconsistent on `grok-voice-latest` (1 win + 1 TTS fallback in one session) and `grok-voice-think-fast-1.0` is still untested (session resolved to the alias). Full detail + owner's background-tasks-as-chat UX asks + a duplicate-status bug + a status-speak logging gap in "Voice background-tasks — live findings + UX vision (2026-07-09)" below.
+
+---
+
+## Voice background-tasks — live findings + UX vision (2026-07-09 e2e realtime test)
+
+Live on-device e2e (relay `2968a17`, app `1.4.0-sideload` build 22, provider
+`xai_realtime`). The delivery-report tooling from `5ff78da` was confirmed working
+against live data during this test.
+
+### Findings
+- **First confirmed provider-voiced delivery.** A background turn ("what do you
+  think about our notes so far?") delivered `forced_summary_streaming`
+  (provider-voiced, early-commit) — grok read the answer in its own voice and
+  passed validation. BUT the same session's earlier turn ("check Hermes for what
+  we know about Minnesota") fell back to relay TTS (`acknowledgement_not_summary`).
+  So `grok-voice-latest` is **inconsistent** at the exact-reading instruction:
+  1 win + 1 fallback in one session — reinforces the "pin
+  `grok-voice-think-fast-1.0` and measure" plan (see "xAI voice platform moved"
+  re-baseline items).
+- **think-fast never engaged.** `resolved_model=grok-voice-latest` on both turns —
+  the app requested the provider default. `grok-voice-think-fast-1.0` is advertised
+  in `provider_options` but was not selected. The next signoff round MUST force the
+  session onto think-fast (voice-settings model pick, or relay default) or the new
+  model stays untested. Ties directly to the pin-vs-alias decision.
+- **Duplicate "background task is running" + voice mismatch (BUG).** User heard the
+  "working on it" status TWICE, the second sounding like relay TTS. The provider's
+  own acknowledgement and the relay's restrained-status-while-Hermes-runs speak can
+  double up, and the status mouth may not match the delivery mouth. Reproduce,
+  de-dupe, and keep the run's status utterances in ONE voice.
+- **Logging gap — status/acknowledgement speaks carry no text.** The flight recorder
+  captured the user turns and the delivery outcome, but the in-between "working on
+  it" utterances appear only as untitled `hermes.run.progress` pings, so "what did
+  the user actually hear" can't be reconstructed. Log the spoken text of provider
+  acknowledgements + restrained-status speaks (they drive real audio) so forensic
+  replay of a delivery is possible. Prereq for diagnosing the duplicate above.
+
+### Background-tasks-as-first-class-chat vision (owner ask 2026-07-09)
+Theme: stop treating a background run as an ephemeral voice-only side effect —
+surface it in chat like any other turn and keep its result. Overlaps the "Voice
+background-run v2" chip roadmap below (items 3/4/7) but reframed around
+chat/history rather than the voice chip; unify rather than build twice.
+- **Titled background tasks.** Give each run a short title/label (first-line- or
+  model-derived) so it's identifiable in a list and in chat.
+- **Chat entry on kickoff + result.** Drop a chat entry when a background task
+  starts ("Background task: <title> — running") and settle the result into the same
+  thread when it finishes. Don't leave it voice-only.
+- **Results persisted in chat/history.** Show the background result cleanly in chat
+  history instead of discarding it after it's spoken — especially valuable for
+  follow-ups ("what did that say again?").
+- **Detail view (expand on tap).** Tapping a background-task chat entry expands to
+  the full run detail like a normal chat message / tool timeline (reuse
+  `SubagentLane`). Same intent as v2 items 3+4 — build once.
+- **Realtime agent retains background-result context in-session.** After a result
+  lands, the realtime session should reference it for follow-ups without a fresh
+  Hermes round-trip. Today provider-answered turns fold into the Hermes session via
+  `RealtimeTurnSyncBuilder` on the NEXT Hermes turn, but the ephemeral provider
+  session doesn't carry the result forward on its own — a follow-up like "expand on
+  that" may lack it. Decide: seed the delivered result back into the provider
+  session context at delivery time.
+- **Proper concurrent multi-task.** True N-way parallel background runs — see v2
+  item 7 (deferred: needs session-per-run topology, run-id-targeted cancel,
+  multi-run chip/list). Owner is now explicitly asking for it; re-rank against the
+  queue rather than leaving deferred.
 
 ---
 
