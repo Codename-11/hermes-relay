@@ -2919,7 +2919,7 @@
     <string name="security_sheet_learn_more">了解连接安全 →</string>
     <string name="security_sheet_no_route">未配置路由</string>
     <string name="security_sheet_title">连接安全</string>
-    <string name="subagent_lane_a11y">%s %s</string>
+    <string name="subagent_lane_a11y">%1$s %2$s</string>
     <string name="subagent_lane_label_fallback">代理</string>
     <string name="subagent_lane_running_count">%d 个运行中</string>
     <string name="subagent_lane_tool_count">%d 个工具</string>

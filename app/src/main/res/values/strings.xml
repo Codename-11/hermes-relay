@@ -2828,7 +2828,7 @@
     <string name="chat_clear">Clear</string>
     <string name="chat_profile_api_label">Profile API</string>
     <string name="chat_profile_sessions">%s sessions</string>
-    <string name="chat_queue_count">%d message%s queued — delivers after this turn</string>
+    <string name="chat_queue_count">%1$d message%2$s queued — delivers after this turn</string>
     <string name="command_palette_count">%d commands</string>
     <string name="cw_api_url_scheme_error">API URL must start with http:// or https://</string>
     <string name="cw_confirm_desc_hermes">This will connect to an existing Hermes server you control.</string>
@@ -2869,11 +2869,11 @@
     <string name="cw_scan_result_api_only">API only</string>
     <string name="cw_scan_result_dashboard_only">Dashboard only</string>
     <string name="cw_scan_result_unknown">Unknown</string>
-    <string name="cw_scan_summary_api_only">%d API endpoint%s</string>
-    <string name="cw_scan_summary_both">%d server%s</string>
-    <string name="cw_scan_summary_dashboard_only">%d dashboard%s</string>
+    <string name="cw_scan_summary_api_only">%1$d API endpoint%2$s</string>
+    <string name="cw_scan_summary_both">%1$d server%2$s</string>
+    <string name="cw_scan_summary_dashboard_only">%1$d dashboard%2$s</string>
     <string name="cw_scan_summary_empty">No Hermes servers found on this network</string>
-    <string name="cw_scan_summary_hosts">Scanned %d host%s</string>
+    <string name="cw_scan_summary_hosts">Scanned %1$d host%2$s</string>
     <string name="cw_scanning_lan">Scanning LAN…</string>
     <string name="cw_secure_label">Secure</string>
     <string name="cw_show_api_key">Show API key</string>
@@ -2979,7 +2979,7 @@
     <string name="security_sheet_learn_more">Learn about connection security →</string>
     <string name="security_sheet_no_route">No route configured</string>
     <string name="security_sheet_title">Connection security</string>
-    <string name="subagent_lane_a11y">%s %s</string>
+    <string name="subagent_lane_a11y">%1$s %2$s</string>
     <string name="subagent_lane_label_fallback">Agent</string>
     <string name="subagent_lane_running_count">%d running</string>
     <string name="subagent_lane_tool_count">%d tools</string>
