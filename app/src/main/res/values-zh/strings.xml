@@ -2301,7 +2301,7 @@
     <!-- DestructiveVerbConfirmDialog -->
     <string name="destructive_confirm_title">确认危险操作</string>
     <string name="destructive_confirm_warning">如果您没有预料到此操作，请点击拒绝。</string>
-    <string name="destructive_confirm_dont_ask">不再询问 &quot;%1$s&quot;</string>
+    <string name="destructive_confirm_dont_ask">不再询问"%1$s"</string>
     <string name="destructive_confirm_deny">拒绝</string>
     <string name="destructive_confirm_allow">允许此操作</string>
     <string name="destructive_label_tap_text">目标文本（点击）</string>
