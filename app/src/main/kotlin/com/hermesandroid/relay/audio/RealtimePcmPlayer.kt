@@ -26,7 +26,7 @@ import kotlin.math.sqrt
  * writes them directly to an AudioTrack so the Android Studio dev build can
  * hear provider output without waiting for an encoded file.
  */
-class RealtimePcmPlayer(context: Context? = null) {
+class RealtimePcmPlayer(private val context: Context? = null) {
     private val trackLock = Any()
     private val writeLock = Any()
     private val audioManager =

@@ -150,6 +150,7 @@ fun EndpointsCard(
     // Pre-resolve cancel manual switch string (needs preferredRole which may be null)
     val cancelManualSwitchText = stringResource(R.string.endpoints_cancel_manual_switch)
     val stopPreferringText = stringResource(R.string.endpoints_stop_preferring)
+    val noPinRecordedText = stringResource(R.string.endpoints_no_pin_recorded)
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -366,7 +367,7 @@ private fun EndpointRow(
                             menuOpen = false
                             scope.launch {
                                 pinDialogText = onViewPin(candidate)
-                                    ?: stringResource(R.string.endpoints_no_pin_recorded)
+                                    ?: noPinRecordedText
                             }
                         },
                     )

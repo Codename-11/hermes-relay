@@ -206,6 +206,7 @@ fun DestructiveVerbConfirmDialog(
     }
 }
 
+@Composable
 private fun labelFor(method: String): String = when (method) {
     "/tap_text" -> stringResource(R.string.destructive_label_tap_text)
     "/type" -> stringResource(R.string.destructive_label_type)

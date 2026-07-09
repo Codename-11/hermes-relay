@@ -77,6 +77,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
+import kotlinx.coroutines.delay
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 
@@ -548,8 +549,9 @@ fun CleanChatMode(
 
     BackHandler(enabled = true) { onExit() }
 
+    val sphereDescLabel = stringResource(R.string.agent_text_sphere_desc)
     val sphereDescription = remember(sphereState) {
-        "${stringResource(R.string.agent_text_sphere_desc)} ${sphereState.name.lowercase()}"
+        "$sphereDescLabel ${sphereState.name.lowercase()}"
     }
 
     Box(

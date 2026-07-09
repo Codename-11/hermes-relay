@@ -212,6 +212,8 @@ fun NotificationCompanionSettingsScreen(
                     mutableStateOf<List<TestNotificationLine>>(emptyList())
                 }
                 var lastError by remember { mutableStateOf<String?>(null) }
+                val listenerNotBoundText = stringResource(R.string.ncs_listener_not_bound)
+                val accessNotGrantedErrText = stringResource(R.string.ncs_access_not_granted_err)
 
                 FilledTonalButton(
                     onClick = {
@@ -224,9 +226,9 @@ fun NotificationCompanionSettingsScreen(
                         if (service == null) {
                             lastSnapshot = emptyList()
                             lastError = if (granted) {
-                                stringResource(R.string.ncs_listener_not_bound)
+                                listenerNotBoundText
                             } else {
-                                stringResource(R.string.ncs_access_not_granted_err)
+                                accessNotGrantedErrText
                             }
                         } else {
                             val active = service.activeNotifications
