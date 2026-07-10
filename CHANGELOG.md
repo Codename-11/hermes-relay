@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Foreground Realtime Agent results use the protected delivery path.** Hermes tool results receive exact provider speech where supported, delivery validation and generation-scoped confirmation, and one authoritative relay-TTS fallback if the provider closes or rejects result delivery. Local Voice commands no longer leave synthetic `Cancelled.` turns in Chat or mute a later background answer.
+- **Standard Chat now receives background-process completions automatically.** When upstream Hermes finishes detached work and starts a follow-up turn on the originating Gateway session, Android accepts that unsolicited assistant stream, shows it in the open conversation, and reloads persisted history after a cold reconnect instead of silently discarding the reply until the user asks again.
 
 ## [1.4.0] - 2026-07-09
 

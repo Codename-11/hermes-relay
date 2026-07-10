@@ -26,6 +26,7 @@ class GatewayEventMapperTest {
         val subagentEvents = mutableListOf<GatewaySubagentEvent>()
         val interactions = mutableListOf<GatewayAsk>()
         val sessionIds = mutableListOf<String>()
+        var starts = 0
         var turnCompletes = 0
         var completes = 0
         var usage: UsageInfo? = null
@@ -34,6 +35,7 @@ class GatewayEventMapperTest {
 
         val callbacks = GatewayTurnCallbacks(
             onSessionId = { sessionIds += it },
+            onStart = { starts++ },
             onTextDelta = { textDeltas += it },
             onThinkingDelta = { thinkingDeltas += it },
             onToolCallStart = { id, name -> toolStarts += id to name },
@@ -52,7 +54,10 @@ class GatewayEventMapperTest {
     private fun obj(jsonText: String): JsonObject =
         Json.parseToJsonElement(jsonText) as JsonObject
 
-    private fun mapperWith(recorder: Recorder) = GatewayEventMapper(recorder.callbacks)
+    private fun mapperWith(
+        recorder: Recorder,
+        dedupeAdjacentMessageStarts: Boolean = false,
+    ) = GatewayEventMapper(recorder.callbacks, dedupeAdjacentMessageStarts)
 
     // --- The feature: live thinking ---
 
@@ -118,6 +123,19 @@ class GatewayEventMapperTest {
         assertEquals(0, r.turnCompletes)
         mapper.onEvent("message.start", null)
         assertEquals(1, r.turnCompletes)
+        assertEquals(2, r.starts)
+    }
+
+    @Test
+    fun `adjacent duplicate message starts are one boundary`() {
+        val r = Recorder()
+        val mapper = mapperWith(r, dedupeAdjacentMessageStarts = true)
+
+        mapper.onEvent("message.start", null)
+        mapper.onEvent("message.start", null)
+
+        assertEquals(1, r.starts)
+        assertEquals(0, r.turnCompletes)
     }
 
     @Test

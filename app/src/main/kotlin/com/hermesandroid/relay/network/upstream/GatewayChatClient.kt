@@ -32,7 +32,9 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -151,6 +153,8 @@ class GatewayChatClient(
         private const val CONNECT_FAILURE_COOLDOWN_MS = 5_000L
         private const val RATE_LIMIT_COOLDOWN_MS = 300_000L
         private const val CONNECT_ATTEMPTS = 2
+        private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
+        private const val CANCELLED_TURN_SUBMIT_WAIT_MS = 2_000L
 
         /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
         private const val MAX_TURN_REJOINS = 4
@@ -332,6 +336,42 @@ class GatewayChatClient(
     private var activeTurn: GatewayTurn? = null
 
     /**
+     * Upstream may emit the interrupted turn's tail and terminal event after
+     * `session.interrupt` returns. Keep a short exact-session tombstone so that
+     * tail cannot be mistaken for an unsolicited completion or complete a
+     * newly submitted turn. A same-session send briefly waits for this drain
+     * before `prompt.submit`; once a turn actually started, its tombstone stays
+     * until the required terminal event even when that submit wait elapses.
+     */
+    @Volatile
+    private var cancelledTurnDrain: CancelledTurnDrain? = null
+
+    private data class CancelledTurnDrain(
+        val storedSessionId: String,
+        val liveSessionId: String,
+        val submitWaitUntilMs: Long,
+        val terminalRequired: Boolean,
+    )
+
+    /**
+     * Creates UI callbacks when the server starts a turn that has no matching
+     * [sendTurn] call (for example a background-process completion). The
+     * provider is consulted only for an explicit `message.start` whose live
+     * session id exactly matches this client's active session.
+     */
+    @Volatile
+    private var unsolicitedTurnProvider: ((storedSessionId: String) -> GatewayInboundTurnRegistration?)? = null
+
+    /** Recover persisted events that may have completed while the socket was closed. */
+    @Volatile
+    private var coldPrewarmSessionReadyListener: ((storedSessionId: String) -> Unit)? = null
+
+    /** Exact-session completion observed without a bound live mapper. */
+    @Volatile
+    private var unmatchedTurnCompleteListener:
+        ((storedSessionId: String, expectedAssistantText: String?) -> Unit)? = null
+
+    /**
      * Which upload RPC name this socket understands — set after the first
      * successful upload so the legacy fallback is probed at most once per
      * socket lifetime. Reset on socket loss.
@@ -428,6 +468,7 @@ class GatewayChatClient(
                     }
                 }
                 if (turn.cancelled) return@launch
+                if (!awaitCancelledTurnDrain(turn, storedSessionId)) return@launch
                 activeTurn = turn
                 turn.armWatchdog()
                 val submitted = rpc(
@@ -457,7 +498,7 @@ class GatewayChatClient(
                         )
                         return@launch
                     }
-                    activeTurn = null
+                    if (activeTurn === turn) activeTurn = null
                     turn.disarmWatchdog()
                     throw GatewayPreflightException(
                         submitted.exceptionOrNull()?.message ?: "prompt.submit failed",
@@ -470,7 +511,7 @@ class GatewayChatClient(
                 // read-the-absence exercise.
                 Log.i(TAG, "Gateway turn submitted (session=$storedSessionId)")
             } catch (e: Exception) {
-                activeTurn = null
+                if (activeTurn === turn) activeTurn = null
                 if (!turn.cancelled) {
                     Log.w(TAG, "Gateway preflight failed: ${e.message}")
                     turn.tracer.done("preflight-fail")
@@ -485,6 +526,7 @@ class GatewayChatClient(
     fun clearSession() {
         liveSessionId = null
         storedSessionId = null
+        cancelledTurnDrain = null
     }
 
     /**
@@ -528,6 +570,22 @@ class GatewayChatClient(
         if (!enabled && !AppForegroundTracker.isForeground.value) scheduleBackgroundClose()
     }
 
+    fun setUnsolicitedTurnProvider(
+        provider: ((storedSessionId: String) -> GatewayInboundTurnRegistration?)?,
+    ) {
+        unsolicitedTurnProvider = provider
+    }
+
+    fun setColdPrewarmSessionReadyListener(listener: ((storedSessionId: String) -> Unit)?) {
+        coldPrewarmSessionReadyListener = listener
+    }
+
+    fun setUnmatchedTurnCompleteListener(
+        listener: ((storedSessionId: String, expectedAssistantText: String?) -> Unit)?,
+    ) {
+        unmatchedTurnCompleteListener = listener
+    }
+
     /**
      * Establish the socket (and resume an existing session) ahead of the
      * user's first send, so a warm turn reaches first token in tens of ms
@@ -557,6 +615,9 @@ class GatewayChatClient(
      * session, so this path is the common case, not the edge case).
      */
     suspend fun prewarmAwait(storedSessionId: String?): Boolean {
+        val wasLiveForRequestedSession = storedSessionId != null &&
+            liveSessionId != null &&
+            this.storedSessionId == storedSessionId
         try {
             connectMutex.withLock {
                 ensureConnected()
@@ -564,6 +625,14 @@ class GatewayChatClient(
             }
         } catch (e: Exception) {
             Log.d(TAG, "Gateway prewarm skipped: ${e.message}")
+        }
+        val sessionReady = storedSessionId != null &&
+            liveSessionId != null &&
+            this.storedSessionId == storedSessionId
+        if (!wasLiveForRequestedSession && sessionReady) {
+            callbackDispatcher {
+                coldPrewarmSessionReadyListener?.invoke(storedSessionId)
+            }
         }
         return liveSessionId != null
     }
@@ -911,6 +980,10 @@ class GatewayChatClient(
     fun shutdown() {
         activeTurn?.cancel()
         activeTurn = null
+        cancelledTurnDrain = null
+        unsolicitedTurnProvider = null
+        coldPrewarmSessionReadyListener = null
+        unmatchedTurnCompleteListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
         // Stop the foreground collector — a replaced client must not keep
@@ -1011,6 +1084,7 @@ class GatewayChatClient(
         if (live != null) {
             liveSessionId = live
             storedSessionId = storedId
+            updateCancelledDrainLiveSession(storedId, live)
             // Paint the session's real model/provider/effort/etc NOW from the
             // resume result's embedded `info` (same shape session.info carries),
             // so a reopened session shows its ACTUAL model immediately instead of
@@ -1061,6 +1135,9 @@ class GatewayChatClient(
         newSessionTitle: String?,
         turn: GatewayTurn,
     ) {
+        if (requestedStoredId != null && requestedStoredId != storedSessionId) {
+            cancelledTurnDrain = null
+        }
         if (liveSessionId != null && storedSessionId == requestedStoredId && requestedStoredId != null) {
             return
         }
@@ -1079,6 +1156,7 @@ class GatewayChatClient(
             if (live != null) {
                 liveSessionId = live
                 storedSessionId = requestedStoredId
+                updateCancelledDrainLiveSession(requestedStoredId, live)
                 (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
                 return
             }
@@ -1121,6 +1199,7 @@ class GatewayChatClient(
         val stored = created.stringField("stored_session_id") ?: live
         liveSessionId = live
         storedSessionId = stored
+        if (cancelledTurnDrain?.storedSessionId != stored) cancelledTurnDrain = null
         turn.callbacks.onSessionId(stored)
     }
 
@@ -1226,14 +1305,60 @@ class GatewayChatClient(
             payload?.let { applySessionInfo(it) }
         }
 
-        val turn = activeTurn ?: return
         // Foreign-session events (another client's chat on the same gateway) are not ours.
         if (eventSessionId != null && liveSessionId != null && eventSessionId != liveSessionId) {
             return
         }
+        if (consumeCancelledTurnEvent(type, eventSessionId)) return
+        var turn = activeTurn
+        if (turn == null && type == "message.start") {
+            // Unsolicited turns are accepted only with an explicit exact live-
+            // session match. This gateway stream is process-wide; treating a
+            // missing id as ours would leak another desktop tab's response.
+            val liveId = liveSessionId
+            val storedId = storedSessionId
+            if (!eventSessionId.isNullOrBlank() &&
+                eventSessionId == liveId &&
+                !storedId.isNullOrBlank()
+            ) {
+                val registration = unsolicitedTurnProvider?.invoke(storedId)
+                if (registration != null) {
+                    val inboundTurn = GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                    )
+                    if (bindInboundTurn(registration, inboundTurn)) {
+                        turn = inboundTurn
+                        activeTurn = inboundTurn
+                        inboundTurn.armWatchdog()
+                        Log.i(TAG, "Accepted unsolicited gateway turn for session=$storedId")
+                    } else {
+                        Log.i(TAG, "Deferred unsolicited gateway turn for session=$storedId")
+                    }
+                }
+            }
+        }
+        if (turn == null) {
+            // A foreground SSE/realtime turn may already own Chat, or the
+            // socket may have reconnected after message.start. The exact
+            // terminal event is still authoritative and persisted upstream;
+            // recover it through history once the UI becomes idle.
+            val storedId = storedSessionId
+            if (type == "message.complete" &&
+                !eventSessionId.isNullOrBlank() &&
+                eventSessionId == liveSessionId &&
+                !storedId.isNullOrBlank()
+            ) {
+                val expectedText = payload?.stringField("text")
+                callbackDispatcher {
+                    unmatchedTurnCompleteListener?.invoke(storedId, expectedText)
+                }
+            }
+            return
+        }
         turn.onEvent(type, payload)
         if (turn.ended) {
-            activeTurn = null
+            if (activeTurn === turn) activeTurn = null
             if (AppForegroundTracker.isForeground.value.not()) scheduleBackgroundClose()
         }
     }
@@ -1256,7 +1381,7 @@ class GatewayChatClient(
         pendingRpcs.clear()
         val turn = activeTurn ?: return
         if (turn.ended) {
-            activeTurn = null
+            if (activeTurn === turn) activeTurn = null
             return
         }
         // A rejoin already owns recovery — a connect attempt failing inside
@@ -1276,7 +1401,7 @@ class GatewayChatClient(
                 }
             }
         } else {
-            activeTurn = null
+            if (activeTurn === turn) activeTurn = null
             turn.failFromTransport("Connection to the gateway was lost")
         }
     }
@@ -1499,8 +1624,9 @@ class GatewayChatClient(
 
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
+        dedupeAdjacentMessageStarts: Boolean = false,
     ) : ActiveTurnHandle {
-        private val mapper = GatewayEventMapper(callbacks)
+        private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
 
         /** t0 = construction ≈ sendTurn entry (the moment the user sent). */
         val tracer = TurnLatencyTracer("gateway")
@@ -1578,7 +1704,10 @@ class GatewayChatClient(
             cancelled = true
             disarmWatchdog()
             tracer.done("cancelled")
-            if (activeTurn === this) activeTurn = null
+            if (activeTurn === this) {
+                armCancelledTurnDrain(terminalRequired = started)
+                activeTurn = null
+            }
             interruptServerSide()
         }
 
@@ -1592,9 +1721,104 @@ class GatewayChatClient(
         }
     }
 
+    private fun armCancelledTurnDrain(terminalRequired: Boolean) {
+        val storedId = storedSessionId ?: return
+        val liveId = liveSessionId ?: return
+        cancelledTurnDrain = CancelledTurnDrain(
+            storedSessionId = storedId,
+            liveSessionId = liveId,
+            submitWaitUntilMs = System.currentTimeMillis() + CANCELLED_TURN_SUBMIT_WAIT_MS,
+            terminalRequired = terminalRequired,
+        )
+    }
+
+    private fun updateCancelledDrainLiveSession(storedId: String, liveId: String) {
+        val drain = cancelledTurnDrain ?: return
+        if (drain.storedSessionId == storedId) {
+            cancelledTurnDrain = drain.copy(liveSessionId = liveId)
+        }
+    }
+
+    /** Ignore the canceled turn's exact-session tail through its terminal event. */
+    private fun consumeCancelledTurnEvent(type: String, eventSessionId: String?): Boolean {
+        val drain = cancelledTurnDrain ?: return false
+        if (!drain.terminalRequired && System.currentTimeMillis() >= drain.submitWaitUntilMs) {
+            if (cancelledTurnDrain === drain) cancelledTurnDrain = null
+            return false
+        }
+        if (eventSessionId != drain.liveSessionId) return false
+        if (type == "message.complete" || type == "error") {
+            if (cancelledTurnDrain === drain) cancelledTurnDrain = null
+        }
+        Log.d(TAG, "Ignored canceled gateway turn event: $type")
+        return true
+    }
+
+    /**
+     * Preserve same-session event ordering after Stop. The interrupt terminal
+     * normally drains immediately. The wait is bounded so a slow cooperative
+     * interrupt does not indefinitely delay the next submit, but a started
+     * turn's tombstone remains until its terminal event and continues draining
+     * the old tail in front of the server-serialized next prompt.
+     */
+    private suspend fun awaitCancelledTurnDrain(
+        turn: GatewayTurn,
+        targetStoredSessionId: String?,
+    ): Boolean {
+        while (!turn.cancelled) {
+            val drain = cancelledTurnDrain ?: return true
+            if (drain.storedSessionId != targetStoredSessionId) return true
+            if (System.currentTimeMillis() >= drain.submitWaitUntilMs) {
+                if (!drain.terminalRequired && cancelledTurnDrain === drain) {
+                    cancelledTurnDrain = null
+                }
+                return true
+            }
+            delay(25L)
+        }
+        return false
+    }
+
+    /**
+     * Serialize inbound ownership onto the callback/main dispatcher before any
+     * mapper callback is posted. A local SSE turn can otherwise start between
+     * the socket event and UI binding and lose its cancellable handle.
+     */
+    private fun bindInboundTurn(
+        registration: GatewayInboundTurnRegistration,
+        turn: GatewayTurn,
+    ): Boolean {
+        val pending = AtomicBoolean(true)
+        val completed = CountDownLatch(1)
+        var accepted = false
+        try {
+            callbackDispatcher {
+                try {
+                    if (pending.compareAndSet(true, false)) {
+                        accepted = registration.onHandle(turn)
+                    }
+                } finally {
+                    completed.countDown()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Inbound turn dispatcher rejected callback", e)
+            return false
+        }
+        if (!completed.await(INBOUND_BIND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            // If the callback has not started, expire it so a late main-thread
+            // delivery cannot bind a handle the client already discarded. If
+            // it has started, wait for that short ownership check to finish.
+            if (pending.compareAndSet(true, false)) return false
+            completed.await()
+        }
+        return accepted
+    }
+
     /** Wrap callbacks so every invocation lands on the callback dispatcher (main thread). */
     private fun dispatchOn(callbacks: GatewayTurnCallbacks) = GatewayTurnCallbacks(
         onSessionId = { v -> callbackDispatcher { callbacks.onSessionId(v) } },
+        onStart = { callbackDispatcher { callbacks.onStart() } },
         onTextDelta = { v -> callbackDispatcher { callbacks.onTextDelta(v) } },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
         onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
