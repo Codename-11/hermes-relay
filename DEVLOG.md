@@ -30,6 +30,41 @@ ownership before closing the prior socket asynchronously. Provider-connect
 failures and resume-TTL closure also leave the session in a retryable, coherent
 state.
 
+The next installed reproduction completed the background run and delivered its
+notification fallback, but the voice route remained on `Waiting for route`.
+The retry coroutine had anchored its five-minute deadline to session prewarm,
+then exited during healthy idle time before the later disconnect occurred. The
+retry worker now remains inert for the full session lifetime and starts a fresh,
+bounded deadline only when a route-loss episode begins; a successful resume
+clears that episode only after the relay emits `voice.session.resumed`, so a
+bare WebSocket open cannot suppress retries or refresh the budget. Exhaustion
+is terminal instead of leaving the overlay reconnecting indefinitely.
+
+That reproduction also exposed session-owned UI leaking across voice-mode
+boundaries. Exit removed the handoff strip but retained the reconnecting
+background-run state, so reopening showed an orphaned pill whose close action
+sent an unscoped cancellation through the new prewarmed session. Voice exit now
+clears the detached run and handoff atomically before teardown, entry drops any
+defensive orphan before prewarming, and a cancel request rejected by an offline
+socket dismisses the pill locally. A session generation fence also rejects late
+handoff, run, playback, and completion callbacks from the retired session. A
+cancel queued locally but never acknowledged gets a bounded local-dismissal
+backstop, and stale confirmation UI is cleared with the session.
+
+Socket failure, close, and fatal-event callbacks now claim the active socket
+generation and resume episode atomically before changing readiness. Opening
+candidates that fail synchronously cannot be activated after their callback,
+and ordered handoff revisions prevent an older route status from overwriting a
+confirmed replacement. A terminal retry failure detaches any non-settled
+session pill instead of leaving `RECONNECTING` visible after retries stop.
+
+The current sideload build passed the focused recovery suite, both Android
+flavor compiles, and Android lint, then installed as 1.4.0 build 22. Extended
+physical-device recovery coverage is deferred: long-idle prewarm, repeated
+background/foreground route churn, terminal exhaustion, reopen/exit cycles,
+cancel-without-ack, and force-stop persistence remain follow-up validation and
+may require further hardening from live traces.
+
 The UI state machine now reserves `Listening` for a live `AudioRecord`.
 Provider transcript deltas render as `Transcribing`, output suppression checks
 `VoiceRecorder.isRecording()`, and foreground resume reconciles a recorder that

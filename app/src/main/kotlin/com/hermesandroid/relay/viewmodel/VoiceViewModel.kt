@@ -201,6 +201,30 @@ internal fun preserveRealtimeTurnOnStop(backgroundPhase: BackgroundRunPhase?): B
         backgroundPhase == BackgroundRunPhase.RECONNECTING ||
         backgroundPhase == BackgroundRunPhase.DELIVERING
 
+internal fun backgroundRunAfterCancelRequest(
+    run: BackgroundRunState?,
+    cancelSent: Boolean,
+): BackgroundRunState? = when {
+    run == null || run.phase == BackgroundRunPhase.DONE -> null
+    cancelSent -> run.copy(message = "Cancelling…", statusLine = null)
+    else -> null
+}
+
+internal fun voiceSessionExitState(state: VoiceUiState): VoiceUiState =
+    state.copy(
+        voiceMode = false,
+        state = VoiceState.Idle,
+        amplitude = 0f,
+        outputAudioActive = false,
+        transcribedText = null,
+        responseText = "",
+        error = null,
+        destructiveCountdown = null,
+        hermesConfirmation = null,
+        handoffStatus = null,
+        backgroundRun = null,
+    )
+
 data class VoiceHandoffStatus(
     val title: String,
     val route: String? = null,
@@ -337,6 +361,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         /** How long the DONE background-run chip lingers before auto-dismiss. */
         private const val DONE_CHIP_LINGER_MS = 10_000L
+        private const val BACKGROUND_CANCEL_CONFIRM_TIMEOUT_MS = 5_000L
         private const val REALTIME_TURN_DELIVERY_TIMEOUT_MS = 20_000L
         private const val MAX_BROKERED_TOOL_STATUS_PER_MESSAGE = 2
         private const val STABLE_VOICE_INTERFACE_CONTEXT =
@@ -508,10 +533,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // the open path reset them at each turn boundary.
     private var realtimeSessionJob: Job? = null
     private var realtimeTurnChannel: kotlinx.coroutines.channels.Channel<RealtimeTurnInput>? = null
+    private val realtimeSessionStateLock = Any()
+    private val realtimeSessionGeneration = AtomicLong(0L)
+    private var realtimeHandoffRevisionSession = Long.MIN_VALUE
+    private var latestRealtimeHandoffRevision = 0L
 
     /** Watchdog that clears a DELIVERING background-run chip if no summary
      *  audio ever arrives (visual-only delivery, provider hiccup). */
     private var deliveringChipClearJob: Job? = null
+    private var backgroundCancelClearJob: Job? = null
+    private val backgroundCancelGeneration = AtomicLong(0L)
     private var rtUserText: String = ""
     private var rtAssistantMessageId: String = ""
     private var rtConversationContext: List<RealtimeConversationContextMessage> = emptyList()
@@ -1272,6 +1303,25 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     fun enterVoiceMode() {
+        val freshEntry = !_uiState.value.voiceMode
+        val orphanedRun = _uiState.value
+            .takeIf { freshEntry }
+            ?.backgroundRun
+        if (freshEntry) {
+            synchronized(realtimeSessionStateLock) {
+                realtimeSessionGeneration.incrementAndGet()
+                if (orphanedRun != null) {
+                    Log.i(
+                        TAG,
+                        "Clearing detached background run before a new voice session " +
+                            "run=${orphanedRun.runId ?: "?"}",
+                    )
+                    deliveringChipClearJob?.cancel()
+                    deliveringChipClearJob = null
+                    retireBackgroundCancelWatchdogLocked()
+                }
+            }
+        }
         // Re-probe on each overlay entry so a restarted relay/provider is picked up.
         voiceOutputAvailable = null
         resetBrokeredToolSpeechState()
@@ -1286,7 +1336,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Fire the chime first so the sound lands with the overlay appearing.
         try { sfxPlayer?.playEnter() } catch (_: Exception) { /* ignore */ }
         _uiState.update {
-            it.copy(voiceMode = true, state = VoiceState.Idle, outputAudioActive = false, error = null)
+            it.copy(
+                voiceMode = true,
+                state = VoiceState.Idle,
+                outputAudioActive = false,
+                error = null,
+                hermesConfirmation = null,
+                backgroundRun = if (orphanedRun != null) null else it.backgroundRun,
+            )
         }
         prewarmRealtimeSession()
     }
@@ -1324,19 +1381,22 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun cancelRealtimeAgentTurn(reason: String) {
+    private fun cancelRealtimeAgentTurn(reason: String): Boolean {
         val control = realtimeAgentControl ?: realtimeConfirmationControl
-        if (control != null) {
-            val sent = try {
+        val sent = if (control != null) {
+            try {
                 control.cancel()
             } catch (e: Exception) {
                 Log.w(TAG, "Realtime agent cancel failed during $reason: ${e.message}")
                 false
             }
-            Log.i(TAG, "Realtime agent cancel requested during $reason; sent=$sent")
+        } else {
+            false
         }
+        Log.i(TAG, "Realtime agent cancel requested during $reason; sent=$sent")
         realtimeAgentControl = null
         realtimeConfirmationControl = null
+        return sent
     }
 
     /** Apply [transform] to the background-run chip state, if one is showing. */
@@ -1345,6 +1405,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             val run = state.backgroundRun ?: return@update state
             state.copy(backgroundRun = transform(run))
         }
+    }
+
+    private fun retireBackgroundCancelWatchdogLocked() {
+        backgroundCancelGeneration.incrementAndGet()
+        backgroundCancelClearJob?.cancel()
+        backgroundCancelClearJob = null
     }
 
     /**
@@ -1425,23 +1491,67 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     var chatNoticeSink: ((String) -> Unit)? = null
 
     fun cancelBackgroundRun() {
-        val run = _uiState.value.backgroundRun
-        if (run?.phase == BackgroundRunPhase.DONE) {
-            // The task already finished — ✕ on a settled chip is a local
-            // dismiss, never a cancel (a late cancel used to overwrite a
-            // delivered answer with "Cancelled.").
-            Log.i(TAG, "Background run chip dismissed (DONE) run=${run.runId ?: "?"}")
-            deliveringChipClearJob?.cancel()
-            _uiState.update { it.copy(backgroundRun = null) }
-            return
+        synchronized(realtimeSessionStateLock) {
+            val run = _uiState.value.backgroundRun ?: return
+            if (run.phase == BackgroundRunPhase.DONE) {
+                // The task already finished — ✕ on a settled chip is a local
+                // dismiss, never a cancel (a late cancel used to overwrite a
+                // delivered answer with "Cancelled.").
+                Log.i(TAG, "Background run chip dismissed (DONE) run=${run.runId ?: "?"}")
+                deliveringChipClearJob?.cancel()
+                retireBackgroundCancelWatchdogLocked()
+                _uiState.update { it.copy(backgroundRun = null) }
+                return
+            }
+            Log.i(
+                TAG,
+                "Background run cancel requested from chip " +
+                    "run=${run.runId ?: "?"}",
+            )
+            retireBackgroundCancelWatchdogLocked()
+            val watchdogGeneration = backgroundCancelGeneration.get()
+            val cancelSent = cancelRealtimeAgentTurn("background_run_chip")
+            _uiState.update { state ->
+                val current = state.backgroundRun
+                if (current?.runId != run.runId) {
+                    state
+                } else {
+                    state.copy(
+                        backgroundRun = backgroundRunAfterCancelRequest(current, cancelSent),
+                        handoffStatus = if (cancelSent) state.handoffStatus else null,
+                    )
+                }
+            }
+            if (!cancelSent) {
+                providerRealtimeAgentTurnActive.set(false)
+                Log.i(TAG, "Background run chip dismissed locally; voice route unavailable")
+            } else {
+                backgroundCancelClearJob = viewModelScope.launch {
+                    delay(BACKGROUND_CANCEL_CONFIRM_TIMEOUT_MS)
+                    val dismissed = synchronized(realtimeSessionStateLock) {
+                        if (backgroundCancelGeneration.get() != watchdogGeneration) {
+                            false
+                        } else {
+                            val current = _uiState.value.backgroundRun
+                            val shouldDismiss = current != null &&
+                                current.runId == run.runId &&
+                                current.message == "Cancelling…"
+                            if (shouldDismiss) {
+                                _uiState.update {
+                                    it.copy(backgroundRun = null, handoffStatus = null)
+                                }
+                                providerRealtimeAgentTurnActive.set(false)
+                            }
+                            backgroundCancelClearJob = null
+                            shouldDismiss
+                        }
+                    }
+                    if (dismissed) {
+                        Log.i(TAG, "Background run cancel acknowledgement timed out; chip dismissed")
+                    }
+                }
+            }
         }
-        Log.i(
-            TAG,
-            "Background run cancel requested from chip " +
-                "run=${run?.runId ?: "?"}",
-        )
-        updateBackgroundRun { it.copy(message = "Cancelling…", statusLine = null) }
-        cancelRealtimeAgentTurn("background_run_chip")
     }
 
     fun exitVoiceMode() {
@@ -1474,7 +1584,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // or as a proactive notification. Cancelling here both killed the task
         // and let the relay's run-cancelled confirm overwrite an already-
         // delivered answer with "Cancelled." in the chat transcript.
-        val detachedRun = _uiState.value.backgroundRun
+        val detachedRun = synchronized(realtimeSessionStateLock) {
+            // Capture run ownership in the same critical section that retires
+            // this session. A late promotion/cancellation callback must land
+            // either wholly before this decision or be rejected afterward.
+            val currentRun = _uiState.value.backgroundRun
+            if (currentRun == null) {
+                cancelRealtimeAgentTurn("exit voice mode")
+            }
+            deliveringChipClearJob?.cancel()
+            deliveringChipClearJob = null
+            retireBackgroundCancelWatchdogLocked()
+            providerRealtimeAgentTurnActive.set(false)
+            realtimeAgentControl = null
+            realtimeConfirmationControl = null
+            closeRealtimeSession()
+            // Hide the overlay and discard its session-owned run state before
+            // the remaining audio teardown. The detached task remains
+            // relay-owned and can still report through chat/notification, but
+            // a new voice session must never inherit or cancel it.
+            _uiState.update(::voiceSessionExitState)
+            currentRun
+        }
         if (detachedRun != null) {
             Log.i(
                 TAG,
@@ -1495,10 +1626,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         "Hermes will report back when it finishes.",
                 )
             }
-        } else {
-            cancelRealtimeAgentTurn("exit voice mode")
         }
-        closeRealtimeSession()
         // B4: tear down the barge-in listener + timers before we kill the
         // player so AEC doesn't try to track a released audio session.
         stopBargeInListener()
@@ -1559,19 +1687,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // queued SMS would execute the action after the overlay closed,
         // which is exactly the surprise we're trying to prevent.
         voiceBridgeIntentHandler?.cancelPending()
-        _uiState.update {
-            it.copy(
-                voiceMode = false,
-                state = VoiceState.Idle,
-                amplitude = 0f,
-                outputAudioActive = false,
-                transcribedText = null,
-                responseText = "",
-                error = null,
-                destructiveCountdown = null,
-                handoffStatus = null,
-            )
-        }
     }
 
     // ---------------------------------------------------------------------
@@ -2565,6 +2680,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
          */
         prewarm: Boolean = false,
     ) {
+        val sessionGeneration = synchronized(realtimeSessionStateLock) {
+            realtimeSessionGeneration.incrementAndGet()
+        }
+        fun sessionIsCurrent(): Boolean =
+            realtimeSessionGeneration.get() == sessionGeneration
         if (!prewarm) providerRealtimeAgentTurnActive.set(true)
         // New turn requested → allow this response's audio through again.
         realtimeAudioSuppressed = false
@@ -2683,13 +2803,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (remainingProviderAudioMs > 0L) {
                     viewModelScope.launch {
                         delay(remainingProviderAudioMs)
-                        if (!providerRealtimeAgentTurnActive.get()) return@launch
-                        Log.i(TAG, "Realtime status TTS dispatch key=$key delayed=true line=$line")
-                        enqueueSentenceForTts(
-                            sentence = line,
-                            immediate = true,
-                            allowDuringProviderRealtime = true,
-                        )
+                        synchronized(realtimeSessionStateLock) {
+                            if (!sessionIsCurrent() ||
+                                !providerRealtimeAgentTurnActive.get()
+                            ) return@synchronized
+                            Log.i(TAG, "Realtime status TTS dispatch key=$key delayed=true line=$line")
+                            enqueueSentenceForTts(
+                                sentence = line,
+                                immediate = true,
+                                allowDuringProviderRealtime = true,
+                            )
+                        }
                     }
                 } else {
                     enqueueSentenceForTts(
@@ -2711,18 +2835,31 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 conversationContext = conversationContext,
                 model = realtimeModel,
                 voice = realtimeVoice,
-                onHandoff = ::recordVoiceHandoff,
+                onHandoff = { event -> recordRealtimeVoiceHandoff(sessionGeneration, event) },
                 turnInputs = if (persistentOpen) realtimeTurnChannel else null,
-                onTurnComplete = { summary -> onRealtimeTurnComplete(summary) },
+                onTurnComplete = { summary ->
+                    synchronized(realtimeSessionStateLock) {
+                        if (sessionIsCurrent()) onRealtimeTurnComplete(summary)
+                    }
+                },
                 prewarm = prewarm,
             ) { event, control ->
-                realtimeAgentControl = control
-                chatVm.applyRealtimeAgentEvent(
-                    assistantMessageId = rtAssistantMessageId,
-                    event = event,
-                    showDetailedTrace = realtimeTraceDetails,
-                )
-                when (event.type) {
+                synchronized(realtimeSessionStateLock) {
+                    if (!sessionIsCurrent()) {
+                        Log.i(
+                            TAG,
+                            "Ignoring stale realtime event type=${event.type} " +
+                                "generation=$sessionGeneration",
+                        )
+                        return@runRealtimeAgent
+                    }
+                    realtimeAgentControl = control
+                    chatVm.applyRealtimeAgentEvent(
+                        assistantMessageId = rtAssistantMessageId,
+                        event = event,
+                        showDetailedTrace = realtimeTraceDetails,
+                    )
+                    when (event.type) {
                 "voice.input_transcript.delta" -> {
                     event.delta?.let { inputTranscript.append(it) }
                     _uiState.update {
@@ -2932,6 +3069,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // pending auto-dismiss so it can't clear the NEW chip's
                     // later DONE state early.
                     deliveringChipClearJob?.cancel()
+                    retireBackgroundCancelWatchdogLocked()
                     _uiState.update {
                         it.copy(
                             backgroundRun = BackgroundRunState(
@@ -2961,6 +3099,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "hermes.run.background_completed" -> {
+                    retireBackgroundCancelWatchdogLocked()
                     // Background run finished; the spoken summary follows via the
                     // provider's forced-summary turn once the floor is clear (up
                     // to ~12s later). Show a "delivering" chip for that gap; the
@@ -2987,11 +3126,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         deliveringChipClearJob?.cancel()
                         deliveringChipClearJob = viewModelScope.launch {
                             delay(20_000L)
-                            if (_uiState.value.backgroundRun?.phase == BackgroundRunPhase.DELIVERING) {
-                                // Re-assigns deliveringChipClearJob to the DONE
-                                // linger job; this watchdog job is completing, so
-                                // no self-cancel is needed.
-                                settleBackgroundRunChip(reason = "delivery_watchdog")
+                            synchronized(realtimeSessionStateLock) {
+                                if (sessionIsCurrent() &&
+                                    _uiState.value.backgroundRun?.phase == BackgroundRunPhase.DELIVERING
+                                ) {
+                                    // Re-assigns deliveringChipClearJob to the DONE
+                                    // linger job; this watchdog job is completing, so
+                                    // no self-cancel is needed.
+                                    settleBackgroundRunChip(reason = "delivery_watchdog")
+                                }
                             }
                         }
                     }
@@ -3032,17 +3175,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     viewModelScope.launch {
                         if (delayMs > 0L) delay(delayMs)
-                        if (!providerRealtimeAgentTurnActive.get()) return@launch
-                        val sent = control.sendPlaybackDrained(
-                            callId = event.toolCallId,
-                            playedAudioEventId = playedAudioEventId,
-                        )
-                        Log.i(
-                            TAG,
-                            "Realtime playback drained sent=$sent " +
-                                "reason=${reason.ifBlank { "unspecified" }} " +
-                                "call=${event.toolCallId.orEmpty()} playedAudio=$playedAudioEventId",
-                        )
+                        synchronized(realtimeSessionStateLock) {
+                            if (!sessionIsCurrent() ||
+                                !providerRealtimeAgentTurnActive.get()
+                            ) return@synchronized
+                            val sent = control.sendPlaybackDrained(
+                                callId = event.toolCallId,
+                                playedAudioEventId = playedAudioEventId,
+                            )
+                            Log.i(
+                                TAG,
+                                "Realtime playback drained sent=$sent " +
+                                    "reason=${reason.ifBlank { "unspecified" }} " +
+                                    "call=${event.toolCallId.orEmpty()} playedAudio=$playedAudioEventId",
+                            )
+                        }
                     }
                     if (reason != "pre_hermes_ack") {
                         emitStatus("done-summarizing", "Done, summarizing.", speak = false)
@@ -3086,6 +3233,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "hermes.run.cancelled" -> {
                     Log.i(TAG, "Realtime Hermes run cancelled run=${event.runId ?: "?"}")
+                    retireBackgroundCancelWatchdogLocked()
+                    realtimeAgentControl = null
                     realtimeConfirmationControl = null
                     _uiState.update {
                         it.copy(
@@ -3135,48 +3284,73 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         java.io.IOException(rawDetail),
                         context = "voice_config",
                     )
+                    }
                 }
-                }
+            }
             }
         } finally {
-            hadActiveTurnWhenSessionEnded = providerRealtimeAgentTurnActive.get()
-            providerRealtimeAgentTurnActive.set(false)
-            realtimeAgentControl = null
-            realtimeConfirmationControl = null
+            synchronized(realtimeSessionStateLock) {
+                if (sessionIsCurrent()) {
+                    hadActiveTurnWhenSessionEnded = providerRealtimeAgentTurnActive.get()
+                    providerRealtimeAgentTurnActive.set(false)
+                    realtimeAgentControl = null
+                    realtimeConfirmationControl = null
+                }
+            }
         }
 
-        if (result.isSuccess) {
+        synchronized(realtimeSessionStateLock) {
+            if (!sessionIsCurrent()) {
+                Log.i(TAG, "Ignoring stale realtime session completion generation=$sessionGeneration")
+                return
+            }
+
+            if (result.isSuccess) {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Voice,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Realtime voice turn complete",
+                )
+                pendingInTtsQueue.set(0)
+                maybeAutoResume()
+                return
+            }
+
+            val err = result.exceptionOrNull()
+            Log.w(TAG, "realtime agent failed: ${err?.message}")
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
-                severity = DiagnosticSeverity.Info,
-                title = "Realtime voice turn complete",
+                severity = DiagnosticSeverity.Error,
+                title = "Realtime voice turn failed",
+                detail = err?.message ?: "Unknown error",
             )
-            pendingInTtsQueue.set(0)
-            maybeAutoResume()
-            return
-        }
-
-        val err = result.exceptionOrNull()
-        Log.w(TAG, "realtime agent failed: ${err?.message}")
-        DiagnosticsLog.record(
-            category = DiagnosticCategory.Voice,
-            severity = DiagnosticSeverity.Error,
-            title = "Realtime voice turn failed",
-            detail = err?.message ?: "Unknown error",
-        )
-        // A persistent session ending in error must drop so the next turn opens
-        // a fresh one rather than submitting into a dead channel.
-        closeRealtimeSession()
-        // A failed warm-up must stay silent: no user action happened, and the
-        // first real utterance will simply open a fresh session.
-        if (!prewarm || hadActiveTurnWhenSessionEnded) {
-            if (rtAssistantMessageId.isNotBlank()) {
-                chatVm.failRealtimeAgentTurn(
-                    rtAssistantMessageId,
-                    "Voice connection was interrupted. Tap the mic to try again.",
-                )
+            // A persistent session ending in error must drop so the next turn opens
+            // a fresh one rather than submitting into a dead channel.
+            closeRealtimeSession()
+            deliveringChipClearJob?.cancel()
+            deliveringChipClearJob = null
+            retireBackgroundCancelWatchdogLocked()
+            // The relay-owned task may still finish and notify, but this voice
+            // session can no longer observe or cancel it. Never leave its
+            // session-owned chip claiming that reconnect retries are active.
+            _uiState.update { state ->
+                if (state.backgroundRun?.phase == BackgroundRunPhase.DONE) {
+                    state
+                } else {
+                    state.copy(backgroundRun = null, hermesConfirmation = null)
+                }
             }
-            surfaceError(err, context = "voice_config")
+            // A failed warm-up must stay silent: no user action happened, and the
+            // first real utterance will simply open a fresh session.
+            if (!prewarm || hadActiveTurnWhenSessionEnded) {
+                if (rtAssistantMessageId.isNotBlank()) {
+                    chatVm.failRealtimeAgentTurn(
+                        rtAssistantMessageId,
+                        "Voice connection was interrupted. Tap the mic to try again.",
+                    )
+                }
+                surfaceError(err, context = "voice_config")
+            }
         }
     }
 
@@ -3311,12 +3485,42 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Tear down the persistent realtime session (voice-mode exit / engine switch). */
     private fun closeRealtimeSession() {
-        val hadSession = realtimeTurnChannel != null || realtimeSessionJob != null
-        realtimeTurnChannel?.close()
-        realtimeTurnChannel = null
-        realtimeSessionJob?.cancel()
-        realtimeSessionJob = null
-        if (hadSession) Log.i(TAG, "Realtime persistent session closed")
+        synchronized(realtimeSessionStateLock) {
+            realtimeSessionGeneration.incrementAndGet()
+            val hadSession = realtimeTurnChannel != null || realtimeSessionJob != null
+            realtimeTurnChannel?.close()
+            realtimeTurnChannel = null
+            realtimeSessionJob?.cancel()
+            realtimeSessionJob = null
+            if (hadSession) Log.i(TAG, "Realtime persistent session closed")
+        }
+    }
+
+    internal fun realtimeSessionGenerationForTest(): Long = realtimeSessionGeneration.get()
+
+    internal fun recordVoiceHandoffForTest(
+        generation: Long,
+        event: VoiceHandoffEvent,
+    ) {
+        recordRealtimeVoiceHandoff(generation, event)
+    }
+
+    internal fun setVoiceHandoffReporterForTest(
+        reporter: ((VoiceHandoffEvent) -> Unit)?,
+    ) {
+        voiceHandoffReporter = reporter
+    }
+
+    internal fun seedBackgroundRunForTest(
+        run: BackgroundRunState,
+        control: RealtimeAgentSessionControl,
+    ) {
+        synchronized(realtimeSessionStateLock) {
+            retireBackgroundCancelWatchdogLocked()
+            realtimeAgentControl = control
+            providerRealtimeAgentTurnActive.set(true)
+            _uiState.update { it.copy(backgroundRun = run) }
+        }
     }
 
     private fun realtimeToolStatusLine(toolName: String?): String {
@@ -4693,6 +4897,38 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(handoffStatus = null) }
     }
 
+    private fun recordRealtimeVoiceHandoff(
+        sessionGeneration: Long,
+        event: VoiceHandoffEvent,
+    ) {
+        synchronized(realtimeSessionStateLock) {
+            if (realtimeSessionGeneration.get() != sessionGeneration) {
+                Log.i(
+                    TAG,
+                    "Ignoring stale realtime handoff label=${event.label} " +
+                        "generation=$sessionGeneration",
+                )
+                return
+            }
+            if (realtimeHandoffRevisionSession != sessionGeneration) {
+                realtimeHandoffRevisionSession = sessionGeneration
+                latestRealtimeHandoffRevision = 0L
+            }
+            event.transitionRevision?.let { revision ->
+                if (revision < latestRealtimeHandoffRevision) {
+                    Log.i(
+                        TAG,
+                        "Ignoring superseded realtime handoff label=${event.label} " +
+                            "revision=$revision latest=$latestRealtimeHandoffRevision",
+                    )
+                    return
+                }
+                latestRealtimeHandoffRevision = revision
+            }
+            recordVoiceHandoff(event)
+        }
+    }
+
     private fun recordVoiceHandoff(event: VoiceHandoffEvent) {
         voiceHandoffReporter?.invoke(event)
         // Background-run chip: reflect the voice socket's health so a mid-run
@@ -4700,18 +4936,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // relay keeps the run alive across the retry window; progress events
         // (or the resumed signal) flip the chip back to RUNNING.
         _uiState.value.backgroundRun?.let { run ->
-            if (run.phase != BackgroundRunPhase.DELIVERING &&
-                run.phase != BackgroundRunPhase.DONE
-            ) {
-                when (event.label) {
-                    "Connection changed", "Waiting for route", "Trying voice route",
-                    "Resume sent", "Route changed",
-                    -> updateBackgroundRun { it.copy(phase = BackgroundRunPhase.RECONNECTING) }
-                    "Voice reconnected" -> updateBackgroundRun {
-                        it.copy(
-                            phase = BackgroundRunPhase.RUNNING,
-                            statusLine = "Back online — still working…",
-                        )
+            when {
+                event.label == "Voice handoff failed" || event.label == "Resume rejected" -> {
+                    if (run.phase != BackgroundRunPhase.DONE) {
+                        deliveringChipClearJob?.cancel()
+                        deliveringChipClearJob = null
+                        retireBackgroundCancelWatchdogLocked()
+                        providerRealtimeAgentTurnActive.set(false)
+                        _uiState.update { it.copy(backgroundRun = null) }
+                    }
+                }
+                run.phase != BackgroundRunPhase.DELIVERING &&
+                    run.phase != BackgroundRunPhase.DONE -> {
+                    when (event.label) {
+                        "Connection changed", "Waiting for route", "Trying voice route",
+                        "Resume sent", "Route changed",
+                        -> updateBackgroundRun { it.copy(phase = BackgroundRunPhase.RECONNECTING) }
+                        "Voice reconnected" -> updateBackgroundRun {
+                            it.copy(
+                                phase = BackgroundRunPhase.RUNNING,
+                                statusLine = "Back online — still working…",
+                            )
+                        }
                     }
                 }
             }

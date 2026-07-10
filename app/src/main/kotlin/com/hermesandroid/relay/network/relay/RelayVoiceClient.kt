@@ -94,6 +94,8 @@ class RelayVoiceClient(
     private val relayRouteChangesProvider: (() -> Flow<String>)? = null,
     private val routeProbeRequester: (() -> Unit)? = null,
     private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null,
+    private val realtimeResumeRetryIntervalMs: Long = REALTIME_RESUME_RETRY_INTERVAL_MS,
+    private val realtimeResumeRetryWindowMs: Long = REALTIME_RESUME_RETRY_WINDOW_MS,
 ) {
 
     companion object {
@@ -1299,9 +1301,13 @@ class RelayVoiceClient(
         val routeProbeRequested = AtomicBoolean(false)
         val currentSocket = AtomicReference<WebSocket?>()
         val readySocket = AtomicReference<WebSocket?>()
+        val resumeStateLock = Any()
         val socketGeneration = AtomicLong(0L)
         val activeSocketGeneration = AtomicLong(0L)
         val openingSocketGeneration = AtomicLong(0L)
+        val resumeEpisodeGeneration = AtomicLong(0L)
+        val handoffTransitionRevision = AtomicLong(0L)
+        val resumeEpisodeTransitionRevision = AtomicLong(0L)
         val lastEventId = AtomicLong(0L)
         val lastAudioEventId = AtomicLong(0L)
         val lastPlayedAudioEventId = AtomicLong(0L)
@@ -1320,10 +1326,132 @@ class RelayVoiceClient(
         // persistent between-turn idle is — REALTIME_AGENT_MAX_TURN_MS remains
         // the absolute backstop. Reset at every turn boundary.
         val longRunningTurn = AtomicBoolean(false)
-        // True while a resume attempt has failed and we're between retries —
-        // the periodic retry loop only knocks while this is set; a successful
-        // socket open clears it.
+        // True from the first resume attempt until the relay confirms
+        // voice.session.resumed. A bare WebSocket onOpen is not sufficient.
         val resumeWaiting = AtomicBoolean(false)
+        // The retry budget belongs to a route-loss episode, not to the age of
+        // the persistent voice session. Zero means the route is currently
+        // healthy. Repeated failures within one episode must not extend it.
+        val resumeRetryDeadlineMs = AtomicLong(0L)
+        fun markResumeWaiting(expectedEpisode: Long? = null): RealtimeResumeWaitingState? =
+            synchronized(resumeStateLock) {
+                if (completed.get()) return@synchronized null
+                if (expectedEpisode != null &&
+                    (!resumeWaiting.get() || resumeEpisodeGeneration.get() != expectedEpisode)
+                ) {
+                    return@synchronized null
+                }
+                if (resumeWaiting.compareAndSet(false, true)) {
+                    resumeEpisodeGeneration.incrementAndGet()
+                    resumeEpisodeTransitionRevision.set(
+                        handoffTransitionRevision.incrementAndGet(),
+                    )
+                    resumeRetryDeadlineMs.set(
+                        System.currentTimeMillis() + realtimeResumeRetryWindowMs,
+                    )
+                }
+                readySocket.set(null)
+                RealtimeResumeWaitingState(
+                    episode = resumeEpisodeGeneration.get(),
+                    transitionRevision = resumeEpisodeTransitionRevision.get(),
+                )
+            }
+        fun publishReadySocket(webSocket: WebSocket, generation: Long): Long? =
+            synchronized(resumeStateLock) {
+                if (completed.get() ||
+                    currentSocket.get() !== webSocket ||
+                    activeSocketGeneration.get() != generation
+                ) {
+                    return@synchronized null
+                }
+                resumeWaiting.set(false)
+                resumeRetryDeadlineMs.set(0L)
+                readySocket.set(webSocket)
+                handoffTransitionRevision.incrementAndGet()
+            }
+        fun currentReadySocket(): WebSocket? = synchronized(resumeStateLock) {
+            readySocket.get()?.takeIf {
+                it === currentSocket.get() && !resumeWaiting.get()
+            }
+        }
+        fun socketIsReady(webSocket: WebSocket): Boolean = synchronized(resumeStateLock) {
+            currentSocket.get() === webSocket &&
+                readySocket.get() === webSocket &&
+                !resumeWaiting.get()
+        }
+        fun socketCallbackMatchesLocked(
+            webSocket: WebSocket,
+            generation: Long,
+            wasOpening: Boolean,
+            openingResumeEpisode: Long?,
+        ): Boolean =
+            (currentSocket.get() === webSocket && activeSocketGeneration.get() == generation) ||
+                (wasOpening &&
+                    generation > activeSocketGeneration.get() &&
+                    (openingResumeEpisode == null ||
+                        (resumeWaiting.get() &&
+                            resumeEpisodeGeneration.get() == openingResumeEpisode)))
+        fun claimResumeLoss(
+            webSocket: WebSocket,
+            generation: Long,
+            wasOpening: Boolean,
+            openingResumeEpisode: Long?,
+        ): RealtimeResumeLossClaim? = synchronized(resumeStateLock) {
+            if (completed.get() ||
+                !socketCallbackMatchesLocked(
+                    webSocket,
+                    generation,
+                    wasOpening,
+                    openingResumeEpisode,
+                )
+            ) {
+                return@synchronized null
+            }
+            if (currentSocket.get() === webSocket) {
+                readySocket.compareAndSet(webSocket, null)
+            }
+            val startsEpisode = !resumeWaiting.get()
+            val startsFirstResume = resumeAttempted.compareAndSet(false, true)
+            val waiting = markResumeWaiting() ?: return@synchronized null
+            RealtimeResumeLossClaim(
+                // A later established route should recover immediately too.
+                // The wasOpening guard only prevents recursive reopen from a
+                // synchronous test/factory callback before onOpen unwinds.
+                openImmediately = startsFirstResume || (startsEpisode && !wasOpening),
+                waiting = waiting,
+            )
+        }
+        fun claimTerminalSocket(
+            webSocket: WebSocket,
+            generation: Long,
+            wasOpening: Boolean,
+            openingResumeEpisode: Long?,
+        ): Long? = synchronized(resumeStateLock) {
+            if (completed.get() ||
+                !socketCallbackMatchesLocked(
+                    webSocket,
+                    generation,
+                    wasOpening,
+                    openingResumeEpisode,
+                ) ||
+                !completed.compareAndSet(false, true)
+            ) {
+                return@synchronized null
+            }
+            readySocket.compareAndSet(webSocket, null)
+            handoffTransitionRevision.incrementAndGet()
+        }
+        fun currentTransitionRevision(webSocket: WebSocket, generation: Long): Long? =
+            synchronized(resumeStateLock) {
+                handoffTransitionRevision.get().takeIf {
+                    !completed.get() &&
+                        currentSocket.get() === webSocket &&
+                        activeSocketGeneration.get() == generation
+                }
+            }
+        fun resumeEpisodeSnapshot(): Long? = synchronized(resumeStateLock) {
+            resumeEpisodeGeneration.get().takeIf { resumeWaiting.get() }
+        }
         val inputChunks = mutableListOf<BufferedRealtimeInputChunk>().apply {
             var offset = 0
             var chunkId = 1L
@@ -1354,7 +1482,6 @@ class RelayVoiceClient(
 
         // Persistent-mode: chunk + send one more utterance on the open socket.
         fun sendTurnPcm(
-            webSocket: WebSocket,
             pcm: ByteArray,
             sampleRate: Int,
         ): BufferedRealtimeTurnSendResult {
@@ -1385,11 +1512,7 @@ class RelayVoiceClient(
 
                 // A replacement socket may have become ready after the turn
                 // reader captured [webSocket]. Prefer the current ready route.
-                val targetSocket = readySocket.get()
-                    ?.takeIf { !resumeWaiting.get() }
-                    ?: webSocket.takeIf {
-                        currentSocket.get() === it && !resumeWaiting.get()
-                    }
+                val targetSocket = currentReadySocket()
                 if (targetSocket == null) {
                     return@synchronized BufferedRealtimeTurnSendResult(
                         accepted = false,
@@ -1419,22 +1542,22 @@ class RelayVoiceClient(
                 }
                 BufferedRealtimeTurnSendResult(
                     accepted = accepted,
-                    routeChanged = currentSocket.get() !== targetSocket ||
-                        readySocket.get() !== targetSocket ||
-                        resumeWaiting.get(),
+                    routeChanged = !socketIsReady(targetSocket),
                 )
             }
         }
         fun activateSocket(webSocket: WebSocket, generation: Long): Boolean {
-            while (true) {
+            synchronized(resumeStateLock) {
                 val activeGeneration = activeSocketGeneration.get()
                 if (generation < activeGeneration) {
                     return false
                 }
-                if (activeSocketGeneration.compareAndSet(activeGeneration, generation)) {
+                if (generation > activeGeneration || currentSocket.get() !== webSocket) {
+                    activeSocketGeneration.set(generation)
                     currentSocket.set(webSocket)
-                    return true
+                    readySocket.set(null)
                 }
+                return true
             }
         }
 
@@ -1459,35 +1582,59 @@ class RelayVoiceClient(
             return true
         }
 
-        fun completeFailure(message: String, throwable: Throwable? = null) {
-            if (completed.compareAndSet(false, true)) {
-                if (resumeAttempted.get()) {
-                    onHandoff(
-                        VoiceHandoffEvent(
-                            label = "Voice handoff failed",
-                            detail = message,
-                            active = false,
-                        )
+        fun reportClaimedFailure(
+            message: String,
+            throwable: Throwable? = null,
+            transitionRevision: Long? = null,
+        ) {
+            if (resumeAttempted.get()) {
+                onHandoff(
+                    VoiceHandoffEvent(
+                        label = "Voice handoff failed",
+                        detail = message,
+                        active = false,
+                        transitionRevision = transitionRevision,
                     )
+                )
+            }
+            finished.complete(Result.failure(IOException(message, throwable)))
+        }
+
+        fun completeFailure(message: String, throwable: Throwable? = null) {
+            val transitionRevision = synchronized(resumeStateLock) {
+                if (completed.compareAndSet(false, true)) {
+                    handoffTransitionRevision.incrementAndGet()
+                } else {
+                    null
                 }
-                finished.complete(Result.failure(IOException(message, throwable)))
+            }
+            if (transitionRevision != null) {
+                reportClaimedFailure(message, throwable, transitionRevision)
             }
         }
 
-        fun openSocket(resume: Boolean, overrideWsBase: String? = null): WebSocket? {
+        fun openSocket(
+            resume: Boolean,
+            overrideWsBase: String? = null,
+            expectedResumeEpisode: Long? = null,
+        ): WebSocket? {
             val generation = socketGeneration.incrementAndGet()
             if (!openingSocketGeneration.compareAndSet(0L, generation)) {
                 Log.i(TAG, "Realtime agent websocket open coalesced; handshake already pending")
                 return null
             }
-            val (currentWsBase, request) = try {
-                if (resume) {
-                    // A WebSocket returned by OkHttp is only an opening attempt.
-                    // Do not let persistent turns use it until onOpen has queued
-                    // session.resume successfully.
-                    resumeWaiting.set(true)
-                    readySocket.set(null)
+            val resumeState = if (resume) {
+                // A WebSocket returned by OkHttp is only an opening attempt.
+                // Do not let persistent turns use it until the relay has
+                // confirmed session.resume.
+                markResumeWaiting(expectedResumeEpisode) ?: run {
+                    openingSocketGeneration.compareAndSet(generation, 0L)
+                    return null
                 }
+            } else {
+                null
+            }
+            val (currentWsBase, request) = try {
                 val base = overrideWsBase ?: resolveWebSocketBase()
                     ?: throw IOException("Relay URL not configured")
                 val socketRequest = Request.Builder()
@@ -1504,6 +1651,7 @@ class RelayVoiceClient(
                             label = "Trying voice route",
                             route = routeLabel(base),
                             active = true,
+                            transitionRevision = resumeState?.transitionRevision,
                         )
                     )
                 }
@@ -1512,17 +1660,30 @@ class RelayVoiceClient(
                 openingSocketGeneration.compareAndSet(generation, 0L)
                 throw e
             }
+            val terminalCallbackSeen = AtomicBoolean(false)
+            fun activateSocketIfLive(webSocket: WebSocket): Boolean =
+                synchronized(resumeStateLock) {
+                    if (terminalCallbackSeen.get()) {
+                        false
+                    } else {
+                        activateSocket(webSocket, generation)
+                    }
+                }
             fun isStaleSocket(webSocket: WebSocket): Boolean {
-                val activeSocket = currentSocket.get()
-                return activeSocket != null && activeSocket !== webSocket
+                return synchronized(resumeStateLock) {
+                    currentSocket.get() !== webSocket ||
+                        activeSocketGeneration.get() != generation
+                }
             }
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     try {
                         synchronized(inputSendLock) {
-                            if (!activateSocket(webSocket, generation)) {
+                            if (!activateSocketIfLive(webSocket)) {
                                 Log.i(TAG, "Realtime agent stale websocket opened; closing")
-                                webSocket.close(1000, "stale route")
+                                if (!terminalCallbackSeen.get()) {
+                                    webSocket.close(1000, "stale route")
+                                }
                                 return
                             }
                             val ready = if (resume) {
@@ -1539,6 +1700,7 @@ class RelayVoiceClient(
                                         label = "Resume sent",
                                         route = routeLabel(webSocket.request().url.toString()),
                                         active = true,
+                                        transitionRevision = resumeState?.transitionRevision,
                                     )
                                 )
                                 val resumeSent = webSocket.send(
@@ -1573,8 +1735,11 @@ class RelayVoiceClient(
                                 return
                             }
                             if (currentSocket.get() !== webSocket || completed.get()) return
-                            resumeWaiting.set(false)
-                            readySocket.set(webSocket)
+                            if (resume) {
+                                Log.i(TAG, "Realtime agent resume sent; awaiting relay confirmation")
+                            } else {
+                                publishReadySocket(webSocket, generation)
+                            }
                         }
                     } finally {
                         openingSocketGeneration.compareAndSet(generation, 0L)
@@ -1588,8 +1753,28 @@ class RelayVoiceClient(
                     }
                     lastEventAtMs.set(System.currentTimeMillis())
                     val event = parseRealtimeEvent(text)
+                    val transitionRevision = if (resume && event.type == "voice.session.resumed") {
+                        publishReadySocket(webSocket, generation) ?: run {
+                            Log.i(TAG, "Realtime agent superseded resume confirmation ignored")
+                            return
+                        }
+                    } else {
+                        currentTransitionRevision(webSocket, generation) ?: run {
+                            Log.i(TAG, "Realtime agent superseded websocket event ignored")
+                            return
+                        }
+                    }
+                    if (resume && event.type == "voice.session.resumed") {
+                        Log.i(TAG, "Realtime agent relay-confirmed resume is ready")
+                    }
                     logVoiceResumeEvent("Realtime agent", event)
-                    reportVoiceHandoffEvent("Realtime agent", webSocket, event, onHandoff)
+                    reportVoiceHandoffEvent(
+                        "Realtime agent",
+                        webSocket,
+                        event,
+                        onHandoff,
+                        transitionRevision = transitionRevision,
+                    )
                     event.eventId
                         ?.takeIf { shouldAdvanceResumeEventCursor(event) }
                         ?.let { lastEventId.updateAndGet { current -> maxOf(current, it) } }
@@ -1650,13 +1835,29 @@ class RelayVoiceClient(
                             longRunningTurn.set(false)
                             onTurnComplete(summary)
                         } else {
-                            if (completed.compareAndSet(false, true)) {
+                            if (claimTerminalSocket(
+                                    webSocket,
+                                    generation,
+                                    wasOpening = false,
+                                    openingResumeEpisode = null,
+                                ) != null
+                            ) {
                                 finished.complete(Result.success(summary))
                             }
                             webSocket.close(1000, "done")
                         }
                     } else if (event.type == "voice.session.resume_failed") {
-                        completeFailure(event.message ?: "Realtime agent error")
+                        claimTerminalSocket(
+                            webSocket,
+                            generation,
+                            wasOpening = false,
+                            openingResumeEpisode = null,
+                        )?.let { terminalRevision ->
+                            reportClaimedFailure(
+                                event.message ?: "Realtime agent error",
+                                transitionRevision = terminalRevision,
+                            )
+                        }
                         webSocket.close(1011, "provider error")
                     } else if (event.type == "voice.error") {
                         val msg = event.message ?: "Realtime agent error"
@@ -1667,86 +1868,117 @@ class RelayVoiceClient(
                             // filters these too; this is defense in depth.
                             Log.i(TAG, "Realtime agent transient provider notice ignored: $msg")
                         } else {
-                            completeFailure(msg)
+                            claimTerminalSocket(
+                                webSocket,
+                                generation,
+                                wasOpening = false,
+                                openingResumeEpisode = null,
+                            )?.let { terminalRevision ->
+                                reportClaimedFailure(
+                                    msg,
+                                    transitionRevision = terminalRevision,
+                                )
+                            }
                             webSocket.close(1011, "provider error")
                         }
                     }
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    openingSocketGeneration.compareAndSet(generation, 0L)
+                    terminalCallbackSeen.set(true)
+                    val wasOpening = openingSocketGeneration.compareAndSet(generation, 0L)
                     if (completed.get()) return
-                    readySocket.compareAndSet(webSocket, null)
-                    val activeSocket = currentSocket.get()
-                    if (resumeAttempted.get() && activeSocket != null && activeSocket !== webSocket) {
-                        Log.i(TAG, "Realtime agent previous websocket failed during resume; ignoring: ${t.message}")
-                        return
-                    }
-                    if (session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.get()) {
-                        Log.i(TAG, "Realtime agent resume websocket failed; will retry: ${t.message}")
-                        resumeWaiting.set(true)
-                        requestRouteProbeOnce("Realtime agent", t.message, routeProbeRequested)
+                    val detail = t.message
+                    if (session.resumeSupported && !session.resumeToken.isNullOrBlank()) {
+                        val claim = claimResumeLoss(
+                            webSocket,
+                            generation,
+                            wasOpening,
+                            resumeState?.episode,
+                        )
+                        if (claim == null) {
+                            Log.i(
+                                TAG,
+                                "Realtime agent previous websocket failed; ignoring: $detail",
+                            )
+                            return
+                        }
+                        requestRouteProbeOnce("Realtime agent", detail, routeProbeRequested)
+                        val label = if (claim.openImmediately) {
+                            "Connection changed"
+                        } else {
+                            "Waiting for route"
+                        }
+                        Log.i(
+                            TAG,
+                            if (claim.openImmediately) {
+                                "Realtime agent websocket failed; attempting resume: $detail"
+                            } else {
+                                "Realtime agent resume websocket failed; will retry: $detail"
+                            },
+                        )
                         onHandoff(
                             VoiceHandoffEvent(
-                                label = "Waiting for route",
-                                detail = t.message,
+                                label = label,
+                                detail = detail,
                                 route = routeLabel(webSocket.request().url.toString()),
                                 active = true,
+                                transitionRevision = claim.waiting.transitionRevision,
                             )
                         )
-                        return
-                    }
-                    if (session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.compareAndSet(false, true)) {
+                        if (!claim.openImmediately) return
                         try {
-                            Log.i(TAG, "Realtime agent websocket failed; attempting resume: ${t.message}")
-                            requestRouteProbeOnce("Realtime agent", t.message, routeProbeRequested)
-                            onHandoff(
-                                VoiceHandoffEvent(
-                                    label = "Connection changed",
-                                    detail = t.message,
-                                    route = routeLabel(webSocket.request().url.toString()),
-                                    active = true,
-                                )
+                            openSocket(
+                                resume = true,
+                                expectedResumeEpisode = claim.waiting.episode,
                             )
-                            openSocket(resume = true)
                             return
                         } catch (e: Exception) {
                             completeFailure("Realtime agent resume failed: ${e.message ?: "network error"}", e)
                             return
                         }
                     }
-                    completeFailure("Realtime agent websocket failed: ${t.message}", t)
+                    val transitionRevision = claimTerminalSocket(
+                        webSocket,
+                        generation,
+                        wasOpening,
+                        resumeState?.episode,
+                    )
+                    if (transitionRevision == null) {
+                        Log.i(TAG, "Realtime agent previous websocket failed; ignoring: $detail")
+                        return
+                    }
+                    reportClaimedFailure(
+                        "Realtime agent websocket failed: $detail",
+                        t,
+                        transitionRevision,
+                    )
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    openingSocketGeneration.compareAndSet(generation, 0L)
+                    terminalCallbackSeen.set(true)
+                    val wasOpening = openingSocketGeneration.compareAndSet(generation, 0L)
                     if (completed.get()) return
-                    readySocket.compareAndSet(webSocket, null)
-                    val activeSocket = currentSocket.get()
-                    if (resumeAttempted.get() && activeSocket != null && activeSocket !== webSocket) {
-                        Log.i(TAG, "Realtime agent previous websocket closed during resume; ignoring: $code $reason")
-                        return
-                    }
-                    if (code != 1000 && session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.get()) {
-                        Log.i(TAG, "Realtime agent resume websocket closed; will retry: $code $reason")
-                        resumeWaiting.set(true)
-                        requestRouteProbeOnce("Realtime agent", "Closed $code $reason", routeProbeRequested)
-                        onHandoff(
-                            VoiceHandoffEvent(
-                                label = "Waiting for route",
-                                detail = "Closed $code $reason",
-                                route = routeLabel(webSocket.request().url.toString()),
-                                active = true,
+                    val detail = "Closed $code $reason"
+                    if (code == 1000) {
+                        val transitionRevision = claimTerminalSocket(
+                            webSocket,
+                            generation,
+                            wasOpening,
+                            resumeState?.episode,
+                        )
+                        if (transitionRevision == null) {
+                            Log.i(
+                                TAG,
+                                "Realtime agent previous websocket closed; ignoring: $code $reason",
                             )
-                        )
-                        return
-                    }
-                    if (code == 1000 && persistent && !activeTurn.get()) {
-                        Log.i(
-                            TAG,
-                            "Realtime agent provider session closed while idle; next turn will reopen: $reason",
-                        )
-                        if (completed.compareAndSet(false, true)) {
+                            return
+                        }
+                        if (persistent && !activeTurn.get()) {
+                            Log.i(
+                                TAG,
+                                "Realtime agent provider session closed while idle; next turn will reopen: $reason",
+                            )
                             finished.complete(
                                 Result.success(
                                     RealtimeVoiceSummary(
@@ -1762,33 +1994,80 @@ class RelayVoiceClient(
                                     )
                                 )
                             )
+                        } else {
+                            reportClaimedFailure(
+                                "Realtime agent websocket closed before completion: $code $reason",
+                                transitionRevision = transitionRevision,
+                            )
                         }
                         return
                     }
-                    if (code == 1000) {
-                        completeFailure("Realtime agent websocket closed before completion: $code $reason")
-                        return
-                    }
-                    if (session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.compareAndSet(false, true)) {
-                        try {
-                            Log.i(TAG, "Realtime agent websocket closed code=$code; attempting resume")
-                            requestRouteProbeOnce("Realtime agent", "Closed $code $reason", routeProbeRequested)
-                            onHandoff(
-                                VoiceHandoffEvent(
-                                    label = "Connection changed",
-                                    detail = "Closed $code $reason",
-                                    route = routeLabel(webSocket.request().url.toString()),
-                                    active = true,
-                                )
+                    if (session.resumeSupported && !session.resumeToken.isNullOrBlank()) {
+                        val claim = claimResumeLoss(
+                            webSocket,
+                            generation,
+                            wasOpening,
+                            resumeState?.episode,
+                        )
+                        if (claim == null) {
+                            Log.i(
+                                TAG,
+                                "Realtime agent previous websocket closed; ignoring: $code $reason",
                             )
-                            openSocket(resume = true)
+                            return
+                        }
+                        requestRouteProbeOnce("Realtime agent", detail, routeProbeRequested)
+                        val label = if (claim.openImmediately) {
+                            "Connection changed"
+                        } else {
+                            "Waiting for route"
+                        }
+                        Log.i(
+                            TAG,
+                            if (claim.openImmediately) {
+                                "Realtime agent websocket closed code=$code; attempting resume"
+                            } else {
+                                "Realtime agent resume websocket closed; will retry: $code $reason"
+                            },
+                        )
+                        onHandoff(
+                            VoiceHandoffEvent(
+                                label = label,
+                                detail = detail,
+                                route = routeLabel(webSocket.request().url.toString()),
+                                active = true,
+                                transitionRevision = claim.waiting.transitionRevision,
+                            )
+                        )
+                        if (!claim.openImmediately) return
+                        try {
+                            openSocket(
+                                resume = true,
+                                expectedResumeEpisode = claim.waiting.episode,
+                            )
                             return
                         } catch (e: Exception) {
                             completeFailure("Realtime agent resume failed: ${e.message ?: "network error"}", e)
                             return
                         }
                     }
-                    completeFailure("Realtime agent websocket closed before completion: $code $reason")
+                    val transitionRevision = claimTerminalSocket(
+                        webSocket,
+                        generation,
+                        wasOpening,
+                        resumeState?.episode,
+                    )
+                    if (transitionRevision == null) {
+                        Log.i(
+                            TAG,
+                            "Realtime agent previous websocket closed; ignoring: $code $reason",
+                        )
+                        return
+                    }
+                    reportClaimedFailure(
+                        "Realtime agent websocket closed before completion: $code $reason",
+                        transitionRevision = transitionRevision,
+                    )
                 }
             }
             val webSocket = try {
@@ -1797,25 +2076,28 @@ class RelayVoiceClient(
                 openingSocketGeneration.compareAndSet(generation, 0L)
                 throw e
             }
-            activateSocket(webSocket, generation)
-            return webSocket
+            return webSocket.takeIf { activateSocketIfLive(it) }
         }
 
         suspend fun awaitReadyTurnSocket(): WebSocket {
-            readySocket.get()?.takeIf { !resumeWaiting.get() }?.let { return it }
+            currentReadySocket()?.let { return it }
             val deadline = System.currentTimeMillis() + REALTIME_TURN_SOCKET_READY_TIMEOUT_MS
             var nextResumeAttemptAtMs = 0L
             while (!completed.get() && System.currentTimeMillis() < deadline) {
-                readySocket.get()?.takeIf { !resumeWaiting.get() }?.let { return it }
+                currentReadySocket()?.let { return it }
                 val now = System.currentTimeMillis()
-                if (resumeWaiting.get() &&
+                val resumeEpisode = resumeEpisodeSnapshot()
+                if (resumeEpisode != null &&
                     openingSocketGeneration.get() == 0L &&
                     now >= nextResumeAttemptAtMs
                 ) {
                     nextResumeAttemptAtMs = now + REALTIME_TURN_RESUME_RETRY_THROTTLE_MS
                     try {
                         Log.i(TAG, "Realtime turn waiting for route; requesting resume")
-                        openSocket(resume = true)
+                        openSocket(
+                            resume = true,
+                            expectedResumeEpisode = resumeEpisode,
+                        )
                     } catch (e: Exception) {
                         Log.i(TAG, "Realtime turn resume attempt failed: ${e.message}")
                     }
@@ -1907,7 +2189,7 @@ class RelayVoiceClient(
                             }
                             accepted
                         } else {
-                            val sendResult = sendTurnPcm(ws, turn.inputPcm, turn.sampleRate)
+                            val sendResult = sendTurnPcm(turn.inputPcm, turn.sampleRate)
                             if (sendResult.routeChanged) {
                                 try {
                                     // Socket setup replays the atomically
@@ -1956,7 +2238,9 @@ class RelayVoiceClient(
         }
 
         val socket = openSocket(resume = false)
+            ?: currentSocket.get()
             ?: throw IOException("Realtime agent websocket handshake was already pending")
+        val routeWatcherResumeEpisode = AtomicLong(0L)
         val routeWatcher = startRouteResumeWatcher(
             surface = "Realtime agent",
             completed = completed,
@@ -1964,8 +2248,22 @@ class RelayVoiceClient(
             resumeSupported = session.resumeSupported,
             resumeToken = session.resumeToken,
             currentSocket = currentSocket,
-            openResumeSocket = { route -> openSocket(resume = true, overrideWsBase = route) },
-            onHandoff = onHandoff,
+            openResumeSocket = { route ->
+                openSocket(
+                    resume = true,
+                    overrideWsBase = route,
+                    expectedResumeEpisode = routeWatcherResumeEpisode
+                        .getAndSet(0L)
+                        .takeIf { it > 0L },
+                )
+            },
+            onHandoff = routeHandoff@{ event ->
+                val waiting = markResumeWaiting() ?: return@routeHandoff
+                routeWatcherResumeEpisode.set(waiting.episode)
+                onHandoff(
+                    event.copy(transitionRevision = waiting.transitionRevision),
+                )
+            },
             completeFailure = ::completeFailure,
         )
         // Periodic resume retry: a failed resume used to park forever waiting
@@ -1975,13 +2273,42 @@ class RelayVoiceClient(
         // the fast path when the network actually switches.
         val resumeRetry: Job? = if (session.resumeSupported && !session.resumeToken.isNullOrBlank()) {
             launch {
-                val deadline = System.currentTimeMillis() + REALTIME_RESUME_RETRY_WINDOW_MS
-                while (!completed.get() && System.currentTimeMillis() < deadline) {
-                    delay(REALTIME_RESUME_RETRY_INTERVAL_MS)
-                    if (completed.get() || !resumeWaiting.get()) continue
+                while (!completed.get()) {
+                    delay(realtimeResumeRetryIntervalMs)
+                    val resumeEpisode = resumeEpisodeSnapshot() ?: continue
+                    var socketToCancel: WebSocket? = null
+                    var failureTransitionRevision: Long? = null
+                    val expired = synchronized(resumeStateLock) {
+                        val deadline = resumeRetryDeadlineMs.get()
+                        val sameEpisode = resumeWaiting.get() &&
+                            resumeEpisodeGeneration.get() == resumeEpisode
+                        if (!completed.get() &&
+                            sameEpisode &&
+                            deadline > 0L &&
+                            System.currentTimeMillis() >= deadline &&
+                            completed.compareAndSet(false, true)
+                        ) {
+                            socketToCancel = currentSocket.get()
+                            failureTransitionRevision = handoffTransitionRevision.incrementAndGet()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    if (expired) {
+                        reportClaimedFailure(
+                            "Realtime agent could not restore the voice route",
+                            transitionRevision = failureTransitionRevision,
+                        )
+                        socketToCancel?.cancel()
+                        return@launch
+                    }
                     try {
                         Log.i(TAG, "Realtime agent periodic resume retry")
-                        openSocket(resume = true)
+                        openSocket(
+                            resume = true,
+                            expectedResumeEpisode = resumeEpisode,
+                        )
                     } catch (e: Exception) {
                         Log.i(TAG, "Realtime agent periodic resume retry failed: ${e.message}")
                     }
@@ -2496,6 +2823,7 @@ class RelayVoiceClient(
         webSocket: WebSocket,
         event: RealtimeVoiceEvent,
         onHandoff: (VoiceHandoffEvent) -> Unit,
+        transitionRevision: Long? = null,
     ) {
         val route = routeLabel(webSocket.request().url.toString())
         when (event.type) {
@@ -2506,6 +2834,7 @@ class RelayVoiceClient(
                     route = route,
                     active = false,
                     success = true,
+                    transitionRevision = transitionRevision,
                 )
             )
             "voice.replay.started" -> onHandoff(
@@ -2513,6 +2842,7 @@ class RelayVoiceClient(
                     label = "Replaying missed audio",
                     route = route,
                     active = true,
+                    transitionRevision = transitionRevision,
                 )
             )
             "voice.replay.done" -> onHandoff(
@@ -2522,6 +2852,7 @@ class RelayVoiceClient(
                     route = route,
                     active = false,
                     success = true,
+                    transitionRevision = transitionRevision,
                 )
             )
             "voice.session.resume_failed" -> onHandoff(
@@ -2530,6 +2861,7 @@ class RelayVoiceClient(
                     detail = event.message,
                     route = route,
                     active = false,
+                    transitionRevision = transitionRevision,
                 )
             )
         }
@@ -3006,6 +3338,7 @@ data class VoiceHandoffEvent(
     val nextRoute: String? = null,
     val active: Boolean = true,
     val success: Boolean = false,
+    val transitionRevision: Long? = null,
 )
 
 class RealtimeAgentSessionControl(
@@ -3082,6 +3415,16 @@ private data class BufferedRealtimeInputChunk(
 private data class BufferedRealtimeTurnSendResult(
     val accepted: Boolean,
     val routeChanged: Boolean,
+)
+
+private data class RealtimeResumeWaitingState(
+    val episode: Long,
+    val transitionRevision: Long,
+)
+
+private data class RealtimeResumeLossClaim(
+    val openImmediately: Boolean,
+    val waiting: RealtimeResumeWaitingState,
 )
 
 /**
