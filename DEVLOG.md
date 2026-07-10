@@ -1,5 +1,42 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-10 — Gateway background processes become visible Chat activity
+
+Current upstream Hermes exposes a session-scoped process registry over the same
+Dashboard/TUI Gateway socket Android already uses for Chat. `process.list`
+returns running and recently finished entries plus a bounded output tail;
+`process.kill` stops one process after verifying session ownership;
+`agent.terminal.output`, process status events, and terminal/process tool
+completion provide refresh and live-output signals. There is no structured
+process-start event, so Android follows the official Desktop reconciliation
+recipe: load after session prewarm, refresh on relevant events, and poll every
+five seconds only while a process remains running. Method-not-found is treated
+as an unsupported optional surface instead of a Chat transport failure.
+
+Chat now exposes that state through a compact composer-adjacent background strip
+and a current-chat bottom sheet. Running and recent rows show command, elapsed
+time, completion/exit state, expandable live or snapshot output, exact-process
+Stop, and local Dismiss. Session/client generations reject stale responses after
+a chat or connection switch, and profile context is part of the ownership key
+because isolated profile databases can reuse stored session IDs. A newer async
+prewarm invalidates an older resume before it can replace the live session.
+Reconnects repopulate from `process.list`; the five-second safety poll pauses in
+the background unless the user explicitly enabled Gateway keep-alive, so it
+cannot reopen the socket after the normal background grace close. Raw process
+output is length-only in logcat, never placed in notifications, and ANSI/control
+sequences are removed before the plain-text mobile viewer renders it.
+
+Hermes intentionally persists a completed process notification as synthetic
+user-role input before starting the agent's follow-up turn. Android now recognizes
+the upstream formatter shape and presents that history item as a compact,
+expandable process notice rather than a human-authored bubble, while preserving
+its wire/history role and excluding it from edit-and-resend behavior.
+
+Focused Gateway transport, process-controller, notification-parser, and output
+viewer tests pass on both Android product flavors. Google Play and sideload debug
+lint report zero errors, and the sideload debug APK assembles successfully for
+physical-device validation.
+
 ## 2026-07-10 — Gateway background completions return to ordinary Chat
 
 Upstream Hermes already associates a detached process with the originating

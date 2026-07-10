@@ -36,6 +36,9 @@ import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayProcess
+import com.hermesandroid.relay.network.upstream.GatewayProcessCapability
+import com.hermesandroid.relay.network.upstream.GatewayProcessEvent
 import com.hermesandroid.relay.network.upstream.GatewaySessionModel
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
@@ -142,6 +145,7 @@ class ChatViewModel : ViewModel() {
 
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
+    private var backgroundProcessSessionJob: Job? = null
     private var connectionSwitchJob: Job? = null
     private var sessionRefreshJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
@@ -822,6 +826,10 @@ class ChatViewModel : ViewModel() {
         // the agent to the new profile (pulled live via sessionProfileProvider),
         // like the desktop spawning the profile's backend lazily on the next send.
         gateway.clearSession()
+        // The selected profile changes before RelayApp's coalesced context
+        // switch lands. Clear the old profile's process snapshot immediately
+        // so it can never linger under the new profile header.
+        selectBackgroundProcessSession(null)
         // Session-scoped YOLO/Fast/reasoning + the personality overlay don't
         // carry across the profile's fresh session — null them so a stale flag
         // or persona can't show (or be injected) until the new session.info
@@ -936,6 +944,32 @@ class ChatViewModel : ViewModel() {
      */
     private var gatewayClient: GatewayChatClient? = null
     private var gatewayHistoryReconcileJob: Job? = null
+    private var gatewayProcessSource: GatewayProcessSource? = null
+    private val gatewayProcessController = GatewayProcessController(viewModelScope)
+
+    /** Session-scoped upstream shell processes shown beside the composer. */
+    val backgroundProcesses: StateFlow<List<GatewayProcess>> = gatewayProcessController.processes
+
+    /** Feature-detection state for gateways older than the process RPC surface. */
+    val backgroundProcessCapability: StateFlow<GatewayProcessCapability> =
+        gatewayProcessController.capability
+
+    val backgroundProcessesLoading: StateFlow<Boolean> = gatewayProcessController.loading
+    val stoppingProcessIds: StateFlow<Set<String>> = gatewayProcessController.stoppingProcessIds
+
+    fun refreshBackgroundProcesses() {
+        gatewayProcessController.refresh()
+    }
+
+    fun stopBackgroundProcess(processId: String) {
+        gatewayProcessController.stop(processId) { message ->
+            _transientNotice.tryEmit(message)
+        }
+    }
+
+    fun dismissBackgroundProcess(processId: String) {
+        gatewayProcessController.dismiss(processId)
+    }
 
     fun updateGatewayClient(client: GatewayChatClient?) {
         val previousClient = gatewayClient
@@ -946,6 +980,14 @@ class ChatViewModel : ViewModel() {
             previousClient?.setUnmatchedTurnCompleteListener(null)
         }
         gatewayClient = client
+        if (changed) {
+            gatewayProcessSource = client?.let(::GatewayChatProcessSource)
+            gatewayProcessController.bind(
+                newSource = gatewayProcessSource,
+                sessionId = chatHandler?.currentSessionId?.value,
+                scopeKey = activeProfileContextKey,
+            )
+        }
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
@@ -982,6 +1024,12 @@ class ChatViewModel : ViewModel() {
         }
         client?.setColdPrewarmSessionReadyListener { storedSessionId ->
             scheduleGatewayHistoryReconcile(storedSessionId)
+            if (
+                gatewayClient === client &&
+                chatHandler?.currentSessionId?.value == storedSessionId
+            ) {
+                gatewayProcessController.sessionReady(storedSessionId)
+            }
         }
         client?.setUnmatchedTurnCompleteListener { storedSessionId, expectedText ->
             scheduleGatewayHistoryReconcile(
@@ -1313,7 +1361,25 @@ class ChatViewModel : ViewModel() {
      * Driven by a foreground/visibility effect in ChatScreen.
      */
     fun prewarmGateway() {
-        gatewayClient?.prewarm(chatHandler?.currentSessionId?.value)
+        val client = gatewayClient ?: return
+        val sessionId = chatHandler?.currentSessionId?.value
+        selectBackgroundProcessSession(sessionId)
+        if (sessionId == null) {
+            client.prewarm(null)
+        } else {
+            // prewarm() only emits the existing "cold ready" callback when it
+            // had to resume. An already-live session still needs its initial
+            // process snapshot when Chat opens, so confirm it explicitly.
+            viewModelScope.launch {
+                if (
+                    client.prewarmAwait(sessionId) &&
+                    gatewayClient === client &&
+                    chatHandler?.currentSessionId?.value == sessionId
+                ) {
+                    gatewayProcessController.sessionReady(sessionId)
+                }
+            }
+        }
     }
 
     // === Gateway desktop-parity state ===
@@ -1465,6 +1531,14 @@ class ChatViewModel : ViewModel() {
     }
     private var displayAliasProvider: () -> String? = { null }
     private var activeProfileContextKey: String? = null
+
+    /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
+    private fun selectBackgroundProcessSession(
+        sessionId: String?,
+        scopeKey: String? = activeProfileContextKey,
+    ) {
+        gatewayProcessController.selectSession(sessionId, scopeKey)
+    }
 
     /**
      * Wire the agent-profile provider. The provider is typically a lambda
@@ -1883,6 +1957,17 @@ class ChatViewModel : ViewModel() {
     fun initialize(apiClient: HermesApiClient, chatHandler: ChatHandler) {
         this.apiClient = apiClient
         this.chatHandler = chatHandler
+        selectBackgroundProcessSession(chatHandler.currentSessionId.value)
+        backgroundProcessSessionJob?.cancel()
+        backgroundProcessSessionJob = viewModelScope.launch {
+            // ChatHandler is the single source of truth for session ownership.
+            // Collecting it catches every path (drawer switch, new send, voice
+            // sync, profile/connection change) without relying on a growing set
+            // of mirrored setSessionId call sites.
+            chatHandler.currentSessionId.collect { sessionId ->
+                selectBackgroundProcessSession(sessionId)
+            }
+        }
         // A handler created after the persisted Thread names loaded still gets
         // them, so a named Thread keeps its name across restart / reconnect.
         chatHandler.setUserThreadNames(persistedThreadNames)
@@ -1935,6 +2020,8 @@ class ChatViewModel : ViewModel() {
      */
     fun bindDemoHandler(handler: ChatHandler) {
         this.chatHandler = handler
+        backgroundProcessSessionJob?.cancel()
+        selectBackgroundProcessSession(null)
         toolHistoryJob?.cancel()
         toolHistoryJob = viewModelScope.launch {
             handler.messages.collect { msgs ->
@@ -2062,6 +2149,7 @@ class ChatViewModel : ViewModel() {
                     handler.clearSessions()
                     handler.setSessionId(null)
                 }
+                selectBackgroundProcessSession(null)
                 // Forward the null session id to the persisted
                 // last-session-id slot so the old connection's session
                 // doesn't bleed into the new connection on next launch.
@@ -2087,6 +2175,7 @@ class ChatViewModel : ViewModel() {
             handler.currentSessionId.value == sessionId
         ) {
             activeProfileContextKey = contextKey
+            selectBackgroundProcessSession(sessionId, contextKey)
             _initialChatSettled.value = true
             return
         }
@@ -2128,8 +2217,10 @@ class ChatViewModel : ViewModel() {
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
+        selectBackgroundProcessSession(sessionId, contextKey)
         if (sessionId != null) {
             onSessionChanged?.invoke(sessionId)
+            if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
         }
 
         if (sessionId == null || client == null) {
@@ -2311,6 +2402,7 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        selectBackgroundProcessSession(null)
 
         // Gateway transport: a new chat is a fresh DRAFT with NO session id.
         // Pre-creating an api_server session would hand the next turn a concrete
@@ -2407,6 +2499,7 @@ class ChatViewModel : ViewModel() {
         // sendMessageInternal's pendingThread branch).
         gatewayClient?.clearSession()
         handler.setSessionId(null)
+        selectBackgroundProcessSession(null)
         handler.clearMessages()
         _contextUsage.value = null
         _contextWindow.value = null
@@ -2469,6 +2562,7 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
+        selectBackgroundProcessSession(sessionId)
         handler.clearMessages()
         _contextUsage.value = null
         _contextWindow.value = null
@@ -2480,6 +2574,7 @@ class ChatViewModel : ViewModel() {
         pendingYolo = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
+        if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
 
         // Load message history (profile-scoped on gateway so a non-default
         // profile's sessions resolve against their own DB).
@@ -2515,6 +2610,9 @@ class ChatViewModel : ViewModel() {
 
         // Optimistic removal
         handler.removeSession(sessionId)
+        if (handler.currentSessionId.value == null) {
+            selectBackgroundProcessSession(null)
+        }
         if (handler.currentSessionId.value == null) {
             onSessionChanged?.invoke(null)
         }
@@ -4896,6 +4994,8 @@ class ChatViewModel : ViewModel() {
                                 ),
                             )
                             handler.setSessionId(sid)
+                            selectBackgroundProcessSession(sid)
+                            gatewayProcessController.sessionReady(sid)
                             onSessionChanged?.invoke(sid)
                             // The brand-new chat now has a session — apply any
                             // YOLO toggled before the first send as a SESSION-
@@ -5570,6 +5670,9 @@ class ChatViewModel : ViewModel() {
         gatewayClient?.setUnmatchedTurnCompleteListener(null)
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = null
+        backgroundProcessSessionJob?.cancel()
+        backgroundProcessSessionJob = null
+        gatewayProcessController.close()
         activeStream?.cancel()
         // viewModelScope teardown already cancels the poller job; this just
         // drops the reference symmetrically.
@@ -5609,6 +5712,25 @@ class ChatViewModel : ViewModel() {
             }
         }
     }
+}
+
+/** Production adapter for the independently-testable process controller. */
+private class GatewayChatProcessSource(
+    private val client: GatewayChatClient,
+) : GatewayProcessSource {
+    override val capability: StateFlow<GatewayProcessCapability>
+        get() = client.processCapability
+
+    override suspend fun listProcesses(): Result<List<GatewayProcess>> = client.listProcesses()
+
+    override suspend fun killProcess(processId: String): Result<Unit> =
+        client.killProcess(processId)
+
+    override fun setEventListener(listener: ((GatewayProcessEvent) -> Unit)?) {
+        client.setProcessEventListener(listener)
+    }
+
+    override fun isPollingAllowed(): Boolean = client.isBackgroundProcessPollingAllowed()
 }
 
 /**

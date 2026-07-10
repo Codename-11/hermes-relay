@@ -25,6 +25,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -218,6 +219,14 @@ class GatewayChatClient(
     val connectionState: StateFlow<GatewayConnectionState> = _connectionState.asStateFlow()
 
     /**
+     * Per-socket feature probe for upstream's session-scoped `process.*` RPCs.
+     * Method-not-found marks the current socket unsupported; reconnecting resets
+     * this to [GatewayProcessCapability.Unknown] so a server upgrade is noticed.
+     */
+    private val _processCapability = MutableStateFlow(GatewayProcessCapability.Unknown)
+    val processCapability: StateFlow<GatewayProcessCapability> = _processCapability.asStateFlow()
+
+    /**
      * Active personality the gateway is applying, as a config value ("none" when
      * the overlay is cleared, otherwise the personality name). Tracks the
      * upstream `display.personality` the way the desktop/TUI do: updated from the
@@ -290,6 +299,8 @@ class GatewayChatClient(
     private var readySignal: CompletableDeferred<Unit>? = null
 
     private val rpcId = AtomicLong(1)
+    /** Invalidates an older async prewarm when a newer session selection wins. */
+    private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
 
     /** Live (per-connection) session id ←→ the stored DB id it was resumed/created from. */
@@ -298,6 +309,10 @@ class GatewayChatClient(
 
     @Volatile
     private var storedSessionId: String? = null
+
+    /** Profile namespace that owns [liveSessionId]; stored IDs are not globally unique. */
+    @Volatile
+    private var liveSessionProfile: String? = null
 
     /**
      * Supplies the profile to bind each `session.create` / `session.resume` to —
@@ -370,6 +385,13 @@ class GatewayChatClient(
     @Volatile
     private var unmatchedTurnCompleteListener:
         ((storedSessionId: String, expectedAssistantText: String?) -> Unit)? = null
+
+    /**
+     * Connection-level process listener. Unlike [GatewayTurnCallbacks], this is
+     * consulted even when there is no locally initiated [activeTurn].
+     */
+    @Volatile
+    private var processEventListener: ((GatewayProcessEvent) -> Unit)? = null
 
     /**
      * Which upload RPC name this socket understands — set after the first
@@ -451,7 +473,10 @@ class GatewayChatClient(
         // alive AND the requested session already live). A "cold" turn re-pays
         // ticket/ws/session — exactly the asymmetry vs always-connected desktop.
         val socketWarm = webSocket != null && readySignal?.isCompleted == true
-        val sessionWarm = liveSessionId != null && storedSessionId == sessionId && sessionId != null
+        val sessionWarm = liveSessionId != null &&
+            storedSessionId == sessionId &&
+            sessionId != null &&
+            liveSessionProfile == currentSessionProfile()
         turn.tracer.warm(socketWarm && sessionWarm)
         scope.launch {
             try {
@@ -524,8 +549,10 @@ class GatewayChatClient(
 
     /** Drop the remembered session so the next send creates a fresh one. */
     fun clearSession() {
+        prewarmRequestGeneration.incrementAndGet()
         liveSessionId = null
         storedSessionId = null
+        liveSessionProfile = null
         cancelledTurnDrain = null
     }
 
@@ -570,6 +597,10 @@ class GatewayChatClient(
         if (!enabled && !AppForegroundTracker.isForeground.value) scheduleBackgroundClose()
     }
 
+    /** Process polling must not silently undo the normal background socket close. */
+    fun isBackgroundProcessPollingAllowed(): Boolean =
+        AppForegroundTracker.isForeground.value || keepAliveInBackground
+
     fun setUnsolicitedTurnProvider(
         provider: ((storedSessionId: String) -> GatewayInboundTurnRegistration?)?,
     ) {
@@ -584,6 +615,10 @@ class GatewayChatClient(
         listener: ((storedSessionId: String, expectedAssistantText: String?) -> Unit)?,
     ) {
         unmatchedTurnCompleteListener = listener
+    }
+
+    fun setProcessEventListener(listener: ((GatewayProcessEvent) -> Unit)?) {
+        processEventListener = listener
     }
 
     /**
@@ -615,26 +650,32 @@ class GatewayChatClient(
      * session, so this path is the common case, not the edge case).
      */
     suspend fun prewarmAwait(storedSessionId: String?): Boolean {
+        val requestGeneration = prewarmRequestGeneration.incrementAndGet()
+        val requestedProfile = currentSessionProfile()
         val wasLiveForRequestedSession = storedSessionId != null &&
             liveSessionId != null &&
-            this.storedSessionId == storedSessionId
+            this.storedSessionId == storedSessionId &&
+            liveSessionProfile == requestedProfile
         try {
             connectMutex.withLock {
                 ensureConnected()
-                if (storedSessionId != null) resumeForPrewarm(storedSessionId)
+                if (storedSessionId != null) {
+                    resumeForPrewarm(storedSessionId, requestedProfile, requestGeneration)
+                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "Gateway prewarm skipped: ${e.message}")
         }
         val sessionReady = storedSessionId != null &&
             liveSessionId != null &&
-            this.storedSessionId == storedSessionId
+            this.storedSessionId == storedSessionId &&
+            liveSessionProfile == requestedProfile
         if (!wasLiveForRequestedSession && sessionReady) {
             callbackDispatcher {
                 coldPrewarmSessionReadyListener?.invoke(storedSessionId)
             }
         }
-        return liveSessionId != null
+        return sessionReady
     }
 
     /**
@@ -736,6 +777,61 @@ class GatewayChatClient(
         }
         return rpc("commands.catalog", JsonObject(emptyMap()))
             .onSuccess { commandsCatalogCache = it }
+    }
+
+    /**
+     * Fetch the current chat session's running and recently-finished background
+     * processes. Callers never provide a session id: this wrapper resolves and
+     * sends the exact LIVE gateway id, not the stored history id exposed to UI.
+     *
+     * A remembered stored session is resumed after a socket reconnect. A brand-
+     * new chat has no server process ownership yet and therefore returns an empty
+     * snapshot without creating an otherwise-empty session.
+     */
+    suspend fun listProcesses(): Result<List<GatewayProcess>> {
+        if (_processCapability.value == GatewayProcessCapability.Unsupported) {
+            return Result.failure(processFeatureUnsupported())
+        }
+        if (liveSessionId == null && storedSessionId == null) {
+            return Result.success(emptyList())
+        }
+        val sid = ensureLiveProcessSession().getOrElse { return Result.failure(it) }
+        val result = rpc(
+            "process.list",
+            buildJsonObject { put("session_id", sid) },
+        )
+        if (result.isFailure) {
+            markProcessUnsupportedIfNeeded(result.exceptionOrNull())
+            return Result.failure(result.exceptionOrNull() ?: GatewayRpcException("process.list failed"))
+        }
+        _processCapability.value = GatewayProcessCapability.Supported
+        return Result.success(
+            ((result.getOrThrow()["processes"] as? JsonArray).orEmpty()).mapNotNull(::parseGatewayProcess),
+        )
+    }
+
+    /** Stop one process owned by the current live gateway session. */
+    suspend fun killProcess(processId: String): Result<Unit> {
+        if (processId.isBlank()) {
+            return Result.failure(GatewayRpcException("process id required"))
+        }
+        if (_processCapability.value == GatewayProcessCapability.Unsupported) {
+            return Result.failure(processFeatureUnsupported())
+        }
+        val sid = ensureLiveProcessSession().getOrElse { return Result.failure(it) }
+        val result = rpc(
+            "process.kill",
+            buildJsonObject {
+                put("session_id", sid)
+                put("process_id", processId)
+            },
+        )
+        if (result.isFailure) {
+            markProcessUnsupportedIfNeeded(result.exceptionOrNull())
+            return Result.failure(result.exceptionOrNull() ?: GatewayRpcException("process.kill failed"))
+        }
+        _processCapability.value = GatewayProcessCapability.Supported
+        return Result.success(Unit)
     }
 
     /**
@@ -984,6 +1080,7 @@ class GatewayChatClient(
         unsolicitedTurnProvider = null
         coldPrewarmSessionReadyListener = null
         unmatchedTurnCompleteListener = null
+        processEventListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
         // Stop the foreground collector — a replaced client must not keep
@@ -1024,6 +1121,7 @@ class GatewayChatClient(
 
     private suspend fun connectOnce() {
         val connectStart = System.nanoTime()
+        _processCapability.value = GatewayProcessCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
             throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
@@ -1062,7 +1160,11 @@ class GatewayChatClient(
      * (no [GatewayTurn] context). Failure is silent — the real send's
      * [ensureSession] will resume-or-create properly.
      */
-    private suspend fun resumeForPrewarm(storedId: String) {
+    private suspend fun resumeForPrewarm(
+        storedId: String,
+        requestedProfile: String?,
+        requestGeneration: Long,
+    ) {
         // Never resume while a turn is in flight: a resume mints a NEW live
         // session id, and the running turn's events (still tagged with the
         // OLD id) would then be filtered out as "foreign" — orphaning the
@@ -1070,20 +1172,29 @@ class GatewayChatClient(
         // is the screen-return (prewarm) variant of the same hazard the
         // mid-turn rejoin avoids by NOT resuming.
         if (activeTurn != null) return
-        if (liveSessionId != null && storedSessionId == storedId) return
+        if (
+            liveSessionId != null &&
+            storedSessionId == storedId &&
+            liveSessionProfile == requestedProfile
+        ) return
         val resumed = rpc(
             "session.resume",
             buildJsonObject {
                 put("session_id", storedId)
                 put("cols", DEFAULT_COLS)
-                currentSessionProfile()?.let { put("profile", it) }
+                requestedProfile?.let { put("profile", it) }
             },
         )
         val result = resumed.getOrNull()
         val live = result?.stringField("session_id")
-        if (live != null) {
+        if (
+            live != null &&
+            activeTurn == null &&
+            prewarmRequestGeneration.get() == requestGeneration
+        ) {
             liveSessionId = live
             storedSessionId = storedId
+            liveSessionProfile = requestedProfile
             updateCancelledDrainLiveSession(storedId, live)
             // Paint the session's real model/provider/effort/etc NOW from the
             // resume result's embedded `info` (same shape session.info carries),
@@ -1129,16 +1240,84 @@ class GatewayChatClient(
         }
     }
 
+    /** Resolve a process RPC against the exact live id, resuming after reconnect when possible. */
+    private suspend fun ensureLiveProcessSession(): Result<String> {
+        val requestedProfile = currentSessionProfile()
+        liveSessionId?.takeIf { liveSessionProfile == requestedProfile }
+            ?.let { return Result.success(it) }
+        val rememberedStoredId = storedSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        val requestGeneration = prewarmRequestGeneration.incrementAndGet()
+        return try {
+            connectMutex.withLock {
+                ensureConnected()
+                if (liveSessionId == null || liveSessionProfile != requestedProfile) {
+                    resumeForPrewarm(rememberedStoredId, requestedProfile, requestGeneration)
+                }
+            }
+            val resumedLiveId = liveSessionId
+            if (
+                resumedLiveId != null &&
+                storedSessionId == rememberedStoredId &&
+                liveSessionProfile == requestedProfile
+            ) {
+                Result.success(resumedLiveId)
+            } else {
+                Result.failure(GatewayRpcException("could not resume live session"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun parseGatewayProcess(element: kotlinx.serialization.json.JsonElement): GatewayProcess? {
+        val process = element as? JsonObject ?: return null
+        val id = process.stringField("session_id")?.takeIf { it.isNotBlank() } ?: return null
+        return GatewayProcess(
+            id = id,
+            command = process.stringField("command").orEmpty(),
+            cwd = process.stringField("cwd"),
+            pid = (process["pid"] as? JsonPrimitive)?.longOrNull,
+            startedAt = process.stringField("started_at"),
+            uptimeSeconds = (process["uptime_seconds"] as? JsonPrimitive)?.longOrNull ?: 0L,
+            status = process.stringField("status") ?: "unknown",
+            outputPreview = process.stringField("output_preview")?.takeIf { it.isNotEmpty() },
+            outputTail = process.stringField("output_tail")?.takeIf { it.isNotEmpty() },
+            exitCode = (process["exit_code"] as? JsonPrimitive)?.intOrNull,
+            detached = (process["detached"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            notifyOnComplete = (process["notify_on_complete"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            sessionScoped = (process["session_scoped"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            watchPatterns = (process["watch_patterns"] as? JsonArray).orEmpty()
+                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+            watchHit = (process["watch_hit"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        )
+    }
+
+    private fun markProcessUnsupportedIfNeeded(error: Throwable?) {
+        if (error.isMethodNotFound()) {
+            _processCapability.value = GatewayProcessCapability.Unsupported
+        }
+    }
+
+    private fun processFeatureUnsupported(): GatewayRpcException =
+        GatewayRpcException("background process RPCs are not supported by this gateway", JSONRPC_METHOD_NOT_FOUND)
+
     /** Must hold [connectMutex]. Resolves [liveSessionId] for the requested stored id. */
     private suspend fun ensureSession(
         requestedStoredId: String?,
         newSessionTitle: String?,
         turn: GatewayTurn,
     ) {
+        val requestedProfile = currentSessionProfile()
         if (requestedStoredId != null && requestedStoredId != storedSessionId) {
             cancelledTurnDrain = null
         }
-        if (liveSessionId != null && storedSessionId == requestedStoredId && requestedStoredId != null) {
+        if (
+            liveSessionId != null &&
+            storedSessionId == requestedStoredId &&
+            requestedStoredId != null &&
+            liveSessionProfile == requestedProfile
+        ) {
             return
         }
 
@@ -1148,7 +1327,7 @@ class GatewayChatClient(
                 buildJsonObject {
                     put("session_id", requestedStoredId)
                     put("cols", DEFAULT_COLS)
-                    currentSessionProfile()?.let { put("profile", it) }
+                    requestedProfile?.let { put("profile", it) }
                 },
             )
             val result = resumed.getOrNull()
@@ -1156,6 +1335,7 @@ class GatewayChatClient(
             if (live != null) {
                 liveSessionId = live
                 storedSessionId = requestedStoredId
+                liveSessionProfile = requestedProfile
                 updateCancelledDrainLiveSession(requestedStoredId, live)
                 (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
                 return
@@ -1172,7 +1352,7 @@ class GatewayChatClient(
             buildJsonObject {
                 put("cols", DEFAULT_COLS)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
-                currentSessionProfile()?.let { put("profile", it) }
+                requestedProfile?.let { put("profile", it) }
                 // Bind the in-chat overrides to the new session as its
                 // per-session overrides. Upstream tui_gateway session.create
                 // reads `model`/`provider` (→ model_override), `reasoning_effort`
@@ -1199,6 +1379,7 @@ class GatewayChatClient(
         val stored = created.stringField("stored_session_id") ?: live
         liveSessionId = live
         storedSessionId = stored
+        liveSessionProfile = requestedProfile
         if (cancelledTurnDrain?.storedSessionId != stored) cancelledTurnDrain = null
         turn.callbacks.onSessionId(stored)
     }
@@ -1280,7 +1461,7 @@ class GatewayChatClient(
         // delta types log length only, everything else logs a payload
         // excerpt so on-device diagnosis doesn't read absences.
         when (type) {
-            "message.delta", "reasoning.delta", "thinking.delta" ->
+            "message.delta", "reasoning.delta", "thinking.delta", "agent.terminal.output" ->
                 Log.d(TAG, "GW ← $type (${payload?.toString()?.length ?: 0} chars)")
             else ->
                 Log.d(TAG, "GW ← $type | ${payload?.toString()?.take(300) ?: "{}"}")
@@ -1309,6 +1490,7 @@ class GatewayChatClient(
         if (eventSessionId != null && liveSessionId != null && eventSessionId != liveSessionId) {
             return
         }
+        dispatchProcessEvent(type, payload, eventSessionId)
         if (consumeCancelledTurnEvent(type, eventSessionId)) return
         var turn = activeTurn
         if (turn == null && type == "message.start") {
@@ -1363,6 +1545,43 @@ class GatewayChatClient(
         }
     }
 
+    /**
+     * Deliver session-scoped process events before the active-turn gate. The
+     * gateway socket is process-wide, so an exact non-blank live id match is
+     * required; missing/foreign ids must never leak another window's process.
+     */
+    private fun dispatchProcessEvent(type: String, payload: JsonObject?, eventSessionId: String?) {
+        val liveId = liveSessionId ?: return
+        if (eventSessionId.isNullOrBlank() || eventSessionId != liveId) return
+        val event = when (type) {
+            "tool.complete" -> when (payload?.stringField("name")) {
+                "terminal", "process" -> GatewayProcessEvent.Invalidated(
+                    GatewayProcessEvent.Trigger.TOOL_COMPLETE,
+                )
+                else -> null
+            }
+            "status.update" -> if (payload?.stringField("kind") == "process") {
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.STATUS_UPDATE)
+            } else {
+                null
+            }
+            "agent.terminal.output" -> {
+                val processId = payload?.stringField("process_id")
+                val chunk = payload?.stringField("chunk")
+                if (!processId.isNullOrBlank() && chunk != null) {
+                    GatewayProcessEvent.Output(processId, chunk)
+                } else {
+                    null
+                }
+            }
+            "terminal.close" -> payload?.stringField("process_id")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { GatewayProcessEvent.TerminalClosed(it) }
+            else -> null
+        } ?: return
+        callbackDispatcher { processEventListener?.invoke(event) }
+    }
+
     private fun onSocketDown(reason: String) {
         Log.i(TAG, "Gateway socket down ($reason)")
         // Capture the in-flight session id BEFORE clearing it — the mid-turn
@@ -1374,6 +1593,7 @@ class GatewayChatClient(
         liveSessionId = null
         attachMethodForSocket = null
         commandsCatalogCache = null
+        _processCapability.value = GatewayProcessCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
@@ -1479,6 +1699,7 @@ class GatewayChatClient(
         liveSessionId = null
         attachMethodForSocket = null
         commandsCatalogCache = null
+        _processCapability.value = GatewayProcessCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
     }
 

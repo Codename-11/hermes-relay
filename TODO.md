@@ -22,9 +22,13 @@ Before release preparation, keep these owner/device gates explicit:
   final-syllable tail, and the reported PCM tap/static between sentences.
 - Exercise the 1.4.1 Chat surfaces: streaming reflow, wide-table overflow, gallery
   paging/zoom/sensitive actions, unread tracking, Demo mic gate, and task-card lifecycle.
-- Re-run an ordinary Chat background process through the Gateway: its unsolicited
-  completion must appear without a follow-up prompt, survive a socket-close/foreground
-  history refresh, and remain isolated to the session that started it.
+- Re-run an ordinary Chat background process through the Gateway: the current-chat
+  process strip/sheet must show running state, live or snapshot output, exact Stop,
+  recent completion and Dismiss; the synthetic completion must render as a process
+  notice, its unsolicited assistant follow-up must appear without another prompt,
+  and both must survive a socket-close/foreground history refresh without crossing
+  into a different session or profile. Backgrounding with keep-alive disabled must
+  also let the Gateway socket close normally instead of polling it back open.
 - Exercise commands and presets on Standard and Realtime Voice, including ordinary
   prompts that resemble commands, explicit stop-vs-cancel behavior, Custom detection,
   and preservation of route/provider/model/voice/concurrency/barge-in choices.
