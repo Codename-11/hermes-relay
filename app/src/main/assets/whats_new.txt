@@ -1,18 +1,22 @@
-v1.3.0 - Voice that multitasks & chats that keep their answers
+v1.4.0 - Realtime voice that finishes the job
 
 Voice
-* Ask for something big and keep talking - long tasks hand off to
-  the background with a live chip (current step, timer, tap to
-  cancel), and the answer is spoken when it's ready, even after a
-  dropped connection. Leaving voice mode no longer cancels a
-  running task.
+* Keep talking while long work runs: quick follow-ups can be
+  answered, another long request can queue, and the finished
+  answer stays in your selected realtime voice.
+* Background and route changes recover more reliably. Stale
+  listening, thinking, reconnecting, and cancel states clear
+  instead of trapping the voice screen.
+* Pick a Realtime Agent model and voice per connection/profile;
+  the next session uses it and the choice survives restart.
 
-Chats
-* An answer is no longer lost if the connection drops mid-reply -
-  the app quietly recovers it when the server finishes.
-* Your agent can message you first (opt-in), and you can reply
-  right from the notification.
+More control
+* Refresh provider model catalogs from Chat or Manage.
+* Opt-in notification rules can offer a local "Ask Hermes?"
+  action, and Bridge tools can target a specific Android device.
 
-Plus
-* Pick your app font, onboarding fits small screens, smarter
-  issue reporting, and a cleaner Connections screen.
+Reliability
+* Long chats avoid premature transport fallback, phone context
+  reaches upstream Hermes on supported paths, malformed server
+  addresses fail safely, and credential files cannot be served
+  through relay media.

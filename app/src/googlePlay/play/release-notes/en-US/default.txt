@@ -1,6 +1,6 @@
-v1.3.0 — Voice that multitasks & sturdier chats.
+v1.4.0 — Realtime voice that finishes the job.
 
-• Long voice tasks run in the background with a live progress chip — keep talking, cancel with a tap, and hear the result even after a dropped connection.
-• Chat answers are no longer lost when the connection drops mid-reply.
-• Your agent can message you first (opt-in), with replies straight from the notification.
-• Pick your app font; onboarding fits small screens; cleaner Connections screen.
+• Long voice tasks can queue, keep running while you ask quick follow-ups, and deliver answers in the selected realtime voice.
+• Voice sessions recover more reliably after background or route changes and clear stale task states.
+• Refresh model catalogs on demand; add opt-in notification rules and multi-device Bridge targeting.
+• Safer startup, server-address handling, long chat turns, and credential media access.

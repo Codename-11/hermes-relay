@@ -1,6 +1,37 @@
 {
  "versions": [
   {
+   "version": "1.4.0",
+   "title": "Realtime voice that finishes the job",
+   "date": "2026-07-09",
+   "sections": [
+    {
+     "header": "Voice that keeps going",
+     "bullets": [
+      "Quick follow-ups can be answered while a long Hermes task runs, another long request can wait in a bounded queue, and the finished answer can stay in the selected realtime voice.",
+      "Voice route recovery now waits for relay confirmation, replays unacknowledged input without starting a second Hermes run, and rejects stale sockets or sessions before they can overwrite a healthy connection.",
+      "Listening, thinking, reconnecting, and cancellation states now settle cleanly after Stop, exit, route loss, or terminal retry failure."
+     ]
+    },
+    {
+     "header": "Models and phone automation",
+     "bullets": [
+      "Realtime Agent model and voice choices apply to the next session, persist per connection/profile, and survive restart.",
+      "Chat and Manage can refresh dynamic provider model catalogs on demand.",
+      "Opt-in notification rules can offer a local Ask Hermes action, and Bridge tools can target a specific paired Android device."
+     ]
+    },
+    {
+     "header": "Reliability and safety",
+     "bullets": [
+      "Long chat turns avoid premature transport fallback, and supported voice, card, and attachment context now reaches upstream Hermes through channels it consumes.",
+      "Malformed server addresses fail through normal connection errors, older Android versions avoid newer collection APIs, and relay media blocks credential and token paths.",
+      "Model management keeps unconfigured providers visible with key-setup guidance, and session cleanup gains export, prune preview/apply, archive, and restore plumbing."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.3.0",
    "title": "Voice that multitasks & sturdier chats",
    "date": "2026-07-06",

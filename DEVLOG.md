@@ -65,6 +65,15 @@ background/foreground route churn, terminal exhaustion, reopen/exit cycles,
 cancel-without-ack, and force-stop persistence remain follow-up validation and
 may require further hardening from live traces.
 
+Release-prep validation forced all 43 routing, overlay, and session-fence
+regressions, then built both signed release flavors with the same
+`bundleRelease assembleRelease` command used by CI. The Google Play AAB carries
+the release certificate. The plugin's realtime, security, route, session-grant,
+and native-layout slice passed 230 tests, and isolated wheel/sdist packaging
+produced the expected 1.4.0 artifacts. Version-track checks, in-app changelog
+JSON, and the synchronized 465-character Play notes also passed their release
+gates.
+
 The UI state machine now reserves `Listening` for a live `AudioRecord`.
 Provider transcript deltas render as `Transcribing`, output suppression checks
 `VoiceRecorder.isRecording()`, and foreground resume reconciles a recorder that

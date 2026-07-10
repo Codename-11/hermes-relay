@@ -10,10 +10,10 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 Compaction-safe snapshot of where we are; details in the linked sections below.
 
-- **RELEASE RESUMED — cut android-v1.4.0 + plugin-v1.4.0 (owner direction 2026-07-09).** Android is **1.4.0 / versionCode 22**, plugin is **1.4.0**, the focused realtime recovery suite and Android lint are green, and the current sideload APK is installed. Extended on-device recovery stress testing and the force-stop persistence check are explicitly deferred rather than release blockers:
-  1. Finish the release notes listed by the bump script: `RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `app/src/main/assets/changelog.json`, `app/src/googlePlay/play/release-notes/en-US/default.txt`.
-  2. Merge `dev`→`main` `--no-ff` + tag `android-v1.4.0` and `plugin-v1.4.0`. Plugin is a **MINOR** (it carries #165 native-loader + installer-venv, #170 doctor guardrails, #171 multi-device bridge, #178 dedup guard — not the 1.3.1 patch originally queued).
-  3. Discard the 1.3.0 Play Console draft and upload the 1.4.0 AAB.
+- **RELEASE IN PROGRESS — cut android-v1.4.0 + plugin-v1.4.0 (owner direction 2026-07-09).** Android is **1.4.0 / versionCode 22**, plugin is **1.4.0**, public release notes and store copy are synchronized, focused realtime recovery tests and Android lint are green, both signed release flavors build, the plugin package builds, and the current sideload APK is installed. Extended on-device recovery stress testing and the force-stop persistence check are explicitly deferred rather than release blockers:
+  1. Push `dev`, wait for its release-facing CI, merge `dev` -> `main` with a merge commit, then tag the shared merge tip as `plugin-v1.4.0` and `android-v1.4.0`. Plugin is a **MINOR** (it carries #165 native-loader + installer-venv, #170 doctor guardrails, #171 multi-device bridge, #178 dedup guard — not the 1.3.1 patch originally queued).
+  2. Verify both GitHub releases, their checksums/artifacts, and the Android signing summary.
+  3. Discard the 1.3.0 Play Console draft, inspect the uploaded 1.4.0 production draft, and start rollout deliberately.
 - **Voice bugs being worked now** — see "Voice — on-device findings" below for full detail:
   1. Background/resume turn stuck on `Listening...` / `Still working...` — **fixed in code; current APK installed; extended live stress test deferred** (2026-07-09).
   2. Tool-call status pills/ordering + stuck "Thinking" — fixed in code; final visual ordering re-check remains.
