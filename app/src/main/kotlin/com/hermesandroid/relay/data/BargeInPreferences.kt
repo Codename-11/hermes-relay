@@ -82,9 +82,9 @@ class BargeInPreferencesRepository(
     constructor(context: Context) : this(context.relayDataStore)
 
     companion object {
-        private val KEY_ENABLED = booleanPreferencesKey("barge_in_enabled")
-        private val KEY_SENSITIVITY = stringPreferencesKey("barge_in_sensitivity")
-        private val KEY_RESUME_AFTER_INTERRUPTION =
+        internal val KEY_ENABLED = booleanPreferencesKey("barge_in_enabled")
+        internal val KEY_SENSITIVITY = stringPreferencesKey("barge_in_sensitivity")
+        internal val KEY_RESUME_AFTER_INTERRUPTION =
             booleanPreferencesKey("barge_in_resume_after_interruption")
     }
 

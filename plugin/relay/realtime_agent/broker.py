@@ -213,6 +213,10 @@ class RealtimeAgentSession:
     native_forced_hermes_turn_active: bool = False
     native_forced_summary_active: bool = False
     native_forced_summary_done: bool = False
+    # Monotonic ownership token for delivery-confirm alarms. A later result or
+    # preemption invalidates an older alarm even if the session-global summary
+    # flags have since been reset for another turn.
+    native_forced_summary_generation: int = 0
     native_forced_summary_response_id: str | None = None
     native_forced_summary_result: dict[str, Any] | None = None
     native_forced_summary_buffer: list[dict[str, Any]] = field(default_factory=list)
@@ -1672,6 +1676,7 @@ class RealtimeAgentHandler:
                                 "session_id": session.session_id,
                                 "chat_session_id": session.chat_session_id,
                                 "response_id": event.response_id,
+                                "delivery": "forced_summary",
                             }
                         )
                     continue
@@ -1717,6 +1722,7 @@ class RealtimeAgentHandler:
                             "source": "provider",
                             "delta": delta,
                             "response_id": event.response_id,
+                            "delivery": "forced_summary",
                         }
                         if session.native_forced_summary_committed:
                             # Early-committed: stream live.
@@ -1754,10 +1760,14 @@ class RealtimeAgentHandler:
                     if self._should_forward_provider_response_event(session, event):
                         if session.native_forced_summary_committed:
                             # Early-committed: stream audio live.
-                            await self._send_provider_audio_delta(ws, session, event)
+                            payload = await self._provider_audio_delta_event(ws, session, event)
+                            if payload is not None:
+                                payload["delivery"] = "forced_summary"
+                                await self._send(ws, session, payload)
                         else:
                             payload = await self._provider_audio_delta_event(ws, session, event)
                             if payload is not None:
+                                payload["delivery"] = "forced_summary"
                                 session.native_forced_summary_buffer.append(payload)
                     continue
                 if not self._should_forward_provider_response_event(session, event):
@@ -1785,6 +1795,7 @@ class RealtimeAgentHandler:
                         audio_done_event = {
                             "type": SERVER_EVT_OUTPUT_AUDIO_DONE,
                             "response_id": event.response_id,
+                            "delivery": "forced_summary",
                         }
                         if session.native_forced_summary_committed:
                             await self._send(ws, session, audio_done_event)
@@ -2087,6 +2098,7 @@ class RealtimeAgentHandler:
                     "event_log_path": str(session.event_log_path),
                     "chat_session_id": session.chat_session_id,
                     "response_id": None if response_id == "__blank_response_id__" else response_id,
+                    "delivery": "forced_summary",
                 },
             )
             self._mark_provider_response_done(session, event)
@@ -2149,13 +2161,33 @@ class RealtimeAgentHandler:
                     "delivery": "fallback",
                 },
             )
-            await self._render_provider_audio(
+            fallback_audio_completed = await self._render_provider_audio(
                 ws,
                 session,
                 fallback_text,
                 {},
                 response_id=fallback_response_id,
+                response_done_fields={
+                    "source": "hermes",
+                    "delivery": "fallback",
+                },
             )
+            if not fallback_audio_completed:
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_RESPONSE_DONE,
+                        "provider": session.provider,
+                        "model": session.model,
+                        "voice": session.voice,
+                        "event_log_path": str(session.event_log_path),
+                        "chat_session_id": session.chat_session_id,
+                        "response_id": fallback_response_id,
+                        "source": "hermes",
+                        "delivery": "fallback",
+                    },
+                )
             return
 
         buffered = list(session.native_forced_summary_buffer)
@@ -2188,6 +2220,7 @@ class RealtimeAgentHandler:
                 "event_log_path": str(session.event_log_path),
                 "chat_session_id": session.chat_session_id,
                 "response_id": None if response_id == "__blank_response_id__" else response_id,
+                "delivery": "forced_summary",
             },
         )
         self._mark_provider_response_done(session, event)
@@ -2240,8 +2273,26 @@ class RealtimeAgentHandler:
         )
         if not delivered:
             return
-        if not await self._request_provider_response(ws, session, connection, call.call_id):
+        if not await self._request_provider_response(
+            ws,
+            session,
+            connection,
+            call.call_id,
+            result=result,
+            transcript=session.promoted_transcript or "",
+        ):
             return
+        confirm = asyncio.create_task(
+            self._confirm_background_delivery(
+                ws,
+                session,
+                dict(result),
+                delivery_generation=session.native_forced_summary_generation,
+            )
+        )
+        confirm.add_done_callback(
+            _log_task_failure(session, "forced_summary_tool_delivery_confirm_task")
+        )
 
     async def _handle_provider_tool_call(
         self,
@@ -2319,8 +2370,28 @@ class RealtimeAgentHandler:
             tool_name=call.name,
             reason="tool_result_summary",
         )
-        if not await self._request_provider_response(ws, session, connection, call.call_id):
+        delivery_result = result if call.name == "hermes_run_task" else None
+        if not await self._request_provider_response(
+            ws,
+            session,
+            connection,
+            call.call_id,
+            result=delivery_result,
+            transcript=str(call.arguments.get("text") or ""),
+        ):
             return
+        if delivery_result is not None:
+            confirm = asyncio.create_task(
+                self._confirm_background_delivery(
+                    ws,
+                    session,
+                    dict(delivery_result),
+                    delivery_generation=session.native_forced_summary_generation,
+                )
+            )
+            confirm.add_done_callback(
+                _log_task_failure(session, "foreground_delivery_confirm_task")
+            )
 
     def _provider_response_had_audio(
         self,
@@ -2393,13 +2464,6 @@ class RealtimeAgentHandler:
             await connection.send_tool_result(call_id, result)
             return True
         except Exception as exc:
-            await self._send_error(
-                ws,
-                session,
-                "Realtime provider closed before Hermes result could be delivered.",
-                error_code="provider_tool_result_send_failed",
-                call_id=call_id,
-            )
             self._log(
                 session,
                 "voice.provider_tool_result_send_failed",
@@ -2408,6 +2472,20 @@ class RealtimeAgentHandler:
                     "call_id": call_id,
                     "error": str(exc),
                 },
+            )
+            if _result_answer_text(result):
+                await self._speak_fallback_answer(
+                    ws,
+                    session,
+                    result,
+                    reason="provider_tool_result_send_failed",
+                )
+            await self._send_error(
+                ws,
+                session,
+                "Realtime provider closed before Hermes result could be delivered.",
+                error_code="provider_tool_result_send_failed",
+                call_id=call_id,
             )
             await self._close_native_session(session, "provider_tool_result_send_failed")
             return False
@@ -2418,18 +2496,38 @@ class RealtimeAgentHandler:
         session: RealtimeAgentSession,
         connection: RealtimeAgentConnection,
         call_id: str,
+        *,
+        result: dict[str, Any] | None = None,
+        transcript: str = "",
     ) -> bool:
+        instructions = None
+        exact_text = None
+        if result is not None:
+            session.native_forced_summary_generation += 1
+            session.native_forced_summary_active = True
+            session.native_forced_summary_done = False
+            session.native_forced_summary_response_id = None
+            session.native_forced_summary_result = dict(result)
+            session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_committed = False
+            session.native_forced_summary_text_parts.clear()
+            instructions = _result_delivery_prompt(
+                session.result_delivery,
+                transcript,
+                result,
+            )
+            if (
+                session.result_delivery == "speak_verbatim"
+                and not _answer_is_structured(result)
+            ):
+                exact_text = _forced_summary_fallback_text(result)
         try:
-            await connection.request_response()
+            await connection.request_response(
+                instructions=instructions,
+                exact_text=exact_text,
+            )
             return True
         except Exception as exc:
-            await self._send_error(
-                ws,
-                session,
-                "Realtime provider closed before it could summarize the Hermes result.",
-                error_code="provider_response_request_failed",
-                call_id=call_id,
-            )
             self._log(
                 session,
                 "voice.provider_response_request_failed",
@@ -2438,6 +2536,20 @@ class RealtimeAgentHandler:
                     "call_id": call_id,
                     "error": str(exc),
                 },
+            )
+            if result is not None and _result_answer_text(result):
+                await self._speak_fallback_answer(
+                    ws,
+                    session,
+                    result,
+                    reason="provider_response_request_failed",
+                )
+            await self._send_error(
+                ws,
+                session,
+                "Realtime provider closed before it could summarize the Hermes result.",
+                error_code="provider_response_request_failed",
+                call_id=call_id,
             )
             await self._close_native_session(session, "provider_response_request_failed")
             return False
@@ -2455,6 +2567,7 @@ class RealtimeAgentHandler:
         if session.native_forced_hermes_turn_active:
             return
         session.native_forced_hermes_turn_active = True
+        session.native_forced_summary_generation += 1
         session.native_forced_summary_active = False
         session.native_forced_summary_done = False
         session.native_forced_summary_response_id = None
@@ -2507,6 +2620,7 @@ class RealtimeAgentHandler:
             # keeps the realtime voice; speak_verbatim differs only in the
             # instructions (read the answer as written vs. natural summary).
             # The forced-summary validator + relay-TTS fallback backstop both.
+            session.native_forced_summary_generation += 1
             session.native_forced_summary_active = True
             session.native_forced_summary_done = False
             session.native_forced_summary_response_id = None
@@ -2517,10 +2631,17 @@ class RealtimeAgentHandler:
             with contextlib.suppress(Exception):
                 await connection.cancel_response()
             try:
+                exact_text = None
+                if (
+                    session.result_delivery == "speak_verbatim"
+                    and not _answer_is_structured(result)
+                ):
+                    exact_text = _forced_summary_fallback_text(result)
                 await connection.request_response(
                     instructions=_result_delivery_prompt(
                         session.result_delivery, transcript, result
-                    )
+                    ),
+                    exact_text=exact_text,
                 )
             except Exception as exc:  # noqa: BLE001 - the answer must still land
                 self._log(
@@ -2541,7 +2662,12 @@ class RealtimeAgentHandler:
             # delivery lands within the confirm window, force a text emit so
             # a dead/stalled provider response can't silently eat the answer.
             confirm = asyncio.create_task(
-                self._confirm_background_delivery(ws, session, dict(result))
+                self._confirm_background_delivery(
+                    ws,
+                    session,
+                    dict(result),
+                    delivery_generation=session.native_forced_summary_generation,
+                )
             )
             confirm.add_done_callback(
                 _log_task_failure(session, "delivery_confirm_task")
@@ -3200,7 +3326,12 @@ class RealtimeAgentHandler:
         # answer is force-emitted as text — it can never be silently lost to
         # filler the validator missed, a dead response, or a stray cancel.
         confirm = asyncio.create_task(
-            self._confirm_background_delivery(ws, session, dict(result))
+            self._confirm_background_delivery(
+                ws,
+                session,
+                dict(result),
+                delivery_generation=session.native_forced_summary_generation,
+            )
         )
         confirm.add_done_callback(
             _log_task_failure(session, "delivery_confirm_task")
@@ -3211,10 +3342,14 @@ class RealtimeAgentHandler:
         ws: web.WebSocketResponse,
         session: RealtimeAgentSession,
         result: dict[str, Any],
+        *,
+        delivery_generation: int,
     ) -> None:
         """Force a text emit when a spoken background delivery never lands."""
         await asyncio.sleep(_DELIVERY_CONFIRM_SECONDS)
         if session.closed:
+            return
+        if session.native_forced_summary_generation != delivery_generation:
             return
         if session.native_forced_summary_done or session.native_forced_summary_committed:
             return
@@ -3332,7 +3467,12 @@ class RealtimeAgentHandler:
         # Same delivered-or-alarm guarantee as the attached background path:
         # a resume-injected summary that never lands is force-emitted as text.
         confirm = asyncio.create_task(
-            self._confirm_background_delivery(ws, session, dict(result))
+            self._confirm_background_delivery(
+                ws,
+                session,
+                dict(result),
+                delivery_generation=session.native_forced_summary_generation,
+            )
         )
         confirm.add_done_callback(
             _log_task_failure(session, "delivery_confirm_task")
@@ -3472,13 +3612,33 @@ class RealtimeAgentHandler:
                 "delivery": "fallback",
             },
         )
-        await self._render_provider_audio(
+        fallback_audio_completed = await self._render_provider_audio(
             ws,
             session,
             fallback_text,
             {},
             response_id=response_id,
+            response_done_fields={
+                "source": "hermes",
+                "delivery": "fallback",
+            },
         )
+        if not fallback_audio_completed:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_DONE,
+                    "provider": session.provider,
+                    "model": session.model,
+                    "voice": session.voice,
+                    "event_log_path": str(session.event_log_path),
+                    "chat_session_id": session.chat_session_id,
+                    "response_id": response_id,
+                    "source": "hermes",
+                    "delivery": "fallback",
+                },
+            )
 
     async def _preempt_pending_forced_summary(
         self,
@@ -3500,6 +3660,7 @@ class RealtimeAgentHandler:
         was_active = session.native_forced_summary_active
         pending = session.native_forced_summary_result
         committed = session.native_forced_summary_committed
+        session.native_forced_summary_generation += 1
         session.native_forced_summary_active = False
         session.native_forced_summary_done = False
         session.native_forced_summary_response_id = None
@@ -3537,6 +3698,7 @@ class RealtimeAgentHandler:
         cancel_current: bool = True,
     ) -> None:
         transcript = session.promoted_transcript or ""
+        session.native_forced_summary_generation += 1
         session.native_forced_summary_active = True
         session.native_forced_summary_done = False
         session.native_forced_summary_response_id = None
@@ -4276,7 +4438,8 @@ class RealtimeAgentHandler:
         payload: dict[str, Any],
         *,
         response_id: str | None = None,
-    ) -> None:
+        response_done_fields: dict[str, Any] | None = None,
+    ) -> bool:
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
         output_path = session.event_log_path.with_suffix(".wav")
@@ -4332,7 +4495,7 @@ class RealtimeAgentHandler:
         except (ProviderUnavailable, ProviderRunError) as exc:
             session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(ws, session, str(exc), provider=session.provider)
-            return
+            return False
         except Exception as exc:
             session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(
@@ -4341,7 +4504,7 @@ class RealtimeAgentHandler:
                 f"realtime agent provider failed: {exc.__class__.__name__}: {exc}",
                 provider=session.provider,
             )
-            return
+            return False
 
         await self._send(
             ws,
@@ -4361,24 +4524,23 @@ class RealtimeAgentHandler:
         if not keep_tap:
             with contextlib.suppress(OSError):
                 Path(response.audio_path).unlink()
-        await self._send(
-            ws,
-            session,
-            {
-                "type": "voice.response.done",
-                "provider": response.provider,
-                "model": response.model,
-                "voice": response.voice,
-                "audio_path": str(response.audio_path) if keep_tap else "",
-                "event_log_path": str(session.event_log_path),
-                "chat_session_id": session.chat_session_id,
-                "final_text": text,
-                "response_id": response_id,
-                "metrics": response.metrics.to_dict(),
-                "metadata": _safe_metadata(response.metadata),
-            },
-        )
+        response_done = {
+            "type": "voice.response.done",
+            "provider": response.provider,
+            "model": response.model,
+            "voice": response.voice,
+            "audio_path": str(response.audio_path) if keep_tap else "",
+            "event_log_path": str(session.event_log_path),
+            "chat_session_id": session.chat_session_id,
+            "final_text": text,
+            "response_id": response_id,
+            "metrics": response.metrics.to_dict(),
+            "metadata": _safe_metadata(response.metadata),
+        }
+        response_done.update(response_done_fields or {})
+        await self._send(ws, session, response_done)
         session.floor.release(FloorMouth.RELAY_TTS)
+        return True
 
     def _provider_options(
         self,
@@ -5532,7 +5694,7 @@ def _bad_forced_summary_reason(text: str, answer: str | None = None) -> str | No
     if len(normalized) <= 80 and any(
         phrase in normalized
         for phrase in ("got it", "sure", "okay", "ok")
-    ) and "check" in normalized:
+    ) and "check" in normalized and normalized != answer_normalized:
         return "short_acknowledgement"
     # Positive check (blocklists chase phrasings; this one doesn't): the
     # summary must share content with the answer it claims to deliver.

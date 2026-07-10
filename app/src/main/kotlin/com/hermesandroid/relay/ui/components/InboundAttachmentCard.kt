@@ -491,7 +491,7 @@ private fun FileCardRender(
  * the default tap previews in-app.
  */
 @Composable
-private fun AttachmentActionsMenu(
+fun AttachmentActionsMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     context: Context,
@@ -527,7 +527,7 @@ private fun AttachmentActionsMenu(
 
 /** Small circular download button overlaid on inline images (B2). */
 @Composable
-private fun SaveOverlayButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SaveOverlayButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         shape = CircleShape,
         color = Color.Black.copy(alpha = 0.45f),
@@ -556,7 +556,7 @@ private suspend fun shareAttachment(context: Context, attachment: Attachment) {
     MediaSaver.share(context, uri, attachment.contentType)
 }
 
-private suspend fun saveAttachment(context: Context, attachment: Attachment) {
+suspend fun saveAttachment(context: Context, attachment: Attachment) {
     val bytes = attachmentBytes(context, attachment)
     if (bytes == null) {
         attachmentToast(context, "Couldn't read this file")

@@ -1,5 +1,55 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Android 1.4.1 Chat and Voice enhancement batch
+
+Chat now represents a promoted realtime background run as one first-class
+assistant turn. The same row moves through queued, running, waiting, delivering,
+complete, failed, or cancelled state and owns its tool detail and authoritative
+answer. Run IDs retain the initiating assistant-row identity across later turns,
+including local Voice commands, so delayed progress or delivery cannot settle a
+newer placeholder. Local pause, resume, stop, repeat, and cancel commands are
+removed from Chat history, quarantine their provider acknowledgement, and cannot
+become the target of Retry. The authoritative answer still persists through the
+existing session history; reconstructing client-only task-card metadata after a
+cold restart remains a separate durability follow-up.
+
+Streaming Markdown can promote blank-terminated prose and headings without
+waiting for the final response, while structurally ambiguous lists, quotes,
+tables, HTML, and fences remain in the raw tail. GFM tables now wrap in readable
+minimum-width columns inside a horizontally scrollable surface. Contiguous image
+attachments render as a bounded gallery with selected-page full-screen paging,
+sensitive-action gating, original-byte Share/Save behavior, and no adjacent
+full-resolution preload. The thinking indicator follows app and system motion
+settings plus TalkBack, the jump-to-bottom affordance reports unread messages,
+and the Demo mic explains locally that Voice requires a real connection.
+
+Voice now intercepts only exact, final-transcript commands in states where the
+action is safe. Standard Voice supports a rearmed new-chat command; realtime
+new-chat remains gated until a persistent WebSocket can be rebound safely. Four
+presets compose existing Voice settings without replacing manual controls or
+silently enabling experimental barge-in. Preset application updates the relay
+first and rolls it back if local persistence fails, with an explicit recovery
+message if rollback also fails. Relay event parsing accepts the documented and
+legacy field aliases used by current broker events.
+
+Foreground Hermes results now use the same forced-summary lifecycle as protected
+background delivery. Non-structured verbatim results take the provider's exact
+text path where supported; structured results use constrained instructions.
+Provider send or response-request failures emit one authoritative fallback before
+the terminal error, and each delivery emits one completion boundary. Delivery
+confirmation is generation-scoped so an alarm from an older response cannot
+invalidate a newer one. Voice-command response suppression is callback-local,
+and forced deliveries remain audible after pause, stop, or background-cancel
+commands.
+
+Verification passed the focused Google Play and sideload Chat/Voice unit suites,
+including a forced clean rerun of the cross-turn ownership regression. Both
+Android lint flavors passed. The realtime route, promotion, validation, xAI, and
+OpenAI provider slice passed 94/94 tests. Device validation remains for gallery
+gestures, reduced-motion/TalkBack behavior, cross-turn background delivery,
+command phrasing, all four presets, provider failure fallback, and the existing
+route-loss/audio quality release gates.
+
 ## 2026-07-09 — Android realtime turns survive background route loss
 
 An on-device foreground/resume failure left a realtime turn showing

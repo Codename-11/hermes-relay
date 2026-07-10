@@ -19,6 +19,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -2564,10 +2565,12 @@ class RelayVoiceClient(
             val resultPreviewValue = (obj["result_preview"] as? JsonPrimitive)?.contentOrNull
                 ?: (obj["result"] as? JsonPrimitive)?.contentOrNull
             val reasonValue = (obj["reason"] as? JsonPrimitive)?.contentOrNull
+            val errorValue = (obj["error"] as? JsonPrimitive)?.contentOrNull
             RealtimeVoiceEvent(
                 type = (obj["type"] as? JsonPrimitive)?.content ?: "unknown",
                 source = (obj["source"] as? JsonPrimitive)?.contentOrNull,
                 message = (obj["message"] as? JsonPrimitive)?.contentOrNull
+                    ?: errorValue
                     ?: reasonValue,
                 reason = reasonValue,
                 statusKey = (obj["status_key"] as? JsonPrimitive)?.contentOrNull,
@@ -2592,7 +2595,7 @@ class RelayVoiceClient(
                 toolName = toolNameValue,
                 toolCallId = toolCallIdValue,
                 resultPreview = resultPreviewValue,
-                success = (obj["success"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull(),
+                success = realtimeEventSuccess(obj),
                 audioBase64 = (obj["audio_base64"] as? JsonPrimitive)?.contentOrNull,
                 byteCount = (obj["byte_count"] as? JsonPrimitive)?.intOrNull,
                 sampleRate = (obj["sample_rate"] as? JsonPrimitive)?.intOrNull,
@@ -2605,7 +2608,8 @@ class RelayVoiceClient(
                 tier = (obj["tier"] as? JsonPrimitive)?.contentOrNull,
                 floor = (obj["floor"] as? JsonPrimitive)?.contentOrNull,
                 activeToolName = (obj["active_tool_name"] as? JsonPrimitive)?.contentOrNull,
-                completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull,
+                completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull
+                    ?: (obj["tool_count"] as? JsonPrimitive)?.intOrNull,
                 elapsedMs = (obj["elapsed_ms"] as? JsonPrimitive)?.longOrNull,
                 queuedCount = (obj["queued_count"] as? JsonPrimitive)?.intOrNull,
                 delivery = (obj["delivery"] as? JsonPrimitive)?.contentOrNull,
@@ -2997,6 +3001,10 @@ data class RealtimeVoiceEvent(
     val isAudioDelta: Boolean
         get() = type == "voice.audio.delta" || type == "voice.output_audio.delta"
 }
+
+internal fun realtimeEventSuccess(obj: JsonObject): Boolean? =
+    (obj["success"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
+        ?: (obj["ok"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
 
 data class VoiceHandoffEvent(
     val label: String,
