@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-09 — Android and plugin 1.4.0 released
+
+`android-v1.4.0` and `plugin-v1.4.0` were published from the same release
+commit. The plugin wheel, source archive, and checksum file were downloaded and
+verified after publication. The Android release exposes only the intended
+sideload APK, Google Play AAB, and matching checksum file; both downloaded
+artifacts matched their recorded hashes, and the APK/AAB certificate digests
+matched the release signer.
+
+Google Play accepted Android versionCode 22 as a production draft. The draft
+was then promoted to `completed`, starting the production rollout. Extended
+physical-device recovery stress testing remains deferred and is tracked in
+`TODO.md`; live findings may still require follow-up recovery hardening.
+
 ## 2026-07-09 — Android realtime turns survive background route loss
 
 An on-device foreground/resume failure left a realtime turn showing
