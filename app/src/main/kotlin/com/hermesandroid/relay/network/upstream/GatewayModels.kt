@@ -136,6 +136,67 @@ data class GatewaySubagentEvent(
 }
 
 /**
+ * One session-owned background process returned by the upstream gateway's
+ * `process.list` RPC. The registry calls its process id `session_id`; Android
+ * exposes it as [id] so it cannot be confused with either the stored chat id or
+ * the gateway's live, per-connection session id.
+ *
+ * [outputPreview] is the registry's short preview, while [outputTail] is the
+ * gateway's larger (currently 4,000-character) snapshot used to recover output
+ * missed while the WebSocket was unavailable. Unknown/new fields are ignored
+ * by the parser so this remains compatible with older and newer gateways.
+ */
+data class GatewayProcess(
+    val id: String,
+    val command: String,
+    val cwd: String? = null,
+    val pid: Long? = null,
+    val startedAt: String? = null,
+    val uptimeSeconds: Long = 0L,
+    val status: String,
+    val outputPreview: String? = null,
+    val outputTail: String? = null,
+    val exitCode: Int? = null,
+    val detached: Boolean = false,
+    val notifyOnComplete: Boolean = false,
+    val sessionScoped: Boolean = false,
+    val watchPatterns: List<String> = emptyList(),
+    val watchHit: Boolean = false,
+) {
+    val isRunning: Boolean get() = status.equals("running", ignoreCase = true)
+}
+
+/** Whether this gateway socket supports the session-scoped process RPCs. */
+enum class GatewayProcessCapability {
+    /** Not probed on this socket yet (or no socket is currently connected). */
+    Unknown,
+
+    /** A `process.list` / `process.kill` call succeeded. */
+    Supported,
+
+    /** The gateway returned JSON-RPC method-not-found for the process surface. */
+    Unsupported,
+}
+
+/**
+ * Connection-level background-process events. These are deliberately separate
+ * from [GatewayTurnCallbacks]: output and completion notifications can arrive
+ * while no app-initiated turn is active.
+ */
+sealed interface GatewayProcessEvent {
+    enum class Trigger { TOOL_COMPLETE, STATUS_UPDATE }
+
+    /** The process snapshot may have changed and should be refreshed. */
+    data class Invalidated(val trigger: Trigger) : GatewayProcessEvent
+
+    /** Live output from `agent.terminal.output`. */
+    data class Output(val processId: String, val chunk: String) : GatewayProcessEvent
+
+    /** The agent requested that its read-only terminal view be closed. */
+    data class TerminalClosed(val processId: String) : GatewayProcessEvent
+}
+
+/**
  * One provider from the gateway `model.options` RPC — the curated, authenticated
  * provider/model list the upstream desktop + TUI model picker uses (NOT the
  * api_server `/v1/models`, which collapses to a single generic agent alias).

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Standard Chat can monitor background terminal work.** A current-chat status strip opens a mobile process sheet with running/recent state, command, elapsed time, expandable live/output-tail text, exact-process Stop, and local Dismiss. It recovers from session snapshots, refreshes on upstream process events, polls only while work is active, and hides cleanly on older Hermes builds without the process RPCs.
 - **Background work is now a first-class Chat turn.** Promoted realtime work appears as a titled task card that advances through working, waiting, delivery, and completion, with queued work and an expandable tool timeline attached to the same assistant response.
 - **Multi-image messages open as galleries.** Adjacent loaded images render in a compact grid and open at the selected image in a swipeable viewer while preserving sensitive-media reveal and original-file actions.
 - **Voice gains state-aware commands and mode presets.** Exact spoken commands can stop speech, explicitly cancel background work, pause or resume continuous listening, repeat a settled background answer, or start a new Standard voice chat. Hands-free, Low latency, Careful tools, and Quiet/visual-only presets tune existing interaction and long-task settings without changing voice identity/routing or silently enabling experimental barge-in.
@@ -20,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Foreground Realtime Agent results use the protected delivery path.** Hermes tool results receive exact provider speech where supported, delivery validation and generation-scoped confirmation, and one authoritative relay-TTS fallback if the provider closes or rejects result delivery. Local Voice commands no longer leave synthetic `Cancelled.` turns in Chat or mute a later background answer.
-- **Standard Chat now receives background-process completions automatically.** When upstream Hermes finishes detached work and starts a follow-up turn on the originating Gateway session, Android accepts that unsolicited assistant stream, shows it in the open conversation, and reloads persisted history after a cold reconnect instead of silently discarding the reply until the user asks again.
+- **Standard Chat now receives background-process completions automatically.** When upstream Hermes finishes detached work and starts a follow-up turn on the originating Gateway session, Android accepts that unsolicited assistant stream, shows it in the open conversation, and reloads persisted history after a cold reconnect instead of silently discarding the reply until the user asks again. Hermes' synthetic process-completion prompt is retained for correct history but rendered as a compact, non-editable process notice instead of impersonating a message typed by the user.
 
 ## [1.4.0] - 2026-07-09
 

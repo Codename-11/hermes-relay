@@ -150,6 +150,7 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.BackgroundTaskCard
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
@@ -166,10 +167,13 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
+import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
+import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.SyntheticProcessNotificationNotice
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
@@ -499,6 +503,9 @@ fun ChatScreen(
     val sessions by chatViewModel.sessions.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val backgroundProcesses by chatViewModel.backgroundProcesses.collectAsState()
+    val backgroundProcessesLoading by chatViewModel.backgroundProcessesLoading.collectAsState()
+    val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
@@ -655,6 +662,13 @@ fun ChatScreen(
     var showCommandPalette by remember { mutableStateOf(false) }
     var showModelSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
+    var showBackgroundProcesses by remember { mutableStateOf(false) }
+
+    // A process inventory is scoped to one gateway session. Never leave a
+    // sheet opened onto a different chat after a drawer/profile switch.
+    LaunchedEffect(currentSessionId, selectedProfile?.name, activeConnection?.id) {
+        showBackgroundProcesses = false
+    }
 
     // Server command dispatch can ask the composer to prefill (e.g. /undo).
     LaunchedEffect(chatViewModel) {
@@ -2072,6 +2086,7 @@ fun ChatScreen(
 
                         items(messages.size, key = { messages[it].id }) { index ->
                             val message = messages[index]
+                            val processNotification = message.hermesProcessNotificationOrNull()
 
                             // Skip empty bubbles (content stripped by annotation parser, no tool calls,
                             // no attachments). Attachments keep the bubble alive for inbound media;
@@ -2122,7 +2137,14 @@ fun ChatScreen(
                                 )
                             }
 
-                            if (shouldRenderBubble) MessageBubble(
+                            if (processNotification != null) {
+                                SyntheticProcessNotificationNotice(
+                                    notification = processNotification,
+                                    modifier = Modifier
+                                        .padding(top = if (isFirstInGroup) 6.dp else 2.dp)
+                                        .animateItem(),
+                                )
+                            } else if (shouldRenderBubble) MessageBubble(
                                 message = message,
                                 modifier = Modifier
                                     .padding(
@@ -2337,6 +2359,14 @@ fun ChatScreen(
                             .padding(bottom = 8.dp)
                     )
                 }
+            }
+
+            if (isGatewayTransport) {
+                GatewayBackgroundProcessStrip(
+                    processes = backgroundProcesses,
+                    loading = backgroundProcessesLoading,
+                    onClick = { showBackgroundProcesses = true },
+                )
             }
 
             // Inline slash command autocomplete
@@ -3003,6 +3033,18 @@ fun ChatScreen(
                 showCommandPalette = false
             },
             onDismiss = { showCommandPalette = false }
+        )
+    }
+
+    if (showBackgroundProcesses) {
+        GatewayBackgroundProcessSheet(
+            processes = backgroundProcesses,
+            loading = backgroundProcessesLoading,
+            stoppingProcessIds = stoppingProcessIds,
+            onRefresh = chatViewModel::refreshBackgroundProcesses,
+            onStop = chatViewModel::stopBackgroundProcess,
+            onDismissProcess = chatViewModel::dismissBackgroundProcess,
+            onDismiss = { showBackgroundProcesses = false },
         )
     }
 

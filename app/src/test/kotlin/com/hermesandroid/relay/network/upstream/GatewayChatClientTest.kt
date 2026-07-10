@@ -4,7 +4,9 @@ import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -112,6 +114,41 @@ class GatewayClientHarness(
                     else buildJsonObject { put("session_id", "live-resumed") }
                 "prompt.submit" -> buildJsonObject { put("ok", true) }
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
+                "process.list" -> buildJsonObject {
+                    put(
+                        "processes",
+                        json.parseToJsonElement(
+                            """
+                            [
+                              {
+                                "session_id": "proc-17",
+                                "command": "./gradlew test",
+                                "cwd": "/workspace/app",
+                                "pid": 4812,
+                                "started_at": "2026-07-10T09:30:00",
+                                "uptime_seconds": 42,
+                                "status": "running",
+                                "output_preview": "running tests",
+                                "output_tail": "running tests\n42 tests completed",
+                                "notify_on_complete": true,
+                                "session_scoped": true,
+                                "watch_patterns": ["BUILD SUCCESSFUL"],
+                                "watch_hit": false
+                              },
+                              {
+                                "session_id": "proc-18",
+                                "command": "npm run lint",
+                                "uptime_seconds": 7,
+                                "status": "exited",
+                                "exit_code": 1,
+                                "detached": true
+                              }
+                            ]
+                            """.trimIndent(),
+                        ),
+                    )
+                }
+                "process.kill" -> buildJsonObject { put("status", "killed") }
                 "session.steer" -> buildJsonObject {
                     put("status", steerStatus)
                     put("text", (params["text"] as? JsonPrimitive)?.contentOrNull ?: "")
@@ -245,13 +282,16 @@ class GatewayClientHarness(
     fun awaitPendingAck(): PendingAck =
         pendingAcks.poll(5, TimeUnit.SECONDS) ?: error("suppressed ack never captured")
 
-    /** Release a withheld ack with a generic success result. */
-    fun releaseAck(ack: PendingAck) {
+    /** Release a withheld ack with a caller-supplied or generic success result. */
+    fun releaseAck(
+        ack: PendingAck,
+        result: JsonObject = buildJsonObject { put("ok", true) },
+    ) {
         ack.ws.send(
             buildJsonObject {
                 put("jsonrpc", "2.0")
                 put("id", ack.id)
-                put("result", buildJsonObject { put("ok", true) })
+                put("result", result)
             }.toString(),
         )
     }
@@ -501,6 +541,55 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `newer prewarm selection wins when an older resume completes late`() = runBlocking {
+        harness.suppressAckMethods += "session.resume"
+
+        val old = async(Dispatchers.IO) { client.prewarmAwait("old-session") }
+        val oldAck = harness.awaitPendingAck()
+
+        // Starting the newer request advances the desired-session generation
+        // even though it must wait for the older request's connect mutex.
+        val newer = async(Dispatchers.IO) { client.prewarmAwait("new-session") }
+        delay(100)
+        harness.releaseAck(
+            oldAck,
+            buildJsonObject { put("session_id", "live-old") },
+        )
+        assertFalse(old.await())
+
+        val newerAck = harness.awaitPendingAck()
+        harness.releaseAck(
+            newerAck,
+            buildJsonObject { put("session_id", "live-new") },
+        )
+        assertTrue(newer.await())
+
+        client.listProcesses().getOrThrow()
+        val params = harness.awaitRpc("process.list")
+        assertEquals("live-new", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `same stored session id is resumed again when profile namespace changes`() = runBlocking {
+        var profile = "profile-a"
+        client.sessionProfileProvider = { profile }
+        assertTrue(client.prewarmAwait("same-stored-id"))
+
+        profile = "profile-b"
+        assertTrue(client.prewarmAwait("same-stored-id"))
+
+        val resumes = harness.awaitRpcCount("session.resume", 2)
+        assertEquals(
+            "profile-a",
+            (resumes[0]["profile"] as? JsonPrimitive)?.contentOrNull,
+        )
+        assertEquals(
+            "profile-b",
+            (resumes[1]["profile"] as? JsonPrimitive)?.contentOrNull,
+        )
+    }
+
+    @Test
     fun `unsolicited error clears turn so the next unsolicited response can arrive`() = runBlocking {
         val recorders = ConcurrentLinkedQueue<Recorder>()
         client.setUnsolicitedTurnProvider {
@@ -558,6 +647,130 @@ class GatewayChatClientTest {
         val refreshParams = harness.awaitRpcCount("model.options", 2).last()
         assertEquals("openai", refreshed.currentProvider)
         assertTrue((refreshParams["refresh"] as? JsonPrimitive)?.booleanOrNull == true)
+    }
+
+    @Test
+    fun `process list uses live session id and parses typed snapshot`() = runBlocking {
+        assertTrue(client.prewarmAwait("stored-session"))
+
+        val processes = client.listProcesses().getOrThrow()
+
+        val params = harness.awaitRpc("process.list")
+        assertEquals("live-resumed", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(GatewayProcessCapability.Supported, client.processCapability.value)
+        assertEquals(2, processes.size)
+        assertEquals(
+            GatewayProcess(
+                id = "proc-17",
+                command = "./gradlew test",
+                cwd = "/workspace/app",
+                pid = 4812L,
+                startedAt = "2026-07-10T09:30:00",
+                uptimeSeconds = 42L,
+                status = "running",
+                outputPreview = "running tests",
+                outputTail = "running tests\n42 tests completed",
+                notifyOnComplete = true,
+                sessionScoped = true,
+                watchPatterns = listOf("BUILD SUCCESSFUL"),
+            ),
+            processes[0],
+        )
+        assertTrue(processes[0].isRunning)
+        assertEquals(1, processes[1].exitCode)
+        assertTrue(processes[1].detached)
+        assertFalse(processes[1].isRunning)
+    }
+
+    @Test
+    fun `process kill uses exact live session and process id`() = runBlocking {
+        assertTrue(client.prewarmAwait("stored-session"))
+
+        assertTrue(client.killProcess("proc-17").isSuccess)
+
+        val params = harness.awaitRpc("process.kill")
+        assertEquals("live-resumed", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("proc-17", (params["process_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(GatewayProcessCapability.Supported, client.processCapability.value)
+    }
+
+    @Test
+    fun `process method not found disables repeat probes for current socket`() = runBlocking {
+        harness.methodNotFound.add("process.list")
+        assertTrue(client.prewarmAwait("stored-session"))
+
+        assertTrue(client.listProcesses().isFailure)
+        assertEquals(GatewayProcessCapability.Unsupported, client.processCapability.value)
+        assertEquals(1, harness.rpcLog.count { it.first == "process.list" })
+
+        assertTrue(client.listProcesses().isFailure)
+        assertEquals(1, harness.rpcLog.count { it.first == "process.list" })
+    }
+
+    @Test
+    fun `process events bypass active turn gate but require exact live session`() = runBlocking {
+        val events = ConcurrentLinkedQueue<GatewayProcessEvent>()
+        val eventLatch = CountDownLatch(4)
+        client.setProcessEventListener {
+            events += it
+            eventLatch.countDown()
+        }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+
+        serverWs.send(
+            harness.eventFrame(
+                "agent.terminal.output",
+                buildJsonObject { put("process_id", "foreign"); put("chunk", "do not leak") },
+                "someone-else",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject { put("name", "browser"); put("tool_id", "tool-ignored") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject { put("name", "terminal"); put("tool_id", "tool-1") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "status.update",
+                buildJsonObject { put("kind", "process"); put("text", "process proc-17 completed") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "agent.terminal.output",
+                buildJsonObject { put("process_id", "proc-17"); put("chunk", "BUILD SUCCESSFUL\n") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "terminal.close",
+                buildJsonObject { put("process_id", "proc-17") },
+                "live-resumed",
+            ),
+        )
+
+        assertTrue("process events were dropped without an active turn", eventLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(
+            listOf(
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.TOOL_COMPLETE),
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.STATUS_UPDATE),
+                GatewayProcessEvent.Output("proc-17", "BUILD SUCCESSFUL\n"),
+                GatewayProcessEvent.TerminalClosed("proc-17"),
+            ),
+            events.toList(),
+        )
     }
 
     @Test
