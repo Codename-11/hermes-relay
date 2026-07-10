@@ -325,8 +325,8 @@ dependencies {
     // [POC] Roborazzi host-side screenshot rendering (src/test, Robolectric).
     // Renders real composables on the JVM at an exact canvas — no device, no
     // status bar, no clipping. See StoreScreenshotTest.
-    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.64.0")
-    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.64.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.66.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.66.0")
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.compose.ui.test.manifest)
     testImplementation("androidx.test.ext:junit:1.3.0")
