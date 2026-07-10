@@ -470,6 +470,12 @@ class GatewayChatClientTest {
     fun `unsolicited assistant turn for resumed session streams without sendTurn`() = runBlocking {
         val r = Recorder()
         val registrations = ConcurrentLinkedQueue<String>()
+        val processEvents = ConcurrentLinkedQueue<GatewayProcessEvent>()
+        val processEventLatch = CountDownLatch(1)
+        client.setProcessEventListener {
+            processEvents += it
+            processEventLatch.countDown()
+        }
         client.setUnsolicitedTurnProvider { storedSessionId ->
             registrations += storedSessionId
             GatewayInboundTurnRegistration(
@@ -498,9 +504,14 @@ class GatewayChatClientTest {
         )
 
         assertTrue("unsolicited turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue("turn completion did not invalidate process inventory", processEventLatch.await(5, TimeUnit.SECONDS))
         assertEquals(listOf("stored-session"), registrations.toList())
         assertEquals(1, r.starts.get())
         assertEquals(listOf("Background task finished."), r.textDeltas.toList())
+        assertEquals(
+            listOf(GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.MESSAGE_COMPLETE)),
+            processEvents.toList(),
+        )
         assertFalse(harness.rpcLog.any { it.first == "prompt.submit" })
     }
 
@@ -710,7 +721,7 @@ class GatewayChatClientTest {
     @Test
     fun `process events bypass active turn gate but require exact live session`() = runBlocking {
         val events = ConcurrentLinkedQueue<GatewayProcessEvent>()
-        val eventLatch = CountDownLatch(4)
+        val eventLatch = CountDownLatch(5)
         client.setProcessEventListener {
             events += it
             eventLatch.countDown()
@@ -760,6 +771,29 @@ class GatewayChatClientTest {
                 "live-resumed",
             ),
         )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "foreign turn") },
+                "someone-else",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "missing session id") },
+                null,
+            ),
+        )
+        // Upstream can omit tool lifecycle events for a background launch;
+        // every exact-session turn completion is therefore a list fallback.
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Started as proc-17") },
+                "live-resumed",
+            ),
+        )
 
         assertTrue("process events were dropped without an active turn", eventLatch.await(5, TimeUnit.SECONDS))
         assertEquals(
@@ -768,6 +802,7 @@ class GatewayChatClientTest {
                 GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.STATUS_UPDATE),
                 GatewayProcessEvent.Output("proc-17", "BUILD SUCCESSFUL\n"),
                 GatewayProcessEvent.TerminalClosed("proc-17"),
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.MESSAGE_COMPLETE),
             ),
             events.toList(),
         )

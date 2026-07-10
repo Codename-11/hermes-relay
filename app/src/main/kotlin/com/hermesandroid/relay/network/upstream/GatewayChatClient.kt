@@ -1565,6 +1565,14 @@ class GatewayChatClient(
             } else {
                 null
             }
+            // Some upstream tool paths complete a background terminal launch
+            // without emitting tool.start/tool.complete to this UI session.
+            // The assistant still closes the initiating turn normally, so use
+            // that exact-session boundary as a cheap authoritative discovery
+            // fallback. process.list then starts the running-only poller.
+            "message.complete" -> GatewayProcessEvent.Invalidated(
+                GatewayProcessEvent.Trigger.MESSAGE_COMPLETE,
+            )
             "agent.terminal.output" -> {
                 val processId = payload?.stringField("process_id")
                 val chunk = payload?.stringField("chunk")

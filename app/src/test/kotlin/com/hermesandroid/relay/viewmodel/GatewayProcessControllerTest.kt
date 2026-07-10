@@ -82,7 +82,7 @@ class GatewayProcessControllerTest {
     }
 
     @Test
-    fun invalidationsRefreshAndLiveOutputExtendsTheRecoverableTail() = runTest {
+    fun messageCompleteFallbackRefreshesAndLiveOutputExtendsTheRecoverableTail() = runTest {
         val source = FakeProcessSource().apply {
             snapshot = listOf(
                 process(id = "p1", status = "running", outputTail = "before\n"),
@@ -101,13 +101,46 @@ class GatewayProcessControllerTest {
             process(id = "p1", status = "exited", exitCode = 7, outputTail = "final"),
         )
         source.emit(
-            GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.STATUS_UPDATE),
+            GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.MESSAGE_COMPLETE),
         )
         runCurrent()
 
         assertEquals(2, source.listCalls)
         assertEquals(7, controller.processes.value.single().exitCode)
         assertEquals("final", controller.processes.value.single().outputTail)
+        controller.close()
+    }
+
+    @Test
+    fun messageCompleteDiscoversRunningProcessAndStartsPolling() = runTest {
+        val source = FakeProcessSource()
+        val controller = GatewayProcessController(this)
+        controller.bind(source, "chat-a")
+        controller.sessionReady("chat-a")
+        runCurrent()
+
+        assertEquals(1, source.listCalls)
+        assertTrue(controller.processes.value.isEmpty())
+
+        source.snapshot = listOf(process(id = "p1", status = "running"))
+        source.emit(
+            GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.MESSAGE_COMPLETE),
+        )
+        runCurrent()
+
+        assertEquals(2, source.listCalls)
+        assertEquals(listOf("p1"), controller.processes.value.map(GatewayProcess::id))
+
+        source.snapshot = listOf(process(id = "p1", status = "exited", exitCode = 0))
+        advanceTimeBy(5_000L)
+        runCurrent()
+
+        assertEquals(3, source.listCalls)
+        assertFalse(controller.processes.value.single().isRunning)
+
+        advanceTimeBy(20_000L)
+        runCurrent()
+        assertEquals(3, source.listCalls)
         controller.close()
     }
 
