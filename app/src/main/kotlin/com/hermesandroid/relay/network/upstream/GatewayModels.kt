@@ -208,6 +208,8 @@ data class GatewayReasoningSettings(
 class GatewayTurnCallbacks(
     /** Stored (DB) session id — fired on session create/rotate so the drawer + persistence stay correct. */
     val onSessionId: (String) -> Unit,
+    /** A gateway `message.start` opened an assistant response for this turn. */
+    val onStart: () -> Unit,
     val onTextDelta: (String) -> Unit,
     val onThinkingDelta: (String) -> Unit,
     val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
@@ -237,4 +239,19 @@ class GatewayTurnCallbacks(
      * no-op so non-gateway/legacy constructors don't need to provide it.
      */
     val onStatusUpdate: (kind: String?, text: String) -> Unit = { _, _ -> },
+)
+
+/**
+ * UI registration for one server-initiated gateway turn.
+ *
+ * Background-process completion is converted upstream into a normal assistant
+ * turn on the originating session. It has no matching client [GatewayChatClient.sendTurn]
+ * call, so the client asks the active conversation for callbacks when the first
+ * `message.start` arrives. [onHandle] binds the resulting cancellable turn into
+ * the same Stop/steer lifecycle as a locally submitted turn.
+ */
+class GatewayInboundTurnRegistration(
+    val callbacks: GatewayTurnCallbacks,
+    /** Main-thread admission. False leaves the server turn unbound for history recovery. */
+    val onHandle: (ActiveTurnHandle) -> Boolean,
 )

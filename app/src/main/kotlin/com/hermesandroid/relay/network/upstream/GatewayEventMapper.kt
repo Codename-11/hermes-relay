@@ -21,13 +21,17 @@ import kotlinx.serialization.json.intOrNull
  * why dispatch is a manual `when (type)` over [JsonObject] rather than a
  * sealed polymorphic hierarchy (which throws on unknown discriminators).
  */
-class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
+class GatewayEventMapper(
+    private val callbacks: GatewayTurnCallbacks,
+    private val dedupeAdjacentMessageStarts: Boolean = false,
+) {
 
     /** True once `message.complete` or `error` has been seen — the turn is over. */
     var turnEnded: Boolean = false
         private set
 
     private var sawMessageStart = false
+    private var previousEventType: String? = null
     private var sawTextDelta = false
     private var sawThinkingDelta = false
     private var syntheticToolCounter = 0
@@ -77,11 +81,18 @@ class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
             }
 
             "message.start" -> {
+                // The upstream background-completion poller currently emits
+                // message.start immediately before _run_prompt_submit(), which
+                // emits the same start again. Treat an adjacent pair as one
+                // boundary; a later start after any other event still closes
+                // the previous assistant message as before.
+                if (dedupeAdjacentMessageStarts && previousEventType == "message.start") return
                 // Gateway has no server-side message id (placeholder UUID
                 // stays). A second start inside one turn means a new
                 // assistant message began — close out the previous one.
                 if (sawMessageStart) callbacks.onTurnComplete()
                 sawMessageStart = true
+                callbacks.onStart()
             }
 
             "tool.generating" -> {
@@ -228,6 +239,7 @@ class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
             // alike: ignore.
             else -> Unit
         }
+        previousEventType = type
     }
 
     private fun syntheticToolId(name: String): String {

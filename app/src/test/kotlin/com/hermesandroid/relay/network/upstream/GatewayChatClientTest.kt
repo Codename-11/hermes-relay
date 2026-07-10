@@ -293,6 +293,7 @@ class GatewayChatClientTest {
     private var unsupportedMarked = false
 
     private class Recorder {
+        val starts = AtomicInteger(0)
         val textDeltas = ConcurrentLinkedQueue<String>()
         val thinkingDeltas = ConcurrentLinkedQueue<String>()
         val sessionIds = ConcurrentLinkedQueue<String>()
@@ -308,6 +309,7 @@ class GatewayChatClientTest {
 
         val callbacks = GatewayTurnCallbacks(
             onSessionId = { sessionIds += it },
+            onStart = { starts.incrementAndGet() },
             onTextDelta = { textDeltas += it },
             onThinkingDelta = { thinkingDeltas += it },
             onToolCallStart = { _, _ -> },
@@ -422,6 +424,127 @@ class GatewayChatClientTest {
         assertEquals(5, r.usages.firstOrNull()?.resolvedInputTokens)
         assertTrue(r.errors.isEmpty())
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `unsolicited assistant turn for resumed session streams without sendTurn`() = runBlocking {
+        val r = Recorder()
+        val registrations = ConcurrentLinkedQueue<String>()
+        client.setUnsolicitedTurnProvider { storedSessionId ->
+            registrations += storedSessionId
+            GatewayInboundTurnRegistration(
+                callbacks = r.callbacks,
+                onHandle = { true },
+            )
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Background task finished.") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Background task finished.") },
+                "live-resumed",
+            ),
+        )
+
+        assertTrue("unsolicited turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("stored-session"), registrations.toList())
+        assertEquals(1, r.starts.get())
+        assertEquals(listOf("Background task finished."), r.textDeltas.toList())
+        assertFalse(harness.rpcLog.any { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `unsolicited starts without exact live session are ignored`() = runBlocking {
+        val r = Recorder()
+        val registrations = AtomicInteger(0)
+        client.setUnsolicitedTurnProvider {
+            registrations.incrementAndGet()
+            GatewayInboundTurnRegistration(r.callbacks) { true }
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(harness.eventFrame("message.start", null, null))
+        serverWs.send(harness.eventFrame("message.start", null, "someone-else"))
+
+        assertFalse("foreign turn was accepted", r.completeLatch.await(300, TimeUnit.MILLISECONDS))
+        assertEquals(0, registrations.get())
+        assertEquals(0, r.starts.get())
+    }
+
+    @Test
+    fun `cold prewarm reports resumed stored session once`() = runBlocking {
+        val resumedSessions = ConcurrentLinkedQueue<String>()
+        val resumedLatch = CountDownLatch(1)
+        client.setColdPrewarmSessionReadyListener { storedSessionId ->
+            resumedSessions += storedSessionId
+            resumedLatch.countDown()
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        assertTrue("cold resume was not reported", resumedLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(client.prewarmAwait("stored-session"))
+        Thread.sleep(100)
+
+        assertEquals(listOf("stored-session"), resumedSessions.toList())
+    }
+
+    @Test
+    fun `unsolicited error clears turn so the next unsolicited response can arrive`() = runBlocking {
+        val recorders = ConcurrentLinkedQueue<Recorder>()
+        client.setUnsolicitedTurnProvider {
+            val recorder = Recorder()
+            recorders += recorder
+            GatewayInboundTurnRegistration(recorder.callbacks) { true }
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "error",
+                buildJsonObject { put("message", "first failed") },
+                "live-resumed",
+            ),
+        )
+
+        val first = awaitRecorder(recorders, 1)
+        assertTrue(first.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("first failed"), first.errors.toList())
+
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "second worked") },
+                "live-resumed",
+            ),
+        )
+
+        val second = awaitRecorder(recorders, 2)
+        assertTrue(second.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("second worked"), second.textDeltas.toList())
+    }
+
+    private fun awaitRecorder(recorders: ConcurrentLinkedQueue<Recorder>, count: Int): Recorder {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline) {
+            if (recorders.size >= count) return recorders.elementAt(count - 1)
+            Thread.sleep(20)
+        }
+        error("recorder $count was never registered")
     }
 
     @Test

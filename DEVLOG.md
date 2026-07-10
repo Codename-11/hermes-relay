@@ -1,5 +1,37 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-10 — Gateway background completions return to ordinary Chat
+
+Upstream Hermes already associates a detached process with the originating
+Dashboard/TUI Gateway session. When that process completes, its notification
+poller injects a synthetic user event, runs a follow-up agent turn, emits the
+normal `message.start` / delta / completion lifecycle, and persists the reply.
+Android discarded that lifecycle because `GatewayChatClient` only allocated a
+turn mapper after a phone-initiated `sendTurn()`; with no request-scoped
+`activeTurn`, every event returned before session filtering or UI dispatch.
+
+The Gateway client now accepts a server-initiated turn only when an explicit
+event session exactly matches its active live session and the open Chat still
+matches the corresponding stored session. It allocates a fresh mapper, binds a
+real cancellable turn handle into `ChatViewModel`, and reuses the normal text,
+thinking, tool, ask, status, completion, notification, queue, and authoritative
+history-reconciliation paths. Foreign or untagged events remain fail-closed.
+The mapper also collapses the adjacent duplicate `message.start` pair currently
+emitted by the upstream completion poller, preventing a phantom boundary or
+duplicate placeholder.
+
+After a user Stop, the client retains a short exact-session drain tombstone for
+the interrupted turn. Its late deltas/terminal event are ignored before a
+same-session next prompt is submitted, so canceled output cannot reappear as an
+unsolicited answer or prematurely complete the newer turn.
+
+A cold foreground prewarm now refreshes the exact resumed session when no turn
+is active, recovering a completion that may have finished while the Gateway
+socket was closed without overwriting another session or live response.
+Regressions cover no-`sendTurn()` delivery, exact-session filtering, duplicate
+starts, error recovery, Chat rendering/finalization, Stop-to-interrupt behavior,
+late canceled terminals, queued-send draining, and disconnected history recovery.
+
 ## 2026-07-09 — Android 1.4.1 Chat and Voice enhancement batch
 
 Chat now represents a promoted realtime background run as one first-class
