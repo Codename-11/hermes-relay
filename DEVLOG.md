@@ -13,6 +13,13 @@ recipe: load after session prewarm, refresh on relevant events, and poll every
 five seconds only while a process remains running. Method-not-found is treated
 as an unsupported optional surface instead of a Chat transport failure.
 
+Live phone verification exposed a start-discovery gap: the Gateway emitted the
+assistant turn that confirmed a new process ID but no terminal/process
+`tool.complete` event, so Android could not begin the running-only poll and first
+found the row from a later reconnect/completion snapshot. Every exact-session
+`message.complete` now invalidates the process snapshot as a low-cost fallback;
+ordinary tool/status events remain the faster path when upstream emits them.
+
 Chat now exposes that state through a compact composer-adjacent background strip
 and a current-chat bottom sheet. Running and recent rows show command, elapsed
 time, completion/exit state, expandable live or snapshot output, exact-process

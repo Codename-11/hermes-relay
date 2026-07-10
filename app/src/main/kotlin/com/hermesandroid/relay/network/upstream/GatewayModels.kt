@@ -184,7 +184,7 @@ enum class GatewayProcessCapability {
  * while no app-initiated turn is active.
  */
 sealed interface GatewayProcessEvent {
-    enum class Trigger { TOOL_COMPLETE, STATUS_UPDATE }
+    enum class Trigger { TOOL_COMPLETE, STATUS_UPDATE, MESSAGE_COMPLETE }
 
     /** The process snapshot may have changed and should be refreshed. */
     data class Invalidated(val trigger: Trigger) : GatewayProcessEvent
