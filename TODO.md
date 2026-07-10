@@ -6,18 +6,395 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Active — next up (2026-07-07)
+
+Compaction-safe snapshot of where we are; details in the linked sections below.
+
+- **RELEASE IN PROGRESS — cut android-v1.4.0 + plugin-v1.4.0 (owner direction 2026-07-09).** Android is **1.4.0 / versionCode 22**, plugin is **1.4.0**, public release notes and store copy are synchronized, focused realtime recovery tests and Android lint are green, both signed release flavors build, the plugin package builds, and the current sideload APK is installed. Extended on-device recovery stress testing and the force-stop persistence check are explicitly deferred rather than release blockers:
+  1. Push `dev`, wait for its release-facing CI, merge `dev` -> `main` with a merge commit, then tag the shared merge tip as `plugin-v1.4.0` and `android-v1.4.0`. Plugin is a **MINOR** (it carries #165 native-loader + installer-venv, #170 doctor guardrails, #171 multi-device bridge, #178 dedup guard — not the 1.3.1 patch originally queued).
+  2. Verify both GitHub releases, their checksums/artifacts, and the Android signing summary.
+  3. Discard the 1.3.0 Play Console draft, inspect the uploaded 1.4.0 production draft, and start rollout deliberately.
+- **Voice bugs being worked now** — see "Voice — on-device findings" below for full detail:
+  1. Background/resume turn stuck on `Listening...` / `Still working...` — **fixed in code; current APK installed; extended live stress test deferred** (2026-07-09).
+  2. Tool-call status pills/ordering + stuck "Thinking" — fixed in code; final visual ordering re-check remains.
+  3. Tap/static click between sentences (`RealtimePcmPlayer` boundary) — still needs an on-device audio repro before fixing.
+- **Deferred post-release voice validation.** Repeat long-idle prewarm → record → background/foreground → route-change recovery, terminal retry exhaustion, repeated reopen/exit, cancel-without-ack, and force-stop persistence on physical devices. Capture both Android and relay traces for any recurrence; further recovery hardening or UX refinement may be required from those results.
+- **Screen-wake-lock — SHIPPED (2026-07-07).** See "Voice — on-device findings" below.
+- **Owner / Mizu — GitHub triage.** Close #64 as superseded, plus the queued open-issue comment/close/label batch (see "Open-issue resolution batch" below).
+- **Voice exact-mode signoff — PASSED (2026-07-09 e2e).** Both `grok-voice-latest` and the pinned `grok-voice-think-fast-1.0` deferred on model-generated exact delivery, so xAI exact mode now bypasses inference through provider-native `force_message`. The full on-device background path spoke the authoritative answer through xAI with no fallback, and a pure-recall follow-up repeated it from history without a second Hermes route/run. OpenAI's separate out-of-band delivery spike remains on its next-RC roadmap. Full detail + the background-tasks-as-chat UX asks + remaining audio/UI gaps are below.
+
+---
+
+## Voice background-tasks — live findings + UX vision (2026-07-09 e2e realtime test)
+
+Live on-device e2e (relay through `8ebb21b`, app `1.4.0-sideload` build 22, provider
+`xai_realtime`). The delivery-report tooling from `5ff78da` was confirmed working
+against live data during this test.
+
+### Findings
+- **Background route loss could strand a recorded turn — FIXED IN CODE; EXTENDED LIVE STRESS TEST DEFERRED (2026-07-09).** Initial logs showed valid PCM accepted by the persistent turn channel after foregrounding, but the socket had failed during background route retries and no new relay event arrived. The first fixed APK restored submission and let the background Hermes run finish, then exposed the delivery race: a slower overlapping resume handshake connected 250 ms after the valid resume, claimed relay ownership before the Android generation check, and detached the session just before the forced answer. The second installed reproduction completed the run and delivered its notification fallback, but voice stayed on `Waiting for route`: the periodic retry deadline had been created when the session was prewarmed, so its coroutine had already expired after five minutes of healthy uptime. Exiting voice mode also retained the session-owned `RECONNECTING` run; reopening rendered that orphaned pill and its close action targeted the new session instead of the detached task. Android now coalesces pending handshakes, waits for a relay-confirmed resumed socket, retains unacknowledged chunks for atomic replay, and returns a per-turn delivery result. Its retry worker lives for the session, starts a fresh bounded budget only when a route is lost, and clears that budget only after `voice.session.resumed`; bare WebSocket opens cannot reset it. Voice sessions carry a generation fence so late handoff, run, playback, and completion callbacks cannot repopulate or act on a newer session. Voice exit atomically drops detached handoff/run/confirmation UI before another session can prewarm; offline cancel rejection dismisses immediately, and a queued cancel without acknowledgement dismisses after a bounded wait. The relay requires a valid resume claim before changing ownership and isolates invalid/stale candidate failures from the active phone socket. Provider STT stays in `Transcribing` unless `VoiceRecorder.isRecording()` is true; Stop/failure settles local placeholders, late terminal deltas are ignored, and stale capture state is reconciled on resume. Route, promotion, ownership, UI-state, and chat-terminal regressions are green. The current APK is installed; repeated long-idle, background/foreground, route-churn, and terminal-exhaustion coverage remains a post-release follow-up and may drive further hardening.
+- **Model-generated exact delivery is inconsistent and deferral is model-agnostic; xAI now has a deterministic path.**
+  A background turn ("what do you
+  think about our notes so far?") delivered `forced_summary_streaming`
+  (provider-voiced, early-commit) — grok read the answer in its own voice and
+  passed validation. BUT the same session's earlier turn ("check Hermes for what
+  we know about Minnesota") fell back to relay TTS (`acknowledgement_not_summary`).
+  A later forced-summary round on `grok-voice-think-fast-1.0` also spoke a genuine
+  deferral ("one moment ... I'll let you know") rather than the completed answer.
+  Validator fallback is therefore correct; model choice alone does not solve the
+  delivery-voice problem. xAI's provider-native `force_message` now handles
+  non-structured Exact deliveries without model inference. Its raw live event
+  stream and the full Android background path are verified; a recall follow-up
+  also answered from that provider history without re-running Hermes.
+- **think-fast selection bug fixed + live-verified.** The app's session POST omitted
+  model/voice, so the settings dropdown was only a transient server-config editor
+  until **Save realtime agent** was tapped. Model/voice now persist per
+  connection/profile and ride every new session. On-device verification selected
+  think-fast without Save, saw the relay request it and the provider's final
+  resolution report it, then force-stop/relaunch restored the selection.
+- **Duplicate "background task is running" — FIXED + LIVE-VERIFIED (2026-07-09).** The signoff trace captured both lines and disproved the suspected TTS mismatch: the provider first said it would check Hermes, then the broker requested a second provider response after promotion. Promotion now suppresses that second handoff when the original tool-calling response already emitted audio; silent calls still get one handoff. A deployed on-device round recorded `provider_acknowledged: true` and `spoken_handoff: false`, with only the original acknowledgement spoken. The same round confirmed the forced delivery emits one client response-start event after deduplicating xAI's `response.created` + `response.output_item.added` pair.
+- **Status-speech logging gap — CLOSED / premise disproved (2026-07-09).** The raw signoff log contains both provider utterances as `voice.response.delta` text, plus the progress events; relay TTS did not speak either line. The flight recorder can reconstruct what the user heard. The real defect was redundant provider response generation, fixed above.
+
+### Background-tasks-as-first-class-chat vision (owner ask 2026-07-09)
+Theme: stop treating a background run as an ephemeral voice-only side effect —
+surface it in chat like any other turn and keep its result. Overlaps the "Voice
+background-run v2" chip roadmap below (items 3/4/7) but reframed around
+chat/history rather than the voice chip; unify rather than build twice.
+- **Titled background tasks.** Give each run a short title/label (first-line- or
+  model-derived) so it's identifiable in a list and in chat.
+- **Chat entry on kickoff + result.** Drop a chat entry when a background task
+  starts ("Background task: <title> — running") and settle the result into the same
+  thread when it finishes. Don't leave it voice-only.
+- **Results persisted in chat/history.** Show the background result cleanly in chat
+  history instead of discarding it after it's spoken — especially valuable for
+  follow-ups ("what did that say again?").
+- **Detail view (expand on tap).** Tapping a background-task chat entry expands to
+  the full run detail like a normal chat message / tool timeline (reuse
+  `SubagentLane`). Same intent as v2 items 3+4 — build once.
+- **Realtime agent retains background-result context in-session — FALLBACK PATH
+  DONE + SEEDING LIVE-VERIFIED (2026-07-09); NO-RERUN VERIFY PENDING.** On a FALLBACK delivery the broker now
+  seeds the delivered answer into the provider's history as an assistant turn
+  (`append_context_item` → silent `conversation.item.create`, no `response.create`),
+  so a follow-up ("what did that say?", "expand on that") finds it durably — fixing
+  the live "can't you see we ran the task?" failure; live follow-up confirmed the
+  provider knew the delivered context. Provider-VOICED success already
+  had its own turn in history, so it's untouched (no double-record). **Remaining:**
+  (a) live on-device verify that a pure-recall post-fallback follow-up is answered
+  without a re-run after the `92f9683` instruction fix; (b) the detached/promoted delivery (`_deliver_pending_background_result`)
+  and the DONE-chip respeak weren't in scope — confirm whether they leave the same
+  gap; (c) decide if the one-shot `native_pending_delivery_note` is now redundant
+  with durable seeding or still earns its keep as an explicit correction.
+- **Proper concurrent multi-task.** True N-way parallel background runs — see v2
+  item 7 (deferred: needs session-per-run topology, run-id-targeted cancel,
+  multi-run chip/list). Owner is now explicitly asking for it; re-rank against the
+  queue rather than leaving deferred.
+
+---
+
+## Voice background-run A–E enhancement batch — SHIPPED in code (2026-07-08 PM)
+
+Owner-approved full batch from the gap review; relay 93/93 realtime tests
+green. Needs relay deploy + APK install + live verify.
+
+- **A1 — positive summary validation + early-flush streaming.** The forced
+  summary must content-overlap the Hermes answer (`_summary_overlaps_answer`;
+  vacuous for bare confirmations) — blocklists chase phrasings, overlap
+  doesn't. And the summary response now STREAMS: buffered only until the
+  prefix (≥40 chars) clears the blocklist + shows answer overlap
+  (`_maybe_commit_forced_summary_early`), then flushes and streams live —
+  kills the observed "silence, then the whole answer in one burst" delay.
+  Uncommitted responses still get full end-of-response validation.
+- **A2 — delivered-or-alarm.** `_confirm_background_delivery`: within 30s of
+  injection the summary must be done or committed-streaming, else
+  `delivery_unconfirmed` is logged and the answer is force-emitted as text.
+  A background answer can no longer be silently lost.
+- **A3 — respeak.** `hermes.result.respeak` client message → relay respeaks
+  `last_background_result` via relay TTS. Client: tapping the settled (DONE)
+  chip requests it; chip stays up while it plays.
+- **B — task queue (+N queued).** A long second ask is queued (FIFO, cap 3)
+  instead of refused (`status: "queued"`); starts automatically when the
+  current run's delivery settles (`_start_next_queued_run`, waits for the
+  summary, runs as durable, spoken transition via `_queued_start_prompt`).
+  Cancel clears the queue. `hermes.run.queued` event + `queued_count` on
+  promoted/background_completed/get_status; chip shows "+N queued". Queue
+  full → the old busy answer.
+- **C1 — chip in compact mode.** The chip previously rendered ONLY in the
+  focus layout; compact mode now shows it above the bottom controls
+  (`bottom = 120.dp` — eyeball on device).
+- **C2 — exit breadcrumb.** Exiting voice mode with a live background run
+  posts a chat system notice ("Background voice task still running (+N
+  queued) — Hermes will report back") via `VoiceViewModel.chatNoticeSink`
+  (wired in RelayApp to the shared ChatHandler).
+- **D — `_thinking` drafting signal + answer redundancy.** Relay: the
+  drafted `_thinking` text is the answer of last resort when the
+  response-delta path yields empty (`answer_from_thinking` log). Client:
+  `_thinking` deltas drive a "Drafting the answer…" chip status line.
+- **E — hygiene.** Fast lane reuses ONE side-session per voice session
+  (`fast_lane_session_id`); the idle probe now injects the relay xAI OAuth
+  token (`_probe_provider_options`) so it actually runs on the relay host;
+  new e2e test where the provider answers the summary request with filler →
+  fallback must carry the real answer
+  (`test_filler_summary_triggers_fallback_delivery`).
+- **Live verify list:** summary starts speaking promptly (streaming, no
+  burst); filler → fallback speaks the answer; queue: two long asks →
+  "queued" spoken + "+1 queued" on chip → auto-starts with spoken
+  transition; DONE-chip tap respeaks; compact-mode chip visible; exit
+  leaves the chat breadcrumb; probe run completes (repro + keepalive).
+- **VERIFIED LIVE (rounds 3–4, 2026-07-08 PM):** queue flow end-to-end
+  (queued ack → auto-start → both answers), chip +1-queued/finished states,
+  fallback delivery + audibility (user's own follow-up confirmed), and two
+  new gaps found + fixed same-day (see DEVLOG: whole-word/2-hit validation,
+  next-turn delivery note).
+- **KEEPALIVE FINAL VERDICT — no protocol message resets xAI's 900s timer
+  (empirical 2026-07-08, 4 probe runs).** Repro died at 900.0s; silent-PCM
+  pings died at 900.0s; server-ACKNOWLEDGED `session.update` pings
+  (240/480/720s) died at 900.0s. The timer counts only real conversation
+  items. **SHIPPED IN CODE (2026-07-08 PM):** picked design (b): treat
+  idle-close as routine, close the Android websocket cleanly while idle,
+  and let the next user turn open a fresh provider conversation seeded
+  from the synced Hermes session. `_provider_keepalive_loop` is retired.
+  **Remaining:** relay deploy + live >15 min idle probe to verify silent
+  next-turn recovery on device.
+- **Delivery input-quiet gate — SHIPPED (2026-07-08 PM, round-5 finding).**
+  A background task finishing while the user was mid-utterance delivered
+  over them and ended their recording. The relay now knows the user is
+  speaking (live `input_audio.append` chunks stamp
+  `native_last_input_audio_at`) and `_await_floor_idle_for_result` holds
+  delivery until they've been quiet ≥1.5s (bounded by the existing floor
+  timeout). Covers summary/fallback/queued-transition. **Client half shipped:**
+  `VoiceViewModel` suppresses realtime response/audio/done only while
+  `VoiceRecorder.isRecording()` is actually true. Provider STT uses
+  `Transcribing`, not the capture-owned `Listening` state, so a partial
+  transcript cannot wedge the mic controls or suppress its own response.
+- **Audio tail cut at end of response (round-5 repro) — MITIGATED IN CODE.**
+  Final word ("you?") cut hard instead of finishing smoothly. The client
+  output resume tail guard is raised from 350ms to 650ms so the final
+  buffered PCM has more time to drain before capture resumes. **Remaining:**
+  verify on device; if the final syllable still snaps, inspect
+  `RealtimePcmPlayer` drain/fade-out behavior.
+- **Fallback speech says file paths (round-5 polish) — FIXED IN CODE.**
+  The fallback spoke "Source: 1. Personal/Household/Househol…"; TTS-safe
+  answer extraction now strips `Source:` / `Sources:` / citation lines and
+  source-list path lines before relay TTS.
+- **grok-voice fails the delivery instruction ~always (4/4 live rounds) —
+  DEFAULT CHANGED, then REWORKED same-day.** Every observed forced summary
+  was deferral filler; the validator+fallback carried every delivery.
+  `speak_verbatim` was first made a direct relay-TTS default, then reworked
+  to provider-voiced exact delivery (below) to keep voice continuity.
+- **Provider-voiced exact delivery — xAI direct path live-verified.**
+  Model-generated word-for-word instructions were not reliable. Non-structured
+  `speak_verbatim` now supplies the authoritative answer to xAI's `force_message`,
+  which synthesizes it in the selected realtime voice without inference and
+  records a normal assistant turn. A raw live probe confirmed the full transcript,
+  audio, history, and completion lifecycle. Structured results and summary modes
+  remain model-generated; relay TTS remains the validator fallback. The on-device
+  background path produced a clean `forced_summary_streaming` event and recall
+  reused the resulting provider history without another Hermes run. Post-audit hardening remains:
+  provider-death TTS fallback on all three delivery paths, confirm alarm on all
+  three, barge-in preemption-as-text, blocklist answer-exemption, and
+  structured-answer prompt routing.
+- **Audit leftovers (deliberate, small).** (1) DONE-chip respeak always
+  renders via relay TTS — intentional determinism, but it voice-mismatches
+  the exact mode's promise; candidate: provider-voiced respeak with TTS
+  fallback. (2) Exact-mode answers >1400 chars are truncated with an
+  appended "…" (and machine-looking text gets "…" even under the cap) —
+  silent for a mode promising completeness; consider a visual "full answer
+  in chat" cue on truncation.
+
+## Voice observability (2026-07-08 assessment) — pre-RC hardening
+
+The realtime flight recorder (per-session JSONL under
+`realtime-agent-runs/`, decision-point events with reasons, task-failure
+wrappers, Android `DiagnosticsLog` Voice category) is in good shape — it
+carried every live-round forensics session. Three gaps before the release
+candidate:
+
+- **Run-dir retention + wav tap gating — DONE (2026-07-08).**
+  `run_retention_days` (default 14, 0 disables) sweeps JSONL + wav
+  artifacts at session-log creation; the render wav is a debug-only tap
+  (`debug_audio_tap`, default off) deleted after PCM streams.
+- **Delivery-outcome rollup — DONE (2026-07-08).**
+  `python -m plugin.relay.realtime_agent.report [--days N] [--json]`
+  tallies provider-spoken vs fallback deliveries with reasons; new
+  `forced_summary_delivered` marker makes clean deliveries countable.
+- **Buffered flight-recorder writes (minor).** `_log` open/appends per
+  event on the event loop, including one line per audio chunk. Fine so
+  far; switch to a buffered writer if voice sessions ever stutter under
+  load — measure before optimizing.
+
+## OpenAI realtime provider — next-RC roadmap (2026-07-08 research)
+
+Full findings with sources in
+`docs/plans/2026-07-08-openai-realtime-notes.md`. Headline: the OpenAI
+provider already exists and is broker-wired
+(`plugin/relay/realtime_agent/providers/openai.py`) but has never had a
+live round and defaults to a superseded model. Key provider contrasts vs
+xAI: hard 60-min wall-clock session cap (not an inactivity timer),
+out-of-band responses (`conversation:"none"` + explicit `input`), async
+function calls, per-token pricing (2.1 audio $32/$64 per 1M; mini $10/$20)
+vs grok's flat $0.05/min.
+
+- **Bump OpenAI realtime default to `gpt-realtime-2.1` — CODE DONE
+  (2026-07-08).** Default bumped, `2.1-mini` + rollback `2` in the model
+  options. Remaining: live connect on 2.1 (covered by the live-verify
+  item below).
+- **Live-verify the OpenAI provider end-to-end.** Code-complete but no
+  recorded live round (all forensics are grok-voice). Run the xAI
+  on-device battery (pair → voice turn → `hermes_run_task` →
+  exact-delivery → queue → respeak) on 2.1. Success bar: a
+  `realtime-agent-runs/` log shows a clean OpenAI session reproducing the
+  flows with provider-voiced Hermes delivery.
+- **Handle OpenAI's 60-min hard cap.** Distinct failure mode from xAI's
+  900s inactivity close — it can cut an ACTIVE session. First confirm how
+  a cap-close currently surfaces (idle-close handling is xAI-shaped, e.g.
+  `_PROVIDER_IDLE_CLOSE_WS_REASON`), then add wall-clock-aware proactive
+  reconnect/reseed. Success bar: a >60-min OpenAI session survives the
+  cap with a proactive reseed, no user-visible break.
+- **Spike out-of-band exact delivery on OpenAI
+  (`conversation:"none"` + answer as `input`).** Supply the Hermes answer
+  as explicit input context instead of an instructions injection the
+  model may ignore. Success bar: measurably lower deferral/filler rate
+  than grok forced-summary in repeated live deliveries, demoting the
+  validator to a safety net.
+- **Async function-call delivery on OpenAI.** OpenAI GA allows the
+  session to continue while a function call is pending — a promoted
+  `hermes_run_task` could complete with a real late
+  `function_call_output` instead of interim-ack + synthetic
+  instructions, retiring `native_pending_delivery_note`. Success bar:
+  provider history reads "done" (never "still running") after a promoted
+  run, verified live.
+- **Guardrail test: only `hermes_*` tools advertised on OpenAI
+  realtime.** Assert `session.update` never advertises hosted-MCP or
+  non-Hermes tools. Success bar: test fails if any such tool appears.
+- **(Defer/eval-only) provider `semantic_vad` vs relay-owned floor.**
+  Better turn-taking naturalness but moves barge-in ownership off
+  `RealtimeFloor` — re-architecture, not RC scope.
+
+## xAI voice platform moved (2026-07) — re-baseline items
+
+xAI shipped `grok-voice-think-fast-1.0` (reasoning voice model, built for
+tool-calling precision) as the new flagship; `grok-voice-fast-1.0` is
+deprecated and the `grok-voice-latest` ALIAS NOW RESOLVES TO THINK-FAST.
+We default to the alias everywhere (`config.py:106`,
+`providers/xai.py:31`), so the live model may have changed under us —
+xAI's docs explicitly say to pin versioned models in production. July also
+added 21 multilingual voices, speech tags, voice cloning, session
+resumption (30-min inactivity history retention), and a
+`turn_detection.idle_timeout_ms` re-engagement knob.
+
+- **Decide pin-vs-alias, then re-baseline the live delivery rounds.** The
+  4/4 deferral-filler verdicts may predate the alias flip — a reasoning
+  voice model may comply with the exact-reading instruction where fast-1.0
+  didn't. Resolved-model logging is DONE (2026-07-08):
+  `provider_model_resolved` records the session.created echo, the delivery
+  report prefers it, and `grok-voice-think-fast-1.0` is a selectable pin.
+  Remaining: run the live rounds, read the resolved ids, and decide
+  pin-vs-alias for production. Success bar: we know which model each live
+  round actually ran on, and the default is a deliberate choice.
+- **Re-probe session lifecycle on think-fast.** The 900s
+  conversation-inactivity close and the keepalive-negative verdict were
+  measured pre-think-fast; xAI now documents session resumption and
+  `idle_timeout_ms`. Re-run `scripts/realtime-provider-idle-probe.py`;
+  if resumption is real, the idle-close-and-reseed handling can become
+  reconnect-and-resume. Success bar: fresh empirical timeout/resume
+  verdicts recorded in the POC doc.
+- **Surface the new voices + speech tags.** `provider_options.py` carries
+  a static grok voice list; refresh or fetch dynamically, and evaluate
+  speech tags against the enhanced-voice config contract. Success bar:
+  new voices selectable in Voice Settings against a live relay.
+
+## Voice — on-device findings (2026-07-08 e2e realtime test)
+
+Live e2e test (phone on 1.4.0 dev APK, relay at `789f32c`) surfaced a chained
+failure — full forensics from the session event log
+(`realtime-agent-20260708-122613`). **All five fixes below are in code
+(2026-07-08 PM); need relay redeploy + app rebuild + a repeat of the same
+test.**
+
+- **Stuck "Thinking" pill (root of the chain) — FIXED.** The gateway streams
+  drafting text as a `_thinking` pseudo-tool (`hermes.tool.delta` only, never
+  `tool.completed`), and `ChatViewModel.applyRealtimeAgentEvent` created a
+  ToolCall pill from the first delta of ANY tool name → a pill that spins
+  "running" forever (chat + voice overlay transcript). Fix: `_`-prefixed tool
+  names are internal (upstream's own hidden-tool convention) — never become
+  pills; their text still feeds the detailed thinking trace. Defensive same
+  guard on `hermes.tool.started`.
+- **Cancel on an already-finished run killed the delivered answer — FIXED
+  (relay).** `response.cancel` unconditionally flipped `hermes_run_status` to
+  "cancelled" and emitted `hermes.run.cancelled` even with no run in flight
+  (observed: user cancelled 10s after completion — invited by the stuck pill —
+  and the Tokyo answer was never spoken). Now the Hermes-run half of cancel
+  only fires when a run is actually active; speech-stop always happens.
+- **Model read the 32-char run ID aloud — FIXED (relay).** The interim ack
+  and the forced-summary prompt both handed the model `run_id`
+  (payload/metadata). Removed everywhere model-visible (get_status/cancel
+  default to the active run; the client gets ids via events) + explicit
+  "never say run/session IDs aloud" in all three instruction sites.
+- **Model claimed "I'll add that to the queue" — FIXED (relay, instruction).**
+  No queue exists (v2 item 2 not built). All handoff/busy instructions now
+  state "there is no task queue — do not offer to queue or claim to have
+  queued anything." True multi-task chip stacking remains the v2 queue item.
+- **Delivery spoke deferral filler instead of the answer — FIXED (relay).**
+  The forced-summary validator caught run-id speech (that saved the Minnesota
+  answer via fallback) but not "One moment while I look that up. I'll report
+  back as soon as I have the info." — Tokyo's answer was lost behind that
+  filler. Added deferral phrases (one moment / report back / looking into /
+  i'll look / as soon as i have) to `_bad_forced_summary_reason`; summary
+  prompt reworded to "speak the answer NOW". Tests:
+  `plugin/tests/test_realtime_summary_validation.py` (5) + updated cancel
+  route test; realtime batch 69/69 green.
+- **Stale pre-lead — FIXED (relay).** A new run's "I'll check Hermes"
+  progress event carried the PREVIOUS run's run_id + completed_tool_count
+  (fires before the per-run reset). Now sends null/zero identity when no run
+  is in flight; keeps the active run's identity during a fast-lane attempt.
+- **Background-run chip vanished the instant the waveform came back — FIXED
+  (client, second finding same day).** The chip was nulled at the first
+  summary-audio byte ("the DELIVERING chip has done its job"), so it
+  disappeared exactly when speech started — reading as the task being lost.
+  New `BackgroundRunPhase.DONE`: on first summary audio (or the 20s
+  no-audio watchdog) the chip settles to "Background task finished." — solid
+  dot, frozen ticker — lingers 10s (`DONE_CHIP_LINGER_MS`), then
+  auto-dismisses; ✕ on a DONE chip is a local dismiss (never a cancel); a
+  new promoted run replaces a lingering DONE chip and cancels its timer;
+  progress/tool/reconnect handlers can't reanimate a settled chip. Verify:
+  chip visibly settles + lingers while the answer is being spoken, ✕ during
+  DONE doesn't emit a relay cancel.
+
+## Voice — on-device findings (2026-07-07 realtime test)
+
+Surfaced during a live realtime-voice test with a long, many-tool-call background run. (The duplicate-error-toast + no-dismiss issue from the same test shipped this session — see DEVLOG 2026-07-07.)
+
+- **Tool-call status pills stuck / ordering wrong — FIXED, needs on-device re-verify (2026-07-07).** After the recent background-run-chip work (`8dc874c`/`9554c7c`), the owner found on-device that the "Thinking" indicator can get stuck and that the relative order of tool-call pills vs. the agent's reply doesn't cleanly track what actually happened. Root cause was narrower than first suspected — `VoiceUiState.responseText` is write-only for the realtime path (nothing renders it), so the actual stuck surface was the `BackgroundRunChip`: no `hermes.tool.completed`/`hermes.tool.failed` branch in `VoiceViewModel`'s event handler meant a finished tool's `statusLine` stayed pinned at `phase=RUNNING` until the next unrelated event overwrote it. Fixed (`VoiceViewModel.kt:2619`): clears the finished tool's status line, advances `completedToolCount`, leaves `DELIVERING` alone. The ordering half was `CompactTranscriptRow` (`VoiceModeOverlay.kt`) rendering reply text above the tool rows that produced it — reordered to tool-rows-first (chronological). The per-message `ToolCall` transcript rows were already correct (untouched). `:app:compileSideloadDebugKotlin` green. **Needs on-device re-verify** (long multi-tool background run: chip never shows a stale finished-tool name; reply reads below its tool calls, not above) before the release resumes.
+- **Tap/static click between sentences (realtime PCM playback) — NEEDS on-device audio investigation.** Suspected discontinuity at TTS chunk/sentence boundaries in `RealtimePcmPlayer` (a buffer underrun between segments, or a pop when a new segment's `AudioTrack` write starts). Capture head-position / underrun logs during a multi-sentence reply to confirm before touching the buffer sizing or adding a boundary crossfade/fade. Related to the existing "Realtime-PCM waveform output gating" note.
+- **Screen-wake-lock for chat/voice — SHIPPED (2026-07-07).** The app previously relied entirely on the OS screen-timeout during both chat and voice mode. Added `KeepScreenOnWhile(enabled)` (`ui/components/OrientationOverride.kt`, `Window.FLAG_KEEP_SCREEN_ON` via `DisposableEffect` — the same Android-recommended visible-surface mechanism `power/WakeLockManager.kt`'s doc comment already pointed at for a background/no-window case), wired at the `ChatScreen` root as a single call site: `enabled = voiceUiState.voiceMode || isStreaming`. Rationale (matches other apps): voice mode is a call-like continuous session (Assistant/phone-call convention) so it holds the flag for the whole time the overlay is open, regardless of Idle/Listening/Thinking/Speaking sub-state; chat only holds it while a reply is actively streaming (video-playback convention) — idle reading/scrolling falls back to the OS default, matching WhatsApp/Telegram/Signal norms rather than pinning the screen on for a static transcript. Deliberately a single owner of the window flag (not ref-counted) — see the function's doc comment before adding a second caller. **Needs on-device confirmation**: screen stays on for the whole voice session incl. silent gaps, screen stays on only during active streaming in chat (not while idle), and the flag is correctly released on exiting voice mode / when a stream ends.
+
 ## Voice background-run v2 (2026-07-06 roadmap — post plugin-v1.3.0)
 
 The v1 shape shipped in plugin-v1.3.0 (single durable run, free floor during
 background work, busy answer, deliver-on-reattach, exit-detaches / chip-✕-
 cancels). Ranked next increments, in value-per-complexity order:
 
-1. **Fast lane** — while one durable run is detached, allow a second
-   `hermes_run_task` *inline only*: run it on a separate ephemeral session
-   (context injected the same way turns pass `realtimeAgentContextMessages`),
-   normal grace window; if it would promote, fall through to the busy/queue
-   answer. Fixes the real gap: today ANY second Hermes-backed request is
-   refused during a background run, even a 2-second lookup.
+1. **Fast lane — SHIPPED in code (2026-07-08; needs relay deploy + live voice
+   verify).** `_run_fast_lane_task` in `broker.py`: while a detached
+   (promoted/durable) run holds the background slot, a second
+   `hermes_run_task` first runs INLINE on a separate ephemeral Hermes session
+   (`session_id=None`) within the normal grace window; grace-elapse, a
+   known-long tool start (`_long_tool_hints`), explicit `mode=background`, or
+   promotion-off all abandon it and fall through to the (reworded) busy
+   answer. Touches NONE of the session's `hermes_*` run state — run_id/
+   status/progress/chip stay owned by the in-flight run — and emits no client
+   events of its own (bounded by grace; a chip would fight the detached
+   run's). Events: `voice.hermes_fast_lane.completed/abandoned/error` in the
+   session log. Tests: `plugin/tests/test_realtime_fast_lane.py` (7) +
+   updated `test_second_run_task_answers_busy_without_orphaning_first`
+   (per-stream cancellation tracking). **Residuals:** (a) context injection —
+   the ephemeral session gets only the task text + interface context, not
+   rolling conversation context (broker keeps no per-turn transcript; the
+   model is instructed to pass self-contained task text); (b) an abandoned
+   attempt may still finish server-side into the ephemeral session
+   (at-least-once, unread) — same property as promotion; (c) live verify:
+   during a long background run, ask a quick second question → answered
+   inline; ask a second long thing → busy answer unchanged.
 2. **Task queue** — upgrade the busy answer from refusal to offer ("want me
    to queue it?"): small FIFO in the broker session, start-next-on-completion
    with a spoken handoff, chip shows "+1 queued". Pairs with (1).
@@ -253,17 +630,83 @@ gated to pre-first-token. Deferred:
 The deliver-on-reattach / adaptive-promotion / milestone-speech / resume-retry /
 prewarm batch shipped (see DEVLOG 2026-07-01). Deferred:
 
-- **Result injection framing (needs xAI parity check).** The completed background
-  summary is injected as a synthetic *user* message (`send_text` →
-  `conversation.item.create` role=user). Cleaner per current realtime-API practice:
-  inject as a function-call output / out-of-band response so the model can't mistake
-  it for the human speaking. OpenAI realtime supports this; xAI support unverified —
-  requires a live parity test before switching. Keep the user-message path as the
-  fallback.
+- **Result injection framing — FIXED in code, deployed, needs live e2e voice verify (2026-07-07).** The completed background summary, the background-handoff acknowledgement, and the forced-Hermes preamble were all injected as a synthetic *user* message (`send_text` → `conversation.item.create` role=user) — the model saw a fake turn where "the user" said things like "Hermes has already handled the user's previous voice request..." Research turned up a cleaner mechanism than the one originally guessed at: `response.create` supports a per-response `instructions` field that overrides the session system prompt for one response only, **without creating any conversation item at all** — confirmed supported by both providers (OpenAI's own docs; xAI's Voice Agent API docs explicitly show the same `response.create.response.instructions` shape). `conversation: "none"` (true out-of-band, not in history) is OpenAI-only and was deliberately NOT used — we want the spoken summary to land in real conversation history so follow-ups like "what was that again" still work; only the injection *transport* changed, not where the turn ends up. Implementation: `RealtimeAgentConnection.request_response()` (`providers/base.py`) gained an optional `instructions: str | None` kwarg; both `providers/openai.py` and `providers/xai.py` implement it identically (`{"type": "response.create", "response": {"instructions": ...}}` only when instructions are given, else the original bare `response.create`); all 4 broker-authored injection call sites (`broker.py:1244, 2113, 2352, 2560`) switched from `send_text(prompt)` to `request_response(instructions=prompt)`. The one genuine passthrough site (`broker.py:699`, real client-supplied text) is untouched. `python -m unittest discover -s plugin/tests` — 1073/1074 green (the one failure is the pre-existing, already-documented `test_reads_hermes_xai_oauth_credential_pool` fixture gap, unrelated). **Deployed to the relay (2026-07-07) — still needs a real on-device voice session** confirming the model still speaks a natural summary when driven by `instructions` alone (no preceding fake user turn); watch for a background-task delivery in particular since that's the highest-traffic call site. **Confirmed live-verified (2026-07-08)** via the raw event log on the relay: a background run (~4min, terminal tool ×9-10) delivered its spoken summary correctly through the new `request_response(instructions=...)` path (`voice.response.started` → `voice.output_audio.delta` ×N → `voice.response.done`, clean).
+- **xAI closes the realtime session after 900s of true silence — SETTLED (2026-07-08).** Live logs showed the provider closing after ~900s of zero conversation activity. Four probe runs proved no keepalive works: the repro, silent-PCM appends, and acknowledged `session.update` pings all died at exactly 900.0s. **Current code path:** idle-close is routine provider-session expiry; the broker closes Android cleanly with no `voice.error`, the old keepalive loop is gone, and the next user turn opens a fresh provider conversation seeded from the durable Hermes session. **Remaining:** relay deploy + on-device >15 min idle recovery verify.
+- **Realtime voice: provider-answered turn durability — gateway drain + provenance badge SHIPPED (2026-07-08); app-restart persistence still open.** Shipped in code (needs on-device verify with the rest of the voice batch): (a) **gateway trace drain** — a gateway-configured turn with unsynced synthetic sync messages (voice intents / card dispatches / provider-answered realtime turns) now forces itself onto the sessions SSE route so the traces actually reach the server (previously "leave them for the next SSE turn" meant *never* on a gateway-primary phone). Deliberately narrow: only with an existing session id + the sessions fallback route (a stateless completions/runs detour would drop the turn itself from the transcript) and only on the default profile (a non-default profile's gateway session lives in its own state.db — the shared api_server POST would 404 and fail the user's turn; that residual defer case is accepted). The synced-mark guard now checks the route the turn actually *dispatched* on (`effectiveEndpoint`), also fixing a latent duplicate-resend for forced-SSE voice turns. (b) **provenance badge on reload** — `RealtimeTurnSyncBuilder.stripProvenanceMarker()` recognizes the synced `[Realtime Agent provider-native voice turn: …]` marker in loaded history, strips the bracket noise, restores the quiet "Realtime Agent" badge (same chip live turns get), and drops the superseded local clientOnly bubble so the exchange doesn't render twice. **Still open — app-restart loss:** unsynced traces are in-memory only; a restart before the next Hermes turn loses them. A fix needs a client-side pending-trace store (DataStore) plus answers to: which session should late traces sync into (voice binds per-session; the next turn may be a different session/profile), and restore-as-bubbles vs builder-side-only. A true flush-on-voice-exit is NOT implementable without an upstream append-messages API (every chat POST runs the agent); the drain above narrows the exposure window to "restart before the very next turn." Deliberately NOT a separate relay transcript store (forks the conversation).
+- ~~**Realtime voice: subtle "Voice" provenance chip (2026-07-08).**~~ **Done via the durability item above** — turned out message-level "Realtime Agent"/"Voice" badges already rendered for live turns (`MessageBubble.kt` VolumeUp chips); the actual gap was reloaded history showing raw bracket provenance instead of the badge, now fixed by the marker → badge restore.
 - **Pre-existing test failure:** `test_realtime_voice_routes.py::
   test_reads_hermes_xai_oauth_credential_pool` fails at HEAD too (`token is None`) —
   looks like an environment/fixture dependency on a local xai oauth pool, not a code
   regression. Diagnose or gate on the fixture.
+- **Standard voice `delegate_task(background=true)` nudge — SHIPPED then
+  REVERTED same-day (2026-07-08); premise disproven by the VERIFY-FIRST
+  check.** The nudge (a `STABLE_VOICE_INTERFACE_CONTEXT` line telling the
+  model to background long voice asks) was implemented, then the companion
+  verify-first item below was actually checked against upstream source and
+  killed it: **`delegate_task(background=true)` never dispatches async on the
+  api_server surface at all.** Upstream downgrades it to synchronous
+  execution (issue #10760): every api_server route binds
+  `async_delivery=False` (`gateway/platforms/api_server.py` ~4000), and
+  `tools/delegate_tool.py` (~2775) checks
+  `gateway.session_context.async_delivery_supported()` and runs the batch
+  inline with a "ran SYNCHRONOUSLY" note — "the adapter's send() is a no-op,
+  so a background dispatch would silently never re-enter the conversation."
+  Since ALL standard voice turns are forced onto SSE (ephemeral prompt slot),
+  the nudge would have made the model block just as long (plus subagent
+  overhead) while claiming it backgrounded. Reverted in `45c7ef4`. If a
+  "don't hold the voice floor" behavior is ever wanted on the standard path,
+  it needs the upstream async-delivery gap fixed first (a poll/webhook
+  delivery channel for stateless sessions — upstream contribution), or the
+  Relay realtime engine, which already has real background runs (ADR 33).
+- ~~**Standard voice: speak a delegated result if the overlay is still open when
+  it lands.**~~ **CLOSED 2026-07-08 — premise gone.** There is no delayed
+  `delegate_task` completion turn on the standard voice path: the api_server
+  surface downgrades `background=true` to synchronous execution (see the
+  reverted-nudge entry above), so the "delegated result landing later" case
+  this wanted to speak cannot occur on SSE. On the gateway transport a
+  background completion does re-enter as a new turn — whether the phone's
+  gateway client renders an unsolicited idle-time turn is a separate
+  (text-chat) question, tracked nowhere yet; add it if gateway background
+  delegation becomes a used flow on phone text chat.
+- **VERIFIED 2026-07-08 — a `delegate_task` completion turn can NEVER reach an
+  api_server-sourced session, because upstream never dispatches one there.**
+  Answered by reading current upstream source (clone @ `5057f03bf`): the
+  question is moot one layer earlier than expected. Every api_server route
+  binds the session context with `async_delivery=False`
+  (`gateway/platforms/api_server.py` ~4000, "the stateless HTTP path");
+  `tools/delegate_tool.py` (~2775) consults
+  `gateway.session_context.async_delivery_supported()` and, when false, runs
+  the whole batch SYNCHRONOUSLY with an explanatory note (issue #10760) —
+  there is no detached child, no completion event, no forged turn. The
+  `_async_delegation_watcher` → `_inject_watch_notification` →
+  `adapter.handle_message()` path only ever fires for sessions whose origin
+  routes to a real push-capable platform adapter (gateway chats, Discord,
+  etc.). Consequences applied same-day: the voice delegate nudge was reverted
+  and the speak-on-overlay item closed (entries above).
+
+## Relay-enhanced standard voice for background tasks — research (2026-07-08)
+
+**Verdict: NO — don't build it.** Full owner ask + Fable 5 agent research (cross-
+checked against hermes-desktop's actual source, found in the local upstream
+monorepo clone). Three lanes already cover "a long voice request survives and
+reports back": (1) standard voice isn't a blocking call — a long turn just keeps
+streaming, and the #166 SSE-recovery poller + `TurnCompleteNotifier` already
+recover + notify on a dropped socket, zero relay involvement; (2) upstream's own
+`delegate_task(background=true)` is the standard-path equivalent of the realtime
+broker's `hermes_run_task` promotion — the model can detach a long task itself;
+(3) hermes-desktop's own voice hook (`apps/desktop/src/app/chat/composer/hooks/
+use-voice-conversation.ts` in the upstream monorepo — verified, zero mentions of
+background/promotion) is the same thin synchronous record→transcribe→submit→speak
+loop with NO background awareness; their background-task UX lives entirely in the
+chat/composer surface (a status stack + native OS notification, never spoken) —
+convergent with Android's existing background-run chip / `SubagentLane` /
+`TurnCompleteNotifier`, not a gap to fill. Building a relay-side background layer
+for standard voice would mean proxying an upstream-only surface through the relay
+or monkey-patching deeper than the accepted `plugin/enhancements/` seam — against
+the standard-path rule — to duplicate machinery ADR 33 itself calls the most
+fragile code in `broker.py`, for an audience realtime already serves better.
+Action items from this research are above (prompt nudge, speak-on-overlay-open
+polish, the api_server-routing verify-first gate).
 - **Prewarm cost watch.** Voice-mode entry now opens the provider session before the
   first utterance. If users habitually open+close voice mode without speaking, idle
   provider sessions cost connect/teardown churn — consider a short "no utterance in
@@ -297,7 +740,7 @@ Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_mes
 - End-to-end: with the app paired + "Let Hermes message me" on, run `send_message target=phone text=...` (and a cron `deliver=phone`) and confirm a notification on the device. Verify 503 (no phone) and the off-by-default gates.
 - **Phase 2c reply round-trip — ✅ DONE (verified on-device 2026-06-29).** Confirmed: agent → phone notification → inline reply → drained through the relay's loopback `GET /phone/replies` (different process) → `handle_message` (`role_authorized=True`, no `PHONE_ALLOW_ALL_USERS`) → agent answer back in the *same* thread. Both fixes required (see DEVLOG / the Phase 2c bullet above).
 - **FIX: cron `deliver=phone` / standalone send is broken.** Live testing: `hermes send --to phone` returns `{"error": "Unknown platform: phone"}`. The standalone (non-gateway) send path doesn't run a `kind=standalone` plugin's programmatic `ctx.register_platform`, so it never learns `phone` — only the running gateway (which loads `register()` at startup) does. The agent path (`send_message target=phone` in the gateway) works and was verified end-to-end on-device; the standalone/cron path needs the platform discoverable there too (declare it so the standalone loader picks it up, or route cron through the gateway). Until then `cron deliver=phone` won't work.
-- **FIX: installer leaves stale plugin backup copies in the plugins dir (root cause of the 2026-06-29 round-trip failure).** `install.sh`'s plugin-clone rebuild backs the old copy up *inside* `~/.hermes/plugins/` (e.g. `hermes-relay.copy-backup-…`). Because the loader dedups discovered plugins by manifest `name` and both copies declare `name: hermes-relay`, the backup can win the dedup and the gateway loads stale code — so every later deploy is silently ignored. Fix: back up *outside* the plugins dir (or delete the old copy), and have `hermes relay doctor` warn when more than one directory under `~/.hermes/plugins/` resolves to the same plugin `name`.
+- **FIX SHIPPED (2026-07-07) — installer + doctor guard against stale duplicate plugin copies; live-host verify pending.** Root cause of the 2026-06-29 round-trip failure: the gateway loader dedups discovered plugins by manifest `name`, so a second directory declaring `name: hermes-relay` (an old-installer backup copy, or a stray native install) could win the dedup and make the gateway load stale code — silently ignoring every later deploy. `plugin/doctor.py` now emits a `plugin-name-unique` warning when more than one directory under `~/.hermes/plugins/` declares the same plugin name (distinct real targets only — two links to the same target are deduped), and `install.sh` sweeps any such duplicate so only the canonical `hermes-relay` symlink survives. (Current `install.sh` already `rm -rf`s the old link rather than backing it up inside the plugins dir, so the original "back up outside the plugins dir" half is moot.) **Verify on the live host:** `hermes relay doctor` reports the `plugin-name-unique` check, and a reinstall leaves exactly one `hermes-relay` entry under `~/.hermes/plugins/`.
 
 ## Phone platform — usability roadmap (post device-verification, 2026-06-29)
 
@@ -351,9 +794,13 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 
 ## Crash-class follow-ups
 
-- **Audit remaining throwing URL-build sites for the "Invalid URL host" class (#131).** The #131 fix guarded the two clients that take a user-entered base URL on the Manage/voice path (`DashboardApiClient`, `StandardHermesVoiceClient`) and validates input at entry, but two lower-risk site groups still call okhttp's throwing `url(String)` / `.toHttpUrl()`:
-  - `HermesApiClient` streaming methods (`sendChatStream` / `sendCompletionsStream` / `sendRunStream`) build `authRequest("$baseUrl/…")` *outside* the surrounding `try`. Latent only — the non-streaming methods (incl. `checkHealth`) already `try/catch`, so a bad `apiServerUrl` is caught and marks the connection unreachable before streaming is reached. Consider a non-throwing `authRequestOrNull()` chokepoint → `onError`.
-  - Relay clients (`RelayHttpClient`, `RelayProfileInspectorClient`, `RelayVoiceClient`, `ConnectionManager`) use `.toHttpUrl()` on `$httpBase/…`. These ride post-pairing relay URLs (from a signed QR / pairing payload), not free-text fields, so the input-validation layer doesn't cover them — route them through `ServerAddress`/`toHttpUrlOrNull` for defense-in-depth.
+- **Verify the Tink pin didn't break EncryptedSharedPreferences (owner, on-device).** The Android-15 `removeFirst`/`removeLast` crash lint flagged `com.google.crypto.tink.hybrid.HybridConfig.<clinit>` in the Tink dependency. Our app pulls Tink transitively via `androidx.security:security-crypto` for `SessionTokenStore`'s `EncryptedSharedPreferences`, which uses the AEAD path (not Hybrid), so the flagged `<clinit>` is very likely never reached at runtime — but we pinned `com.google.crypto.tink:tink-android:1.16.0` (ahead of security-crypto's transitive Tink) to clear the Play warning. **This is untestable without a build:** a too-new Tink can break `EncryptedSharedPreferences` at *runtime* (a `NoSuchMethodError`, not a compile error, so `./gradlew build` won't catch it). On-device smoke: launch the app, pair/sign in, force-stop + relaunch, and confirm the stored session survives (no re-pair prompt) and no startup crash. If it breaks, the blast radius is one line — revert the `tink-android` pin (catalog + `app/build.gradle.kts`) and the token store falls back to security-crypto's transitive Tink; then either try a lower Tink (1.15.0) or leave the (unreached) warning.
+- **Bridge screenshots: regrant UX.** Multi-device live smoke found that a device can report `screen_capture_granted=false` because the MediaProjection grant was revoked and needs an in-app/user-consent regrant. The e-ink timeout path has been hardened with a longer configurable wait and one capture-pipeline rebuild retry; remaining polish is to surface the regrant action more prominently in Bridge status.
+
+- **Audit remaining throwing URL-build sites for the "Invalid URL host" class (#131).** The #131 fix guarded the two clients that take a user-entered base URL on the Manage/voice path (`DashboardApiClient`, `StandardHermesVoiceClient`) and validates input at entry. Remaining site groups:
+  - **`HermesApiClient` streaming methods — DONE 2026-07-08.** `sendChatStream` / `sendCompletionsStream` / `sendRunStream` now build via the non-throwing `authRequestOrNull()` chokepoint (backed by top-level `buildApiRequestOrNull`, unit-tested like `buildRelayRequestOrNull`); a malformed base URL fails the turn through the normal `onError` channel ("Invalid server address …") and returns an inert EventSource instead of throwing out of the ViewModel. The whole #131 audit list is now closed.
+  - **`ConnectionManager` WSS connect — FIXED 2026-07-07** (this was the confirmed crasher: Play 1.2.6 on a Galaxy S25 Ultra / Android 16, `IllegalArgumentException` from `HttpUrl$Builder.parse` via `doConnectInternal` → `Request.Builder.url()` on the IO coroutine). Now routed through `buildRelayRequestOrNull()` → graceful Disconnected + diagnostic instead of a throw. `ConnectionManagerUrlGuardTest` covers it.
+  - **Remaining relay HTTP clients — DONE 2026-07-07 (defense-in-depth).** `RelayVoiceClient` now validates its base in `resolveHttpBase()` (returns null on a malformed URL → the existing `Result.failure` guards fire), and `RelayHttpClient`'s two string-URL sites (`fetchMedia`, `listSessions`) use `toHttpUrlOrNull()` → `Result.failure`. `RelayProfileInspectorClient` was already fully guarded (every `.toHttpUrl()` wrapped in `catch (IllegalArgumentException)`). The whole #131 relay class is now covered; `HermesApiClient` streaming (the other lower-risk group above) remains the only open item.
 
 ## Session titles (#133) — follow-ups beyond the client fixes
 
@@ -378,32 +825,21 @@ The client-side mitigations shipped (see DEVLOG 2026-06-27): the `updateSessions
 
 ## User-Added:
 
-- [x] **Clean-chat: taller scrollable text viewport** *(impl 2026-06-22, orchestration batch — unbuilt; verify in Studio.)* Replaced the fragile `screenHeightDp*0.34f` cap with a weight split (sphere `weight(1f)` / flow `weight(1.1f)` ≈ 52% of the vertical slack); kept the internal scroll + top-fade + `min=96.dp` floor. `AgentTextFlow.kt` (`1dca285`).
 - [ ] Verify profile selection retains voice config selections in all voice modes/configuration combinations - enhance UI/configurability/management for this.
-- [x] **Session delete on a non-default profile now persists** *(impl 2026-06-22, orchestration batch — unbuilt; verify in Studio.)* Root cause: a non-default profile's sessions live in that profile's own `state.db`, but the delete went through the unscoped api_server `DELETE /api/sessions/{id}` (shared DB) so the row survived and the next profile-scoped list resurrected it. Fix routes gateway deletes through the dashboard profile-scoped surface (write twin of the list path) + `refreshSessions()` after success. `DashboardApiClient`/`ConnectionViewModel`/`ChatViewModel`/`RelayApp` (`6552566`).
-- [x] **Voice-settings profile override in 'auto' mode** *(impl 2026-06-21, orchestration batch — unbuilt; verify in Studio. See DEVLOG + "Orchestration batch (2026-06-21)" below.)* Root cause: `VoiceViewModel.shouldPreferRealtimeVoice()` gated on `.route` (configured) not `.effectiveRoute` (resolved), so 'auto'+relay never engaged the override-capable relay path and fell back to host-global Standard `/api/audio/speak` (no override slot). Fixed + wired `connectionId` for per-profile voice-prefs namespacing. Original note: *Look into the voice-settings profile specific capabilities - in 'auto' mode the user-override voice wasn't applied (system default used) despite being displayed; only 'Relay' applied it.*
 
-- [x] **Analytics + Diagnostics overhaul** *(impl 2026-06-22, orchestration batch — unbuilt; verify in Studio.)* Diagnostics is now a full-screen `DiagnosticsScreen` (new `Screen.Diagnostics` route, replacing the modal sheet) led by a vertical status-check timeline — Network, API server, capabilities, chat transport, pairing/auth, relay, voice — each a green/amber/red/gray dot on a connecting rail with an inline failure reason; checks backed by a logged error are tappable into `DiagnosticDetailDialog`. Derived read-only from existing `ConnectionViewModel` flows + recent `DiagnosticsLog` via a pure `buildStatusChecks()`; recent-activity log kept below. Analytics hierarchy tidied. `c3098a9`. See follow-ups below.
-- [x] **Realtime voice stall + over-chatty status** *(client half impl 2026-06-21, orchestration batch — unbuilt; server half deferred, see below.)* Client now relaxes the 90s idle watchdog on promoted/long runs (5-min backstop kept) and throttles spoken status (≥22s gap, ≤3/turn); realtime waveform now gates on real playback-start. Original note: *Realtime voice mode stalls/times-out when calling a background Hermes task and repeatedly reports status vocally when not necessary.*
-- [x] **Connections reframe: "Vanilla/Standard Hermes" → "Hermes"** *(impl 2026-06-22, orchestration batch — unbuilt; verify in Studio.)* 28 user-facing display strings across 10 connection/voice/permissions files; "Hermes-Relay plugin" → "Relay plugin" where it reads naturally. Display text only — no enum names, sealed types, when-branches, or stored route values touched. `c9fa8f7`.
-- [x] **Lock app to a specific profile** *(impl 2026-06-21, orchestration batch — unbuilt; verify in Studio.)* Per-connection lock: new `ProfileLockStore`, `ProfileController` lock flows + enforcement, `ConnectionInfoSheet` collapses the picker to a static "Locked to <name>" row, `SettingsScreen` adds the lock card + dialog (the one surface still listing all profiles). Original note: *Allow locking app to a specific profile, hiding all other profiles except from this setting - cleanly hide profile specific UI elements based on this gate.*
-- [x] **Profile icon in the floating voice overlay** *(impl 2026-06-21, orchestration batch — unbuilt.)* `VoiceModeOverlay` header pill now shows the per-profile icon (`LocalAgentIconPath`); sphere/pet stays the fallback.
-- [x] **Voice dropdown state mixes + label overflow** *(impl 2026-06-21, orchestration batch — unbuilt.)* Invalid engine/route combos made unreachable (RealtimeAgent disabled without relay, unavailable routes disabled, `coerceAudioRoute` auto-corrects); long dropdown/provider labels get `maxLines=1`+ellipsis. Original note: *Fix the voice dropdown mode toggles to not allow weird state mixes - labels need overflow control to prevent 2 lines or crunching.*
+### Thinking indicator — post-v1.3.0 follow-ups
 
-- [x] **Per-profile agent icon + static-image avatar (shipped 2026-06-20 —** `d827e46`**, see DEVLOG).** Per-profile icon: client-side `ProfileIconStore` (per `(connection, profile)`, never sent to Hermes; stores a copied-file path) → small Coil image beside the agent name in `MessageBubble` via `LocalAgentIconPath`; picker is `AgentIconRow` under the local-name row in `ConnectionInfoSheet`. Static image: "Add a pet" accepts a single image (magic-byte detect → one-frame static pet). Scope shipped: small name-adjacent icon only; big avatar stays global. Follow-ups: on-device smoke (import an image as a pet; set a profile icon, confirm it shows by the name + persists across restart); optionally also show the icon in the profile picker.
+The animated dot-matrix "thinking" indicator shipped in **android-v1.3.0** (Wave/Pulse/Bounce/Sparkle motions + Auto/accent colors, live preview in Chat settings; static when animations are off). Remaining:
 
-- [ ] **Dot-matrix "thinking" indicator** *(prototype impl 2026-06-28 — unbuilt; verify in Studio.)* New `DotMatrixIndicator` (`ui/components/DotMatrixIndicator.kt`): a Compose-`Canvas` dot grid with a brightness wave sweeping left→right — the dot-anime-react concept reimplemented natively (not a port). Swaps the in-bubble `StreamingDots` working indicator via `LocalThinkingIndicator` (provided in `ChatScreen` around the message `LazyColumn`), behind a new **Chat settings → "Thinking indicator" (Dots / Matrix)** selector with a live preview (`thinkingIndicatorStyle` pref on `ConnectionViewModel`, default "matrix"). Brand-themed (uses the bubble `textColor`), frame-throttled via `rememberAmbientPhase` (not `rememberInfiniteTransition`), and renders a static frame when `animationEnabled` is off. Follow-ups once the base motion is approved:
-  - [x] **Preset frame patterns** *(impl 2026-06-28)* — `ThinkingMatrixPattern` (Wave/Pulse/Bounce/Sparkle): Wave stays procedural, the rest are authored `List<Set<Int>>` frame sequences (built generatively in `buildMatrixFrames`, addressed `row*cols+col`), crossfaded between frames. New `thinkingMatrixPattern` pref + a Matrix-only "Pattern" selector in Chat settings. Width widened twice on request (column pitch now 9dp).
-  - [x] **Per-indicator color** *(impl 2026-06-28)* — `ThinkingMatrixColor` (Auto + brand accents relay/cyan/green/amber/purple/pink) resolved against `LocalBrand` via `toColor()`, so accents re-theme per app theme. New `thinkingMatrixColor` pref + a Matrix-only swatch row in Chat settings; Auto follows the bubble text color. Possible later add-on: a freeform custom-color picker.
-  - **OS-level reduce-motion / TalkBack** — currently gates only on the app's `animationEnabled` pref. Also honor OS reduce-motion + touch-exploration like `CleanChatMode` does (`rememberCleanMotionState().osAnimations`).
-  - **Optional: promote to a full avatar style** — the alternative scope (a `DotMatrixAvatar` `AgentAvatar` shown everywhere via `LocalAvailableAvatars`, selected in Appearance). Deferred in favor of the narrower in-bubble indicator.
+- **OS-level reduce-motion / TalkBack** — currently gates only on the app's `animationEnabled` pref. Also honor OS reduce-motion + touch-exploration like `CleanChatMode` does (`rememberCleanMotionState().osAnimations`).
+- **Optional: promote to a full avatar style** — the alternative scope (a `DotMatrixAvatar` `AgentAvatar` shown everywhere via `LocalAvailableAvatars`, selected in Appearance). Deferred in favor of the narrower in-bubble indicator.
 
 ## Demo mode (2026-06-27) — deferred polish
 
 Shipped offline Demo / Explore mode (see DEVLOG 2026-06-27). Core is in; these are non-blocking polish items, none required for the Play "App access" fix:
 
 - **On-device verify (Studio).** Confirm: "Try the demo" on the onboarding Connect page and the standalone Connect screen lands on Chat showing the canned transcript (Markdown, tool-progress card, weather card, code block); the persistent banner shows and its Connect exits demo into the real wizard; demo runs in airplane mode with no network; Manage/Voice show the demo empty state; Bridge/Terminal show their pair-gate; backing out of demo Chat clears the flag so a real connection still works.
-- **Demo composer is a silent no-op.** `ChatViewModel.sendMessage()` early-returns with no API client, so typing + Send in demo does nothing. Polish: intercept sends while `isDemoMode` to append a canned "This is a demo — connect your Hermes server to chat for real" assistant bubble (or disable the composer with a hint), so it doesn't read as broken.
+- **Demo composer is a silent no-op — DONE 2026-07-08.** `sendMessage` now intercepts while `isDemoMode`: echoes the user bubble and appends `DemoContent.composerReply` ("offline demo, can't answer for real — tap Connect in the banner"), both clientOnly so demo-exit's `clearMessages()` wipes them. Wired via `setDemoModeWiring` (unconditional in RelayApp — the client-gated chat init never runs in demo, so ChatViewModel's own handler is null there). On-device check rides the existing demo verify item above.
 - **Live voice mode in demo.** The voice-mode overlay (mic) launched from Chat isn't demo-gated — a tap would attempt a transcribe (fails gracefully, no crash). Add a demo notice / disable the mic in demo. (Voice settings screen already shows the demo empty state.)
 - **Light typewriter/stream simulation.** The transcript is statically populated; an optional per-token reveal on first entry would better convey the "streaming" feel. Acceptable as static for v1.
 - **Optional richer demo.** Could add a second tool type or an image attachment to the transcript to showcase more surfaces; kept minimal/one-file for now.
@@ -553,10 +989,10 @@ Things to look into:
 - **Update discovery (shipped 2026-06-30 — CLI + dashboard + app).** `hermes relay update-check`, a dashboard "Plugin version" card, and an app **About → "Relay"** row all compare the installed plugin against the latest `plugin-v*` release and surface the right update command (`hermes plugins update hermes-relay` vs `hermes-relay-update`). The app polls the relay's `GET /relay/update-check` (`:8767`, bearer) on each `auth.ok`; the relay is the single source of truth (the app never hits GitHub). Possible polish (deferred): a more prominent dismissible "relay is behind" banner outside About (today it's capability-first + the About row), and showing the app's own version alongside the relay's in the same readout (the app-Version row already exists separately just above it).
 - **Per-profile enablement (shipped 2026-06-30).** `hermes relay profiles list|enable [--all|NAME]` + `plugin/profiles.py` resolve the install-once/enable-per-profile papercut; docs now cover the pair-once/one-relay model. Possible follow-up: an `install.sh` / `hermes plugins install` prompt offering "enable for all existing profiles" so new installs don't need the manual `profiles enable --all`.
 - `**hermes-relay-self-setup` SKILL.md as a precedent** — we just shipped a self-installing skill that an LLM can fetch from a raw GitHub URL and execute. Does this pattern generalize? Could it become a recommended way for any third-party Hermes project to ship setup automation?
-- **Bootstrap injection** — `hermes_relay_bootstrap/` monkey-patches `aiohttp.web.Application` to inject endpoints into vanilla upstream. This is intentional but feels like a hack. Upstream PR #8556 (`feat/session-api`) will eventually let us delete it — verified 2026-04-15 that its scope covers the full bootstrap surface (sessions, memory, skills, config, available-models). Track that PR's status periodically.
-- **Gateway slash-command preprocessor — upstream Stage 1 PR.** Sibling follow-up to #8556. Intercepts known gateway commands on `/v1/runs` + `/v1/chat/completions`, dispatches the stateless ones (`/help`, `/commands`) via `gateway_help_lines()`, returns a deterministic "use a channel with session state" notice for the stateful majority. Currently being prepared in `C:/Users/Bailey/Desktop/Open-Projects/hermes-agent-pr-prep/` on branch `feat/api-server-gateway-commands`; awaiting subagent's code + draft PR body before pushing. See `docs/upstream-contributions.md` §5.
+- **Bootstrap injection** — `hermes_relay_bootstrap/` monkey-patches `aiohttp.web.Application` to inject endpoints into vanilla/partial upstream. This is intentional but feels like a hack. The original broad PR #8556 was **closed as superseded**; native upstream now covers sessions/chat/fork via [#33134](https://github.com/NousResearch/hermes-agent/pull/33134) and skill/toolset discovery via `/v1/skills` + `/v1/toolsets` (#33016). **Done (2026-07-08, HRUI-002):** the bootstrap's sessions CRUD/messages/fork handlers and the legacy `GET /api/skills` list were retired outright — no pre-#33134 fallback remains; old core builds degrade via the client capability probe. **Still gapped (bootstrap remains for these):** config, memory, legacy `/api/skills/{name}` detail + `PUT /api/skills/toggle` (501 stub), available-models, `/api/sessions/search`, and the slash-command middleware — each retires individually when a native replacement lands or the dependent UX is removed. Track upstream per surface.
+- **Gateway slash-command preprocessor — upstream Stage 1 PR.** Sibling follow-up to the native session-control baseline (#33134). Intercepts known gateway commands on `/v1/runs` + `/v1/chat/completions`, dispatches the stateless ones (`/help`, `/commands`) via `gateway_help_lines()`, returns a deterministic "use a channel with session state" notice for the stateful majority. Currently being prepared in `C:/Users/Bailey/Desktop/Open-Projects/hermes-agent-pr-prep/` on branch `feat/api-server-gateway-commands`; awaiting subagent's code + draft PR body before pushing. See `docs/upstream-contributions.md` §5.
 - **Gateway slash-command preprocessor — bootstrap middleware (Stage 1 equivalent).** Sibling shim in `hermes_relay_bootstrap/_command_middleware.py` that mirrors the upstream Stage 1 PR as an aiohttp middleware injected at bootstrap time. Ships the hallucination fix to vanilla-upstream installs before the upstream PR lands. Planned for v0.4.1, after the current bridge feature branch wraps. See `ROADMAP.md` v0.4.1 entry.
-- **Stage 2 — stateful slash-command dispatch on `/api/sessions/{id}/chat/stream`.** Blocked on PR #8556 merging. Once session primitives ship upstream, add a preprocessor scoped to the session chat stream endpoint only, using `session_id` as the persistence handle. Separate upstream PR + matching bootstrap middleware. See `docs/upstream-contributions.md` §5 ("Stage 2").
+- **Stage 2 — stateful slash-command dispatch on `/api/sessions/{id}/chat/stream`.** Unblocked now that session primitives shipped upstream (#33134 / `f7527b0`). Add a preprocessor scoped to the session chat stream endpoint only, using `session_id` as the persistence handle. Separate upstream PR + matching bootstrap middleware. See `docs/upstream-contributions.md` §5 ("Stage 2").
 
 When the answer becomes clearer, this section becomes either an ADR in `docs/decisions.md` or a Plan under `Plans/`.
 
@@ -613,7 +1049,7 @@ Follow-ups:
 ## Voice overhaul (shipped 2026-06-18 — `docs/plans/2026-06-18-voice-overhaul.md`)
 
 - **Per-profile voice on Standard (upstream PR).** Upstream `/api/profiles/*` has no voice field and `/api/audio/*` is host-global. Long-term: PR a voice section to the profile config + make `/api/audio/*` honor the active/`?profile=` profile. The relay path already carries per-profile voice; ship that first.
-- **Wire connectionId for per-profile voice namespacing.** `VoicePreferencesRepository` is scope-aware (`base_connId_profile`), but `RelayApp` passes only the profile *name* to `onProfileChanged`, so `connectionId` is null and keys namespace by profile-only. Wire `setVoicePrefsConnection` to `ConnectionViewModel.activeConnectionId` (in `RelayApp`) so two connections with same-named profiles don't share voice settings.
+- ~~**Wire connectionId for per-profile voice namespacing.**~~ **Already shipped — stale entry (verified 2026-07-08).** The wiring landed in `0aa1b38` (2026-06-21, the same batch this list belongs to): `RelayApp` has a `LaunchedEffect(activeConnectionId, selectedProfile?.name)` calling `voiceViewModel.setVoicePrefsConnection(activeConnectionId)` *before* `onProfileChanged(...)`, and `applyVoicePrefsScope` pushes `(connectionId, profile)` into `VoicePreferencesRepository.setActiveScope`. Two connections with same-named profiles namespace separately.
 - **Realtime-PCM waveform output gating.** The basic-TTS output waveform is now Visualizer-accurate (gated on real playback amplitude), but the realtime path gates `outputAudioActive` on `audioSeen` (first decoded PCM bytes) in `VoiceViewModel.handleRealtimeVoiceEvent`, which can still lead audible output by the `RealtimePcmPlayer` start prebuffer. Gate realtime on actual playback-start (head moved) to match the basic-TTS path.
 
 ## Chat clean-mode + pets (shipped 2026-06-18 — `docs/plans/2026-06-18-chat-clean-mode-and-pets.md`)

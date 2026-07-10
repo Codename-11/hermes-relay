@@ -704,7 +704,7 @@ to a tracked background task so the provider event pump stays responsive instead
 of blocking on the run:
 
 ```json
-{"type":"hermes.run.promoted","event_id":20,"source":"hermes","run_id":"...","tier":"promoted","promote_after_ms":6000,"spoken_handoff":true,"result_delivery":"speak_when_idle","call_id":"call-1"}
+{"type":"hermes.run.promoted","event_id":20,"source":"hermes","run_id":"...","tier":"promoted","promote_after_ms":6000,"spoken_handoff":true,"result_delivery":"speak_verbatim","call_id":"call-1"}
 {"type":"hermes.run.background_completed","event_id":41,"source":"hermes","run_id":"...","ok":true,"tool_count":2}
 ```
 
@@ -714,9 +714,12 @@ of blocking on the run:
   provider speak a brief "I'm on it" line.
 - When the background run finishes, the relay emits
   `hermes.run.background_completed`, waits for the audio **floor** to be idle,
-  then injects the result through the same forced-summary path so the provider
-  speaks the answer exactly once. `result_delivery` selects `speak_when_idle`
-  (default), `notify_then_speak`, or `visual_only`.
+  then delivers the answer exactly once. `result_delivery` selects
+  `speak_verbatim` (default: the realtime provider reads the authoritative
+  answer word for word — relay TTS speaks it only as the validator's
+  fallback), `speak_when_idle` (provider/model summary), `notify_then_speak`,
+  or `visual_only`. All spoken modes keep the session's realtime voice; the
+  forced-summary validator + relay-TTS fallback backstop off-script responses.
 - `hermes_run_task(mode="background")` skips the grace window and detaches
   immediately (`tier:"durable"`), even when grace-period promotion is disabled.
 - `hermes.run.progress` carries two extra fields while a run is in flight:
@@ -734,8 +737,11 @@ on `GET/PATCH /voice/realtime-agent/config` as a `promotion` block:
 `spoken_handoff`, `progress_spoken_after_ms`, `progress_repeat_ms`,
 `result_delivery`, and `max_background_runs`. The default-on path is safe because
 it closes the pending call rather than holding an open provider response; the
-`scripts/realtime-provider-idle-probe.py` verdict (see `docs/realtime-voice-poc.md`)
-confirms per-provider socket survival across the between-turns idle gap.
+`scripts/realtime-provider-idle-probe.py` verdict (see
+`docs/realtime-voice-poc.md`) confirms per-provider socket behavior. For xAI's
+900s conversation-inactivity timeout, the relay treats the provider close as
+routine expiry and opens a fresh provider conversation on the next user turn
+instead of surfacing a voice error.
 
 If a provider-native realtime turn answers directly without Hermes, Android
 keeps the local user/assistant bubbles and marks that provider-only assistant

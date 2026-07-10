@@ -135,10 +135,13 @@ class TestClipboardSchemas(unittest.TestCase):
         self.assertIn("android_clipboard_read", android_tool._HANDLERS)
         self.assertIn("android_clipboard_write", android_tool._HANDLERS)
 
-    def test_read_schema_takes_no_args(self) -> None:
+    def test_read_schema_takes_no_required_args(self) -> None:
         schema = android_tool._SCHEMAS["android_clipboard_read"]
         self.assertEqual(schema["parameters"]["required"], [])
-        self.assertEqual(schema["parameters"]["properties"], {})
+        self.assertEqual(
+            set(schema["parameters"]["properties"]),
+            {"device"},
+        )
 
     def test_write_schema_requires_text(self) -> None:
         schema = android_tool._SCHEMAS["android_clipboard_write"]

@@ -124,8 +124,17 @@ class RelayConfig:
     # opt back in to periodic spoken filler.
     realtime_voice_progress_spoken_after_ms: int = 0
     realtime_voice_progress_repeat_ms: int = 30000
-    realtime_voice_result_delivery: str = "speak_when_idle"
+    realtime_voice_result_delivery: str = "speak_verbatim"
     realtime_voice_max_background_runs: int = 1
+    # Flight-recorder hygiene: session JSONL logs (and any wav taps) older
+    # than this are swept from the run dir when a new session starts.
+    # 0 disables the sweep. The logs carry conversation transcripts, so
+    # retention is privacy hygiene as much as disk hygiene.
+    realtime_voice_run_retention_days: int = 14
+    # Debug-only: keep the relay-TTS render wav next to the session log.
+    # Off by default — a single session's fallback audio was observed at
+    # 5.6MB, and the tap is only useful when diagnosing TTS output itself.
+    realtime_voice_debug_audio_tap: bool = False
 
     @classmethod
     def from_env(cls) -> RelayConfig:
@@ -426,12 +435,20 @@ def _apply_realtime_voice_config(
         config.realtime_voice_progress_repeat_ms = max(0, progress_repeat_ms)
 
     result_delivery = _string_value(section.get("result_delivery"))
-    if result_delivery in ("speak_when_idle", "notify_then_speak", "visual_only"):
+    if result_delivery in ("speak_verbatim", "speak_when_idle", "notify_then_speak", "visual_only"):
         config.realtime_voice_result_delivery = result_delivery
 
     max_background_runs = _optional_int(section.get("max_background_runs"))
     if max_background_runs is not None:
         config.realtime_voice_max_background_runs = max(1, max_background_runs)
+
+    run_retention_days = _optional_int(section.get("run_retention_days"))
+    if run_retention_days is not None:
+        config.realtime_voice_run_retention_days = max(0, run_retention_days)
+
+    debug_audio_tap = _optional_bool(section.get("debug_audio_tap"))
+    if debug_audio_tap is not None:
+        config.realtime_voice_debug_audio_tap = debug_audio_tap
 
 
 def _apply_voice_output_config(

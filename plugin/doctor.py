@@ -4,11 +4,17 @@ The doctor command is intentionally local and read-only. It gives operators and
 agents one stable surface for checking which parts of the Relay install are
 plugin-owned, which standard upstream Hermes routes are reachable, and whether
 the legacy bootstrap monkeypatch is still installed.
+
+The bootstrap it reports on is compatibility-only: session search, memory,
+legacy skill detail/toggle, config, available-models, and slash middleware.
+Sessions CRUD/messages/fork and read-only skill/toolset lists are native
+upstream (PR #33134 / #33016) and are no longer bootstrap-provided.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import site
@@ -85,6 +91,13 @@ def _default_relay_port() -> int:
         return DEFAULT_RELAY_PORT
 
 
+def _default_plugins_dir() -> Path:
+    """The Hermes user-plugins directory (`~/.hermes/plugins` or `$HERMES_HOME/plugins`)."""
+    home = os.environ.get("HERMES_HOME")
+    base = Path(home) if home else Path.home() / ".hermes"
+    return base / "plugins"
+
+
 def _route_exists_status(status: int | None) -> bool:
     """Treat auth and method errors as evidence that a route exists."""
     if status is None:
@@ -136,6 +149,58 @@ def http_probe(
             "url": url,
             "error": str(exc),
         }
+
+
+_MANAGE_SURFACE_FIX = (
+    "Manage, dashboard voice, and gateway chat need the dashboard/Manage "
+    "surface. Start it with `hermes dashboard` (default port 9119) and point "
+    "the dashboard URL at it; `hermes serve` is the headless backend command "
+    "and is not the Manage surface."
+)
+
+
+def classify_manage_surface(
+    status_probe: dict[str, Any],
+    capabilities_probe: dict[str, Any],
+) -> dict[str, Any]:
+    """Classify what the configured dashboard URL is actually serving.
+
+    ``status_probe`` is ``GET /api/status`` on the dashboard base (the
+    dashboard/Manage liveness marker); ``capabilities_probe`` is
+    ``GET /v1/capabilities`` on the same base, which only the API server
+    answers. The classification catches the two common misconfigurations:
+    pointing the dashboard slot at the API server, and pointing it at a host
+    where no dashboard is running at all.
+    """
+    if status_probe.get("ok"):
+        return {
+            "kind": "dashboard",
+            "summary": "dashboard URL answers the dashboard/Manage surface",
+            "recommendation": None,
+        }
+    if capabilities_probe.get("ok"):
+        return {
+            "kind": "api-server",
+            "summary": (
+                "dashboard URL answers like the Hermes API server, "
+                "not the dashboard/Manage surface"
+            ),
+            "recommendation": _MANAGE_SURFACE_FIX,
+        }
+    if status_probe.get("status") is None and capabilities_probe.get("status") is None:
+        return {
+            "kind": "unreachable",
+            "summary": "no dashboard/Manage surface reachable at the dashboard URL",
+            "recommendation": _MANAGE_SURFACE_FIX,
+        }
+    return {
+        "kind": "unknown",
+        "summary": (
+            "dashboard URL is reachable but did not answer like the "
+            "dashboard/Manage surface"
+        ),
+        "recommendation": _MANAGE_SURFACE_FIX,
+    }
 
 
 def _site_dirs(site_dirs: Iterable[Path] | None = None) -> list[Path]:
@@ -191,6 +256,59 @@ def _plugin_manager_layout(plugin_dir: Path) -> dict[str, Any]:
     }
 
 
+def _duplicate_plugin_dirs(plugins_dir: Path, plugin_name: str) -> list[str]:
+    """Names of extra plugin directories that declare the same ``plugin_name``.
+
+    The gateway plugin loader dedups discovered plugins by manifest ``name``.
+    When more than one directory under the plugins dir declares the same name
+    (e.g. a leftover backup copy from an older installer, or a second native
+    install), the loader can pick the stale copy and load old code — silently
+    ignoring every later deploy. Distinct real targets sharing a name are the
+    hazard; two links to the *same* target are harmless (deduped by real path).
+    """
+    if not plugins_dir.is_dir():
+        return []
+    try:
+        entries = sorted(plugins_dir.iterdir())
+    except OSError:
+        return []
+    by_target: dict[str, str] = {}
+    for entry in entries:
+        if _read_simple_manifest(entry / "plugin.yaml").get("name") != plugin_name:
+            continue
+        try:
+            target = str(entry.resolve())
+        except OSError:
+            target = str(entry)
+        by_target.setdefault(target, entry.name)
+    if len(by_target) <= 1:
+        return []
+    return sorted(by_target.values())
+
+
+def _relay_import_chain() -> dict[str, Any]:
+    """Import the relay server module chain under the CURRENT package layout.
+
+    ``hermes relay start`` runs ``create_app`` from ``<plugin pkg>.relay.server``,
+    which transitively pulls the voice/realtime/voice_lab modules. Actually
+    importing that chain here catches the failure class from issue #165 —
+    absolute ``plugin.*`` imports crashing when the native plugin loader
+    imports the tree as ``hermes_plugins.hermes_relay`` (no top-level
+    ``plugin`` package exists) — which a filesystem-layout check can never see.
+    """
+    package = __package__ or "plugin"
+    module_name = f"{package}.relay.server"
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:  # any import-time failure is a real start failure
+        return {
+            "ok": False,
+            "module": module_name,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {"ok": True, "module": module_name, "error": None}
+
+
 def _check(checks: list[dict[str, str]], check_id: str, status: str, summary: str) -> None:
     checks.append({"id": check_id, "status": status, "summary": summary})
 
@@ -203,6 +321,7 @@ def collect_doctor_report(
     timeout: float = 2.0,
     probe: Probe = http_probe,
     site_dirs: Iterable[Path] | None = None,
+    plugins_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Collect a stable, JSON-serializable diagnostic report."""
     manifest = _read_simple_manifest(PLUGIN_DIR / "plugin.yaml")
@@ -222,6 +341,22 @@ def collect_doctor_report(
         method="POST",
         timeout=timeout,
     )
+    # Same base as the dashboard URL on purpose: only the API server answers
+    # /v1/capabilities, so a hit here means the dashboard slot points at the
+    # API server instead of the dashboard/Manage surface.
+    dashboard_capabilities = probe(
+        _url(dashboard_base, "/v1/capabilities"),
+        method="GET",
+        timeout=timeout,
+    )
+    # HEAD, never POST: /api/sessions/prune deletes sessions. A POST-only
+    # FastAPI route answers HEAD with 405 when present and 404 when absent.
+    dashboard_sessions_prune = probe(
+        _url(dashboard_base, "/api/sessions/prune"),
+        method="HEAD",
+        timeout=timeout,
+    )
+    manage_surface = classify_manage_surface(dashboard_status, dashboard_capabilities)
     relay_info = probe(
         f"http://127.0.0.1:{int(port)}/relay/info",
         method="GET",
@@ -229,7 +364,11 @@ def collect_doctor_report(
     )
 
     layout = _plugin_manager_layout(PLUGIN_DIR)
+    plugins_root = plugins_dir if plugins_dir is not None else _default_plugins_dir()
+    plugin_name = manifest.get("name", PLUGIN_NAME)
+    duplicate_dirs = _duplicate_plugin_dirs(plugins_root, plugin_name)
     bootstrap = _bootstrap_status(site_dirs)
+    relay_import = _relay_import_chain()
     checks: list[dict[str, str]] = []
 
     _check(
@@ -243,6 +382,19 @@ def collect_doctor_report(
         "dashboard-plugin",
         "ok" if layout["has_dashboard_manifest"] else "warn",
         "dashboard manifest is present under the plugin root",
+    )
+    _check(
+        checks,
+        "plugin-name-unique",
+        "warn" if duplicate_dirs else "ok",
+        (
+            f"multiple plugin directories under {plugins_root} declare name "
+            f"'{plugin_name}' ({', '.join(duplicate_dirs)}) — the loader dedups by "
+            "name, so a stale copy can win and the gateway loads old code. Remove "
+            "the extras and keep only the hermes-relay entry."
+        )
+        if duplicate_dirs
+        else "no duplicate plugin directories share this plugin name",
     )
     _check(
         checks,
@@ -262,6 +414,23 @@ def collect_doctor_report(
     )
     _check(
         checks,
+        "dashboard-manage-surface",
+        "ok" if manage_surface["kind"] == "dashboard" else "warn",
+        manage_surface["summary"],
+    )
+    _check(
+        checks,
+        "dashboard-session-prune",
+        "ok" if dashboard_sessions_prune.get("exists") else "warn",
+        "server-backed session cleanup route (/api/sessions/prune) exists"
+        if dashboard_sessions_prune.get("exists")
+        else (
+            "server-backed session cleanup route (/api/sessions/prune) was not "
+            "detected; bulk cleanup degrades to per-session deletes"
+        ),
+    )
+    _check(
+        checks,
         "dashboard-audio",
         "ok" if dashboard_audio.get("exists") else "warn",
         "dashboard audio route exists"
@@ -278,6 +447,21 @@ def collect_doctor_report(
     )
     _check(
         checks,
+        "relay-import-chain",
+        "ok" if relay_import["ok"] else "error",
+        f"relay server module chain imports cleanly ({relay_import['module']})"
+        if relay_import["ok"]
+        else (
+            f"importing {relay_import['module']} failed "
+            f"({relay_import['error']}) — `hermes relay start` will crash. "
+            "If the error names a missing 'plugin' module, this plugin build "
+            "predates native-layout support; update it "
+            "(hermes plugins install Codename-11/hermes-relay/plugin) or "
+            "reinstall with install.sh."
+        ),
+    )
+    _check(
+        checks,
         "relay-loopback",
         "ok" if relay_info.get("ok") else "warn",
         "relay loopback /relay/info reachable"
@@ -288,7 +472,8 @@ def collect_doctor_report(
         checks,
         "legacy-bootstrap",
         "warn" if bootstrap["installed"] else "ok",
-        "legacy bootstrap monkeypatch is installed"
+        "legacy bootstrap monkeypatch is installed (compatibility-only "
+        "surfaces; sessions and skill/toolset lists are native upstream)"
         if bootstrap["installed"]
         else "legacy bootstrap monkeypatch is not installed",
     )
@@ -299,6 +484,8 @@ def collect_doctor_report(
             "name": manifest.get("name", PLUGIN_NAME),
             "version": manifest.get("version", ""),
             "layout": layout,
+            "plugins_dir": str(plugins_root),
+            "duplicate_dirs": duplicate_dirs,
         },
         "standard": {
             "api_url": api_base,
@@ -308,11 +495,15 @@ def collect_doctor_report(
                 "status": dashboard_status,
                 "audio_transcribe": dashboard_audio,
                 "ws_ticket": dashboard_ws_ticket,
+                "capabilities": dashboard_capabilities,
+                "sessions_prune": dashboard_sessions_prune,
+                "manage_surface": manage_surface,
             },
         },
         "relay": {
             "port": int(port),
             "info": relay_info,
+            "import_chain": relay_import,
         },
         "bootstrap": bootstrap,
         "lifecycle": {
@@ -368,6 +559,12 @@ def render_doctor_text(report: dict[str, Any]) -> str:
     for check in report.get("checks", []):
         status = str(check.get("status", "unknown")).upper()
         lines.append(f"  [{status}] {check.get('id')}: {check.get('summary')}")
+
+    manage_surface = standard.get("dashboard", {}).get("manage_surface", {})
+    recommendation = manage_surface.get("recommendation")
+    if recommendation:
+        lines.append("")
+        lines.append(f"Fix: {recommendation}")
 
     lines.append("")
     lines.append(

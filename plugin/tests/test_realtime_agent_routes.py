@@ -184,6 +184,9 @@ class DeltaOnlyHermesToolBroker:
 
 
 class RealtimeAgentBrokerHelperTests(unittest.TestCase):
+    def test_realtime_config_defaults_to_verbatim_delivery(self) -> None:
+        self.assertEqual(RelayConfig().realtime_voice_result_delivery, "speak_verbatim")
+
     def test_relay_xai_oauth_skips_expired_hermes_provider_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             auth_path = os.path.join(tmpdir, "auth.json")
@@ -292,11 +295,26 @@ class RealtimeAgentBrokerHelperTests(unittest.TestCase):
         self.assertLess(len(text), 900)
         self.assertNotIn('"output"', text)
 
+    def test_provider_safe_answer_strips_source_path_lines(self) -> None:
+        text = broker_module._provider_safe_answer_for_speech(
+            "Your dog's name is Luna.\n"
+            "Source: 1. Personal/Household/Household notes.md\n"
+            "Sources:\n"
+            "- C:\\Users\\Example\\notes.md\n"
+        )
+
+        self.assertEqual("Your dog's name is Luna.", text)
+
     def test_force_hermes_for_previous_tool_result_followup(self) -> None:
         self.assertTrue(
             broker_module._should_force_hermes_for_transcript(
                 "Hey, didn't get any data back from that last call?"
             )
+        )
+
+    def test_force_hermes_for_queue_status_followup(self) -> None:
+        self.assertTrue(
+            broker_module._should_force_hermes_for_transcript("What's in the queue?")
         )
 
 
@@ -305,6 +323,7 @@ class FakeNativeConnection:
         self.audio_chunks: list[tuple[bytes, int]] = []
         self.text_inputs: list[str] = []
         self.tool_results: list[tuple[str, dict[str, Any]]] = []
+        self.context_items: list[tuple[str, str]] = []
         self.request_response_count = 0
         self.clear_count = 0
         self.cancelled = False
@@ -333,10 +352,20 @@ class FakeNativeConnection:
             raise ConnectionError("Cannot write to closing transport")
         self.tool_results.append((call_id, output))
 
-    async def request_response(self) -> None:
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        self.context_items.append((role, text))
+
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
         if self.fail_request_response:
             raise ConnectionError("Cannot write to closing transport")
         self.request_response_count += 1
+        if instructions:
+            self.text_inputs.append(instructions)
 
     async def close(self) -> None:
         self.closed = True
@@ -436,6 +465,7 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             realtime_voice_provider="stub",
             realtime_voice_model="local-tone",
             realtime_voice_voice="sine",
+            realtime_voice_result_delivery="speak_when_idle",
             realtime_voice_config_path=os.path.join(
                 self._tmpdir.name,
                 "relay-config.yaml",
@@ -639,6 +669,10 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             self.assertIn("User (hermes_chat): Tell me about the Bitwarden integration.", instructions)
             self.assertIn("Assistant (realtime_agent): It syncs vault metadata through Hermes.", instructions)
             self.assertIn("Use that seeded context for follow-up references", instructions)
+            # Re-route-bias fix: a follow-up that only recalls an
+            # already-delivered result must be answerable from history without
+            # re-running the completed task.
+            self.assertIn("do NOT re-run a task you already completed", instructions)
         finally:
             await ws.close()
             await handler._close_native_session(handler.sessions[body["session_id"]], "test cleanup")
@@ -791,8 +825,12 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             self.assertEqual(fake_broker.requests[0].interface_context["provider"], "stub")
             done = next(event for event in events if event["type"] == "voice.response.done")
             self.assertEqual(done["provider"], "stub")
-            self.assertTrue(os.path.isfile(done["audio_path"]))
+            # The wav render tap is debug-only (off by default): the artifact
+            # is deleted after the PCM streamed and audio_path is blank.
+            self.assertEqual(done["audio_path"], "")
             self.assertTrue(os.path.isfile(done["event_log_path"]))
+            wav_path = done["event_log_path"].rsplit(".", 1)[0] + ".wav"
+            self.assertFalse(os.path.exists(wav_path))
         finally:
             await ws.close()
 
@@ -824,6 +862,11 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
         try:
             ready = await self._next_ws_event(ws)
             self.assertEqual(ready["type"], "voice.session.ready")
+
+            # Fresh sockets already receive ready on attach. Android then sends
+            # session.start; it must be idempotent rather than enqueueing a
+            # second ready event ahead of the next real reply.
+            await ws.send_json({"type": "session.start"})
 
             # Acks that produce no reply on the non-native path. Before the fix,
             # playback.drained and input_audio.clear hit the else→voice.error
@@ -1309,9 +1352,7 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
         )
         try:
             ready1 = await self._next_ws_event(ws1)
-            ready2 = await self._next_ws_event(ws2)
             self.assertEqual(ready1["type"], "voice.session.ready")
-            self.assertEqual(ready2["type"], "voice.session.ready")
             await ws2.send_json(
                 {
                     "type": "session.resume",
@@ -1353,6 +1394,265 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             await ws1.close()
             await ws2.close()
             await handler._close_native_session(session, "test cleanup")
+
+    async def test_provider_native_unclaimed_stale_socket_cannot_evict_active_resume(self) -> None:
+        token = await self._make_session()
+        fake_provider = FakeNativeProvider()
+        handler = self._server().realtime_agent
+        handler.native_providers["xai_realtime"] = fake_provider
+        resp = await self.client.post(
+            "/voice/realtime-agent/session",
+            json={
+                "provider": "xai_realtime",
+                "model": "grok-voice-latest",
+                "voice": "leo",
+            },
+            headers=self._bearer(token),
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        session = handler.sessions[body["session_id"]]
+
+        ws1 = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        ready = await self._next_ws_event(ws1)
+        await ws1.close(code=1001, message=b"network changed")
+        for _ in range(40):
+            if session.detached_at is not None:
+                break
+            await asyncio.sleep(0.01)
+        self.assertIsNotNone(session.detached_at)
+
+        ws2 = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        stale_ws = None
+        try:
+            await ws2.send_json(
+                {
+                    "type": "session.resume",
+                    "resume_token": body["resume_token"],
+                    "last_event_id": ready["event_id"],
+                    "last_audio_event_id": 0,
+                    "last_played_audio_event_id": 0,
+                    "last_input_chunk_id": 0,
+                }
+            )
+            for _ in range(10):
+                event = await self._next_ws_event(ws2)
+                if event["type"] == "voice.replay.done":
+                    break
+            self.assertIsNone(session.detached_at)
+
+            # A slower, superseded client attempt can finish its HTTP upgrade
+            # after the valid resume. Until it proves ownership with
+            # session.resume, opening and closing it must not detach ws2.
+            stale_ws = await self.client.ws_connect(
+                body["websocket_path"],
+                headers=self._bearer(token),
+            )
+            await stale_ws.close(code=1000, message=b"stale route")
+            await asyncio.sleep(0.05)
+            self.assertIsNone(session.detached_at)
+
+            await fake_provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_DONE, response_id="resp-after-stale")
+            )
+            events: list[dict[str, Any]] = []
+            for _ in range(10):
+                event = await self._next_ws_event(ws2)
+                events.append(event)
+                if event["type"] == "voice.response.done":
+                    break
+            self.assertIn("voice.response.done", [event["type"] for event in events])
+        finally:
+            if stale_ws is not None:
+                await stale_ws.close()
+            await ws1.close()
+            await ws2.close()
+            await handler._close_native_session(session, "test cleanup")
+
+    async def test_provider_native_unclaimed_candidate_errors_only_reach_candidate(self) -> None:
+        token = await self._make_session()
+        fake_provider = FakeNativeProvider()
+        handler = self._server().realtime_agent
+        handler.native_providers["xai_realtime"] = fake_provider
+        resp = await self.client.post(
+            "/voice/realtime-agent/session",
+            json={
+                "provider": "xai_realtime",
+                "model": "grok-voice-latest",
+                "voice": "leo",
+            },
+            headers=self._bearer(token),
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        session = handler.sessions[body["session_id"]]
+
+        active_ws = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        await self._next_ws_event(active_ws)
+        invalid_ws = None
+        malformed_ws = None
+        try:
+            invalid_ws = await self.client.ws_connect(
+                body["websocket_path"],
+                headers=self._bearer(token),
+            )
+            await invalid_ws.send_json(
+                {
+                    "type": "session.resume",
+                    "resume_token": "wrong-token",
+                    "last_event_id": 0,
+                }
+            )
+            invalid_event = await self._next_ws_event(invalid_ws)
+            self.assertEqual(invalid_event["type"], "voice.session.resume_failed")
+            self.assertEqual(invalid_event["reason"], "invalid_resume_token")
+
+            malformed_ws = await self.client.ws_connect(
+                body["websocket_path"],
+                headers=self._bearer(token),
+            )
+            await malformed_ws.send_str("{")
+            malformed_event = await self._next_ws_event(malformed_ws)
+            self.assertEqual(malformed_event["type"], "voice.error")
+            self.assertIn("invalid JSON", malformed_event["message"])
+            await malformed_ws.close()
+
+            self.assertIsNone(session.detached_at)
+            await fake_provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_DONE, response_id="resp-active-owner")
+            )
+            events: list[dict[str, Any]] = []
+            for _ in range(10):
+                event = await self._next_ws_event(active_ws)
+                events.append(event)
+                if event["type"] == "voice.response.done":
+                    break
+            event_types = [event["type"] for event in events]
+            self.assertNotIn("voice.session.resume_failed", event_types)
+            self.assertNotIn("voice.error", event_types)
+            self.assertIn("voice.response.done", event_types)
+        finally:
+            if invalid_ws is not None:
+                await invalid_ws.close()
+            if malformed_ws is not None:
+                await malformed_ws.close()
+            await active_ws.close()
+            await handler._close_native_session(session, "test cleanup")
+
+    async def test_provider_native_initial_connect_failure_can_retry(self) -> None:
+        class FlakyNativeProvider(FakeNativeProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                self.connect_attempts = 0
+
+            async def connect(self, config):
+                self.connect_attempts += 1
+                if self.connect_attempts == 1:
+                    raise RuntimeError("temporary provider failure")
+                return await super().connect(config)
+
+        token = await self._make_session()
+        provider = FlakyNativeProvider()
+        handler = self._server().realtime_agent
+        handler.native_providers["xai_realtime"] = provider
+        resp = await self.client.post(
+            "/voice/realtime-agent/session",
+            json={
+                "provider": "xai_realtime",
+                "model": "grok-voice-latest",
+                "voice": "leo",
+            },
+            headers=self._bearer(token),
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        session = handler.sessions[body["session_id"]]
+
+        failed_ws = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        retry_ws = None
+        try:
+            failure = await self._next_ws_event(failed_ws)
+            self.assertEqual(failure["type"], "voice.error")
+            self.assertIn("RuntimeError", failure["message"])
+            self.assertIsNone(session.attached_ws)
+
+            retry_ws = await self.client.ws_connect(
+                body["websocket_path"],
+                headers=self._bearer(token),
+            )
+            ready = await self._next_ws_event(retry_ws)
+            self.assertEqual(ready["type"], "voice.session.ready")
+            self.assertEqual(provider.connect_attempts, 2)
+            self.assertIsNotNone(session.native_connection)
+        finally:
+            await failed_ws.close()
+            if retry_ws is not None:
+                await retry_ws.close()
+            await handler._close_native_session(session, "test cleanup")
+
+    async def test_provider_native_pending_resume_cannot_claim_closed_session(self) -> None:
+        token = await self._make_session()
+        fake_provider = FakeNativeProvider()
+        handler = self._server().realtime_agent
+        handler.native_providers["xai_realtime"] = fake_provider
+        resp = await self.client.post(
+            "/voice/realtime-agent/session",
+            json={
+                "provider": "xai_realtime",
+                "model": "grok-voice-latest",
+                "voice": "leo",
+            },
+            headers=self._bearer(token),
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        session = handler.sessions[body["session_id"]]
+
+        active_ws = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        await self._next_ws_event(active_ws)
+        await active_ws.close(code=1001, message=b"network changed")
+        for _ in range(40):
+            if session.detached_at is not None:
+                break
+            await asyncio.sleep(0.01)
+        self.assertIsNotNone(session.detached_at)
+
+        candidate_ws = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        try:
+            await handler._close_native_session(session, "test resume expiry")
+            await candidate_ws.send_json(
+                {
+                    "type": "session.resume",
+                    "resume_token": body["resume_token"],
+                    "last_event_id": 0,
+                }
+            )
+            event = await self._next_ws_event(candidate_ws)
+            self.assertEqual(event["type"], "voice.session.resume_failed")
+            self.assertEqual(event["reason"], "session_closed")
+            self.assertTrue(session.closed)
+            self.assertIsNone(session.attached_ws)
+        finally:
+            await candidate_ws.close()
+            await active_ws.close()
 
     async def test_provider_native_send_records_and_skips_lost_websocket(self) -> None:
         token = await self._make_session()
@@ -1769,9 +2069,12 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             ready = await self._next_ws_event(ws)
             self.assertEqual(ready["type"], "voice.session.ready")
             await ws.send_json({"type": "response.cancel"})
-            cancelled = await self._next_ws_event(ws)
+            # No Hermes run is in flight here, so the cancel must NOT
+            # fabricate a hermes.run.cancelled event (a cancel after a run
+            # completed used to re-open the settled chip and misreport the
+            # outcome) — the very next event is the cancelled response.done.
+            # Speech-stop still happens: provider cancel + audio clear.
             done = await self._next_ws_event(ws)
-            self.assertEqual(cancelled["type"], "hermes.run.cancelled")
             self.assertEqual(done["type"], "voice.response.done")
             self.assertTrue(done["cancelled"])
             self.assertTrue(fake_provider.connection.cancelled)

@@ -18,8 +18,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -251,6 +253,8 @@ fun VoiceSettingsScreen(
                 currentEngine = currentEngine,
                 output = configState.voiceOutputConfig,
                 realtime = configState.realtimeConfig,
+                realtimeModel = voiceSettings.realtimeModel,
+                realtimeVoice = voiceSettings.realtimeVoice,
             )
 
             // --- Voice scope (single home; WP-V3 dedupe + WP-V4 honest label) ---
@@ -1435,21 +1439,28 @@ private fun RealtimeAgentCard(
     var realtimeSampleRate by remember { mutableStateOf("24000") }
     var realtimeSaving by remember { mutableStateOf(false) }
     var realtimeManualOpen by remember { mutableStateOf(false) }
+    var showDeliveryInfo by remember { mutableStateOf(false) }
 
     val config = configState.realtimeConfig
     LaunchedEffect(
         config?.enabled,
         config?.default_provider,
-        config?.default_model,
-        config?.default_voice,
         config?.sample_rate,
     ) {
         val c = config ?: return@LaunchedEffect
         realtimeEnabled = c.enabled
         realtimeProvider = c.default_provider.orEmpty()
-        realtimeModel = c.default_model.orEmpty()
-        realtimeVoice = c.default_voice.orEmpty()
         realtimeSampleRate = c.sample_rate.toString()
+    }
+    LaunchedEffect(
+        config?.default_model,
+        config?.default_voice,
+        voiceSettings.realtimeModel,
+        voiceSettings.realtimeVoice,
+    ) {
+        val c = config ?: return@LaunchedEffect
+        realtimeModel = voiceSettings.realtimeModel.ifBlank { c.default_model.orEmpty() }
+        realtimeVoice = voiceSettings.realtimeVoice.ifBlank { c.default_voice.orEmpty() }
     }
 
     fun refreshRealtimeProviderOptions(providerId: String, applyDefaults: Boolean) {
@@ -1535,10 +1546,10 @@ private fun RealtimeAgentCard(
             value = config?.default_provider
                 ?: (configState.realtimeConfigError?.let { "unavailable" } ?: "loading..."),
         )
-        config?.default_model?.let { model ->
+        realtimeModel.takeIf { it.isNotBlank() }?.let { model ->
             ProviderRow(label = "Model", value = model)
         }
-        config?.default_voice?.let { voice ->
+        realtimeVoice.takeIf { it.isNotBlank() }?.let { voice ->
             ProviderRow(label = "Voice", value = voice)
         }
         config?.let { c ->
@@ -1610,17 +1621,34 @@ private fun RealtimeAgentCard(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "When the answer is ready",
-                    style = MaterialTheme.typography.labelMedium,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "When the answer is ready",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    IconButton(
+                        onClick = { showDeliveryInfo = true },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = "Delivery mode details",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 val deliveryOptions = listOf(
+                    "speak_verbatim",
                     "speak_when_idle",
                     "notify_then_speak",
                     "visual_only",
                 )
-                val deliveryLabels = listOf("Speak", "Notify", "Show only")
+                val deliveryLabels = listOf("Exact", "Summary", "Notify", "Show")
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     deliveryOptions.forEachIndexed { index, option ->
                         SegmentedButton(
@@ -1647,6 +1675,10 @@ private fun RealtimeAgentCard(
                     }
                 }
             }
+        }
+
+        if (showDeliveryInfo) {
+            DeliveryModeInfoDialog(onDismiss = { showDeliveryInfo = false })
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -1724,6 +1756,9 @@ private fun RealtimeAgentCard(
                 selectedRealtimeProvider?.let { provider ->
                     realtimeVoice = voiceForModel(provider, model, realtimeVoice)
                 }
+                scope.launch {
+                    prefsRepo.setRealtimeSelection(realtimeModel, realtimeVoice)
+                }
             },
             enabled = voiceClient != null,
         )
@@ -1735,7 +1770,10 @@ private fun RealtimeAgentCard(
                 realtimeVoice,
                 realtimeModel,
             ),
-            onValueChange = { realtimeVoice = it },
+            onValueChange = { voice ->
+                realtimeVoice = voice
+                scope.launch { prefsRepo.setRealtimeVoice(voice) }
+            },
             enabled = voiceClient != null,
         )
         compatibilityNotice(
@@ -1774,14 +1812,20 @@ private fun RealtimeAgentCard(
             )
             OutlinedTextField(
                 value = realtimeModel,
-                onValueChange = { realtimeModel = it },
+                onValueChange = { model ->
+                    realtimeModel = model
+                    scope.launch { prefsRepo.setRealtimeModel(model) }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("Model ID") },
             )
             OutlinedTextField(
                 value = realtimeVoice,
-                onValueChange = { realtimeVoice = it },
+                onValueChange = { voice ->
+                    realtimeVoice = voice
+                    scope.launch { prefsRepo.setRealtimeVoice(voice) }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("Voice ID") },
@@ -1839,6 +1883,7 @@ private fun RealtimeAgentCard(
                     )
                     realtimeSaving = false
                     if (result.isSuccess) {
+                        prefsRepo.setRealtimeSelection(realtimeModel, realtimeVoice)
                         settingsViewModel.setRealtimeConfig(result.getOrNull())
                     } else {
                         val human = classifyError(
@@ -1863,6 +1908,51 @@ private fun RealtimeAgentCard(
                 color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+@Composable
+private fun DeliveryModeInfoDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Answer delivery") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                DeliveryModeInfoRow(
+                    label = "Exact",
+                    body = "Recommended. The realtime voice reads the Hermes answer word for word, falling back to standard TTS only if it goes off-script.",
+                )
+                DeliveryModeInfoRow(
+                    label = "Summary",
+                    body = "The realtime voice rephrases the result in its own words. More conversational, less faithful to the exact answer.",
+                )
+                DeliveryModeInfoRow(
+                    label = "Notify",
+                    body = "Shows that the answer is ready first, then speaks when you re-engage.",
+                )
+                DeliveryModeInfoRow(
+                    label = "Show",
+                    body = "Keeps the completed answer visual only.",
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Got it")
+            }
+        },
+    )
+}
+
+@Composable
+private fun DeliveryModeInfoRow(label: String, body: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -2844,6 +2934,8 @@ private fun voiceOutputSummary(
     currentEngine: VoiceEngineMode,
     output: VoiceOutputConfig?,
     realtime: RealtimeVoiceConfig?,
+    realtimeModel: String = "",
+    realtimeVoice: String = "",
 ): Pair<String, String> {
     val profileLabel = profile?.description?.takeIf { it.isNotBlank() }
         ?: profile?.name?.takeIf { it.isNotBlank() }
@@ -2856,8 +2948,12 @@ private fun voiceOutputSummary(
     } ?: "loading voice output..."
     val realtimeLabel = realtime?.let { config ->
         val provider = config.default_provider?.takeIf { it.isNotBlank() } ?: "realtime ..."
-        val voice = config.default_voice?.takeIf { it.isNotBlank() } ?: "voice ..."
-        "$provider / $voice"
+        val model = realtimeModel.takeIf { it.isNotBlank() }
+            ?: config.default_model?.takeIf { it.isNotBlank() }
+        val voice = realtimeVoice.takeIf { it.isNotBlank() }
+            ?: config.default_voice?.takeIf { it.isNotBlank() }
+            ?: "voice ..."
+        if (model == null) "$provider / $voice" else "$provider / $model / $voice"
     } ?: "realtime loading..."
     return profileLabel to when (currentEngine) {
         VoiceEngineMode.HermesVoiceOutput -> "Hermes Chat + Voice Output - $outputLabel"
@@ -2871,12 +2967,16 @@ private fun VoiceProfileSummaryCard(
     currentEngine: VoiceEngineMode,
     output: VoiceOutputConfig?,
     realtime: RealtimeVoiceConfig?,
+    realtimeModel: String,
+    realtimeVoice: String,
 ) {
     val (title, subtitle) = voiceOutputSummary(
         profile = selectedProfile,
         currentEngine = currentEngine,
         output = output,
         realtime = realtime,
+        realtimeModel = realtimeModel,
+        realtimeVoice = realtimeVoice,
     )
     Card(
         modifier = Modifier.fillMaxWidth(),

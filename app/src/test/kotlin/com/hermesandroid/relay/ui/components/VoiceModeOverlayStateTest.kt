@@ -3,13 +3,85 @@ package com.hermesandroid.relay.ui.components
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.viewmodel.InteractionMode
+import com.hermesandroid.relay.viewmodel.BackgroundRunState
+import com.hermesandroid.relay.viewmodel.BackgroundRunPhase
+import com.hermesandroid.relay.viewmodel.HermesConfirmationState
+import com.hermesandroid.relay.viewmodel.VoiceHandoffStatus
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
+import com.hermesandroid.relay.viewmodel.backgroundRunAfterCancelRequest
+import com.hermesandroid.relay.viewmodel.preserveRealtimeTurnOnStop
+import com.hermesandroid.relay.viewmodel.realtimeTranscriptState
+import com.hermesandroid.relay.viewmodel.realtimeTurnActiveAfterResponseDone
+import com.hermesandroid.relay.viewmodel.voiceSessionExitState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VoiceModeOverlayStateTest {
+
+    @Test
+    fun providerTranscript_isTranscribingAfterMicrophoneCaptureStops() {
+        assertEquals(VoiceState.Transcribing, realtimeTranscriptState(micCaptureActive = false))
+        assertEquals(VoiceState.Listening, realtimeTranscriptState(micCaptureActive = true))
+    }
+
+    @Test
+    fun responseDone_keepsLogicalTurnActiveOnlyWhileBackgroundRunIsLive() {
+        assertEquals(true, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.RUNNING))
+        assertEquals(true, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.RECONNECTING))
+        assertEquals(false, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.DELIVERING))
+        assertEquals(false, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.DONE))
+        assertEquals(false, realtimeTurnActiveAfterResponseDone(null))
+    }
+
+    @Test
+    fun stop_preservesSharedTurnWhileBackgroundSummaryCanStillArrive() {
+        assertEquals(true, preserveRealtimeTurnOnStop(BackgroundRunPhase.RUNNING))
+        assertEquals(true, preserveRealtimeTurnOnStop(BackgroundRunPhase.RECONNECTING))
+        assertEquals(true, preserveRealtimeTurnOnStop(BackgroundRunPhase.DELIVERING))
+        assertEquals(false, preserveRealtimeTurnOnStop(BackgroundRunPhase.DONE))
+        assertEquals(false, preserveRealtimeTurnOnStop(null))
+    }
+
+    @Test
+    fun voiceExit_clearsDetachedReconnectStateBeforeNextEntry() {
+        val exited = voiceSessionExitState(
+            VoiceUiState(
+                voiceMode = true,
+                state = VoiceState.Thinking,
+                handoffStatus = VoiceHandoffStatus(title = "Waiting for route"),
+                hermesConfirmation = HermesConfirmationState(
+                    confirmationId = "confirmation-orphaned",
+                    message = "Approve this action?",
+                ),
+                backgroundRun = BackgroundRunState(
+                    runId = "run-orphaned",
+                    phase = BackgroundRunPhase.RECONNECTING,
+                ),
+            )
+        )
+
+        assertEquals(false, exited.voiceMode)
+        assertEquals(VoiceState.Idle, exited.state)
+        assertNull(exited.handoffStatus)
+        assertNull(exited.backgroundRun)
+        assertNull(exited.hermesConfirmation)
+    }
+
+    @Test
+    fun backgroundCancel_clearsChipWhenSocketRejectsRequest() {
+        val run = BackgroundRunState(
+            runId = "run-offline",
+            phase = BackgroundRunPhase.RECONNECTING,
+        )
+
+        assertNull(backgroundRunAfterCancelRequest(run, cancelSent = false))
+        assertEquals(
+            "Cancelling…",
+            backgroundRunAfterCancelRequest(run, cancelSent = true)?.message,
+        )
+    }
 
     @Test
     fun pendingTranscript_showsWhileThinkingBeforeChatHistoryCatchesUp() {

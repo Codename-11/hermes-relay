@@ -35,7 +35,9 @@ HERMES_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
             "not rely on provider model priors, including latest/versioned info, "
             "device or desktop state, personal/project context, side effects, "
             "precision-sensitive answers, media/artifact handling, and dense "
-            "machine-readable output that needs a speech-safe summary."
+            "machine-readable output that needs a speech-safe summary. Do not "
+            "use this to ask what is currently running or queued; use "
+            "hermes_get_status for current run and queue status."
         ),
         "parameters": {
             "type": "object",
@@ -59,7 +61,12 @@ HERMES_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     },
     {
         "name": "hermes_get_status",
-        "description": "Check status of a Hermes run started via hermes_run_task.",
+        "description": (
+            "Check the current Hermes background run, active tool, pending "
+            "confirmation, and queued follow-up requests. Use this when the "
+            "user asks what is running, what is in the queue, whether a task "
+            "finished, or for status of the current voice background work."
+        ),
         "parameters": {
             "type": "object",
             "properties": {"run_id": {"type": "string"}},
@@ -175,6 +182,7 @@ CLIENT_MSG_HERMES_CONFIRM = "hermes.confirm"
 CLIENT_MSG_SESSION_RESUME = "session.resume"
 CLIENT_MSG_CLIENT_ACK = "client.ack"
 CLIENT_MSG_SESSION_CLOSE = "session.close"
+CLIENT_MSG_RESULT_RESPEAK = "hermes.result.respeak"
 
 CLIENT_MSGS: frozenset[str] = frozenset({
     CLIENT_MSG_SESSION_START,
@@ -188,6 +196,7 @@ CLIENT_MSGS: frozenset[str] = frozenset({
     CLIENT_MSG_HERMES_CONFIRM,
     CLIENT_MSG_CLIENT_ACK,
     CLIENT_MSG_SESSION_CLOSE,
+    CLIENT_MSG_RESULT_RESPEAK,
 })
 
 SERVER_EVT_SESSION_READY = "voice.session.ready"
@@ -233,6 +242,7 @@ __all__ = [
     "CLIENT_MSG_CLIENT_ACK",
     "CLIENT_MSG_SESSION_RESUME",
     "CLIENT_MSG_SESSION_CLOSE",
+    "CLIENT_MSG_RESULT_RESPEAK",
     "CLIENT_MSG_SESSION_START",
     "HERMES_TOOL_SCHEMAS",
     "HERMES_TOOL_SURFACE",

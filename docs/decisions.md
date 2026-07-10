@@ -569,14 +569,17 @@ We considered four options:
 - `install.sh` step 2 — copies the `.pth` into the venv site-packages
 
 **Removal path** is now per surface:
-1. Sessions: once the supported Hermes baseline includes #33134, remove the
-   sessions compatibility handlers and any docs that require bootstrap for
-   history/chat. Until then, verify native `/api/sessions/*` routes win.
-2. Read-only skills/toolsets: clients should prefer native `/v1/skills` and
-   `/v1/toolsets` from #33016. Retire `/api/skills` list dependence; keep legacy
-   detail/toggle only if the UI still needs it.
-3. Config/memory/available-models: remove those compatibility handlers only
-   after stable core APIs exist or the dependent Android surfaces are redesigned.
+1. Sessions: **done (2026-07-08, HRUI-002).** The sessions CRUD/messages/fork
+   handlers were removed from the bootstrap with no pre-#33134 fallback kept;
+   native `/api/sessions/*` (#33134) is the only provider. Older core builds
+   degrade via the client capability probe to `/v1/chat/completions`/`/v1/runs`.
+2. Read-only skills/toolsets: **done (2026-07-08, HRUI-002).** The legacy
+   `GET /api/skills` list handler was removed; clients use native `/v1/skills`
+   and `/v1/toolsets` (#33016). Legacy detail (`/api/skills/{name}`) and the
+   501 toggle stub remain — no native equivalent exists.
+3. Config/memory/available-models/session search: remove those compatibility
+   handlers only after stable core APIs exist or the dependent Android surfaces
+   are redesigned.
 4. Slash middleware: remove after native API-server slash preprocessing exists.
 5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update
@@ -1266,6 +1269,8 @@ We already had a working precedent: the `MEDIA:` marker in assistant text gives 
 
 Each [com.hermesandroid.relay.data.HermesCardDispatch] carries a `syncedToServer` flag. On the next chat send, `CardDispatchSyncBuilder.buildSyntheticMessages` materializes every unsynced dispatch into an OpenAI-format `assistant` (with `tool_calls`) + `tool` (with `tool_call_id`) pair under a synthetic tool name `hermes_card_action` — a namespaced name the upstream dispatcher will never try to execute, it's a historical audit record only. The arguments object carries `card_key` / `action_value` / `card_type` / `card_title` / `action_label` / `action_mode` / `action_style` so the LLM has enough context to describe the interaction even if the card itself gets trimmed from rolling window memory. Pairs are spliced into the same request-body slot as voice-intent synthetic messages (`voiceIntentMessages` param — name is historical, the param accepts any synthetic-message JsonArray); once the API client accepts the request, `ChatHandler.markCardDispatchesSynced` flips every dispatch's flag so subsequent turns don't re-emit. Commit-timing matches the voice-intent path exactly (post-handoff) so a thrown request-building exception leaves dispatches unsynced for the next try.
 
+*Update (2026-07, HRUI-001):* the top-level `messages` array these pairs originally rode on the sessions/runs SSE payloads was never parsed by native upstream — the context was silently dropped on those transports. The payload builders (`HermesChatPayloads.kt`) now deliver synthetic history through channels upstream actually consumes: tool-call pairs render as a plain-text digest folded into the per-turn ephemeral system prompt (`system_message` on sessions, `instructions` on runs, the `system` message on completions), and plain realtime-voice turns ride a real history channel where one exists (completions `messages` splice, runs `conversation_history`). The digest is per-turn context, not persisted server-side session history.
+
 **Phase B (deferred — not v0.7.x).**
 
 Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter translations. Discord gains its first real embed usage; Slack reuses the existing Block Kit path. Plain-text platforms (Signal, SMS) fall back to a markdown render of the same card. Same playbook as the current compatibility-overlay model: ship locally while the shape is proving out, then retire the local marker path once a released core build exposes the native card surface. Held until real phone-side card usage surfaces concrete fidelity issues worth translating for.
@@ -1655,8 +1660,10 @@ override:
   promotion vs. silent + visual only.
 - `progress_spoken_after_ms` / `progress_repeat_ms` - reuse existing
   `_HERMES_SPOKEN_PROGRESS_*` knobs, now configurable.
-- `result_delivery` - `speak_when_idle` (default) vs. `notify_then_speak`
-  (chime/visual, speak on user re-engage) vs. `visual_only`.
+- `result_delivery` - `speak_verbatim` (default; the realtime provider reads
+  the authoritative answer word for word, with relay TTS as the validator's
+  fallback) vs. `speak_when_idle` (provider/model summary), `notify_then_speak`
+  (chime/visual, speak on user re-engage), or `visual_only`.
 - `max_background_runs` - concurrent background runs per session (default 1 for
   the MVP; the existing single-`hermes_task` field assumes 1).
 
@@ -1680,8 +1687,20 @@ idle with `turn_detection: None` + resume TTL; relay-host probe retained as a
 regression check, not a precondition). The premise was also superseded in
 implementation: Tier B closes the pending provider call with an interim ack
 rather than holding an open response, so the socket only sees the normal
-between-turns idle gap — no provider needs the `must-reopen` fallback today, and
-default-on is unblocked.
+between-turns idle gap. This unblocked default-on at the short-window scale.
+See the 2026-07-08 revision below for xAI's later 900s idle-expiry behavior.
+
+**Phase 0 revision (2026-07-08).** The xAI verdict was scoped to between-turn
+idle and broke at the 15-minute scale: a live event log showed xAI closing a
+quiet conversation with "timed out after 900.0 seconds due to inactivity"
+(~896s of zero events after a background-run summary finished speaking).
+Follow-up probe runs proved no keepalive works: neither uncommitted silent PCM
+nor acknowledged `session.update` pings reset xAI's 900s timer. The broker now
+treats an idle timeout as routine provider-session expiry: it logs the expiry,
+closes the attached Android websocket cleanly while idle, emits no `voice.error`,
+and lets the next user turn open a fresh provider conversation seeded from the
+durable Hermes session. Full findings live in `docs/realtime-voice-poc.md` →
+"Idle tolerance" → "Revision (2026-07-08)".
 
 **Rules.**
 

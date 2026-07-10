@@ -11,6 +11,7 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
@@ -151,6 +152,8 @@ class ChatViewModel : ViewModel() {
     private val realtimeAgentModels = mutableMapOf<String, String>()
     private val realtimeAgentVoices = mutableMapOf<String, String>()
     private val realtimeAgentProgressKeys = mutableMapOf<String, String>()
+    private val terminalRealtimeAgentTurnIdsLock = Any()
+    private val terminalRealtimeAgentTurnIds = LinkedHashSet<String>()
     private var nextInterfaceContextPrompt: String? = null
 
     // --- Media dependencies (wired via initializeMedia from RelayApp) ---
@@ -384,6 +387,10 @@ class ChatViewModel : ViewModel() {
     private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
     val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
 
+    /** True only during an explicit user-requested dynamic model catalog refresh. */
+    private val _modelOptionsRefreshing = MutableStateFlow(false)
+    val modelOptionsRefreshing: StateFlow<Boolean> = _modelOptionsRefreshing.asStateFlow()
+
     /** Current gateway model from `model.options`, used when no Android override is active. */
     private val _gatewayCurrentModel = MutableStateFlow("")
     val gatewayCurrentModel: StateFlow<String> = _gatewayCurrentModel.asStateFlow()
@@ -429,28 +436,37 @@ class ChatViewModel : ViewModel() {
     /**
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
+     * [refresh] is the explicit upstream refresh path for dynamic/custom-provider catalogs;
+     * automatic picker opens stay on the cheap cached path.
      */
-    fun refreshModelOptions() {
+    fun refreshModelOptions(refresh: Boolean = false) {
         val gateway = gatewayClient ?: run {
             android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
+            if (refresh) _modelOptionsRefreshing.value = false
             return
         }
+        if (refresh && _modelOptionsRefreshing.value) return
+        if (refresh) _modelOptionsRefreshing.value = true
         viewModelScope.launch {
-            gateway.modelOptions().fold(
+            gateway.modelOptions(refresh = refresh).fold(
                 onSuccess = {
                     _modelProviders.value = it.providers
                     _gatewayCurrentModel.value = it.currentModel
                     _gatewayCurrentProvider.value = it.currentProvider
                     android.util.Log.i(
                         "ChatViewModel",
-                        "model.options: ${it.providers.size} providers, " +
+                        "model.options${if (refresh) " refresh" else ""}: ${it.providers.size} providers, " +
                             "${it.providers.sumOf { p -> p.models.size }} models, current=${it.currentModel}",
                     )
                 },
                 onFailure = {
                     android.util.Log.w("ChatViewModel", "model.options failed: ${it.message}")
+                    if (refresh) {
+                        _transientNotice.tryEmit("Couldn't refresh models: ${it.message ?: "unknown error"}")
+                    }
                 },
             )
+            if (refresh) _modelOptionsRefreshing.value = false
         }
     }
 
@@ -1133,6 +1149,23 @@ class ChatViewModel : ViewModel() {
      * Default provider returns `null` so a fresh VM (before RelayApp has
      * wired the flow) behaves identically to pre-profile-picker installs.
      */
+    /**
+     * Demo / Explore mode wiring. [demoModeProvider] reads
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.isDemoMode];
+     * [demoChatHandlerProvider] supplies the shared [ChatHandler] carrying
+     * the canned transcript. Both are needed because in demo there is no API
+     * client, so [initialize] never runs and this VM's own [chatHandler]
+     * stays null. Wired unconditionally from RelayApp (not inside the
+     * client-gated init effect).
+     */
+    private var demoModeProvider: () -> Boolean = { false }
+    private var demoChatHandlerProvider: () -> ChatHandler? = { chatHandler }
+
+    fun setDemoModeWiring(isDemo: () -> Boolean, handler: () -> ChatHandler?) {
+        demoModeProvider = isDemo
+        demoChatHandlerProvider = handler
+    }
+
     private var selectedProfileProvider: () -> Profile? = { null }
     private var effectiveProfileProvider: () -> Profile? = { selectedProfileProvider() }
     private var displayProfileProvider: () -> Profile? = {
@@ -2239,6 +2272,32 @@ class ChatViewModel : ViewModel() {
         if (text.isBlank()) return
         recordRecentPrompt(text)
 
+        // Demo / Explore mode: there is no server, but a silently dead Send
+        // button reads as broken. Echo the user's text and answer with an
+        // honest canned notice through the real pipeline — clientOnly
+        // bubbles, zero network, wiped with the rest of the transcript on
+        // demo exit (exitDemoMode → clearMessages).
+        if (demoModeProvider()) {
+            val demoHandler = demoChatHandlerProvider() ?: return
+            val now = System.currentTimeMillis()
+            demoHandler.addUserMessage(
+                ChatMessage(
+                    id = "demo-composer-user-${java.util.UUID.randomUUID()}",
+                    role = MessageRole.USER,
+                    content = text.trim(),
+                    timestamp = now,
+                    clientOnly = true,
+                ),
+            )
+            demoHandler.addUserMessage(
+                DemoContent.composerReply(
+                    id = "demo-composer-reply-${java.util.UUID.randomUUID()}",
+                    nowMs = now + 1L,
+                ),
+            )
+            return
+        }
+
         val client = apiClient ?: return
         val handler = chatHandler ?: return
 
@@ -3204,6 +3263,9 @@ class ChatViewModel : ViewModel() {
         val trimmed = userText.trim().ifBlank { "Listening..." }
         val userMessageId = UUID.randomUUID().toString()
         val assistantMessageId = "realtime-agent-${UUID.randomUUID()}"
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            terminalRealtimeAgentTurnIds.remove(assistantMessageId)
+        }
         realtimeAgentUserMessages[assistantMessageId] = userMessageId
         realtimeAgentInputTranscripts[assistantMessageId] = StringBuilder()
         realtimeAgentToolCallIds[assistantMessageId] = mutableSetOf()
@@ -3235,6 +3297,94 @@ class ChatViewModel : ViewModel() {
             )
         )
         return assistantMessageId
+    }
+
+    /**
+     * Settle a realtime turn that failed before the relay could emit a
+     * `voice.error`. Transport submission failures happen below the event
+     * layer, so without this explicit terminal path the placeholder remains
+     * streaming forever.
+     */
+    fun failRealtimeAgentTurn(assistantMessageId: String, message: String) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            val handler = chatHandler ?: return
+            removeRealtimeAgentUserPlaceholder(
+                handler = handler,
+                assistantMessageId = assistantMessageId,
+            )
+            clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
+            val existing = handler.messages.value
+                .firstOrNull { it.id == assistantMessageId }
+                ?.content
+                ?.trim()
+                .orEmpty()
+            if (existing.isBlank()) {
+                handler.replaceMessageContent(assistantMessageId, message)
+            }
+            handler.markError(assistantMessageId)
+            handler.onStreamError(message)
+            activeStream = null
+        }
+    }
+
+    /** Locally settle the realtime placeholder when the voice stop action wins. */
+    fun cancelRealtimeAgentTurnLocally(assistantMessageId: String) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            val handler = chatHandler ?: return
+            removeRealtimeAgentUserPlaceholder(
+                handler = handler,
+                assistantMessageId = assistantMessageId,
+            )
+            clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
+            val existing = handler.messages.value
+                .firstOrNull { it.id == assistantMessageId }
+                ?.content
+                ?.trim()
+                .orEmpty()
+            if (existing.isBlank()) {
+                handler.replaceMessageContent(assistantMessageId, "Cancelled.")
+            } else {
+                handler.markStopped(assistantMessageId)
+            }
+            handler.onStreamComplete(assistantMessageId)
+            activeStream = null
+        }
+    }
+
+    private fun removeRealtimeAgentUserPlaceholder(
+        handler: ChatHandler,
+        assistantMessageId: String,
+    ) {
+        val userMessageId = realtimeAgentUserMessages[assistantMessageId] ?: return
+        val current = handler.messages.value
+            .firstOrNull { it.id == userMessageId }
+            ?.content
+            ?.trim()
+        if (current == "Listening...") {
+            handler.removeMessage(userMessageId)
+        }
+    }
+
+    private fun clearRealtimeAgentTurnTracking(
+        assistantMessageId: String,
+        quarantine: Boolean = false,
+    ) {
+        if (quarantine) synchronized(terminalRealtimeAgentTurnIdsLock) {
+            terminalRealtimeAgentTurnIds.add(assistantMessageId)
+            while (terminalRealtimeAgentTurnIds.size > 64) {
+                val oldest = terminalRealtimeAgentTurnIds.iterator().next()
+                terminalRealtimeAgentTurnIds.remove(oldest)
+            }
+        }
+        realtimeAgentUserMessages.remove(assistantMessageId)
+        realtimeAgentInputTranscripts.remove(assistantMessageId)
+        realtimeAgentProviderBadges.remove(assistantMessageId)
+        realtimeAgentToolCallIds.remove(assistantMessageId)
+        realtimeAgentHermesBacked.remove(assistantMessageId)
+        realtimeAgentProviderIds.remove(assistantMessageId)
+        realtimeAgentModels.remove(assistantMessageId)
+        realtimeAgentVoices.remove(assistantMessageId)
+        realtimeAgentProgressKeys.remove(assistantMessageId)
     }
 
     private fun realtimeBadges(
@@ -3271,6 +3421,17 @@ class ChatViewModel : ViewModel() {
         assistantMessageId: String,
         event: RealtimeVoiceEvent,
         showDetailedTrace: Boolean = false,
+    ) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            if (assistantMessageId in terminalRealtimeAgentTurnIds) return
+            applyRealtimeAgentEventLocked(assistantMessageId, event, showDetailedTrace)
+        }
+    }
+
+    private fun applyRealtimeAgentEventLocked(
+        assistantMessageId: String,
+        event: RealtimeVoiceEvent,
+        showDetailedTrace: Boolean,
     ) {
         val handler = chatHandler ?: return
         val hermesSessionId = when {
@@ -3338,7 +3499,16 @@ class ChatViewModel : ViewModel() {
             "hermes.tool.delta" -> {
                 realtimeAgentHermesBacked[assistantMessageId] = true
                 val name = event.toolName?.takeIf { it.isNotBlank() }
-                if (!name.isNullOrBlank() && !name.equals("hermes", ignoreCase = true)) {
+                // `_`-prefixed tools are internal machinery (upstream hides
+                // them from every tool surface). The gateway streams drafting
+                // text as a `_thinking` pseudo-tool that only ever emits
+                // deltas — no tool.completed — so a pill created for it spins
+                // "running" forever. Its text still feeds the detailed
+                // thinking trace below; it just never becomes a ToolCall row.
+                if (!name.isNullOrBlank() &&
+                    !name.equals("hermes", ignoreCase = true) &&
+                    !name.startsWith("_")
+                ) {
                     val callId = event.toolCallId?.takeIf { it.isNotBlank() } ?: name
                     val seen = realtimeAgentToolCallIds
                         .getOrPut(assistantMessageId) { mutableSetOf() }
@@ -3407,6 +3577,10 @@ class ChatViewModel : ViewModel() {
             "hermes.tool.started" -> {
                 realtimeAgentHermesBacked[assistantMessageId] = true
                 val name = event.toolName?.takeIf { it.isNotBlank() } ?: "hermes"
+                // Same `_`-internal-tool guard as hermes.tool.delta above —
+                // defensive here (the relay currently only sends started for
+                // real tools), since an unpaired started would pin a pill.
+                if (name.startsWith("_")) return
                 val callId = event.toolCallId?.takeIf { it.isNotBlank() } ?: name
                 realtimeAgentToolCallIds
                     .getOrPut(assistantMessageId) { mutableSetOf() }
@@ -3489,10 +3663,8 @@ class ChatViewModel : ViewModel() {
                     handler.onThinkingDelta(assistantMessageId, prompt)
                 }
             }
-            "hermes.run.completed" -> {
-                // Hermes completion means the tool result is ready; provider narration ends the turn.
-                Unit
-            }
+            // Hermes completion means the tool result is ready; provider narration ends the turn.
+            "hermes.run.completed" -> Unit
             "voice.response.done" -> {
                 if (realtimeAgentHermesBacked[assistantMessageId] != true) {
                     val userMessageId = realtimeAgentUserMessages[assistantMessageId]
@@ -3519,14 +3691,7 @@ class ChatViewModel : ViewModel() {
                     }
                 }
                 handler.onStreamComplete(assistantMessageId)
-                realtimeAgentUserMessages.remove(assistantMessageId)
-                realtimeAgentInputTranscripts.remove(assistantMessageId)
-                realtimeAgentProviderBadges.remove(assistantMessageId)
-                realtimeAgentToolCallIds.remove(assistantMessageId)
-                realtimeAgentHermesBacked.remove(assistantMessageId)
-                realtimeAgentProviderIds.remove(assistantMessageId)
-                realtimeAgentModels.remove(assistantMessageId)
-                realtimeAgentVoices.remove(assistantMessageId)
+                clearRealtimeAgentTurnTracking(assistantMessageId)
                 activeStream = null
             }
             "hermes.run.cancelled" -> {
@@ -3535,6 +3700,10 @@ class ChatViewModel : ViewModel() {
                 // (chip-cancel racing completion, or a stale confirm). Only a
                 // bubble with no real content becomes "Cancelled."; anything
                 // else keeps its text and gets the Stopped badge instead.
+                removeRealtimeAgentUserPlaceholder(
+                    handler = handler,
+                    assistantMessageId = assistantMessageId,
+                )
                 val existingContent = handler.messages.value
                     .firstOrNull { it.id == assistantMessageId }
                     ?.content
@@ -3546,26 +3715,16 @@ class ChatViewModel : ViewModel() {
                     handler.markStopped(assistantMessageId)
                 }
                 handler.onStreamComplete(assistantMessageId)
-                realtimeAgentUserMessages.remove(assistantMessageId)
-                realtimeAgentInputTranscripts.remove(assistantMessageId)
-                realtimeAgentProviderBadges.remove(assistantMessageId)
-                realtimeAgentToolCallIds.remove(assistantMessageId)
-                realtimeAgentHermesBacked.remove(assistantMessageId)
-                realtimeAgentProviderIds.remove(assistantMessageId)
-                realtimeAgentModels.remove(assistantMessageId)
-                realtimeAgentVoices.remove(assistantMessageId)
+                clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }
             "voice.error" -> {
+                removeRealtimeAgentUserPlaceholder(
+                    handler = handler,
+                    assistantMessageId = assistantMessageId,
+                )
                 handler.onStreamError(event.message ?: "Realtime agent failed")
-                realtimeAgentUserMessages.remove(assistantMessageId)
-                realtimeAgentInputTranscripts.remove(assistantMessageId)
-                realtimeAgentProviderBadges.remove(assistantMessageId)
-                realtimeAgentToolCallIds.remove(assistantMessageId)
-                realtimeAgentHermesBacked.remove(assistantMessageId)
-                realtimeAgentProviderIds.remove(assistantMessageId)
-                realtimeAgentModels.remove(assistantMessageId)
-                realtimeAgentVoices.remove(assistantMessageId)
+                clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }
         }
@@ -4172,9 +4331,33 @@ class ChatViewModel : ViewModel() {
         // instead, so force any turn that has a per-turn interface context
         // (set only by sendVoiceMessage) onto SSE. resolveSseFallback picks the
         // best available SSE route.
+        //
+        // Synthetic sync messages (voice intents / card dispatches / provider-
+        // answered realtime turns) have the same gateway limitation — prompt.submit
+        // can't carry them — but on a gateway-primary phone "leave them for the
+        // next SSE turn" means *never*: the default transport is the gateway, so
+        // unsynced traces would defer forever and the agent never learns what
+        // happened in realtime voice. Drain them by forcing this one turn onto
+        // the sessions SSE route, but ONLY when that is strictly safe:
+        //  - an existing session id + the sessions fallback route (a stateless
+        //    completions/runs detour would drop THIS turn from the transcript
+        //    to save a trace — worse than deferring), and
+        //  - the default profile (a non-default profile's gateway session lives
+        //    in that profile's own state.db, which the shared api_server surface
+        //    can't see — the sessions POST would 404 and fail the user's turn).
+        // Cost when it fires: one turn without live gateway thinking. The synced
+        // traces persist server-side, so this happens at most once per batch.
+        val sseDrainEndpoint = resolveSseFallback(handler)
+        val forceSseForTraceDrain =
+            voiceIntentMessages != null &&
+                streamingEndpoint == "gateway" &&
+                profileName == null &&
+                sseDrainEndpoint == "sessions"
         val effectiveEndpoint =
-            if (interfaceContextPrompt != null && streamingEndpoint == "gateway") {
-                resolveSseFallback(handler)
+            if ((interfaceContextPrompt != null || forceSseForTraceDrain) &&
+                streamingEndpoint == "gateway"
+            ) {
+                sseDrainEndpoint
             } else {
                 streamingEndpoint
             }
@@ -4290,8 +4473,15 @@ class ChatViewModel : ViewModel() {
         // point. Guarded per-stream so we only do the work when the
         // corresponding synthetic messages were actually sent.
         // Gateway turns can't carry synthetic messages (prompt.submit is
-        // bare text) — leave traces unsynced so the next SSE turn sends them.
-        if (voiceIntentMessages != null && streamingEndpoint != "gateway") {
+        // bare text) — leave traces unsynced so a later SSE turn (or the
+        // forced trace-drain above) sends them. Checked against the route
+        // this turn actually DISPATCHED on (effectiveEndpoint), not the
+        // configured transport: a gateway-configured turn forced onto SSE
+        // (voice interface context, trace drain) did carry the synthetic
+        // messages, and skipping the mark there re-sent them every turn.
+        // The async gateway preflight-failure fallback stays conservative:
+        // its traces are marked on the NEXT turn (at-least-once delivery).
+        if (voiceIntentMessages != null && effectiveEndpoint != "gateway") {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
             if (hasRealtimeTurns) handler.markRealtimeTurnsSynced()

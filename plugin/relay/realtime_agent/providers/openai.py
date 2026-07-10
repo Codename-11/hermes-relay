@@ -12,8 +12,8 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from plugin.voice_lab.auth import load_voice_lab_env_file
-from plugin.voice_lab.providers.base import ProviderRunError, ProviderUnavailable
+from ....voice_lab.auth import load_voice_lab_env_file
+from ....voice_lab.providers.base import ProviderRunError, ProviderUnavailable
 
 from ..models import (
     ProviderEvent,
@@ -24,7 +24,7 @@ from ..models import (
 )
 from .base import RealtimeAgentProviderAdapter
 
-DEFAULT_MODEL = "gpt-realtime-2"
+DEFAULT_MODEL = "gpt-realtime-2.1"
 DEFAULT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper"
 DEFAULT_URL = "wss://api.openai.com/v1/realtime"
 DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -209,8 +209,38 @@ class OpenAIRealtimeAgentConnection:
             }
         )
 
-    async def request_response(self) -> None:
-        await self.socket.send_json({"type": "response.create"})
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        # Seed a history message without requesting a response. Assistant
+        # items replay model output ("text"); user/system items are input
+        # ("input_text"). No response.create -> silent, no re-speak.
+        content_type = "text" if role == "assistant" else "input_text"
+        await self.socket.send_json(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": role,
+                    "content": [{"type": content_type, "text": text}],
+                },
+            }
+        )
+
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
+        # OpenAI Realtime has no force_message equivalent. Keep exact delivery
+        # on the instruction-driven response path; the broker validator remains
+        # the correctness backstop.
+        payload: dict[str, Any] = {"type": "response.create"}
+        if instructions:
+            # Per-response instructions override the session-level system
+            # prompt for this response only — see xai.py's matching method
+            # for why this replaces the fake-user-message injection hack.
+            payload["response"] = {"instructions": instructions}
+        await self.socket.send_json(payload)
 
     async def close(self) -> None:
         await self.socket.close()
@@ -360,10 +390,21 @@ def _provider_event(
     event_type = str(event.get("type") or "").strip()
     response_id = _response_id(event)
     if event_type in {"session.created", "session.updated", "conversation.created"}:
+        # Surface the RESOLVED model id so session logs record which model
+        # actually served (aliases/snapshots can move server-side).
+        session_info = event.get("session")
+        resolved_model = (
+            str(session_info.get("model") or "").strip()
+            if isinstance(session_info, dict)
+            else ""
+        )
         return ProviderEvent(
             ProviderEventKind.READY,
             response_id=response_id,
-            payload={"provider_event_type": event_type},
+            payload={
+                "provider_event_type": event_type,
+                "resolved_model": resolved_model or None,
+            },
         )
     if event_type in {"response.created", "response.output_item.added"}:
         return ProviderEvent(

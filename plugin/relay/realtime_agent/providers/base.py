@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from plugin.voice_lab.expressions import VoiceExpression
-from plugin.voice_lab.metrics import MetricsRecorder
-from plugin.voice_lab.providers.base import VoiceRequest, VoiceResponse
-from plugin.voice_lab.registry import default_registry
+from ....voice_lab.expressions import VoiceExpression
+from ....voice_lab.metrics import MetricsRecorder
+from ....voice_lab.providers.base import VoiceRequest, VoiceResponse
+from ....voice_lab.registry import default_registry
 
 from ..models import (
     ProviderEvent,
@@ -85,7 +85,25 @@ class RealtimeAgentConnection(Protocol):
 
     async def send_tool_result(self, call_id: str, output: dict[str, Any]) -> None: ...
 
-    async def request_response(self) -> None: ...
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        """Add a message to the provider's conversation history WITHOUT
+        triggering a response. Used to seed a delivered background result
+        (spoken by relay TTS, so absent from the provider's own history) so
+        the provider can answer follow-ups about it."""
+        ...
+
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
+        """Request provider speech, optionally using native exact-text synthesis.
+
+        Providers without an exact-text primitive may ignore ``exact_text`` and
+        follow ``instructions`` through normal model inference.
+        """
+        ...
 
     async def close(self) -> None: ...
 

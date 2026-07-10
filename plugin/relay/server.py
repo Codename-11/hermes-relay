@@ -1568,6 +1568,18 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
         the same as every other phone-facing relay channel.
       * **Path checks (always on)** — absolute path, ``realpath`` resolution,
         exists, is a regular file, under ``RELAY_MEDIA_MAX_SIZE_MB``.
+      * **Credential/system denylist (always on)** — even in permissive
+        mode, paths that resolve into credential or system locations
+        (``~/.hermes/.env``, ``auth.json``, ``config.yaml``, OAuth token
+        stores, ``pairing/``, ``mcp-tokens/``, ``~/.ssh``, ``/etc``, ...)
+        are rejected with 403. Mirrors upstream hermes-agent's native
+        media-delivery hardening (``validate_media_delivery_path``): the
+        "LLM can already exfil via plain text" rationale below does not
+        extend to files the agent itself is forbidden to read, so a
+        prompt-injected ``MEDIA:`` marker can't deliver live secrets as a
+        native attachment. Symlinks are resolved first, so a link into a
+        denied path is caught. See ``plugin/relay/media.py``
+        ``_is_denied_media_path``.
       * **Allowed-roots sandbox (opt-in)** — off by default. Set
         ``RELAY_MEDIA_STRICT_SANDBOX=1`` to re-enable the allowlist
         enforcement. Rationale: if the LLM already has filesystem-reading
@@ -1582,7 +1594,8 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
       → 200 file bytes
       → 400 missing path query param
       → 401 missing/invalid bearer
-      → 403 path not absolute / other validation failure (or outside allowlist in strict mode)
+      → 403 path not absolute / denied credential-or-system path / other
+        validation failure (or outside allowlist in strict mode)
       → 404 file does not exist or is not a regular file
       → 413 file exceeds RELAY_MEDIA_MAX_SIZE_MB
 
@@ -1718,12 +1731,13 @@ def _bridge_error_response(
     """Convert a :class:`BridgeError` to a JSON response that matches the
     legacy standalone relay's error shape."""
     msg = str(exc) or "Bridge error"
-    status = fallback_status
+    status = getattr(exc, "status_code", None) or fallback_status
     lowered = msg.lower()
-    if "did not respond" in lowered or "timeout" in lowered:
-        status = _BRIDGE_TIMEOUT_STATUS
-    elif "failed to send" in lowered:
-        status = _BRIDGE_SEND_FAIL_STATUS
+    if status == fallback_status:
+        if "did not respond" in lowered or "timeout" in lowered:
+            status = _BRIDGE_TIMEOUT_STATUS
+        elif "failed to send" in lowered:
+            status = _BRIDGE_SEND_FAIL_STATUS
     return web.json_response({"error": msg}, status=status)
 
 
@@ -1731,20 +1745,35 @@ async def _bridge_dispatch(
     request: web.Request,
     path: str,
 ) -> web.Response:
-    """Forward an HTTP request to the phone via the bridge channel."""
+    """Forward an HTTP request to an Android bridge device."""
     server: RelayServer = request.app["server"]
     method = request.method  # GET or POST
 
     params: dict[str, Any] = dict(request.query)
     body: dict[str, Any] = {}
+    selector = (
+        params.pop("device", None)
+        or params.pop("device_id", None)
+        or params.pop("deviceId", None)
+    )
     if method == "POST":
         # android_tool.py always sends JSON bodies; treat anything else as empty.
         try:
             raw = await request.json()
             if isinstance(raw, dict):
-                body = raw
+                body = dict(raw)
         except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
             body = {}
+        if selector is None:
+            selector = (
+                body.pop("device", None)
+                or body.pop("device_id", None)
+                or body.pop("deviceId", None)
+            )
+        else:
+            body.pop("device", None)
+            body.pop("device_id", None)
+            body.pop("deviceId", None)
     else:
         # H1/M5 fix: phone-side BridgeCommandHandler reads its arguments from
         # the envelope body, with a `params` fallback that's dead code because
@@ -1753,7 +1782,10 @@ async def _bridge_dispatch(
         # (limit/since) and /screen (include_bounds) actually see them.
         # Values from request.query are strings; phone-side parsers must use
         # .content.toIntOrNull() etc. rather than .intOrNull.
-        body = dict(request.query)
+        body = dict(params)
+
+    if selector is not None and not isinstance(selector, str):
+        return web.json_response({"error": "device selector must be a string"}, status=400)
 
     try:
         response = await server.bridge.handle_command(
@@ -1761,6 +1793,7 @@ async def _bridge_dispatch(
             path=path,
             params=params,
             body=body,
+            device=selector,
         )
     except BridgeError as exc:
         return _bridge_error_response(exc)
@@ -1998,55 +2031,69 @@ async def handle_bridge_send_mms(request: web.Request) -> web.Response:
 # with ``phone_connected`` + ``last_seen_seconds_ago`` and returns.
 
 
+async def handle_bridge_devices(request: web.Request) -> web.Response:
+    """Return connected/known Android bridge devices for local callers."""
+    _require_loopback(request)
+    server: RelayServer = request.app["server"]
+    return web.json_response(server.bridge.devices_payload())
+
+
+async def handle_bridge_select_active(request: web.Request) -> web.Response:
+    """Select the default Android bridge device used by untargeted calls."""
+    _require_loopback(request)
+    try:
+        payload = await request.json() if request.body_exists else {}
+    except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response({"ok": False, "error": "body must be a JSON object"}, status=400)
+    selector = payload.get("device") or payload.get("device_id") or payload.get("deviceId")
+    if not isinstance(selector, str) or not selector.strip():
+        return web.json_response(
+            {"ok": False, "error": "missing device or device_id"}, status=400
+        )
+    server: RelayServer = request.app["server"]
+    try:
+        selected = server.bridge.select_active(selector)
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    return web.json_response(selected)
+
+
 async def handle_bridge_status(request: web.Request) -> web.Response:
-    """Return the most recent cached phone status.
+    """Return cached Android bridge status, optionally for a selected device.
 
     GET /bridge/status
       → 200 {"phone_connected": true, "last_seen_seconds_ago": N, ...}
-        when the phone has pushed at least one bridge.status envelope
+        for the active/default device
       → 503 {"phone_connected": false, "error": "no phone connected"}
-        when no phone has ever connected to this relay process
+        when no Android bridge has ever connected to this relay process
       → 403 non-loopback caller
+
+    GET /bridge/status?device=boox
+      → 200 status for the matching connected/known bridge device
+      → 404/409 when the selector is unknown or ambiguous
     """
-    remote = request.remote or ""
-    if remote not in ("127.0.0.1", "::1"):
-        logger.warning(
-            "Rejected /bridge/status from non-loopback peer %s", remote
-        )
-        raise web.HTTPForbidden(
-            text="/bridge/status is restricted to localhost callers",
-        )
+    _require_loopback(request)
 
     server: RelayServer = request.app["server"]
     bridge_handler = server.bridge
+    query = getattr(request, "query", {})
+    selector = query.get("device") or query.get("device_id") or query.get("deviceId")
 
-    if bridge_handler.latest_status is None:
-        return web.json_response(
-            {
-                "phone_connected": False,
-                "last_seen_seconds_ago": None,
-                "error": "no phone connected",
-            },
-            status=503,
-        )
-
-    payload: dict[str, Any] = dict(bridge_handler.latest_status)
-    last_seen_at = bridge_handler.last_seen_at
-    if last_seen_at is None:
-        last_seen_seconds_ago: int | None = None
-    else:
-        # Round to whole seconds — sub-second resolution is noise for a
-        # status-cache consumer and keeps the JSON compact.
-        last_seen_seconds_ago = max(0, int(time.time() - last_seen_at))
-
-    response = {
-        "phone_connected": bridge_handler.is_phone_connected(),
-        "last_seen_seconds_ago": last_seen_seconds_ago,
-    }
-    # Merge the phone-provided groups (device / bridge / safety + any
-    # legacy fields) into the top-level response. If the phone is on an
-    # older build that only sends flat keys, they come through here too.
-    response.update(payload)
+    try:
+        response = bridge_handler.status_payload(selector)
+    except BridgeError as exc:
+        if getattr(exc, "status_code", None) == 503:
+            return web.json_response(
+                {
+                    "phone_connected": False,
+                    "last_seen_seconds_ago": None,
+                    "error": "no phone connected",
+                },
+                status=503,
+            )
+        return _bridge_error_response(exc)
     return web.json_response(response)
 
 
@@ -3747,7 +3794,21 @@ async def _on_message(
         task = asyncio.create_task(server.terminal.handle(ws, envelope))
         _track_task(server, ws, task)
     elif channel == "bridge":
-        task = asyncio.create_task(server.bridge.handle(ws, envelope))
+        token = server._clients.get(ws)
+        session = server.sessions.get_session(token) if token else None
+        if session is not None and session.channel_is_expired("bridge"):
+            logger.warning(
+                "Rejected bridge message from device=%s: bridge grant expired",
+                session.device_id,
+            )
+            await _send_system(
+                ws,
+                "error",
+                {"message": "Bridge grant expired for this device"},
+                msg_id=msg_id,
+            )
+            return
+        task = asyncio.create_task(server.bridge.handle(ws, envelope, session=session))
         _track_task(server, ws, task)
     elif channel == "tui":
         task = asyncio.create_task(server.tui.handle(ws, envelope))
@@ -4131,7 +4192,9 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/send_mms", handle_bridge_send_mms)
     # === END PHASE3-bridge-server ===
 
-    # === PHASE3-status: loopback-gated structured phone status ===
+    # === PHASE3-status: loopback-gated structured Android bridge status ===
+    app.router.add_get("/bridge/devices", handle_bridge_devices)
+    app.router.add_post("/bridge/select-active", handle_bridge_select_active)
     app.router.add_get("/bridge/status", handle_bridge_status)
     # === END PHASE3-status ===
 

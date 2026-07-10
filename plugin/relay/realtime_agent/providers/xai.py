@@ -12,12 +12,12 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from plugin.voice_lab.auth import (
+from ....voice_lab.auth import (
     VoiceLabAuthError,
     load_voice_lab_env_file,
     read_xai_oauth_token,
 )
-from plugin.voice_lab.providers.base import ProviderRunError, ProviderUnavailable
+from ....voice_lab.providers.base import ProviderRunError, ProviderUnavailable
 
 from ..models import (
     ProviderEvent,
@@ -200,8 +200,54 @@ class XAIRealtimeAgentConnection:
             }
         )
 
-    async def request_response(self) -> None:
-        await self.socket.send_json({"type": "response.create"})
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        # Seed a history message without requesting a response. Assistant
+        # items replay model output ("text"); user/system items are input
+        # ("input_text"). No response.create -> silent, no re-speak.
+        content_type = "text" if role == "assistant" else "input_text"
+        await self.socket.send_json(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": role,
+                    "content": [{"type": content_type, "text": text}],
+                },
+            }
+        )
+
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
+        if exact_text:
+            # xAI's force_message bypasses model inference while preserving the
+            # normal assistant response/audio lifecycle and conversation item.
+            await self.socket.send_json(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "force_message",
+                        "role": "assistant",
+                        "interruptible": True,
+                        "content": [{"type": "output_text", "text": exact_text}],
+                    },
+                }
+            )
+            return
+        payload: dict[str, Any] = {"type": "response.create"}
+        if instructions:
+            # Per-response instructions override the session-level system
+            # prompt for this response only — confirmed supported by both
+            # xAI and OpenAI's realtime protocol (docs.x.ai Voice Agent API).
+            # Lets the broker steer a spoken turn (e.g. speak a Hermes
+            # background result) without fabricating a fake conversation
+            # item, so the transcript never contains a synthetic message
+            # attributed to a role that didn't actually say it.
+            payload["response"] = {"instructions": instructions}
+        await self.socket.send_json(payload)
 
     async def close(self) -> None:
         await self.socket.close()
@@ -314,10 +360,21 @@ def _provider_event(event: dict[str, Any]) -> ProviderEvent | None:
     event_type = str(event.get("type") or "").strip()
     response_id = _response_id(event)
     if event_type in {"session.created", "session.updated", "conversation.created"}:
+        # Surface the RESOLVED model id: "grok-voice-latest" is an alias xAI
+        # moves, so the echo is the only record of which model actually served.
+        session_info = event.get("session")
+        resolved_model = (
+            str(session_info.get("model") or "").strip()
+            if isinstance(session_info, dict)
+            else ""
+        )
         return ProviderEvent(
             ProviderEventKind.READY,
             response_id=response_id,
-            payload={"provider_event_type": event_type},
+            payload={
+                "provider_event_type": event_type,
+                "resolved_model": resolved_model or None,
+            },
         )
     if event_type in {"response.created", "response.output_item.added"}:
         return ProviderEvent(

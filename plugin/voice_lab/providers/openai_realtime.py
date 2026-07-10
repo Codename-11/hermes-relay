@@ -20,7 +20,7 @@ from .base import (
     VoiceResponse,
 )
 
-DEFAULT_MODEL = "gpt-realtime-2"
+DEFAULT_MODEL = "gpt-realtime-2.1"
 DEFAULT_VOICE = "marin"
 DEFAULT_OUTPUT_FORMAT = "audio/pcm"
 DEFAULT_SAMPLE_RATE = 24000
@@ -61,9 +61,11 @@ class OpenAIRealtimeProvider(VoiceProvider):
         name="OpenAI Realtime",
         description=(
             "Server-side WebSocket adapter for OpenAI Realtime, defaulting to "
-            "gpt-realtime-2 and WAV output for CLI testing."
+            "gpt-realtime-2.1 and WAV output for CLI testing."
         ),
-        models=(DEFAULT_MODEL,),
+        # 2.1-mini is the cheap tier; gpt-realtime-2 stays selectable for
+        # rollback. Same wire protocol across all three.
+        models=("gpt-realtime-2.1", "gpt-realtime-2.1-mini", "gpt-realtime-2"),
         voices=(
             "alloy",
             "ash",

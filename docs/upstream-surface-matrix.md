@@ -22,7 +22,7 @@ Verified upstream source snapshot:
 | `/v1/capabilities` | Upstream API server | No | Capability probe | Source of truth for API-server features; current upstream advertises no audio API. |
 | `/v1/chat/completions` | Upstream API server | No | Chat fallback | OpenAI-compatible streaming. Tool events may degrade to inline annotations. |
 | `/v1/runs`, `/v1/runs/{id}/events` | Upstream API server | No | Chat fallback | Structured run events and stop/approval support. |
-| `/api/sessions/*` | Upstream API server | No | Session CRUD and SSE chat | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Bootstrap is old-build fallback only. |
+| `/api/sessions/*` | Upstream API server/dashboard | No | Session CRUD, SSE chat, export, archive, and bulk cleanup | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Newer hosts also expose single-session JSON export via `GET /api/sessions/{id}/export`, soft archive via `PATCH /api/sessions/{id}`, and guarded bulk cleanup via `POST /api/sessions/prune`; Android must dry-run prune first and show the matched count/span before destructive apply. The bootstrap no longer injects any session CRUD/messages/fork routes (retired in favor of native #33134); only `/api/sessions/search` remains a bootstrap compatibility route. |
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Read-only API-server skill/toolset inventory. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. |
@@ -31,7 +31,7 @@ Verified upstream source snapshot:
 | `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab | FastAPI plugin backend proxies loopback requests to the Relay server. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability, plugin layout, Relay loopback state, and legacy bootstrap presence. |
-| `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-upstream | Fallback only | Installed via `.pth` by legacy installer. Keep only for older Hermes builds or compatibility-only gaps. |
+| `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-upstream | Fallback only | Installed via `.pth` by legacy installer. Injects only compatibility-only gaps: session search, memory, legacy skill detail/toggle, config, available-models, slash middleware. Sessions CRUD and skill/toolset lists are native upstream and retired from the bootstrap. |
 
 ## Client capability gate (build flavor)
 

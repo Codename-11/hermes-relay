@@ -265,6 +265,18 @@ class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(fake_socket.sent[-1], {"type": "response.create"})
 
+        await connection.request_response(
+            instructions="Speak this result.",
+            exact_text="Background answer ready.",
+        )
+        self.assertEqual(
+            fake_socket.sent[-1],
+            {"type": "response.create", "response": {"instructions": "Speak this result."}},
+        )
+
+        await connection.request_response()
+        self.assertEqual(fake_socket.sent[-1], {"type": "response.create"})
+
         await connection.cancel_response()
         await connection.clear_audio()
         self.assertEqual(fake_socket.sent[-2], {"type": "response.cancel"})

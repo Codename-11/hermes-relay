@@ -85,10 +85,12 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.2.5 — Stability + Try the demo.
+v1.4.0 — Realtime voice that finishes the job.
 
-• Fixed a crash that could close the app when a non-URL value (like a label or a line copied from the docs) was entered in a server address field — it now shows an inline error instead.
-• New: Try the demo — explore an offline preview of the chat experience with no server or setup, right from the first screen.
+• Long voice tasks can queue, keep running while you ask quick follow-ups, and deliver answers in the selected realtime voice.
+• Voice sessions recover more reliably after background or route changes and clear stale task states.
+• Refresh model catalogs on demand; add opt-in notification rules and multi-device Bridge targeting.
+• Safer startup, server-address handling, long chat turns, and credential media access.
 ```
 
 ## Category

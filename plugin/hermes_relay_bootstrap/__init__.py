@@ -6,29 +6,30 @@ that waits for `aiohttp.web` to be imported, then replaces `web.Application`
 with a thin subclass that detects when hermes-agent's `APIServerAdapter`
 attaches itself to a fresh app and:
 
-1. **Injects missing compatibility routes** — older hermes-agent builds may
-   lack `/api/sessions/*`, `/api/memory`, `/api/skills`, `/api/config`, and
-   `/api/available-models`. Current upstream already has the session API and
-   read-only `/v1/skills` + `/v1/toolsets`, so native routes win per method/path
-   and the bootstrap only fills gaps.
+1. **Injects missing compatibility-only routes** — surfaces with no native
+   upstream API-server replacement yet: `/api/sessions/search`, `/api/memory`,
+   `/api/skills/{name}` (legacy detail), `PUT /api/skills/toggle` (501 stub),
+   `/api/config`, and `/api/available-models`. Native routes still win per
+   method/path if any of these ever land in core.
+
+   Retired and no longer injected (native upstream owns them): sessions
+   CRUD/messages/fork (`/api/sessions/*`, PR #33134) and the legacy read-only
+   `GET /api/skills` list (native `/v1/skills` + `/v1/toolsets`, PR #33016).
+   Older pre-#33134 core builds no longer get bootstrap-provided session CRUD;
+   clients degrade via capability probing to `/v1/chat/completions` / `/v1/runs`.
 
 2. **Installs slash-command middleware** — an aiohttp middleware that intercepts
    `/v1/chat/completions` and `/v1/runs` to handle gateway slash commands
    (`/help`, `/commands`, `/profile`, `/provider`) and return decline notices
    for stateful commands (`/model`, `/new`, `/retry`, etc.), preventing the
    LLM from hallucinating responses for them. This mirrors the upstream
-   Stage 1 preprocessor from `gateway/platforms/api_server_slash.py`.
+   Stage 1 preprocessor from `gateway/platforms/api_server_slash.py` and
+   skips itself when that native module exists.
 
-Chat streaming prefers upstream's native
-`/api/sessions/{session_id}/chat/stream` endpoint when it is advertised. Older
-builds that only get bootstrap-provided session CRUD fall back to standard
-`/v1/chat/completions` or `/v1/runs` paths.
-
-This module retires per surface, not as one broad PR cleanup. Sessions can go
-once the supported hermes-agent baseline includes PR #33134, read-only skills
-should use PR #33016's `/v1/skills`, and the remaining config/memory/legacy
-skill/available-model/slash-command surfaces need stable replacements or local
-UX removal before the package and `.pth` hook can disappear.
+This module keeps retiring per surface, not as one broad cleanup. The
+remaining config/memory/legacy skill detail+toggle/available-models/session
+search/slash-command surfaces need stable native replacements or deliberate
+local UX removal before the package and `.pth` hook can disappear entirely.
 """
 
 from __future__ import annotations

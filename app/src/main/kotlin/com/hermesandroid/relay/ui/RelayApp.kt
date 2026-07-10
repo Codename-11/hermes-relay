@@ -421,6 +421,7 @@ fun RelayApp() {
                         System.currentTimeMillis() - lastPausedAtMs.value
                     }
                     connectionViewModel.revalidateOnResume(awayMs)
+                    voiceViewModel.onAppResumed()
                 }
                 else -> {}
             }
@@ -789,6 +790,23 @@ fun RelayApp() {
     val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
     LaunchedEffect(notifyTurnComplete) {
         chatViewModel.notifyOnTurnComplete = notifyTurnComplete
+    }
+
+    // Demo-mode composer wiring: unconditional — a demo session has no API
+    // client, so the client-gated chat init effect above never runs and
+    // ChatViewModel's own handler stays null. Lambdas read live state on
+    // every send.
+    LaunchedEffect(Unit) {
+        chatViewModel.setDemoModeWiring(
+            isDemo = { connectionViewModel.isDemoMode.value },
+            handler = { connectionViewModel.chatHandler },
+        )
+        // Voice → chat breadcrumbs (e.g. "background task still running" when
+        // voice mode exits with a detached run) land as system notices in the
+        // shared chat transcript.
+        voiceViewModel.chatNoticeSink = { notice ->
+            connectionViewModel.chatHandler.addSystemNotice(notice)
+        }
     }
 
     // Sync tool annotation parsing toggle to ChatHandler

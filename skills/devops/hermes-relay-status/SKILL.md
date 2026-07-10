@@ -40,7 +40,29 @@ curl -s -o /dev/null -w "desktop: HTTP %{http_code}\n" http://127.0.0.1:8767/des
 
 # Is a phone connected? (parse `connected` field)
 curl -s http://127.0.0.1:8767/bridge/status | head -3
+
+# Multi-device Android bridge registry (phone + tablet/BOOX, when enabled)
+curl -s http://127.0.0.1:8767/bridge/devices | python3 -m json.tool
 ```
+
+If multiple Android devices are connected, verify selectors before reporting success:
+
+```bash
+curl -s 'http://127.0.0.1:8767/bridge/status?device=phone' | python3 -m json.tool
+curl -s 'http://127.0.0.1:8767/bridge/status?device=boox' | python3 -m json.tool
+curl -s 'http://127.0.0.1:8767/current_app?device=phone' | python3 -m json.tool
+curl -s 'http://127.0.0.1:8767/current_app?device=boox' | python3 -m json.tool
+
+# Change the default target for android_* tools, then smoke-test the default route.
+curl -s -X POST -H 'content-type: application/json' \
+  -d '{"device":"phone"}' http://127.0.0.1:8767/bridge/select-active | python3 -m json.tool
+curl -s http://127.0.0.1:8767/current_app | python3 -m json.tool
+curl -s -X POST -H 'content-type: application/json' \
+  -d '{"device":"boox"}' http://127.0.0.1:8767/bridge/select-active | python3 -m json.tool
+curl -s http://127.0.0.1:8767/current_app | python3 -m json.tool
+```
+
+Expected aliases include `phone`/`pixel`/`fold` for Pixel-style phones and `boox`/`note`/`notemax`/`tablet` for BOOX NoteMax-style devices. If a device is listed in `/sessions` but not `/bridge/devices`, it is paired but currently offline/asleep; have the user wake/open Hermes Relay on that device and re-check.
 
 If desktop returns 200, you have `desktop_*` tools available — go ahead and read files, run commands, take screenshots, etc. on the user's machine. If 503, tell them to run `hermes-relay` in any terminal (bare invocation = shell/TUI mode by default; that's what attaches the desktop client and establishes the channel).
 

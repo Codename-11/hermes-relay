@@ -18,6 +18,28 @@ import org.junit.Test
  */
 class HermesApiClientTest {
 
+    // --- buildApiRequestOrNull (#131 guard, streaming paths) ---
+
+    @Test
+    fun buildApiRequestOrNull_validUrlsBuildARequest() {
+        assertTrue(buildApiRequestOrNull("http://192.168.1.10:8642/api/sessions/x/chat/stream") != null)
+        assertTrue(buildApiRequestOrNull("https://hermes.example.com/v1/runs") != null)
+    }
+
+    @Test
+    fun buildApiRequestOrNull_malformedUrlsReturnNullInsteadOfThrowing() {
+        // Each would make Request.Builder.url(String) throw
+        // IllegalArgumentException on the streaming send path.
+        for (bad in listOf(
+            "http://", // empty host
+            "http://in valid host:8642/v1/runs", // space in host
+            "not-a-url/api/sessions/x/chat/stream", // no scheme (corrupt baseUrl)
+            "/api/sessions/x/chat/stream", // blank baseUrl
+        )) {
+            assertNull("expected null for malformed url '$bad'", buildApiRequestOrNull(bad))
+        }
+    }
+
     // --- HealthCheckResult sealed interface ---
 
     @Test

@@ -12,7 +12,11 @@ the adapter while the app is still being built (router not yet frozen).
 At that point, we call `_register_routes()` to bind any missing compatibility
 handlers to the same router the gateway is in the middle of populating. Route
 registration is granular: native upstream routes win per method/path, and the
-bootstrap only fills gaps that still do not exist. We also install the
+bootstrap only fills gaps that still do not exist. The injected set is
+compatibility-only — session search, memory, legacy skill detail/toggle,
+config, and available-models. Sessions CRUD/messages/fork and the legacy
+skill list are retired: native upstream owns them (PR #33134 / #33016) and
+the bootstrap no longer carries handlers for them. We also install the
 slash-command middleware that intercepts
 ``/v1/chat/completions`` and ``/v1/runs`` to handle gateway commands like
 ``/help``, ``/commands``, ``/profile``, and ``/provider`` without forwarding
@@ -36,15 +40,13 @@ logger = logging.getLogger(__name__)
 # Compatibility paths that `_handlers.register_routes()` can fill when native
 # upstream support is absent. Registration is method-aware in `_handlers.py`;
 # this set is only used for logging/cheap diagnostics in the import hook.
+# Retired surfaces (sessions CRUD/messages/fork, legacy /api/skills list) are
+# deliberately absent — native upstream owns them (PR #33134 / #33016).
 _COMPATIBILITY_PATHS: frozenset[str] = frozenset({
-    "/api/sessions",
     "/api/sessions/search",
-    "/api/sessions/{session_id}",
-    "/api/sessions/{session_id}/messages",
-    "/api/sessions/{session_id}/fork",
     "/api/memory",
-    "/api/skills",
     "/api/skills/{name}",
+    "/api/skills/toggle",
     "/api/config",
     "/api/available-models",
 })
@@ -167,10 +169,12 @@ def _apply_patch(web_module) -> None:
 def _maybe_register_routes(app, adapter) -> None:
     """Register missing compatibility routes without shadowing upstream.
 
-    Current Hermes core work is split across focused upstream PRs rather than
-    one broad session-management branch. For example, native `/api/sessions/*`
-    may exist while `/api/config`, `/api/skills`, or `/api/memory` still need
-    the relay bootstrap. Do not use all-or-nothing route detection here.
+    The registrable set is compatibility-only: session search, memory, legacy
+    skill detail/toggle, config, and available-models. Native `/api/sessions/*`
+    CRUD and `/v1/skills`/`/v1/toolsets` are upstream's alone — the bootstrap
+    carries no handlers for them anymore. Detection stays per method/path (not
+    all-or-nothing) so any remaining surface that later lands in core is
+    skipped automatically.
     """
     existing_paths: set[str] = set()
     try:

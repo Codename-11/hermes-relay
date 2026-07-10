@@ -40,9 +40,15 @@ class FakeNativeConnection:
     def __init__(self) -> None:
         self.text_inputs: list[str] = []
         self.tool_results: list[tuple[str, dict[str, Any]]] = []
+        self.context_items: list[tuple[str, str]] = []
+        self.exact_response_texts: list[str] = []
         self.request_response_count = 0
         self.cancelled = False
         self.closed = False
+        # When set, summary/exact delivery injections (recognizable by their
+        # "final spoken answer" instructions) raise — simulates the provider
+        # socket dying between run completion and result delivery.
+        self.fail_summary_requests = False
         self._events: asyncio.Queue[ProviderEvent | None] = asyncio.Queue()
 
     async def send_audio(self, pcm: bytes, sample_rate: int) -> None:
@@ -63,8 +69,30 @@ class FakeNativeConnection:
     async def send_tool_result(self, call_id: str, output: dict[str, Any]) -> None:
         self.tool_results.append((call_id, output))
 
-    async def request_response(self) -> None:
+    async def append_context_item(self, *, role: str, text: str) -> None:
+        self.context_items.append((role, text))
+
+    async def request_response(
+        self,
+        *,
+        instructions: str | None = None,
+        exact_text: str | None = None,
+    ) -> None:
+        if (
+            self.fail_summary_requests
+            and instructions
+            and "final spoken answer" in instructions
+        ):
+            raise RuntimeError("provider socket dead")
         self.request_response_count += 1
+        if exact_text:
+            self.exact_response_texts.append(exact_text)
+        if instructions:
+            # Per-response instructions replace the old fake-user-message
+            # injection (send_text) as the summary-delivery mechanism; keep
+            # them in text_inputs so existing "what got spoken" assertions
+            # don't need to know which transport carried it.
+            self.text_inputs.append(instructions)
 
     async def close(self) -> None:
         self.closed = True
@@ -100,8 +128,14 @@ class GatedHermesToolBroker:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.cancelled = asyncio.Event()
+        # Which stream_task call (0-based) was cancelled. The fast lane
+        # (background-run v2) legitimately opens-and-abandons a SECOND stream
+        # while the first run blocks, so orphaning assertions must check the
+        # first stream specifically, not "any stream cancelled".
+        self.cancelled_indices: list[int] = []
 
     async def stream_task(self, request: HermesTaskRequest):
+        index = len(self.requests)
         self.requests.append(request)
         session_id = request.session_id or "created-hermes-session"
         yield {
@@ -115,6 +149,7 @@ class GatedHermesToolBroker:
             await self.release.wait()
         except asyncio.CancelledError:
             self.cancelled.set()
+            self.cancelled_indices.append(index)
             raise
         yield {
             "type": "voice.response.delta",
@@ -206,6 +241,7 @@ class RealtimePromotionTests(AioHTTPTestCase):
             realtime_voice_voice="sine",
             realtime_voice_promotion_enabled=True,
             realtime_voice_promote_after_ms=50,
+            realtime_voice_result_delivery="speak_when_idle",
             realtime_voice_config_path=os.path.join(self._tmpdir.name, "relay-config.yaml"),
             realtime_voice_run_dir=self._tmpdir.name,
         )
@@ -339,6 +375,185 @@ class RealtimePromotionTests(AioHTTPTestCase):
                     break
                 await asyncio.sleep(0.02)
             self.assertEqual(len(summaries), 1)
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_verbatim_delivery_injects_exact_provider_reading(self) -> None:
+        """speak_verbatim supplies the provider an exact text delivery hint."""
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        self._server().realtime_agent.sessions[body["session_id"]].result_delivery = (
+            "speak_verbatim"
+        )
+        try:
+            await self._emit_tool_call(provider)
+            await self._read_until(ws, "hermes.run.promoted")
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            exact: list[str] = []
+            for _ in range(50):
+                exact = [
+                    t
+                    for t in provider.connection.text_inputs
+                    if "word for word as written" in t
+                ]
+                if exact:
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(len(exact), 1)
+            self.assertIn("Background answer ready.", exact[0])
+            self.assertEqual(
+                provider.connection.exact_response_texts,
+                ["Background answer ready."],
+            )
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_exact_delivery_forwards_one_started_event_per_response(self) -> None:
+        broker = GatedHermesToolBroker()
+        ws, provider, _ = await self._open(broker=broker)
+        try:
+            await self._emit_tool_call(provider)
+            await self._read_until(ws, "hermes.run.promoted")
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            for _ in range(50):
+                if provider.connection.exact_response_texts:
+                    break
+                await asyncio.sleep(0.02)
+
+            for _ in range(2):
+                await provider.connection.emit(
+                    ProviderEvent(
+                        ProviderEventKind.RESPONSE_STARTED,
+                        response_id="delivery-1",
+                    )
+                )
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.OUTPUT_TEXT_DELTA,
+                    response_id="delivery-1",
+                    payload={"delta": "Background answer ready."},
+                )
+            )
+            await provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_DONE, response_id="delivery-1")
+            )
+
+            events = await self._read_until(ws, "voice.response.done", limit=60)
+            starts = [
+                event
+                for event in events
+                if event.get("type") == "voice.response.started"
+                and event.get("response_id") == "delivery-1"
+            ]
+            self.assertEqual(1, len(starts), events)
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_provider_ack_suppresses_duplicate_promotion_handoff(self) -> None:
+        broker = GatedHermesToolBroker()
+        ws, provider, _ = await self._open(broker=broker)
+        try:
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.AUDIO_DELTA,
+                    response_id="resp-1",
+                    payload={"audio": b"\0\0" * 40},
+                )
+            )
+            await self._read_until(ws, "voice.output_audio.delta")
+
+            await self._emit_tool_call(provider)
+            await self._read_until(ws, "voice.playback_drain.requested")
+            await ws.send_json({"type": "playback.drained"})
+            events = await self._read_until(ws, "hermes.run.promoted")
+            promoted = next(event for event in events if event["type"] == "hermes.run.promoted")
+
+            self.assertFalse(promoted["spoken_handoff"])
+            await asyncio.sleep(0.05)
+            self.assertEqual(0, provider.connection.request_response_count)
+            self.assertEqual(
+                "running_in_background",
+                provider.connection.tool_results[0][1].get("status"),
+            )
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_injection_failure_falls_back_to_relay_tts(self) -> None:
+        """Provider socket dies between run completion and delivery: the
+        answer must still land as spoken relay-TTS audio, not vanish until
+        the confirm alarm's text emit."""
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        provider.connection.fail_summary_requests = True
+        try:
+            await self._emit_tool_call(provider, call_id="call-1")
+            await self._read_until(ws, "hermes.run.promoted")
+            await broker.started.wait()
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            events = await self._read_until(ws, "voice.response.delta")
+            fallback_delta = next(
+                e for e in events if e["type"] == "voice.response.delta"
+            )
+            self.assertEqual("hermes", fallback_delta.get("source"))
+            # The delivery tag is what lets the phone's voice overlay render
+            # hermes-sourced delivery text (plain hermes run chatter stays
+            # suppressed client-side).
+            self.assertEqual("fallback", fallback_delta.get("delivery"))
+            self.assertIn(
+                "Background answer ready", str(fallback_delta.get("delta"))
+            )
+            log_text = session.event_log_path.read_text(encoding="utf-8")
+            self.assertIn("voice.realtime_agent.summary_send_failed", log_text)
+            self.assertIn("voice.response.delivery_fallback", log_text)
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_barge_in_preempts_pending_delivery_as_text(self) -> None:
+        """A new user utterance while a delivery is injected-but-unspoken must
+        cancel the stale response and land the answer as text — never drop it
+        silently (the pre-fix behavior wiped the state with no record)."""
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        try:
+            await self._emit_tool_call(provider, call_id="call-1")
+            await self._read_until(ws, "hermes.run.promoted")
+            await broker.started.wait()
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+            for _ in range(100):
+                if any(
+                    "final spoken answer step" in t
+                    for t in provider.connection.text_inputs
+                ):
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                self.fail("forced-summary injection never reached the provider")
+
+            # User talks over the pending (never-started) delivery.
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.INPUT_TRANSCRIPT_FINAL,
+                    payload={"text": "actually tell me a joke instead"},
+                )
+            )
+            events = await self._read_until(ws, "voice.response.done")
+            visual = [e for e in events if e.get("delivery") == "visual_only"]
+            self.assertTrue(visual, [e["type"] for e in events])
+            delta = next(e for e in events if e["type"] == "voice.response.delta")
+            self.assertIn("Background answer ready", str(delta.get("delta")))
+            log_text = session.event_log_path.read_text(encoding="utf-8")
+            self.assertIn("voice.realtime_agent.delivery_preempted", log_text)
         finally:
             broker.release.set()
             await ws.close()
@@ -612,15 +827,112 @@ class RealtimePromotionTests(AioHTTPTestCase):
                     break
                 await asyncio.sleep(0.02)
             self.assertTrue(busy)
-            self.assertEqual(busy[0][1].get("status"), "already_running")
-            # First run untouched: not cancelled, still deliverable.
-            self.assertFalse(broker.cancelled.is_set())
+            # Queue contract (background-run v2 §2): the long second ask is
+            # QUEUED behind the running task instead of refused.
+            self.assertEqual(busy[0][1].get("status"), "queued")
+            self.assertEqual(busy[0][1].get("queue_position"), 1)
+            # First run untouched: ITS stream (call index 0) was never
+            # cancelled, so it stays deliverable. The fast-lane attempt for
+            # call-2 (index 1) is expected to be opened and abandoned —
+            # that cancellation is the designed fall-through to the queue.
+            self.assertNotIn(0, broker.cancelled_indices)
 
             broker.release.set()
             done = await self._read_until(ws, "hermes.run.background_completed")
             self.assertTrue(
                 any(e["type"] == "hermes.run.background_completed" for e in done)
             )
+        finally:
+            broker.release.set()
+            await ws.close()
+
+    async def test_filler_summary_triggers_fallback_delivery(self) -> None:
+        # E2E misbehaving provider: the background run completes with a real
+        # answer, but the provider responds to the forced-summary request with
+        # deferral filler instead of delivering it. The validator must catch
+        # it and the fallback must carry the actual answer — the class of
+        # failure where a completed result was silently lost behind "one
+        # moment while I look that up".
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        try:
+            await self._emit_tool_call(provider, call_id="call-1")
+            await self._read_until(ws, "hermes.run.promoted")
+            await broker.started.wait()
+            broker.release.set()
+            await self._read_until(ws, "hermes.run.background_completed")
+
+            # Wait for the delivery to inject the forced-summary request.
+            for _ in range(100):
+                if any(
+                    "final spoken answer step" in t
+                    for t in provider.connection.text_inputs
+                ):
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                self.fail("forced-summary injection never reached the provider")
+
+            # Provider misbehaves: speaks filler instead of the answer.
+            await provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_STARTED, response_id="sum-1")
+            )
+            await provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.OUTPUT_TEXT_DELTA,
+                    response_id="sum-1",
+                    payload={"delta": "One moment while I look that up."},
+                )
+            )
+            await provider.connection.emit(
+                ProviderEvent(ProviderEventKind.RESPONSE_DONE, response_id="sum-1")
+            )
+
+            # The validator flags the filler and the fallback delta carries
+            # the real answer over the ws (the fallback marker itself is a
+            # session-log event, not a ws event).
+            events = await self._read_until(ws, "voice.response.delta")
+            fallback_delta = next(
+                e for e in events if e["type"] == "voice.response.delta"
+            )
+            self.assertEqual("hermes", fallback_delta.get("source"))
+            self.assertEqual("fallback", fallback_delta.get("delivery"))
+            self.assertIn("Background answer ready", str(fallback_delta.get("delta")))
+            # The buffered filler was dropped — it never reached the client.
+            filler_deltas = [
+                e for e in events
+                if "One moment" in str(e.get("delta") or "")
+            ]
+            self.assertEqual([], filler_deltas)
+            log_text = session.event_log_path.read_text(encoding="utf-8")
+            self.assertIn("voice.response.forced_summary_fallback", log_text)
+            self.assertIn("acknowledgement_not_summary", log_text)
+            # The provider never saw the fallback delivery — a next-turn
+            # correction note must be pending so the model can't claim the
+            # task is still running (observed live).
+            self.assertIsNotNone(session.native_pending_delivery_note)
+            self.assertIn(
+                "Background answer ready",
+                session.native_pending_delivery_note,
+            )
+            self.assertIn("ALREADY COMPLETED", session.native_pending_delivery_note)
+            # Durable seed: the delivered answer is now in the provider's own
+            # conversation history as an assistant turn, so a follow-up
+            # ("what did that say?") is answerable from context without a
+            # re-run — unlike the one-shot pending note above, which only lands
+            # on the next Hermes-routed turn.
+            seeded = [
+                text
+                for role, text in provider.connection.context_items
+                if role == "assistant"
+            ]
+            self.assertTrue(
+                any("Background answer ready" in t for t in seeded),
+                f"expected a seeded assistant history item; got "
+                f"{provider.connection.context_items}",
+            )
+            self.assertIn("voice.realtime_agent.result_seeded", log_text)
         finally:
             broker.release.set()
             await ws.close()

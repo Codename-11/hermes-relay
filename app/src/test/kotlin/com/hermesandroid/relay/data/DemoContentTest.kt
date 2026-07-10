@@ -109,4 +109,24 @@ class DemoContentTest {
         // the demo looks the same every launch and the content is testable.
         assertEquals(DemoContent.transcript(), DemoContent.transcript())
     }
+
+    @Test
+    fun composerReplyFollowsTheDemoContentContract() {
+        // The canned reply for a message typed inside demo mode (composer
+        // no-op polish) must obey the same rules as the transcript: an
+        // honest offline notice, clientOnly, terminal, zero network.
+        val reply = DemoContent.composerReply(id = "demo-composer-reply-test", nowMs = 123L)
+        assertEquals("demo-composer-reply-test", reply.id)
+        assertEquals(123L, reply.timestamp)
+        assertEquals(MessageRole.ASSISTANT, reply.role)
+        assertTrue("composer reply must be clientOnly", reply.clientOnly)
+        assertFalse("composer reply must be terminal", reply.isStreaming)
+        assertTrue("composer reply carries the Demo badge", reply.badges.contains("Demo"))
+        assertTrue(
+            "composer reply should say it can't answer offline",
+            reply.content.contains("demo", ignoreCase = true),
+        )
+        assertTrue("composer reply has no attachments", reply.attachments.isEmpty())
+        assertEquals(DemoContent.DEMO_AGENT_NAME, reply.agentName)
+    }
 }

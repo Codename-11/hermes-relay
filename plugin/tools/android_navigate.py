@@ -225,7 +225,7 @@ def _capture_screenshot() -> _Screenshot:
     # graceful degradation as android_screenshot).
     token_marker = f"file://{tmp.name}"
     try:
-        from plugin.relay.client import register_media  # type: ignore
+        from ..relay.client import register_media  # type: ignore
 
         token = register_media(tmp.name, "image/jpeg", file_name="nav_step.jpg")
         if token:

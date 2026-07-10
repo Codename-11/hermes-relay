@@ -12,10 +12,7 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - "plugin/__init__.py"
-      - "plugin/android_tool.py"
-      - "plugin/cli.py"
-      - "plugin/pair.py"
+      - "plugin/*.py"
       - "plugin/plugin.yaml"
       - "plugin/relay/**"
       - "plugin/tools/**"
@@ -31,10 +28,7 @@ on:
   pull_request:
     branches: [main, dev]
     paths:
-      - "plugin/__init__.py"
-      - "plugin/android_tool.py"
-      - "plugin/cli.py"
-      - "plugin/pair.py"
+      - "plugin/*.py"
       - "plugin/plugin.yaml"
       - "plugin/relay/**"
       - "plugin/tools/**"
@@ -111,7 +105,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r relay_server/requirements.txt
+          # Editable install pulls the full runtime dependency set from
+          # pyproject.toml (requests, aiohttp, segno, httpx, websocket-client,
+          # pyyaml). test_native_layout_imports imports the whole relay module
+          # chain in a clean subprocess, so the minimal relay_server/requirements
+          # set is not enough on its own.
+          pip install -e .
           pip install pytest responses
 
       - name: Run focused Plugin tests
@@ -119,4 +118,5 @@ jobs:
           python -m pytest \
             plugin/tests/test_relay_security.py \
             plugin/tests/test_voice_routes.py \
-            plugin/tests/test_session_grants.py
+            plugin/tests/test_session_grants.py \
+            plugin/tests/test_native_layout_imports.py

@@ -1,34 +1,31 @@
-"""Compatibility handlers from the pre-upstream Hermes-Relay API branch.
+"""Compatibility-only handlers for surfaces upstream does not serve natively.
 
-The original broad branch was superseded upstream. Current Hermes main has
-native session controls via PR #33134 and read-only skills/toolsets via PR
-#33016; these handlers remain for older core builds and for compatibility-only
-surfaces that do not yet have stable API-server replacements.
+This module began as a mirror of the management endpoints from the pre-upstream
+Hermes-Relay fork branch. Upstream hermes-agent has since absorbed the major
+surfaces natively, and the bootstrap retires per surface as that happens. The
+split as of the sessions/skills retirement (HRUI-002):
 
-This file mirrors the management endpoints from the fork branch, adapted to
-take the `APIServerAdapter` instance as an explicit parameter rather than
-relying on `self`. That keeps the patch loosely coupled to upstream's class
-shape — we don't bind methods onto the adapter, just register closures that
-capture an `adapter` reference.
+RETIRED — native upstream owns these; the bootstrap no longer injects them,
+not even as a fallback for pre-#33134 core builds (older builds degrade to
+`/v1/chat/completions` / `/v1/runs` via the client's capability probe):
 
-Endpoints injected (all bearer-auth gated via `adapter._check_auth`):
+  GET/POST /api/sessions, GET/PATCH/DELETE /api/sessions/{id},
+  GET /api/sessions/{id}/messages, POST /api/sessions/{id}/fork
+      — native session control API, PR #33134
+  POST /api/sessions/{id}/chat + /chat/stream
+      — native via PR #33134 (never injected here; see note below)
+  GET /api/skills (legacy read-only list)
+      — superseded by native `/v1/skills` + `/v1/toolsets`, PR #33016
 
-  GET    /api/sessions                          — list sessions
-  POST   /api/sessions                          — create a new session
+STILL INJECTED — genuine compatibility gaps with no native API-server
+replacement yet (all bearer-auth gated via `adapter._check_auth`):
+
   GET    /api/sessions/search?q=...             — full-text message search
-  GET    /api/sessions/{session_id}             — fetch one session
-  GET    /api/sessions/{session_id}/messages    — fetch session messages
-  PATCH  /api/sessions/{session_id}             — rename / update metadata
-  DELETE /api/sessions/{session_id}             — delete a session
-  POST   /api/sessions/{session_id}/fork        — clone a session
-
   GET    /api/memory                            — read memory state
   POST   /api/memory                            — append memory entry
   PATCH  /api/memory                            — replace memory entry
   DELETE /api/memory                            — remove memory entry
-
-  GET    /api/skills                            — list skills (optional ?category=)
-  GET    /api/skills/{name}                     — fetch skill body
+  GET    /api/skills/{name}                     — fetch skill body (legacy detail)
   PUT    /api/skills/toggle                     — STUB (501 Not Implemented).
                                                   Registered so the Android client's
                                                   capability probe observes the route
@@ -36,42 +33,40 @@ Endpoints injected (all bearer-auth gated via `adapter._check_auth`):
                                                   instead of missing. See
                                                   ``toggle_skill`` docstring for the
                                                   upstream gap explanation.
-
   GET    /api/config                            — read model + config
   PATCH  /api/config                            — update model/provider/base_url
-
   GET    /api/available-models                  — provider model list
 
-NOT injected:
+Handlers take the `APIServerAdapter` instance as an explicit parameter rather
+than relying on `self`. That keeps the patch loosely coupled to upstream's
+class shape — we don't bind methods onto the adapter, just register closures
+that capture an `adapter` reference.
 
-- `POST /api/sessions/{session_id}/chat/stream` — native upstream provides
-  this in PR #33134. The bootstrap does not inject a chat-stream handler for
-  older builds because that path requires coordinating with `_create_agent` /
-  `run_conversation` — the fork's riskiest cross-cutting dependencies. Clients
-  should fall back to `/v1/chat/completions` or `/v1/runs` when chat streaming
-  is not advertised.
+Notes on surfaces that were never injected:
+
+- `POST /api/sessions/{session_id}/chat/stream` — even before the sessions
+  retirement, the bootstrap never injected a chat-stream handler because that
+  path requires coordinating with `_create_agent` / `run_conversation` — the
+  fork's riskiest cross-cutting dependencies. Clients fall back to
+  `/v1/chat/completions` or `/v1/runs` when chat streaming is not advertised.
 
 - `GET /api/skills/categories` — removed from upstream as dead code in commit
   8d023e43 ("refactor: remove dead code — 1,784 lines across 77 files"). The
-  app does not call this endpoint; skill browsing uses `/api/skills?category=`.
-  Re-injecting it would require importing a symbol that no longer exists.
+  app does not call this endpoint. Re-injecting it would require importing a
+  symbol that no longer exists.
 
-Removal note: upstream is moving toward focused native surfaces rather than one
-large frontend API patch. As each method/path lands in hermes-agent, route
-registration below skips that native route and keeps only the missing
-compatibility gaps. Cleanup should therefore happen per surface: sessions can
-retire once the supported core baseline includes PR #33134, read-only skill
-lists should use `/v1/skills` from PR #33016, while config/memory/legacy skill
-detail/toggle/available-models remain until core exposes stable equivalents or
-Hermes-Relay stops depending on them.
+Removal note: registration stays method/path-aware (`_add_route_if_missing`)
+so native upstream routes always win if any of the remaining paths ever land
+in core. Each remaining surface retires individually when core exposes a
+stable equivalent or Hermes-Relay stops depending on it: config, memory,
+legacy skill detail/toggle, available-models, and session search.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +91,9 @@ def _resolve_upstream():
         curated_models_for_provider,
         list_available_providers,
     )
-    from tools.skills_tool import skill_view, skills_list
+    # Only the legacy skill *detail* view remains bootstrap territory; the
+    # read-only list surface retired in favor of native /v1/skills (#33016).
+    from tools.skills_tool import skill_view
 
     # MemoryStore lives at tools/memory_tool.py upstream. We import it lazily
     # because it pulls in a chain of optional deps that we don't want to crash
@@ -115,7 +112,6 @@ def _resolve_upstream():
         "save_config": save_config,
         "curated_models_for_provider": curated_models_for_provider,
         "list_available_providers": list_available_providers,
-        "skills_list": skills_list,
         "skill_view": skill_view,
     }
 
@@ -169,20 +165,6 @@ def _get_memory_store(adapter, upstream):
 # Pure helpers (no adapter coupling)
 # ---------------------------------------------------------------------------
 
-def _normalize_session_record(session: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Parse serialized session fields into API-friendly JSON."""
-    if session is None:
-        return None
-    normalized = dict(session)
-    model_config = normalized.get("model_config")
-    if model_config:
-        try:
-            normalized["model_config"] = json.loads(model_config)
-        except (TypeError, json.JSONDecodeError):
-            pass
-    return normalized
-
-
 def _current_model_settings(config: Dict[str, Any]) -> Dict[str, Any]:
     """Extract model/provider/base_url/api_mode from config.yaml."""
     model_cfg = config.get("model")
@@ -214,63 +196,15 @@ def _parse_int(value: Any, default: int, minimum: int = 0) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Sessions handlers
+# Session search handler
 # ---------------------------------------------------------------------------
+#
+# The only surviving `/api/sessions*` surface. Sessions CRUD, messages, and
+# fork retired with native upstream PR #33134; full-text message search has
+# no native API-server equivalent, so it stays a compatibility injection.
 
-def _make_sessions_handlers(adapter, upstream):
+def _make_session_search_handlers(adapter, upstream):
     web = upstream["web"]
-
-    async def list_sessions(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        try:
-            limit = _parse_int(request.query.get("limit"), 50)
-            offset = _parse_int(request.query.get("offset"), 0)
-        except ValueError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-        source = (request.query.get("source") or "").strip() or None
-        db = _get_session_db(adapter, upstream)
-        items = [
-            _normalize_session_record(item)
-            for item in db.list_sessions_rich(source=source, limit=limit, offset=offset)
-        ]
-        total = db.session_count(source=source)
-        return web.json_response({"items": items, "total": total})
-
-    async def create_session(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, Exception):
-            return web.json_response({"error": "Invalid JSON in request body"}, status=400)
-
-        title = body.get("title")
-        source = str(body.get("source") or "api_server").strip() or "api_server"
-        model = body.get("model")
-        system_prompt = body.get("system_prompt")
-        session_id = f"sess_{uuid.uuid4().hex}"
-        db = _get_session_db(adapter, upstream)
-
-        try:
-            db.create_session(
-                session_id=session_id,
-                source=source,
-                model=model,
-                system_prompt=system_prompt,
-            )
-            if title is not None:
-                db.set_session_title(session_id, str(title))
-        except ValueError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-        except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
-
-        session = _normalize_session_record(db.get_session(session_id))
-        return web.json_response({"session": session})
 
     async def search_sessions(request):
         auth_err = adapter._check_auth(request)
@@ -289,114 +223,8 @@ def _make_sessions_handlers(adapter, upstream):
         results = db.search_messages(query=query, limit=limit, offset=offset)
         return web.json_response({"query": query, "count": len(results), "results": results})
 
-    async def get_session(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        db = _get_session_db(adapter, upstream)
-        session = _normalize_session_record(db.get_session(session_id))
-        if session is None:
-            return web.json_response({"error": "Session not found"}, status=404)
-        return web.json_response({"session": session})
-
-    async def get_session_messages(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        db = _get_session_db(adapter, upstream)
-        if db.get_session(session_id) is None:
-            db.ensure_session(session_id, source="web")
-        items = db.get_messages(session_id)
-        return web.json_response({"items": items, "total": len(items)})
-
-    async def update_session(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        db = _get_session_db(adapter, upstream)
-        if db.get_session(session_id) is None:
-            return web.json_response({"error": "Session not found"}, status=404)
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, Exception):
-            return web.json_response({"error": "Invalid JSON in request body"}, status=400)
-
-        try:
-            if "title" in body:
-                db.set_session_title(session_id, body.get("title"))
-            if "system_prompt" in body:
-                db.update_system_prompt(session_id, body.get("system_prompt"))
-            if "end_reason" in body:
-                db.end_session(session_id, str(body.get("end_reason") or "updated"))
-        except ValueError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-        except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
-
-        session = _normalize_session_record(db.get_session(session_id))
-        return web.json_response({"session": session})
-
-    async def delete_session(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        db = _get_session_db(adapter, upstream)
-        deleted = db.delete_session(session_id)
-        if not deleted:
-            return web.json_response({"error": "Session not found"}, status=404)
-        return web.json_response({"ok": True})
-
-    async def fork_session(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        db = _get_session_db(adapter, upstream)
-        original = db.get_session(session_id)
-        if original is None:
-            return web.json_response({"error": "Session not found"}, status=404)
-
-        forked_id = f"sess_{uuid.uuid4().hex}"
-        try:
-            db.create_session(
-                session_id=forked_id,
-                source=original.get("source") or "api_server",
-                model=original.get("model"),
-                system_prompt=original.get("system_prompt"),
-                user_id=original.get("user_id"),
-                parent_session_id=session_id,
-            )
-            for message in db.get_messages(session_id):
-                db.append_message(
-                    session_id=forked_id,
-                    role=message.get("role"),
-                    content=message.get("content"),
-                    tool_name=message.get("tool_name"),
-                    tool_calls=message.get("tool_calls"),
-                    tool_call_id=message.get("tool_call_id"),
-                    token_count=message.get("token_count"),
-                    finish_reason=message.get("finish_reason"),
-                    reasoning=message.get("reasoning"),
-                )
-        except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
-
-        session = _normalize_session_record(db.get_session(forked_id))
-        return web.json_response({"session": session, "forked_from": session_id})
-
     return {
-        "list_sessions": list_sessions,
-        "create_session": create_session,
         "search_sessions": search_sessions,
-        "get_session": get_session,
-        "get_session_messages": get_session_messages,
-        "update_session": update_session,
-        "delete_session": delete_session,
-        "fork_session": fork_session,
     }
 
 
@@ -512,20 +340,16 @@ def _make_memory_handlers(adapter, upstream):
 
 
 # ---------------------------------------------------------------------------
-# Skills handlers
+# Skills handlers (legacy detail + toggle stub only)
 # ---------------------------------------------------------------------------
+#
+# The legacy read-only list (`GET /api/skills`) retired in favor of native
+# `/v1/skills` + `/v1/toolsets` (PR #33016). The per-skill detail view and
+# the 501 toggle stub remain: neither has a native API-server equivalent.
 
 def _make_skills_handlers(adapter, upstream):
     web = upstream["web"]
-    skills_list = upstream["skills_list"]
     skill_view = upstream["skill_view"]
-
-    async def list_skills(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        category = (request.query.get("category") or "").strip() or None
-        return web.json_response(json.loads(skills_list(category=category)))
 
     async def view_skill(request):
         auth_err = adapter._check_auth(request)
@@ -577,7 +401,6 @@ def _make_skills_handlers(adapter, upstream):
         )
 
     return {
-        "list_skills": list_skills,
         "view_skill": view_skill,
         "toggle_skill": toggle_skill,
     }
@@ -737,29 +560,29 @@ def register_routes(app, adapter) -> int:
     aiohttp keeps mutable until `AppRunner.setup()` freezes it shortly after
     `connect()` returns. Native upstream routes win per method/path.
 
+    Only compatibility-only surfaces are registered here. Sessions CRUD,
+    messages, and fork (native via PR #33134) and the legacy read-only skill
+    list (native `/v1/skills` via PR #33016) are retired — see the module
+    docstring for the full split.
+
     Returns the number of compatibility routes actually added.
     """
     upstream = _resolve_upstream()
 
-    sessions = _make_sessions_handlers(adapter, upstream)
+    search = _make_session_search_handlers(adapter, upstream)
     memory = _make_memory_handlers(adapter, upstream)
     skills = _make_skills_handlers(adapter, upstream)
     config = _make_config_handlers(adapter, upstream)
 
     routes = [
-        ("GET", "/api/sessions", sessions["list_sessions"]),
-        ("POST", "/api/sessions", sessions["create_session"]),
-        ("GET", "/api/sessions/search", sessions["search_sessions"]),
-        ("GET", "/api/sessions/{session_id}", sessions["get_session"]),
-        ("GET", "/api/sessions/{session_id}/messages", sessions["get_session_messages"]),
-        ("PATCH", "/api/sessions/{session_id}", sessions["update_session"]),
-        ("DELETE", "/api/sessions/{session_id}", sessions["delete_session"]),
-        ("POST", "/api/sessions/{session_id}/fork", sessions["fork_session"]),
+        # Full-text message search — no native API-server equivalent.
+        ("GET", "/api/sessions/search", search["search_sessions"]),
+        # Memory CRUD — no native API-server equivalent.
         ("GET", "/api/memory", memory["get_memory"]),
         ("POST", "/api/memory", memory["add_memory"]),
         ("PATCH", "/api/memory", memory["replace_memory"]),
         ("DELETE", "/api/memory", memory["delete_memory"]),
-        ("GET", "/api/skills", skills["list_skills"]),
+        # Legacy skill detail — native /v1/skills is list-only.
         ("GET", "/api/skills/{name}", skills["view_skill"]),
     ]
     # Stubbed 501 — see `toggle_skill` docstring. Registered so the
@@ -770,6 +593,8 @@ def register_routes(app, adapter) -> int:
 
     routes.extend(
         [
+            # Model/config + provider model list — dashboard web_server has
+            # equivalents, but the API server does not.
             ("GET", "/api/config", config["get_config"]),
             ("PATCH", "/api/config", config["update_config"]),
             ("GET", "/api/available-models", config["available_models"]),

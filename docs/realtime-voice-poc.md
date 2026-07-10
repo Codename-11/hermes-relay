@@ -1153,7 +1153,7 @@ strategy:
 |---|---|---|
 | `hold-floor-ok` | Socket survives idle; post-idle turn clean | Hold the provider session open during the background run (default) |
 | `needs-keepalive` | Survives but post-idle turn degraded | Hold open + send a minimal keep-alive; revalidate the first post-idle turn |
-| `must-reopen` | Socket closes/errors while idle | Detach the run but close+reopen (or resume) the provider socket on completion |
+| `must-reopen` | Socket closes/errors while idle, or no keepalive resets provider expiry | Let the provider socket expire cleanly and reopen/reseed on the next user turn |
 
 ### Findings
 
@@ -1168,7 +1168,8 @@ speaking and the next `response.create`, across the resume TTL).
 | Provider | Date | Basis | Windows | Post-idle turn | Verdict |
 |---|---|---|---|---|---|
 | OpenAI (`gpt-realtime-2`) | 2026-05-24 | empirical (probe) | 10s, 20s, 30s | audio returned, no error | **`hold-floor-ok`** |
-| xAI (`grok-voice-latest`) | 2026-05-24 | existing production behavior + protocol parity | between-turn idle in daily use | clean (no idle-close reports) | **`hold-floor-ok`** |
+| xAI (`grok-voice-latest`) | 2026-05-24 | existing production behavior + protocol parity | between-turn idle in daily use | clean (no idle-close reports) | ~~`hold-floor-ok`~~ (revised below) |
+| xAI (`grok-voice-latest`) | 2026-07-08 | empirical (live log + four relay-host probes) | 900s continuous silence | conversation closed server-side; silent PCM and `session.update` pings also timed out at 900.0s | **`must-reopen`** |
 
 **OpenAI — empirical.** Ran `realtime-provider-idle-probe.py --provider openai
 --windows 10,20,30` against the live API. The session stayed open across all
@@ -1188,9 +1189,41 @@ degrading on those idle gaps. Background promotion does not lengthen the
 *open-response* duration (the call is closed with an interim ack), so it does not
 introduce a new idle condition beyond what xAI already tolerates today. Running
 the probe on the relay host is retained as a **regression check**, not a
-precondition. If it ever returns `needs-keepalive`/`must-reopen`, set that
-provider's `realtime_voice` override accordingly; the per-provider setting
-surface already supports it.
+precondition. This short-window verdict was later revised for xAI's 900s
+continuous-silence expiry; see the revision below.
 
 **Conclusion.** Both verdicts are `hold-floor-ok`, so `promotion_enabled`
 defaults **on**. Phase 0's gate is satisfied; default-on is no longer blocked.
+
+### Revision (2026-07-08) — xAI must reopen after ~900s idle expiry
+
+The regression case the 2026-05-24 xAI verdict reserved for has occurred. A
+live relay event log showed a session dying while quiet: after a background-run
+summary finished speaking, a complete gap of zero events for ~896s ended in
+`voice.error` — "xAI Realtime error: Conversation timed out after 900.0
+seconds due to inactivity". The 2026-05-24 verdict was scoped to *between-turn*
+idle in normal use (tens of seconds); it never probed the 15-minute scale,
+because "daily use" never leaves a session silent that long. The client's
+manual turn-taking (`turn_detection: None`, mic streamed only while the user
+talks) means nothing on the provider socket resets xAI's inactivity timer
+during a background wait or an open-but-silent session.
+
+**Further revision (2026-07-08 PM) — no keepalive works.** Four relay-host
+probe runs completed against live xAI: the repro died at exactly 900.0s,
+silent-PCM appends at 240s/480s/720s also died at exactly 900.0s, and valid
+`session.update` pings at 240s/480s/720s (each acknowledged by the server)
+still timed out at exactly 900.0s. xAI's conversation-inactivity timer counts
+only real conversation items — no side-channel message resets it.
+
+**Final design (shipped in the broker, 2026-07-08 PM).** Keepalive is retired.
+An xAI idle timeout is treated as routine provider-session expiry: the broker
+logs `voice.realtime_agent.provider_idle_close`, closes the attached Android
+websocket cleanly while the user is idle, and does not emit a `voice.error`.
+The next user turn opens a fresh provider conversation and is seeded from the
+durable Hermes session rather than relying on the expired provider-side
+conversation history. This is equivalent to reopening before the deadline for
+context preservation, but avoids a timer race and churn while the user is not
+speaking.
+
+OpenAI's tolerance at the 900s scale remains unprobed (2026-05-24 ran only
+10/20/30s).

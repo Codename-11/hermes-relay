@@ -155,6 +155,7 @@ fun VoiceModeOverlay(
     // Cancels the promoted/durable background Hermes run from the chip's ✕.
     // Default no-op so existing call sites/previews keep compiling.
     onBackgroundRunCancel: () -> Unit = {},
+    onBackgroundRunTap: () -> Unit = {},
     onHermesConfirmationAnswer: (String) -> Unit = {},
     // === END v0.4.1 ===
 ) {
@@ -174,14 +175,12 @@ fun VoiceModeOverlay(
         }
     }
 
-    // Pipe classified voice errors to the app-wide snackbar host. The inline
-    // error banner stays as a belt-and-suspenders for longer-lived messages.
-    val snackbarHost = LocalSnackbarHost.current
-    LaunchedEffect(errorEvents) {
-        errorEvents?.collect { err ->
-            snackbarHost.showHumanError(err)
-        }
-    }
+    // Voice errors surface ONLY on the overlay's own inline top banner
+    // (uiState.error) while the overlay is up — we deliberately do NOT also pipe
+    // them to the app-wide bottom snackbar. Doing both duplicated the message
+    // and left a retry-only, un-dismissable toast at the bottom during long /
+    // timed-out background runs. (errorEvents is still used by the chat + voice
+    // settings surfaces when the overlay isn't the active surface.)
 
     Box(
         modifier = modifier
@@ -351,6 +350,7 @@ fun VoiceModeOverlay(
                 BackgroundRunChip(
                     run = uiState.backgroundRun,
                     onCancel = onBackgroundRunCancel,
+                    onTap = onBackgroundRunTap,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 4.dp),
@@ -447,6 +447,25 @@ fun VoiceModeOverlay(
             }
         }
 
+        // Compact mode: the background-run chip must survive outside focus
+        // mode too — a running task with no visible presence reads as lost
+        // (the chip previously existed ONLY in the focus layout).
+        AnimatedVisibility(
+            visible = !focusMode && uiState.backgroundRun != null,
+            enter = fadeIn(tween(140)),
+            exit = fadeOut(tween(180)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp, start = 24.dp, end = 24.dp),
+        ) {
+            BackgroundRunChip(
+                run = uiState.backgroundRun,
+                onCancel = onBackgroundRunCancel,
+                onTap = onBackgroundRunTap,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
         // Error banner
         AnimatedVisibility(
             visible = uiState.error != null,
@@ -470,8 +489,14 @@ fun VoiceModeOverlay(
                         text = uiState.error.orEmpty(),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                     )
+                    // Dismiss clears the error and returns to Idle without
+                    // retrying, so a failed/timed-out turn never traps the user
+                    // on a retry-only banner.
+                    TextButton(onClick = { onClearError() }) {
+                        Text("Dismiss")
+                    }
                     TextButton(
                         onClick = {
                             onClearError()
@@ -1239,6 +1264,18 @@ private fun CompactTranscriptRow(
             )
         }
         val hasText = message.content.isNotBlank()
+        // Tools run before the agent's reply, so render the tool rows above the
+        // reply text — the bubble then reads in chronological order (tool calls
+        // ran → answer) instead of showing the answer above the tools that
+        // preceded it.
+        if (message.toolCalls.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                message.toolCalls.forEach { toolCall ->
+                    VoiceToolStatusRow(toolCall)
+                }
+            }
+            if (hasText) Spacer(Modifier.height(6.dp))
+        }
         when {
             isVoiceActionBubble && hasText -> MarkdownContent(
                 content = message.content,
@@ -1258,14 +1295,6 @@ private fun CompactTranscriptRow(
                 maxLines = if (expanded) Int.MAX_VALUE else 6,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
-        if (message.toolCalls.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                message.toolCalls.forEach { toolCall ->
-                    VoiceToolStatusRow(toolCall)
-                }
-            }
         }
     }
 }
@@ -1480,6 +1509,7 @@ private fun DestructiveCountdownRow(
 private fun BackgroundRunChip(
     run: BackgroundRunState?,
     onCancel: () -> Unit,
+    onTap: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var latest by remember { mutableStateOf<BackgroundRunState?>(null) }
@@ -1509,14 +1539,19 @@ private fun BackgroundRunChip(
             animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
             label = "bgRunPulseAlpha",
         )
+        val done = display.phase == BackgroundRunPhase.DONE
         val dotColor = when (display.phase) {
             BackgroundRunPhase.RECONNECTING -> MaterialTheme.colorScheme.tertiary
             else -> MaterialTheme.colorScheme.primary
         }
+        // A settled (DONE) chip reads as an outcome, not activity: solid dot,
+        // no pulse, no live ticker.
+        val dotAlpha = if (done) 1f else pulse
         val title = when (display.phase) {
             BackgroundRunPhase.RECONNECTING -> "Reconnecting — your task is still running"
             BackgroundRunPhase.DELIVERING -> display.message
             BackgroundRunPhase.RUNNING -> display.message
+            BackgroundRunPhase.DONE -> display.message
         }
         val detail = buildList {
             display.statusLine
@@ -1528,12 +1563,18 @@ private fun BackgroundRunChip(
                         if (display.completedToolCount == 1) "" else "s"
                 )
             }
-            add(elapsedLabel)
+            if (display.queuedCount > 0) {
+                add("+${display.queuedCount} queued")
+            }
+            if (!done) add(elapsedLabel)
         }.joinToString(" · ")
 
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.secondaryContainer,
+            // Tap on a settled chip = respeak the delivered answer (the VM
+            // no-ops the tap for live phases).
+            onClick = onTap,
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1543,7 +1584,7 @@ private fun BackgroundRunChip(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(dotColor.copy(alpha = pulse)),
+                        .background(dotColor.copy(alpha = dotAlpha)),
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -1570,7 +1611,9 @@ private fun BackgroundRunChip(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Cancel background task",
+                        // The VM treats ✕ on a DONE chip as a local dismiss,
+                        // never a cancel — label it accordingly for TalkBack.
+                        contentDescription = if (done) "Dismiss" else "Cancel background task",
                         tint = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.size(16.dp),
                     )

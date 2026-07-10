@@ -335,8 +335,11 @@ while a turn is thinking or speaking, Android follows the app's current relay
 route signal and can reopen the same relay voice session before the old
 websocket times out. It sends a session resume token and its last received
 audio/event IDs, and the relay replays missed status or PCM chunks instead of
-starting a second Hermes run. If the resume window expires, the app shows a
-recoverable voice error and the next tap starts a fresh turn.
+starting a second Hermes run. Android waits for the relay's resume confirmation
+before sending another recorded turn, and retries for a bounded window that
+starts when the route is lost. If that window expires, the app detaches the old
+task status, shows a recoverable voice error, and the next tap starts a fresh
+turn; a durable Hermes task may still report through chat or notification.
 
 Voice turns include interface context. In stable voice mode the chat agent is
 told the turn came through `Hermes Chat + Voice Output`; in Realtime Agent mode

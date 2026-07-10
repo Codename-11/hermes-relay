@@ -71,11 +71,23 @@ class GatewayChatClient(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     /** Max wall-clock a single mid-turn reconnect keeps retrying before failing the turn. */
     private val midTurnRejoinWindowMs: Long = MAX_MIDTURN_REJOIN_MS,
+    /** Test seam — generic RPC ack timeout. Production keeps [RPC_TIMEOUT_MS]. */
+    private val rpcTimeoutMs: Long = RPC_TIMEOUT_MS,
+    /** Test seam — `prompt.submit` ack ceiling. Production keeps [PROMPT_SUBMIT_REQUEST_TIMEOUT_MS]. */
+    private val promptSubmitTimeoutMs: Long = PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
+    /** Test seam — idle-progress watchdog base. Production keeps [TURN_TIMEOUT_MS]. */
+    private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
 ) {
     companion object {
         private const val TAG = "GatewayChatClient"
 
-        /** Mirrors the desktop CLI's turn timeout — reset on every received event. */
+        /**
+         * Idle-progress turn watchdog — reset on EVERY received gateway event
+         * (deltas, tool events, status lines), so it only fires after this
+         * long with no events at all. It is NOT a hard turn cap: a turn that
+         * keeps streaming lives indefinitely, and a slow `prompt.submit` ack
+         * is bounded separately by [PROMPT_SUBMIT_REQUEST_TIMEOUT_MS].
+         */
         private const val TURN_TIMEOUT_MS = 180_000L
 
         /**
@@ -88,14 +100,22 @@ class GatewayChatClient(
         private const val ASK_SUDO_TIMEOUT_MS = 150_000L
         private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
 
-        private fun watchdogTimeoutFor(eventType: String): Long = when (eventType) {
-            "clarify.request", "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
-            "sudo.request" -> ASK_SUDO_TIMEOUT_MS
-            "approval.request", "terminal.read.request" -> ASK_UNBOUNDED_TIMEOUT_MS
-            else -> TURN_TIMEOUT_MS
-        }
-
         private const val RPC_TIMEOUT_MS = 15_000L
+
+        /**
+         * `prompt.submit` ack ceiling — mirrors upstream desktop's
+         * PROMPT_SUBMIT_REQUEST_TIMEOUT_MS (apps/desktop/src/hermes.ts,
+         * upstream commit 164144183). The submit is effectively
+         * fire-and-forget: turn completion is signaled by stream events
+         * (`message.complete`), NOT by the RPC return, and MoA/deep-reasoning/
+         * tool-heavy turns can legitimately take minutes to ack. Bounding the
+         * ack by [RPC_TIMEOUT_MS] false-failed a running turn into the SSE
+         * preflight fallback — which resubmits the same prompt → duplicate
+         * turn. Matches the backend's own agent-turn ceiling
+         * (agent.gateway_timeout = 1800s), so this only fires when the turn
+         * would have been abandoned server-side anyway.
+         */
+        private const val PROMPT_SUBMIT_REQUEST_TIMEOUT_MS = 1_800_000L
         private const val CONNECT_TIMEOUT_MS = 20_000L
 
         /**
@@ -417,8 +437,26 @@ class GatewayChatClient(
                         put("text", text)
                         truncateBeforeUserOrdinal?.let { put("truncate_before_user_ordinal", it) }
                     },
+                    // Long-running RPC, not a generic 15s ack — see the
+                    // constant's doc. The idle watchdog (armed above, reset by
+                    // every event) owns liveness while this await is pending.
+                    timeoutMs = promptSubmitTimeoutMs,
                 )
                 if (submitted.isFailure) {
+                    // Once this turn's own events are flowing (or it already
+                    // finished), the prompt provably reached the server — a
+                    // slow, lost, or socket-severed ack must NOT preflight-fail
+                    // into the SSE fallback, which would resubmit the same
+                    // prompt as a duplicate turn. Recovery belongs to the
+                    // stream: the watchdog and mid-turn rejoin own it.
+                    if (turn.started || turn.ended) {
+                        Log.w(
+                            TAG,
+                            "prompt.submit ack failed after turn start " +
+                                "(${submitted.exceptionOrNull()?.message}) — no SSE fallback",
+                        )
+                        return@launch
+                    }
                     activeTurn = null
                     turn.disarmWatchdog()
                     throw GatewayPreflightException(
@@ -723,7 +761,7 @@ class GatewayChatClient(
      * generic alias. Connects on demand if needed. Switching a model is then a
      * `/model <model> --provider <slug>` slash dispatch.
      */
-    suspend fun modelOptions(): Result<GatewayModelOptions> {
+    suspend fun modelOptions(refresh: Boolean = false): Result<GatewayModelOptions> {
         if (webSocket == null || readySignal?.isCompleted != true) {
             try {
                 connectMutex.withLock { ensureConnected() }
@@ -731,7 +769,10 @@ class GatewayChatClient(
                 return Result.failure(e)
             }
         }
-        val params = buildJsonObject { liveSessionId?.let { put("session_id", it) } }
+        val params = buildJsonObject {
+            liveSessionId?.let { put("session_id", it) }
+            if (refresh) put("refresh", true)
+        }
         return rpc("model.options", params).map { result ->
             val providers = (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
                 val obj = el as? JsonObject ?: return@mapNotNull null
@@ -1294,7 +1335,7 @@ class GatewayChatClient(
                         retargetedThisTurn = false
                         POST_RETARGET_SETTLE_MS
                     } else {
-                        TURN_TIMEOUT_MS
+                        turnIdleTimeoutMs
                     },
                 )
                 return
@@ -1336,7 +1377,7 @@ class GatewayChatClient(
     private suspend fun rpc(
         method: String,
         params: JsonObject,
-        timeoutMs: Long = RPC_TIMEOUT_MS,
+        timeoutMs: Long = rpcTimeoutMs,
     ): Result<JsonObject> {
         val socket = webSocket ?: return Result.failure(GatewayRpcException("not connected"))
         val id = rpcId.getAndIncrement()
@@ -1448,6 +1489,14 @@ class GatewayChatClient(
     // Turn handle
     // ------------------------------------------------------------------
 
+    /** Per-event idle-watchdog duration — asks block server-side with no events, so they arm longer. */
+    private fun watchdogTimeoutFor(eventType: String): Long = when (eventType) {
+        "clarify.request", "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
+        "sudo.request" -> ASK_SUDO_TIMEOUT_MS
+        "approval.request", "terminal.read.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+        else -> turnIdleTimeoutMs
+    }
+
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
     ) : ActiveTurnHandle {
@@ -1470,7 +1519,19 @@ class GatewayChatClient(
 
         val ended: Boolean get() = mapper.turnEnded || cancelled
 
+        /**
+         * True once any turn-scoped event has arrived — proof the server
+         * received the submit and is running the turn. `session.info` doesn't
+         * count: it's connection-level (resume/config echoes) and can arrive
+         * independent of this turn, so it must not suppress a legitimate
+         * preflight fallback.
+         */
+        @Volatile
+        var started = false
+            private set
+
         fun onEvent(type: String, payload: JsonObject?) {
+            if (type != "session.info") started = true
             tracer.mark("ttfe")
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
                 tracer.mark("ttft")
@@ -1486,7 +1547,7 @@ class GatewayChatClient(
             }
         }
 
-        fun armWatchdog(timeoutMs: Long = TURN_TIMEOUT_MS) {
+        fun armWatchdog(timeoutMs: Long = turnIdleTimeoutMs) {
             watchdog?.cancel()
             watchdog = scope.launch {
                 delay(timeoutMs)

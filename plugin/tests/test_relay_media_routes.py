@@ -17,10 +17,12 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
+from plugin.relay import media
 from plugin.relay.config import RelayConfig
 from plugin.relay.server import create_app
 
@@ -302,6 +304,27 @@ class RelayMediaRoutesTests(AioHTTPTestCase):
         # Phone-provided hint overrides the guess for .bin
         self.assertEqual(resp.headers.get("Content-Type"), "application/json")
 
+    async def test_by_path_denies_credentials_inside_sandbox_in_strict_mode(self) -> None:
+        """The credential denylist is always-on — it outranks the allowlist.
+
+        Even when a credential file sits INSIDE an allowed root (an operator
+        who allowlisted a directory containing Hermes state), strict mode
+        must still refuse to serve it. Mirrors upstream media-delivery
+        hardening where the denylist applies in every mode.
+        """
+        fake_home = os.path.join(self._sandbox, "hermes-home")
+        os.makedirs(fake_home, exist_ok=True)
+        env_file = _write_file(fake_home, ".env", content=b"API_KEY=sk-test")
+        token_bearer = await self._create_session_token()
+
+        with mock.patch.dict(os.environ, {"HERMES_HOME": fake_home}):
+            resp = await self.client.get(
+                "/media/by-path",
+                params={"path": env_file},
+                headers={"Authorization": f"Bearer {token_bearer}"},
+            )
+        self.assertEqual(resp.status, 403)
+
     async def test_by_path_oversized_returns_403(self) -> None:
         # Shrink the registry's size cap to 10 bytes, write a bigger file.
         # Restore in finally so later tests in the class (which share one
@@ -331,7 +354,10 @@ class RelayMediaByPathPermissiveTests(AioHTTPTestCase):
     default on-server behavior — it was introduced to fix the "LLM finds
     a file in ~/projects and the phone says Path not allowed" friction.
     The allowlist is still honored by the token path (/media/register) and
-    by by-path when ``RELAY_MEDIA_STRICT_SANDBOX=1`` is set.
+    by by-path when ``RELAY_MEDIA_STRICT_SANDBOX=1`` is set. The always-on
+    credential/system denylist (covered by
+    :class:`RelayMediaByPathDenylistTests`) is the one exception to
+    "any absolute regular file".
     """
 
     async def get_application(self) -> web.Application:
@@ -424,6 +450,187 @@ class RelayMediaByPathPermissiveTests(AioHTTPTestCase):
         body = await resp.json()
         self.assertFalse(body["ok"])
         self.assertIn("allowed root", body["error"])
+
+
+class RelayMediaByPathDenylistTests(AioHTTPTestCase):
+    """Always-on credential/system denylist on /media/by-path (HRUI-014).
+
+    Runs in PERMISSIVE mode (``strict_sandbox=False``, the production
+    default) — the denylist must hold even with the allowlist off, mirroring
+    upstream hermes-agent's media-delivery hardening
+    (``gateway/platforms/base.py`` ``validate_media_delivery_path``). A
+    prompt-injected ``MEDIA:~/.hermes/mcp-tokens/<server>.json`` marker must
+    404/403 rather than hand a paired phone a live credential.
+
+    ``HERMES_HOME`` is pointed at a temp dir for the lifetime of the test
+    app so credential fixtures never touch the real ``~/.hermes``.
+    """
+
+    async def get_application(self) -> web.Application:
+        self._plain_dir = tempfile.mkdtemp(prefix="hermes_denylist_plain_")
+        self._hermes_home = tempfile.mkdtemp(prefix="hermes_denylist_home_")
+        self._cleanup_paths: list[str] = [self._plain_dir, self._hermes_home]
+
+        # The denylist resolves $HERMES_HOME at check time, so patching the
+        # env here covers every request the class makes.
+        self._env_patcher = mock.patch.dict(
+            os.environ, {"HERMES_HOME": self._hermes_home}
+        )
+        self._env_patcher.start()
+
+        # Credential fixtures inside the fake Hermes home.
+        _write_file(self._hermes_home, ".env", content=b"API_KEY=sk-secret")
+        _write_file(self._hermes_home, "auth.json", content=b"{}")
+        _write_file(self._hermes_home, "config.yaml", content=b"key: value")
+        mcp_dir = os.path.join(self._hermes_home, "mcp-tokens")
+        os.makedirs(mcp_dir, exist_ok=True)
+        _write_file(mcp_dir, "github.json", content=b'{"access_token":"gho_x"}')
+        pairing_dir = os.path.join(self._hermes_home, "pairing")
+        os.makedirs(pairing_dir, exist_ok=True)
+        _write_file(pairing_dir, "pending.json", content=b"{}")
+        # An ordinary (non-credential) file at the Hermes home root — the
+        # denylist enumerates credentials per-file/per-dir, it is NOT a
+        # whole-tree deny of ~/.hermes.
+        _write_file(self._hermes_home, "notes.txt", content=b"deliverable")
+
+        config = RelayConfig()
+        config.media_allowed_roots = [self._plain_dir]
+        config.media_strict_sandbox = False
+        return create_app(config)
+
+    async def tearDownAsync(self) -> None:
+        await super().tearDownAsync()
+        self._env_patcher.stop()
+        for path in getattr(self, "_cleanup_paths", []):
+            shutil.rmtree(path, ignore_errors=True)
+
+    # ── Helpers ─────────────────────────────────────────────────────────
+
+    def _server(self):
+        return self.app["server"]
+
+    async def _get_by_path(self, path: str):
+        token = self._server().sessions.create_session(
+            "test-device", "test-id"
+        ).token
+        return await self.client.get(
+            "/media/by-path",
+            params={"path": path},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    # ── Permissive mode stays permissive ────────────────────────────────
+
+    async def test_ordinary_file_still_served(self) -> None:
+        contents = b"\x89PNG\r\n\x1a\nordinary-bytes"
+        path = _write_file(self._plain_dir, "chart.png", content=contents)
+        resp = await self._get_by_path(path)
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(await resp.read(), contents)
+
+    async def test_ordinary_file_in_hermes_home_root_still_served(self) -> None:
+        """Per-file enumeration — non-credential ~/.hermes files deliver."""
+        resp = await self._get_by_path(
+            os.path.join(self._hermes_home, "notes.txt")
+        )
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(await resp.read(), b"deliverable")
+
+    # ── Credential paths → 403 ──────────────────────────────────────────
+
+    async def test_credential_files_return_403(self) -> None:
+        denied = [
+            os.path.join(self._hermes_home, ".env"),
+            os.path.join(self._hermes_home, "auth.json"),
+            os.path.join(self._hermes_home, "config.yaml"),
+            os.path.join(self._hermes_home, "mcp-tokens", "github.json"),
+            os.path.join(self._hermes_home, "pairing", "pending.json"),
+        ]
+        for path in denied:
+            with self.subTest(path=path):
+                resp = await self._get_by_path(path)
+                self.assertEqual(resp.status, 403)
+
+    async def test_denied_path_returns_403_even_when_missing(self) -> None:
+        """The deny check precedes the existence check — a probe for a
+        credential file must not learn whether it exists (403, never 404)."""
+        resp = await self._get_by_path(
+            os.path.join(self._hermes_home, "credentials")
+        )
+        self.assertEqual(resp.status, 403)
+
+    async def test_symlink_resolving_into_denied_path_returns_403(self) -> None:
+        """Symlinks are resolved before the deny check — an innocent-looking
+        link in a deliverable directory can't launder a credential path."""
+        target = os.path.join(self._hermes_home, ".env")
+        link = os.path.join(self._plain_dir, "innocent.txt")
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError) as exc:
+            # Windows requires SeCreateSymbolicLinkPrivilege / Developer
+            # Mode; skip rather than fail on unprivileged runners.
+            self.skipTest(f"symlink creation unavailable here: {exc}")
+        resp = await self._get_by_path(link)
+        self.assertEqual(resp.status, 403)
+
+
+class MediaDenylistUnitTests(unittest.TestCase):
+    """Direct unit coverage of the denylist helpers in plugin.relay.media.
+
+    These pin the home-directory semantics that are awkward to exercise
+    through HTTP (they'd require fixtures in the real ``~/.ssh``): denied
+    home subpaths, denied system prefixes, and the own-home exemption.
+    """
+
+    def _patched_home_env(self, home: str) -> dict[str, str]:
+        # posixpath.expanduser reads HOME; ntpath.expanduser prefers
+        # USERPROFILE — set both so the test is platform-agnostic.
+        return {"HOME": home, "USERPROFILE": home}
+
+    def test_home_credential_dirs_are_denied(self) -> None:
+        fake_home = tempfile.mkdtemp(prefix="hermes_denylist_userhome_")
+        self.addCleanup(shutil.rmtree, fake_home, ignore_errors=True)
+        ssh_dir = os.path.join(fake_home, ".ssh")
+        os.makedirs(ssh_dir)
+        key = _write_file(ssh_dir, "id_rsa", content=b"PRIVATE KEY")
+        plain = _write_file(fake_home, "report.pdf", content=b"%PDF")
+
+        with mock.patch.dict(os.environ, self._patched_home_env(fake_home)):
+            os.environ.pop("HERMES_HOME", None)
+            os.environ.pop("HERMES_RELAY_HOME", None)
+            self.assertTrue(
+                media._is_denied_media_path(os.path.realpath(key))
+            )
+            # A plain file directly in the home tree stays deliverable.
+            self.assertFalse(
+                media._is_denied_media_path(os.path.realpath(plain))
+            )
+
+    def test_system_prefixes_are_denied(self) -> None:
+        # realpath maps "/etc/passwd" onto the current drive on Windows,
+        # matching how the denylist itself resolves "/etc" — so this holds
+        # cross-platform without the file existing.
+        probe = os.path.realpath(os.path.join("/etc", "passwd"))
+        self.assertTrue(media._is_denied_media_path(probe))
+
+    def test_denied_prefix_equal_to_own_home_is_exempt(self) -> None:
+        """/root is denied so a non-root relay can't serve root's home, but
+        on a root-run relay ($HOME=/root) the operator's own plain files
+        stay deliverable — while credential subpaths remain blocked."""
+        root_home = os.path.realpath("/root")
+        with mock.patch.dict(os.environ, self._patched_home_env(root_home)):
+            os.environ.pop("HERMES_HOME", None)
+            os.environ.pop("HERMES_RELAY_HOME", None)
+            self.assertFalse(
+                media._is_denied_media_path(
+                    os.path.join(root_home, "deliverable.txt")
+                )
+            )
+            self.assertTrue(
+                media._is_denied_media_path(
+                    os.path.join(root_home, ".ssh", "id_rsa")
+                )
+            )
 
 
 if __name__ == "__main__":

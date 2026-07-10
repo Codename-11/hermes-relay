@@ -54,6 +54,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -2444,24 +2445,29 @@ private data class ExpensiveModelConfirm(
     val warning: String,
 )
 
-private data class ModelProviderOption(
+internal data class ModelProviderOption(
     val id: String,
     val label: String,
     val authenticated: Boolean,
     val models: List<String>,
+    /** Upstream setup hint for unconfigured rows, e.g. "paste OPENAI_API_KEY to activate". */
+    val setupHint: String? = null,
 )
 
 /**
  * Tolerant reader for `GET /api/model/options` (the REST twin of the TUI's
- * `model.options` RPC). Unauthenticated providers come back as skeleton rows
- * — keep them visible but unselectable so the user learns which key to add
- * in the Keys section instead of the provider silently missing.
+ * `model.options` RPC, requested with `include_unconfigured=1`).
+ * Unauthenticated providers come back as skeleton rows — empty `models` on
+ * newer upstream — and MUST survive parsing: they render greyed/unselectable
+ * so the user learns which key to add in the Keys section instead of the
+ * provider silently missing.
  */
-private fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
+internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
     val providers = root["providers"] as? JsonArray ?: return emptyList()
     return providers.mapNotNull { element ->
         val obj = element as? JsonObject ?: return@mapNotNull null
-        val id = obj.stringField("id")
+        val id = obj.stringField("slug")
+            ?: obj.stringField("id")
             ?: obj.stringField("provider")
             ?: obj.stringField("name")
             ?: return@mapNotNull null
@@ -2472,15 +2478,17 @@ private fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
                 else -> null
             }?.trim()?.takeIf { it.isNotBlank() }
         }.orEmpty()
-        if (models.isEmpty()) return@mapNotNull null
         ModelProviderOption(
             id = id,
             label = obj.stringField("label")
                 ?: obj.stringField("display_name")
                 ?: obj.stringField("name")
                 ?: id,
-            authenticated = obj.booleanField("authenticated") != false,
+            // Absent hint field: a row with models is assumed usable; an empty
+            // row can only be an unconfigured skeleton, so grey it.
+            authenticated = obj.booleanField("authenticated") ?: models.isNotEmpty(),
             models = models,
+            setupHint = obj.stringField("warning"),
         )
     }.sortedByDescending { it.authenticated }
 }
@@ -2494,27 +2502,36 @@ private fun ModelPickerDialog(
     onDismiss: () -> Unit,
 ) {
     var loading by remember { mutableStateOf(true) }
+    var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var providers by remember { mutableStateOf<List<ModelProviderOption>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+
+    fun loadOptions(refresh: Boolean = false) {
+        if (refresh && refreshing) return
+        if (refresh) refreshing = true else loading = true
+        error = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client -> client.getModelOptions(refresh = refresh) }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            result.fold(
+                onSuccess = { root ->
+                    providers = parseModelOptions(root)
+                    if (providers.isEmpty()) {
+                        error = "The dashboard returned no model options."
+                    }
+                },
+                onFailure = { err -> error = err.message ?: "Could not load model options" },
+            )
+            if (refresh) refreshing = false else loading = false
+        }
+    }
 
     LaunchedEffect(target) {
-        loading = true
-        error = null
-        val result = try {
-            withDashboardClient(clientFactory) { client -> client.getModelOptions() }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-        result.fold(
-            onSuccess = { root ->
-                providers = parseModelOptions(root)
-                if (providers.isEmpty()) {
-                    error = "The dashboard returned no model options."
-                }
-            },
-            onFailure = { err -> error = err.message ?: "Could not load model options" },
-        )
-        loading = false
+        loadOptions()
     }
 
     AlertDialog(
@@ -2538,12 +2555,37 @@ private fun ModelPickerDialog(
                     color = MaterialTheme.colorScheme.error,
                 )
                 else -> Column {
-                    Text(
-                        text = "Applies to new sessions. Greyed providers need a key — " +
-                            "add one under Manage → Keys.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Applies to new sessions. Greyed providers need a key — " +
+                                "add one under Manage → Keys.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = { loadOptions(refresh = true) },
+                            enabled = !refreshing && !actionInFlight,
+                        ) {
+                            if (refreshing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            Text(if (refreshing) "Refreshing" else "Refresh")
+                        }
+                    }
                     LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
                         providers.forEach { provider ->
                             item(key = "provider-${provider.id}") {
@@ -2558,6 +2600,22 @@ private fun ModelPickerDialog(
                                     },
                                     modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
                                 )
+                            }
+                            if (provider.models.isEmpty()) {
+                                // Unconfigured skeleton row (include_unconfigured=1):
+                                // no models until a key lands, so show the server's
+                                // setup hint in place of the model list.
+                                item(key = "setup-${provider.id}") {
+                                    Text(
+                                        text = provider.setupHint
+                                            ?: "Add a key under Manage → Keys to unlock models.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp),
+                                    )
+                                }
                             }
                             items(
                                 items = provider.models,

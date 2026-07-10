@@ -27,9 +27,9 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-from plugin.voice_lab.auth import load_voice_lab_env_file
-from plugin.voice_lab.providers.base import ProviderRunError, ProviderUnavailable
-from plugin.voice_lab.registry import default_registry
+from ...voice_lab.auth import load_voice_lab_env_file
+from ...voice_lab.providers.base import ProviderRunError, ProviderUnavailable
+from ...voice_lab.registry import default_registry
 
 from ..config import (
     RelayConfig,
@@ -62,6 +62,7 @@ from .models import (
     CLIENT_MSG_PLAYBACK_DRAINED,
     CLIENT_MSG_RESPONSE_CREATE,
     CLIENT_MSG_RESPONSE_CANCEL,
+    CLIENT_MSG_RESULT_RESPEAK,
     CLIENT_MSG_SESSION_CLOSE,
     CLIENT_MSG_SESSION_RESUME,
     CLIENT_MSG_SESSION_START,
@@ -129,6 +130,30 @@ _BACKGROUND_RUN_MAX_SECONDS = 300.0
 _LONG_TOOL_QUICK_FINISH_SECONDS = 1.5
 # Poll cadence for the detached-session keep-alive loop.
 _BACKGROUND_DETACHED_POLL_SECONDS = 2.0
+# xAI ends a realtime conversation after 900s of true conversation inactivity.
+# Four live probe runs on 2026-07-08 showed that neither uncommitted silent PCM
+# nor server-acknowledged session.update messages reset that timer. Treat that
+# close as routine provider-session expiry: close the Android websocket cleanly
+# while idle, and let the next user turn open a fresh provider conversation
+# seeded from the synced Hermes session.
+_PROVIDER_IDLE_CLOSE_WS_REASON = "provider idle timeout"
+# Forced-summary early commit: once the buffered summary prefix is at least
+# this long, passes the bad-phrase check, AND shows content overlap with the
+# Hermes answer, the buffer flushes and the rest streams live — the user
+# hears the answer as it generates instead of after it completes.
+_FORCED_SUMMARY_EARLY_COMMIT_MIN_CHARS = 40
+# Delivered-or-alarm: a background result must produce a finished (or
+# committed-streaming) spoken summary within this window, else the answer is
+# force-emitted as text so it can never be silently lost.
+_DELIVERY_CONFIRM_SECONDS = 30.0
+# A delivery must not speak over the USER: live mic chunks stream in as
+# input_audio.append while they talk, so "user quiet for this long" gates
+# result delivery alongside the floor (observed live: a task finishing
+# mid-utterance ended the user's recording).
+_DELIVERY_INPUT_QUIET_SECONDS = 1.5
+# Background task queue: a long second ask while the slot is busy is queued
+# (FIFO) instead of refused; bounded so the model can't pile up unbounded work.
+_BACKGROUND_QUEUE_MAX = 3
 _PROFILE_SOUL_PROMPT_MAX_CHARS = 6000
 _PROFILE_MEMORY_PROMPT_MAX_FILES = 4
 _PROFILE_MEMORY_PROMPT_MAX_CHARS = 6000
@@ -178,6 +203,7 @@ class RealtimeAgentSession:
     native_provider_task: asyncio.Task[None] | None = None
     native_playback_drained: asyncio.Event | None = None
     native_close_task: asyncio.Task[None] | None = None
+    native_provider_idle_closed: bool = False
     native_input_audio_bytes: int = 0
     native_response_requested_for_input: bool = False
     native_forced_preamble_active: bool = False
@@ -191,8 +217,34 @@ class RealtimeAgentSession:
     native_forced_summary_result: dict[str, Any] | None = None
     native_forced_summary_buffer: list[dict[str, Any]] = field(default_factory=list)
     native_forced_summary_text_parts: list[str] = field(default_factory=list)
+    # True once the buffered summary prefix passed early validation and was
+    # flushed — the rest of that response streams live (no more buffering)
+    # and the end-of-response validation is skipped (audio already played).
+    native_forced_summary_committed: bool = False
+    # Last background result that reached the delivery step — kept so the
+    # client can request a respeak (DONE-chip tap) and the delivery-confirm
+    # watcher can force a text emit if the spoken summary never lands.
+    last_background_result: dict[str, Any] | None = None
+    # FIFO of queued background tasks ({"text","profile"}), started one at a
+    # time as the active run's delivery settles. Cleared on cancel.
+    background_queue: deque[dict[str, Any]] = field(default_factory=deque)
+    # Reused Hermes side-session for fast-lane asks (created on the first
+    # fast-lane run) so quick inline answers don't litter one session each.
+    fast_lane_session_id: str | None = None
+    # Set when a background result was delivered OUTSIDE the provider's own
+    # conversation (fallback TTS / text-only emit) — the provider never saw
+    # that delivery, so its history still reads "running in background" and
+    # it will claim the task is unfinished (observed live). Attached to the
+    # NEXT user turn's per-response instructions, then cleared.
+    native_pending_delivery_note: str | None = None
+    # time.monotonic() of the last LIVE mic chunk from the client — while
+    # this is fresh the user is mid-utterance and deliveries must hold.
+    native_last_input_audio_at: float = 0.0
     native_hermes_required_transcript: str | None = None
     native_hermes_required_reason: str | None = None
+    # Model id the provider reported actually serving (session.created echo);
+    # aliases like grok-voice-latest resolve server-side and can move.
+    native_resolved_model: str | None = None
     hermes_run_id: str | None = None
     hermes_run_status: str = "idle"
     hermes_run_tier: str = "foreground"
@@ -204,7 +256,7 @@ class RealtimeAgentSession:
     promotion_enabled: bool = False
     promote_after_ms: int = 6000
     spoken_handoff: bool = True
-    result_delivery: str = "speak_when_idle"
+    result_delivery: str = "speak_verbatim"
     promoted_transcript: str | None = None
     background_delivery_task: asyncio.Task[None] | None = None
     response_ids_awaiting_tool_followup: set[str] = field(default_factory=set)
@@ -384,7 +436,7 @@ class RealtimeAgentHandler:
             promotion_enabled=bool(settings.get("promotion_enabled", False)),
             promote_after_ms=int(settings.get("promote_after_ms", 6000)),
             spoken_handoff=bool(settings.get("spoken_handoff", True)),
-            result_delivery=str(settings.get("result_delivery", "speak_when_idle")),
+            result_delivery=str(settings.get("result_delivery", "speak_verbatim")),
             progress_spoken_after_seconds=(
                 max(0, int(settings.get("progress_spoken_after_ms", 0))) / 1000.0
             ),
@@ -443,8 +495,10 @@ class RealtimeAgentHandler:
         if msg_type == CLIENT_MSG_SESSION_START:
             if _str_option(payload, "resume_token") or session.detached_at is not None:
                 await self._handle_resume_message(ws, session, payload)
-            else:
-                await self._send(ws, session, self._ready_event(session))
+            # A fresh attach sends voice.session.ready before entering the
+            # receive loop. Android follows with session.start, so treating it
+            # as another ready request duplicated the event and advanced the
+            # replay cursor twice on every new session.
             return True
         if msg_type == CLIENT_MSG_SESSION_RESUME:
             await self._handle_resume_message(ws, session, payload)
@@ -577,9 +631,17 @@ class RealtimeAgentHandler:
     ) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=2 * 1024 * 1024)
         await ws.prepare(request)
-        was_detached = session.detached_at is not None
-        session.attached_ws = ws
-        if not was_detached:
+        initial_attach = (
+            session.attached_ws is None
+            and session.detached_at is None
+            and session.native_connection is None
+        )
+        # A resumed or already-active session treats a new HTTP upgrade as an
+        # unclaimed candidate. It becomes the owner only after presenting the
+        # resume token; otherwise a slower stale handshake can evict the socket
+        # that already resumed successfully.
+        if initial_attach:
+            session.attached_ws = ws
             session.detached_at = None
             session.resume_deadline = None
             if session.native_close_task is not None and not session.native_close_task.done():
@@ -587,11 +649,27 @@ class RealtimeAgentHandler:
 
         connection = session.native_connection
         if connection is None:
+            if not initial_attach:
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                        "session_id": session.session_id,
+                        "reason": "session_initializing",
+                    },
+                    record=False,
+                    direct=True,
+                )
+                await ws.close(code=1013, message=b"session initializing")
+                return ws
             provider = self.native_providers[session.provider]
             try:
                 connection = await provider.connect(self._native_session_config(session))
             except (ProviderUnavailable, ProviderRunError) as exc:
                 await self._send_error(ws, session, str(exc), provider=session.provider)
+                if session.attached_ws is ws:
+                    session.attached_ws = None
                 await ws.close()
                 return ws
             except Exception as exc:
@@ -601,6 +679,8 @@ class RealtimeAgentHandler:
                     f"realtime agent provider connection failed: {exc.__class__.__name__}: {exc}",
                     provider=session.provider,
                 )
+                if session.attached_ws is ws:
+                    session.attached_ws = None
                 await ws.close()
                 return ws
             session.native_connection = connection
@@ -614,7 +694,7 @@ class RealtimeAgentHandler:
                 )
             )
 
-        if not was_detached:
+        if initial_attach:
             await self._send(ws, session, self._ready_event(session))
         provider_task = session.native_provider_task
         intentional_close = False
@@ -623,18 +703,54 @@ class RealtimeAgentHandler:
                 if msg.type == WSMsgType.ERROR:
                     break
                 if msg.type != WSMsgType.TEXT:
-                    await self._send_error(ws, session, "unsupported websocket frame")
+                    await self._send_error(
+                        ws,
+                        session,
+                        "unsupported websocket frame",
+                        direct=session.attached_ws is not ws,
+                    )
                     continue
                 try:
                     payload = json.loads(msg.data)
                 except json.JSONDecodeError:
-                    await self._send_error(ws, session, "invalid JSON message")
+                    await self._send_error(
+                        ws,
+                        session,
+                        "invalid JSON message",
+                        direct=session.attached_ws is not ws,
+                    )
                     continue
                 if not isinstance(payload, dict):
-                    await self._send_error(ws, session, "message must be a JSON object")
+                    await self._send_error(
+                        ws,
+                        session,
+                        "message must be a JSON object",
+                        direct=session.attached_ws is not ws,
+                    )
                     continue
 
                 msg_type = str(payload.get("type", "")).strip()
+                is_resume_claim = msg_type == CLIENT_MSG_SESSION_RESUME or (
+                    msg_type == CLIENT_MSG_SESSION_START
+                    and (
+                        _str_option(payload, "resume_token")
+                        or session.detached_at is not None
+                    )
+                )
+                if session.attached_ws is not ws and not is_resume_claim:
+                    await self._send(
+                        ws,
+                        session,
+                        {
+                            "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                            "session_id": session.session_id,
+                            "reason": "session_not_claimed",
+                        },
+                        record=False,
+                        direct=True,
+                    )
+                    await ws.close(code=4009, message=b"session not claimed")
+                    break
                 if await self._handle_common_client_message(ws, session, msg_type, payload):
                     pass
                 elif msg_type == CLIENT_MSG_INPUT_AUDIO_APPEND:
@@ -662,6 +778,7 @@ class RealtimeAgentHandler:
                         )
                         continue
                     await connection.send_audio(chunk, sample_rate)
+                    session.native_last_input_audio_at = time.monotonic()
                     session.native_input_audio_bytes += len(chunk)
                     session.input_chunk_seq = max(session.input_chunk_seq, chunk_id)
                     await self._send(
@@ -700,18 +817,32 @@ class RealtimeAgentHandler:
                 elif msg_type == CLIENT_MSG_INPUT_AUDIO_CLEAR:
                     await connection.clear_audio()
                 elif msg_type == CLIENT_MSG_RESPONSE_CANCEL:
-                    self._cancel_active_hermes(session)
+                    # Cancel the Hermes run ONLY when one is actually in
+                    # flight. A cancel after completion (observed live: the
+                    # client cancelled a run that finished 10s earlier) must
+                    # not flip hermes_run_status to "cancelled" or emit
+                    # hermes.run.cancelled for the finished run — that
+                    # re-opens a settled chip and misreports the outcome.
+                    # Stopping the CURRENT SPEECH (cancel_response +
+                    # clear_audio) always happens.
+                    hermes_run_active = (
+                        session.hermes_task is not None
+                        and not session.hermes_task.done()
+                    )
+                    if hermes_run_active:
+                        self._cancel_active_hermes(session)
                     await connection.cancel_response()
                     await connection.clear_audio()
-                    await self._send(
-                        ws,
-                        session,
-                        {
-                            "type": "hermes.run.cancelled",
-                            "session_id": session.chat_session_id,
-                            "run_id": session.hermes_run_id,
-                        },
-                    )
+                    if hermes_run_active:
+                        await self._send(
+                            ws,
+                            session,
+                            {
+                                "type": "hermes.run.cancelled",
+                                "session_id": session.chat_session_id,
+                                "run_id": session.hermes_run_id,
+                            },
+                        )
                     await self._send(
                         ws,
                         session,
@@ -726,6 +857,65 @@ class RealtimeAgentHandler:
                             "cancelled": True,
                         },
                     )
+                elif msg_type == CLIENT_MSG_RESULT_RESPEAK:
+                    # Respeak the last delivered background result (DONE-chip
+                    # tap). Rides the relay-TTS fallback path — deterministic,
+                    # no provider round-trip, and immune to summary drift.
+                    respeak_result = session.last_background_result
+                    if respeak_result is None:
+                        await self._send(
+                            ws,
+                            session,
+                            {"type": "hermes.result.respeak_unavailable"},
+                        )
+                    else:
+                        respeak_text = _forced_summary_fallback_text(respeak_result)
+                        # Respeak is also invisible to the provider — refresh
+                        # the next-turn correction so it stays consistent.
+                        session.native_pending_delivery_note = _delivery_note(respeak_text)
+                        respeak_id = f"respeak-{session.event_seq + 1}"
+                        self._log(
+                            session,
+                            "voice.result.respeak",
+                            {
+                                "type": "voice.result.respeak",
+                                "response_id": respeak_id,
+                                "chars": len(respeak_text),
+                            },
+                        )
+                        await self._send(
+                            ws,
+                            session,
+                            {
+                                "type": SERVER_EVT_RESPONSE_STARTED,
+                                "provider": session.provider,
+                                "model": session.model,
+                                "voice": session.voice,
+                                "session_id": session.session_id,
+                                "chat_session_id": session.chat_session_id,
+                                "response_id": respeak_id,
+                                "source": "hermes",
+                                "delivery": "respeak",
+                            },
+                        )
+                        await self._send(
+                            ws,
+                            session,
+                            {
+                                "type": SERVER_EVT_RESPONSE_DELTA,
+                                "source": "hermes",
+                                "delta": respeak_text,
+                                "response_id": respeak_id,
+                                "delivery": "respeak",
+                            },
+                        )
+                        await self._render_provider_audio(
+                            ws,
+                            session,
+                            respeak_text,
+                            {},
+                            response_id=respeak_id,
+                        )
                 elif msg_type == CLIENT_MSG_SESSION_CLOSE:
                     intentional_close = True
                     session.explicit_close_requested = True
@@ -954,6 +1144,20 @@ class RealtimeAgentHandler:
         session: RealtimeAgentSession,
         payload: dict[str, Any],
     ) -> None:
+        if session.closed:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_SESSION_RESUME_FAILED,
+                    "session_id": session.session_id,
+                    "reason": "session_closed",
+                },
+                record=False,
+                direct=True,
+            )
+            await ws.close(code=4008, message=b"session closed")
+            return
         if not self._resume_token_matches(session, _str_option(payload, "resume_token")):
             await self._send(
                 ws,
@@ -964,6 +1168,7 @@ class RealtimeAgentHandler:
                     "reason": "invalid_resume_token",
                 },
                 record=False,
+                direct=True,
             )
             await ws.close(code=4003, message=b"invalid resume token")
             return
@@ -977,10 +1182,19 @@ class RealtimeAgentHandler:
                     "reason": "resume_expired",
                 },
                 record=False,
+                direct=True,
             )
             await ws.close(code=4008, message=b"resume expired")
             await self._close_native_session(session, "resume_expired")
             return
+
+        previous_ws = session.attached_ws
+        session.attached_ws = ws
+        if previous_ws is not None and previous_ws is not ws and not previous_ws.closed:
+            asyncio.create_task(
+                self._close_superseded_websocket(previous_ws),
+                name=f"realtime-close-superseded-{session.session_id}",
+            )
 
         last_event_id = _int_option(payload, "last_event_id", 0)
         last_audio_event_id = _int_option(payload, "last_audio_event_id", 0)
@@ -1207,6 +1421,7 @@ class RealtimeAgentHandler:
         session.native_forced_summary_done = True
         session.native_forced_summary_result = None
         session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_committed = False
         session.native_forced_summary_text_parts.clear()
 
     async def _start_forced_hermes_preamble(
@@ -1224,6 +1439,7 @@ class RealtimeAgentHandler:
         session.native_forced_summary_response_id = None
         session.native_forced_summary_result = None
         session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_committed = False
         session.native_forced_summary_text_parts.clear()
         session.native_forced_preamble_active = True
         session.native_forced_preamble_transcript = transcript
@@ -1241,7 +1457,9 @@ class RealtimeAgentHandler:
         )
         with contextlib.suppress(Exception):
             await connection.cancel_response()
-        await connection.send_text(_forced_hermes_preamble_prompt(transcript))
+        await connection.request_response(
+            instructions=_forced_hermes_preamble_prompt(transcript)
+        )
 
     def _should_forward_forced_preamble_event(
         self,
@@ -1307,6 +1525,10 @@ class RealtimeAgentHandler:
                 "response_id": None if response_id == "__blank_response_id__" else response_id,
                 "audio_seen": audio_seen,
                 "provider": session.provider,
+                # The acknowledgement the user hears before the Hermes run
+                # ("I'll check Hermes"). Logged so the pre-injection speech is
+                # reconstructable (duplicate-status / deferral diagnosis).
+                "transcript_preview": _compact_status_text(transcript),
             },
         )
         await self._run_forced_hermes_turn_from_transcript(
@@ -1327,6 +1549,22 @@ class RealtimeAgentHandler:
     ) -> None:
         async for event in connection.events():
             if event.kind == ProviderEventKind.READY:
+                # Record which model ACTUALLY served: aliases like
+                # grok-voice-latest move server-side, and without this the
+                # flight recorder only shows what we requested — live-round
+                # verdicts become unattributable across alias flips.
+                resolved = str(event.payload.get("resolved_model") or "").strip()
+                if resolved and resolved != session.native_resolved_model:
+                    session.native_resolved_model = resolved
+                    self._log(
+                        session,
+                        "voice.realtime_agent.provider_model_resolved",
+                        {
+                            "type": "voice.realtime_agent.provider_model_resolved",
+                            "requested_model": session.model,
+                            "resolved_model": resolved,
+                        },
+                    )
                 continue
             if event.kind == ProviderEventKind.INPUT_TRANSCRIPT_DELTA:
                 await self._send(
@@ -1351,12 +1589,9 @@ class RealtimeAgentHandler:
                     session.native_response_requested_for_input = True
                     force_reason = _force_hermes_reason_for_transcript(text)
                     if force_reason:
-                        session.native_forced_summary_active = False
-                        session.native_forced_summary_done = False
-                        session.native_forced_summary_response_id = None
-                        session.native_forced_summary_result = None
-                        session.native_forced_summary_buffer.clear()
-                        session.native_forced_summary_text_parts.clear()
+                        await self._preempt_pending_forced_summary(
+                            ws, session, connection, reason="new_forced_turn"
+                        )
                         session.native_hermes_required_transcript = text
                         session.native_hermes_required_reason = force_reason
                         self._log(
@@ -1372,15 +1607,37 @@ class RealtimeAgentHandler:
                         )
                         await connection.request_response()
                     else:
-                        session.native_forced_summary_active = False
-                        session.native_forced_summary_done = False
-                        session.native_forced_summary_response_id = None
-                        session.native_forced_summary_result = None
-                        session.native_forced_summary_buffer.clear()
-                        session.native_forced_summary_text_parts.clear()
+                        await self._preempt_pending_forced_summary(
+                            ws, session, connection, reason="new_user_turn"
+                        )
                         session.native_hermes_required_transcript = None
                         session.native_hermes_required_reason = None
-                        await connection.request_response()
+                        delivery_note = session.native_pending_delivery_note
+                        if delivery_note:
+                            # A system-side delivery (fallback TTS / text
+                            # emit) happened that the provider never saw —
+                            # its history still says "running in background".
+                            # Carry the correction on this one response
+                            # (composed WITH the session instructions, since
+                            # per-response instructions replace them).
+                            session.native_pending_delivery_note = None
+                            self._log(
+                                session,
+                                "voice.response.delivery_note_attached",
+                                {
+                                    "type": "voice.response.delivery_note_attached",
+                                    "note_preview": _compact_status_text(delivery_note),
+                                },
+                            )
+                            await connection.request_response(
+                                instructions=(
+                                    _native_instructions(session)
+                                    + "\n\n"
+                                    + delivery_note
+                                )
+                            )
+                        else:
+                            await connection.request_response()
             elif event.kind == ProviderEventKind.RESPONSE_STARTED:
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
@@ -1404,6 +1661,8 @@ class RealtimeAgentHandler:
                     continue
                 if session.native_forced_summary_active:
                     if self._should_forward_provider_response_event(session, event):
+                        if not self._mark_provider_response_started(session, event):
+                            continue
                         session.native_forced_summary_buffer.append(
                             {
                                 "type": SERVER_EVT_RESPONSE_STARTED,
@@ -1453,14 +1712,18 @@ class RealtimeAgentHandler:
                     if self._should_forward_provider_response_event(session, event):
                         delta = str(event.payload.get("delta") or "")
                         session.native_forced_summary_text_parts.append(delta)
-                        session.native_forced_summary_buffer.append(
-                            {
-                                "type": SERVER_EVT_RESPONSE_DELTA,
-                                "source": "provider",
-                                "delta": delta,
-                                "response_id": event.response_id,
-                            }
-                        )
+                        delta_event = {
+                            "type": SERVER_EVT_RESPONSE_DELTA,
+                            "source": "provider",
+                            "delta": delta,
+                            "response_id": event.response_id,
+                        }
+                        if session.native_forced_summary_committed:
+                            # Early-committed: stream live.
+                            await self._send(ws, session, delta_event)
+                        else:
+                            session.native_forced_summary_buffer.append(delta_event)
+                            await self._maybe_commit_forced_summary_early(ws, session)
                     continue
                 if not self._should_forward_provider_response_event(session, event):
                     continue
@@ -1489,9 +1752,13 @@ class RealtimeAgentHandler:
                     continue
                 if session.native_forced_summary_active:
                     if self._should_forward_provider_response_event(session, event):
-                        payload = await self._provider_audio_delta_event(ws, session, event)
-                        if payload is not None:
-                            session.native_forced_summary_buffer.append(payload)
+                        if session.native_forced_summary_committed:
+                            # Early-committed: stream audio live.
+                            await self._send_provider_audio_delta(ws, session, event)
+                        else:
+                            payload = await self._provider_audio_delta_event(ws, session, event)
+                            if payload is not None:
+                                session.native_forced_summary_buffer.append(payload)
                     continue
                 if not self._should_forward_provider_response_event(session, event):
                     continue
@@ -1515,12 +1782,14 @@ class RealtimeAgentHandler:
                     continue
                 if session.native_forced_summary_active:
                     if self._should_forward_provider_response_event(session, event):
-                        session.native_forced_summary_buffer.append(
-                            {
-                                "type": SERVER_EVT_OUTPUT_AUDIO_DONE,
-                                "response_id": event.response_id,
-                            }
-                        )
+                        audio_done_event = {
+                            "type": SERVER_EVT_OUTPUT_AUDIO_DONE,
+                            "response_id": event.response_id,
+                        }
+                        if session.native_forced_summary_committed:
+                            await self._send(ws, session, audio_done_event)
+                        else:
+                            session.native_forced_summary_buffer.append(audio_done_event)
                     continue
                 if not self._should_forward_provider_response_event(session, event):
                     continue
@@ -1642,7 +1911,31 @@ class RealtimeAgentHandler:
                     )
                     continue
                 error_message = str(event.payload.get("message") or "provider error")
-                if _is_benign_provider_error(error_message):
+                if _is_provider_idle_timeout(error_message):
+                    # The provider ended the conversation after prolonged true
+                    # silence (xAI: 900s inactivity). Keepalive probes proved
+                    # no protocol no-op resets that timer, so this is a normal
+                    # stale-provider-session close. Do not surface a user error:
+                    # the next Android turn will open a fresh provider session
+                    # seeded from the durable Hermes chat context.
+                    session.native_provider_idle_closed = True
+                    self._log(
+                        session,
+                        "voice.realtime_agent.provider_idle_close",
+                        {
+                            "type": "voice.realtime_agent.provider_idle_close",
+                            "message": error_message,
+                            "provider": session.provider,
+                        },
+                    )
+                    attached_ws = session.attached_ws
+                    if attached_ws is not None and not attached_ws.closed:
+                        await attached_ws.close(
+                            code=1000,
+                            message=_PROVIDER_IDLE_CLOSE_WS_REASON.encode("utf-8"),
+                        )
+                    return
+                elif _is_benign_provider_error(error_message):
                     # A non-fatal provider notice (e.g. cancelling when no
                     # response is active) must NOT be surfaced as a fatal
                     # voice.error — the client closes the session on that, which
@@ -1714,6 +2007,63 @@ class RealtimeAgentHandler:
             "response_id": event.response_id,
         }
 
+    async def _maybe_commit_forced_summary_early(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+    ) -> None:
+        """Flush the buffered forced summary early once its prefix validates.
+
+        The summary response is buffered so a bad one (deferral filler, run-id
+        recital, no relation to the answer) can be swapped for the fallback
+        before any audio plays — but full-response buffering means the user
+        hears NOTHING until the provider finishes generating (observed live as
+        a multi-second dead gap, then the whole answer in one burst). Once the
+        accumulated text prefix is long enough, clears the bad-phrase check,
+        and shows content overlap with the Hermes answer, commit: flush the
+        buffer and stream the rest live. A prefix that fails these checks
+        simply keeps buffering — the end-of-response validation still decides.
+        """
+        if session.native_forced_summary_committed:
+            return
+        text = "".join(session.native_forced_summary_text_parts).strip()
+        if len(text) < _FORCED_SUMMARY_EARLY_COMMIT_MIN_CHARS:
+            return
+        answer = _result_answer_text(session.native_forced_summary_result or {})
+        # Pass the answer so blocklist phrases the answer itself contains
+        # don't stall an exact reading's early commit.
+        if _bad_forced_summary_reason(text, answer) is not None:
+            return
+        # Committing is irreversible (audio plays), so the early bar is
+        # HIGHER than end-of-response validation: two whole-word evidence
+        # hits, not one. A single hit let a queue acknowledgement ("will
+        # start automatically…") stream as the answer (observed live). A
+        # prefix that can't clear the bar simply keeps buffering — the full
+        # response still gets end validation + fallback.
+        hits = _summary_overlap_hits(text, answer)
+        if hits != -1 and hits < 2:
+            return
+        session.native_forced_summary_committed = True
+        buffered = list(session.native_forced_summary_buffer)
+        # NOTE: this clear is a FLUSH — committed stays True (every other
+        # buffer.clear() site is a state reset and clears the flag).
+        session.native_forced_summary_buffer.clear()
+        self._log(
+            session,
+            "voice.response.forced_summary_streaming",
+            {
+                "type": "voice.response.forced_summary_streaming",
+                "prefix_chars": len(text),
+                "buffered_events": len(buffered),
+                # What the provider actually committed to reading — lets the
+                # signoff confirm a provider-voiced delivery was verbatim, not
+                # a paraphrase that merely cleared the overlap check.
+                "prefix_preview": _compact_status_text(text),
+            },
+        )
+        for buffered_event in buffered:
+            await self._send(ws, session, buffered_event)
+
     async def _finish_forced_summary_provider_response(
         self,
         ws: web.WebSocketResponse,
@@ -1723,7 +2073,25 @@ class RealtimeAgentHandler:
         provider_text = "".join(session.native_forced_summary_text_parts).strip()
         result = session.native_forced_summary_result or {}
         response_id = str(event.response_id or "").strip() or "__blank_response_id__"
-        if _is_bad_forced_summary_response(provider_text):
+        if session.native_forced_summary_committed:
+            # Early-committed: the summary already streamed live (audio
+            # played) — validation is moot. Close out the response normally.
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_DONE,
+                    "provider": session.provider,
+                    "model": session.model,
+                    "voice": session.voice,
+                    "event_log_path": str(session.event_log_path),
+                    "chat_session_id": session.chat_session_id,
+                    "response_id": None if response_id == "__blank_response_id__" else response_id,
+                },
+            )
+            self._mark_provider_response_done(session, event)
+            return
+        if _is_bad_forced_summary_response(provider_text, _result_answer_text(result)):
             fallback_text = _forced_summary_fallback_text(result)
             self._log(
                 session,
@@ -1732,17 +2100,28 @@ class RealtimeAgentHandler:
                     "type": "voice.response.forced_summary_fallback",
                     "response_id": None if response_id == "__blank_response_id__" else response_id,
                     "provider": session.provider,
-                    "reason": _bad_forced_summary_reason(provider_text),
+                    "reason": _bad_forced_summary_reason(provider_text, _result_answer_text(result)),
                     "provider_text_preview": _compact_status_text(provider_text),
                     "fallback_preview": _compact_status_text(fallback_text),
                 },
             )
             session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_committed = False
             session.native_forced_summary_text_parts.clear()
             session.native_forced_summary_active = False
             session.native_forced_summary_done = True
             session.native_forced_summary_response_id = response_id
             session.native_forced_summary_result = None
+            # The provider never sees this fallback delivery — leave a note
+            # for the next user turn so it can't claim the task is still
+            # running (observed live after a fallback: "the background task
+            # is still going" while the answer had already been spoken).
+            session.native_pending_delivery_note = _delivery_note(fallback_text)
+            # Durably seed the delivered answer into the provider's history so
+            # ANY follow-up has it — not just the next Hermes-routed turn the
+            # pending note above depends on. The provider is alive here (it just
+            # deferred), so the seed lands.
+            await self._seed_provider_with_delivered_result(session, result)
             fallback_response_id = f"forced-summary-fallback-{session.event_seq + 1}"
             await self._send(
                 ws,
@@ -1756,6 +2135,7 @@ class RealtimeAgentHandler:
                     "chat_session_id": session.chat_session_id,
                     "response_id": fallback_response_id,
                     "source": "hermes",
+                    "delivery": "fallback",
                 },
             )
             await self._send(
@@ -1766,6 +2146,7 @@ class RealtimeAgentHandler:
                     "source": "hermes",
                     "delta": fallback_text,
                     "response_id": fallback_response_id,
+                    "delivery": "fallback",
                 },
             )
             await self._render_provider_audio(
@@ -1780,6 +2161,22 @@ class RealtimeAgentHandler:
         buffered = list(session.native_forced_summary_buffer)
         for buffered_event in buffered:
             await self._send(ws, session, buffered_event)
+        # Rollup marker: an end-validated provider-spoken delivery has no
+        # other distinct event (early commits log forced_summary_streaming,
+        # fallbacks log their own reasons) — without this, clean deliveries
+        # are invisible to the delivery-outcome report.
+        self._log(
+            session,
+            "voice.response.forced_summary_delivered",
+            {
+                "type": "voice.response.forced_summary_delivered",
+                "response_id": None if response_id == "__blank_response_id__" else response_id,
+                "chars": len(provider_text),
+                # The full provider-spoken delivery text — confirms an
+                # end-validated delivery was a verbatim reading of the answer.
+                "provider_text_preview": _compact_status_text(provider_text),
+            },
+        )
         await self._send(
             ws,
             session,
@@ -1855,6 +2252,7 @@ class RealtimeAgentHandler:
         event: ProviderEvent,
     ) -> None:
         call = _tool_call_from_provider_event(event)
+        provider_acknowledged = False
         if call.is_hermes_tool() and event.response_id:
             session.response_ids_awaiting_tool_followup.add(event.response_id)
         if call.name == "hermes_run_task":
@@ -1872,7 +2270,10 @@ class RealtimeAgentHandler:
                 )
             session.native_hermes_required_transcript = None
             session.native_hermes_required_reason = None
-            if self._provider_response_had_audio(session, event.response_id):
+            provider_acknowledged = self._provider_response_had_audio(
+                session, event.response_id
+            )
+            if provider_acknowledged:
                 await self._request_playback_drain(
                     ws,
                     session,
@@ -1896,6 +2297,7 @@ class RealtimeAgentHandler:
                 origin="provider_tool_call",
                 call_id=call.call_id,
                 transcript=str(call.arguments.get("text") or ""),
+                provider_acknowledged=provider_acknowledged,
             )
             return
         delivered = await self._send_provider_tool_result(
@@ -2058,6 +2460,7 @@ class RealtimeAgentHandler:
         session.native_forced_summary_response_id = None
         session.native_forced_summary_result = None
         session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_committed = False
         session.native_forced_summary_text_parts.clear()
         call_id = f"forced-hermes-{session.event_seq + 1}"
         try:
@@ -2100,15 +2503,49 @@ class RealtimeAgentHandler:
                 )
                 return
 
+            # Every spoken mode delivers through the provider so the answer
+            # keeps the realtime voice; speak_verbatim differs only in the
+            # instructions (read the answer as written vs. natural summary).
+            # The forced-summary validator + relay-TTS fallback backstop both.
             session.native_forced_summary_active = True
             session.native_forced_summary_done = False
             session.native_forced_summary_response_id = None
             session.native_forced_summary_result = dict(result)
             session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_committed = False
             session.native_forced_summary_text_parts.clear()
             with contextlib.suppress(Exception):
                 await connection.cancel_response()
-            await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+            try:
+                await connection.request_response(
+                    instructions=_result_delivery_prompt(
+                        session.result_delivery, transcript, result
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - the answer must still land
+                self._log(
+                    session,
+                    "voice.realtime_agent.summary_send_failed",
+                    {
+                        "type": "voice.realtime_agent.summary_send_failed",
+                        "run_id": session.hermes_run_id,
+                        "origin": "foreground",
+                        "error": f"{exc.__class__.__name__}: {exc}",
+                    },
+                )
+                await self._speak_fallback_answer(
+                    ws, session, result, reason="foreground_request_failed"
+                )
+                return
+            # Delivered-or-alarm, same as the background path: if no spoken
+            # delivery lands within the confirm window, force a text emit so
+            # a dead/stalled provider response can't silently eat the answer.
+            confirm = asyncio.create_task(
+                self._confirm_background_delivery(ws, session, dict(result))
+            )
+            confirm.add_done_callback(
+                _log_task_failure(session, "delivery_confirm_task")
+            )
         finally:
             session.native_forced_hermes_turn_active = False
 
@@ -2120,6 +2557,17 @@ class RealtimeAgentHandler:
         *,
         should_speak: bool = True,
     ) -> None:
+        # This lead fires BEFORE _execute_brokered_tool resets the per-run
+        # progress state, so session.hermes_run_id / completed_tool_count
+        # still describe the PREVIOUS run here (observed live: a new run's
+        # "I'll check Hermes." event carried the finished prior run's id and
+        # tool count, confusing the client chip). When no run is in flight,
+        # this event announces a FRESH run: send null/zero identity instead
+        # of the stale values. While a run IS active (fast-lane attempt),
+        # keep the active run's identity so the chip stays consistent.
+        hermes_run_active = (
+            session.hermes_task is not None and not session.hermes_task.done()
+        )
         await self._send(
             ws,
             session,
@@ -2128,7 +2576,7 @@ class RealtimeAgentHandler:
                 "source": "hermes",
                 "session_id": session.chat_session_id,
                 "chat_session_id": session.chat_session_id,
-                "run_id": session.hermes_run_id,
+                "run_id": session.hermes_run_id if hermes_run_active else None,
                 "status": "starting",
                 "message": "I'll check Hermes.",
                 "status_key": "run:checking_hermes",
@@ -2136,7 +2584,9 @@ class RealtimeAgentHandler:
                 "call_id": call_id,
                 "active_tool_name": None,
                 "last_tool_name": None,
-                "completed_tool_count": session.hermes_completed_tool_count,
+                "completed_tool_count": (
+                    session.hermes_completed_tool_count if hermes_run_active else 0
+                ),
             },
         )
         if _PRE_HERMES_STATUS_LEAD_SECONDS > 0:
@@ -2156,6 +2606,7 @@ class RealtimeAgentHandler:
         if session.native_forced_summary_active:
             session.native_forced_summary_response_id = None
             session.native_forced_summary_buffer.clear()
+            session.native_forced_summary_committed = False
             session.native_forced_summary_text_parts.clear()
         self._log(
             session,
@@ -2180,19 +2631,73 @@ class RealtimeAgentHandler:
         # max_background_runs=1: a second hermes_run_task while one is still in
         # flight must NOT create a new task — that would overwrite the
         # session.hermes_task reference and cancel the first run's delivery,
-        # orphaning it. Answer with a speakable busy result instead.
+        # orphaning it.
+        #
+        # Fast lane (background-run v2 §1): when the in-flight run is DETACHED
+        # (promoted/durable — the only way a second call can arrive while one
+        # is running), first try the new request INLINE on a separate
+        # ephemeral Hermes session within the normal grace window. A quick
+        # lookup ("what time is it in Tokyo?") answers immediately instead of
+        # being refused; anything that would promote (grace elapsed, known-long
+        # tool started) is abandoned and falls through to the busy answer —
+        # the single background slot stays owned by the in-flight run.
         existing = session.hermes_task
         if existing is not None and not existing.done():
+            if session.hermes_run_tier in ("promoted", "durable"):
+                fast = await self._run_fast_lane_task(session, call)
+                if fast is not None:
+                    return fast
+            # Long second ask (fast lane abandoned or skipped): QUEUE it
+            # instead of refusing — it starts automatically when the current
+            # task's delivery settles. Bounded FIFO; only a full queue still
+            # gets the busy answer.
+            queued_text = str(call.arguments.get("text") or "").strip()
+            if queued_text and len(session.background_queue) < _BACKGROUND_QUEUE_MAX:
+                session.background_queue.append(
+                    {
+                        "text": queued_text,
+                        "profile": str(call.arguments.get("profile") or "").strip() or None,
+                    }
+                )
+                position = len(session.background_queue)
+                await self._send(
+                    ws,
+                    session,
+                    {
+                        "type": "hermes.run.queued",
+                        "source": "hermes",
+                        "session_id": session.chat_session_id,
+                        "chat_session_id": session.chat_session_id,
+                        "run_id": session.hermes_run_id,
+                        "queued_count": position,
+                        "queue_position": position,
+                        "transcript_preview": _compact_status_text(queued_text),
+                    },
+                )
+                return {
+                    "ok": True,
+                    "status": "queued",
+                    "queue_position": position,
+                    "instruction": (
+                        "This request is queued and will start automatically "
+                        "when the current background task finishes — tell the "
+                        "user that in one short sentence. Do not claim it is "
+                        "running yet, and never say run IDs, session IDs, or "
+                        "other identifiers aloud."
+                    ),
+                    "interface": _interface_context(session),
+                }
             return {
                 "ok": True,
                 "status": "already_running",
                 "run_id": session.hermes_run_id,
                 "session_id": session.chat_session_id,
                 "instruction": (
-                    "A previous task is still running in the background. Tell "
-                    "the user it's still in progress; they can wait, ask for "
-                    "status, or cancel it (hermes_cancel) before starting "
-                    "something new."
+                    "A previous task is still running in the background and "
+                    "the task queue is full. Tell the user the earlier work "
+                    "is still in progress; they can wait, ask for status, or "
+                    "cancel it (hermes_cancel) before starting something new. "
+                    "Never say run IDs or other identifiers aloud."
                 ),
                 "interface": _interface_context(session),
             }
@@ -2287,6 +2792,166 @@ class RealtimeAgentHandler:
             if session.hermes_task is task and task.done():
                 session.hermes_task = None
 
+    async def _run_fast_lane_task(
+        self,
+        session: RealtimeAgentSession,
+        call: ToolCallEvent,
+    ) -> dict[str, Any] | None:
+        """Inline-only second ``hermes_run_task`` while a durable run is detached.
+
+        Background-run v2 §1 ("fast lane"). Runs the request on a SEPARATE
+        ephemeral Hermes session (``session_id=None`` — a fresh api_server
+        session) so it cannot interleave with the detached run's gateway
+        session, and keeps every observation in locals so it touches NONE of
+        the session's ``hermes_*`` run state — run_id, status, progress
+        counters, and the chip all stay owned by the in-flight run.
+
+        Returns the tool result dict when the task completes inside the grace
+        window, an error dict on a fast-lane failure, or ``None`` when the
+        request would promote — grace elapsed, a known-long tool started,
+        explicit ``mode=background``, or promotion disabled — in which case
+        the caller falls through to the busy answer. An abandoned attempt is
+        cancelled client-side; the server side may still finish it into the
+        ephemeral session (at-least-once, same property as promotion), where
+        it is simply never read.
+
+        Deliberately silent on the client event stream: a fast-lane answer is
+        bounded by the grace window (a few seconds), so it needs no chip or
+        progress events of its own — and emitting them would fight the
+        detached run's chip.
+        """
+        promote_after = self._promote_after_seconds(session)
+        if promote_after is None or promote_after <= 0:
+            # Promotion off ⇒ runs are inline-forever; an unbounded second
+            # inline run is exactly the collision the busy answer prevents.
+            return None
+        if str(call.arguments.get("mode") or "").strip().lower() == "background":
+            return None  # explicit background request needs the (occupied) slot
+        text = str(call.arguments.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "hermes_run_task requires text"}
+        profile = str(call.arguments.get("profile") or session.profile or "").strip() or None
+        interface_context = _interface_context(session)
+        long_tool_hints = _long_tool_hints()
+
+        final_parts: list[str] = []
+        error_message: str | None = None
+        long_tool_name: str | None = None
+        tool_count = 0
+
+        async def _consume() -> None:
+            nonlocal error_message, long_tool_name, tool_count
+            async for hermes_event in self.hermes.stream_task(
+                HermesTaskRequest(
+                    text=text[:5000],
+                    profile=profile,
+                    # One reused side-session per voice session (created on
+                    # the first fast-lane ask) instead of a fresh session per
+                    # quick lookup — keeps the drawer clean and gives later
+                    # fast-lane asks the earlier ones as context.
+                    session_id=session.fast_lane_session_id,
+                    bearer_token=session.bearer_token,
+                    interface_context=interface_context,
+                )
+            ):
+                etype = str(hermes_event.get("type") or "")
+                if etype == "hermes.session.bound":
+                    bound = str(hermes_event.get("session_id") or "").strip()
+                    if bound:
+                        session.fast_lane_session_id = bound
+                elif etype == "hermes.tool.started":
+                    tool_name = str(hermes_event.get("tool_name") or "")
+                    lowered = tool_name.lower()
+                    if any(hint in lowered for hint in long_tool_hints):
+                        # This request is now expected to be long — it would
+                        # promote on the main lane, so the fast lane abandons
+                        # it instead of racing the grace window.
+                        long_tool_name = tool_name
+                        return
+                elif etype == SERVER_EVT_RESPONSE_DELTA:
+                    final_parts.append(str(hermes_event.get("delta") or ""))
+                elif etype == "voice.response.turn_completed":
+                    content = str(hermes_event.get("content") or "")
+                    if content and not final_parts:
+                        final_parts.append(content)
+                elif etype == "hermes.tool.completed":
+                    tool_count += 1
+                elif etype == "voice.error":
+                    error_message = str(hermes_event.get("message") or "Hermes error")
+
+        consume_task = asyncio.create_task(_consume())
+        try:
+            await asyncio.wait_for(consume_task, timeout=promote_after)
+        except asyncio.TimeoutError:
+            self._log(
+                session,
+                "voice.hermes_fast_lane.abandoned",
+                {
+                    "type": "voice.hermes_fast_lane.abandoned",
+                    "reason": "grace_elapsed",
+                    "grace_ms": int(promote_after * 1000),
+                },
+            )
+            return None
+        except Exception as exc:  # infrastructure failure — report, don't busy
+            self._log(
+                session,
+                "voice.hermes_fast_lane.error",
+                {
+                    "type": "voice.hermes_fast_lane.error",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                },
+            )
+            return {
+                "ok": False,
+                "error": f"fast-lane task failed: {exc}",
+                "interface": interface_context,
+            }
+        if long_tool_name is not None:
+            self._log(
+                session,
+                "voice.hermes_fast_lane.abandoned",
+                {
+                    "type": "voice.hermes_fast_lane.abandoned",
+                    "reason": "long_tool_started",
+                    "tool_name": long_tool_name,
+                },
+            )
+            return None
+        if error_message:
+            return {"ok": False, "error": error_message, "interface": interface_context}
+        final_text = "".join(final_parts).strip()
+        speech_safe_text = _provider_safe_answer_for_speech(final_text)
+        self._log(
+            session,
+            "voice.hermes_fast_lane.completed",
+            {
+                "type": "voice.hermes_fast_lane.completed",
+                "tool_count": tool_count,
+                "answer_chars": len(speech_safe_text),
+            },
+        )
+        return {
+            "ok": True,
+            "status": "completed",
+            "fast_lane": True,
+            "text": speech_safe_text,
+            "answer": speech_safe_text,
+            "summary": speech_safe_text[:1200],
+            "tool_count": tool_count,
+            "interface": interface_context,
+            "note": (
+                "Answered inline on a side session; the earlier background "
+                "task is still running and will report separately."
+            ),
+            "spoken_response": "provider_generated_after_hermes_result",
+            "provider_instruction": (
+                "Use the Hermes text/answer fields as the authoritative context "
+                "for the spoken reply. Summarize naturally; do not say you lack context. "
+                "Do not read raw JSON, logs, tables, IDs, or command output verbatim."
+            ),
+        }
+
     def _promote_after_seconds(self, session: RealtimeAgentSession) -> float | None:
         """Grace window before a run is promoted, or None when promotion is off."""
         if not session.promotion_enabled:
@@ -2302,6 +2967,7 @@ class RealtimeAgentHandler:
         origin: str,
         call_id: str | None,
         transcript: str,
+        provider_acknowledged: bool = False,
     ) -> None:
         """Hand a promoted run off to the background and notify the client.
 
@@ -2310,6 +2976,11 @@ class RealtimeAgentHandler:
         speaks the result when the floor is clear.
         """
         session.promoted_transcript = transcript or session.promoted_transcript
+        speak = (
+            session.spoken_handoff
+            and session.result_delivery != "visual_only"
+            and not provider_acknowledged
+        )
         await self._send(
             ws,
             session,
@@ -2321,22 +2992,30 @@ class RealtimeAgentHandler:
                 "run_id": session.hermes_run_id,
                 "tier": session.hermes_run_tier if session.hermes_run_tier in ("promoted", "durable") else "promoted",
                 "promote_after_ms": session.promote_after_ms,
-                "spoken_handoff": session.spoken_handoff,
+                "spoken_handoff": speak,
+                "provider_acknowledged": provider_acknowledged,
                 "result_delivery": session.result_delivery,
                 "call_id": call_id,
+                "queued_count": len(session.background_queue),
+                "origin": origin,
             },
         )
-        speak = session.spoken_handoff and session.result_delivery != "visual_only"
         if origin == "provider_tool_call" and call_id:
             # Close the pending provider function call so the socket is not left
             # awaiting tool output for the whole background run.
+            # Deliberately NO run_id in the model-visible payload — the model
+            # read it aloud ("the run ID is run_997f23ec…", observed live).
+            # hermes_get_status / hermes_cancel default to the active run, so
+            # the model never needs the id; the client gets it via events.
             interim = {
                 "ok": True,
                 "status": "running_in_background",
-                "run_id": session.hermes_run_id,
                 "instruction": (
                     "The task is running in the background. Briefly acknowledge "
-                    "that you've started and will report back; do not answer yet."
+                    "that you've started and will report back; do not answer "
+                    "yet. Never say run IDs, session IDs, or other identifiers "
+                    "aloud. There is no task queue — do not offer to queue or "
+                    "claim to have queued anything."
                 ),
                 "interface": _interface_context(session),
             }
@@ -2345,7 +3024,20 @@ class RealtimeAgentHandler:
                     await self._request_provider_response(ws, session, connection, call_id)
         elif origin == "forced" and speak:
             with contextlib.suppress(Exception):
-                await connection.send_text(_background_handoff_prompt(transcript))
+                await connection.request_response(
+                    instructions=_background_handoff_prompt(transcript)
+                )
+        elif origin == "queued" and speak:
+            # Broker-initiated start of a previously queued task — one short
+            # spoken transition so the user knows the next item began. Wait
+            # for the floor first: a fallback TTS render for the previous
+            # result may still be speaking, and the transition must not
+            # overlap or clip it.
+            await self._await_floor_idle_for_result(session)
+            with contextlib.suppress(Exception):
+                await connection.request_response(
+                    instructions=_queued_start_prompt(transcript)
+                )
 
         if (
             session.background_delivery_task is not None
@@ -2421,6 +3113,17 @@ class RealtimeAgentHandler:
         finally:
             if session.hermes_task is task:
                 session.hermes_task = None
+            # Queue: the slot is free (whatever the outcome) — start the next
+            # queued task. The starter itself waits for the current summary to
+            # settle before speaking, so it never stomps the delivery; a
+            # cancel already cleared the queue, making this a no-op there.
+            if session.background_queue and not session.closed:
+                queued_start = asyncio.create_task(
+                    self._start_next_queued_run(ws, session, connection)
+                )
+                queued_start.add_done_callback(
+                    _log_task_failure(session, "queued_run_start_task")
+                )
 
         await self._send(
             ws,
@@ -2433,6 +3136,7 @@ class RealtimeAgentHandler:
                 "run_id": session.hermes_run_id,
                 "ok": bool(result.get("ok", True)),
                 "tool_count": result.get("tool_count", session.hermes_completed_tool_count),
+                "queued_count": len(session.background_queue),
             },
         )
 
@@ -2449,13 +3153,19 @@ class RealtimeAgentHandler:
             session.hermes_run_tier = "foreground"
             return
 
+        # Keep the delivered result for the respeak affordance regardless of
+        # the delivery mode below.
+        session.last_background_result = dict(result)
+
         if session.result_delivery == "visual_only":
             await self._emit_background_text_only(ws, session, result)
             session.hermes_run_tier = "foreground"
             return
 
-        # speak_when_idle / notify_then_speak: wait for the floor to clear, then
-        # have the provider speak a natural summary via the forced-summary path.
+        # speak_verbatim / speak_when_idle / notify_then_speak: wait for the
+        # floor to clear, then deliver exactly once through the provider
+        # (exact reading vs. natural summary chosen by mode); the validator's
+        # relay-TTS fallback and the delivery-confirm alarm backstop it.
         session.floor.note_result_ready()
         floor_idle = await self._await_floor_idle_for_result(session)
         # If the phone is detached, don't speak into the void: the provider's
@@ -2485,6 +3195,113 @@ class RealtimeAgentHandler:
             ws, session, connection, result, cancel_current=not floor_idle
         )
         session.hermes_run_tier = "foreground"
+        # Delivered-or-alarm: the summary must actually land (finished or
+        # early-committed streaming) within the confirm window, else the
+        # answer is force-emitted as text — it can never be silently lost to
+        # filler the validator missed, a dead response, or a stray cancel.
+        confirm = asyncio.create_task(
+            self._confirm_background_delivery(ws, session, dict(result))
+        )
+        confirm.add_done_callback(
+            _log_task_failure(session, "delivery_confirm_task")
+        )
+
+    async def _confirm_background_delivery(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        result: dict[str, Any],
+    ) -> None:
+        """Force a text emit when a spoken background delivery never lands."""
+        await asyncio.sleep(_DELIVERY_CONFIRM_SECONDS)
+        if session.closed:
+            return
+        if session.native_forced_summary_done or session.native_forced_summary_committed:
+            return
+        self._log(
+            session,
+            "voice.realtime_agent.delivery_unconfirmed",
+            {
+                "type": "voice.realtime_agent.delivery_unconfirmed",
+                "run_id": session.hermes_run_id,
+                "confirm_after_ms": int(_DELIVERY_CONFIRM_SECONDS * 1000),
+            },
+        )
+        with contextlib.suppress(Exception):
+            await self._emit_background_text_only(ws, session, result)
+
+    async def _start_next_queued_run(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+    ) -> None:
+        """Start the next queued background task once the slot + floor settle.
+
+        Spawned when the active run's task completes (any outcome). Waits,
+        bounded, for the current result's spoken summary to finish so the
+        queued task's handoff can't stomp the delivery; then runs the queued
+        task as a durable background run through the same delivery machinery.
+        """
+        # Phase 1: wait (bounded ~10s) for the current result's spoken
+        # summary to actually BEGIN. This task is spawned the moment the run's
+        # task completes — before the delivery task has injected — so "no
+        # summary active" is true trivially at first; starting then would race
+        # the injection (correct ordering previously held only by task
+        # scheduling luck). Cancel/timeout/visual-only paths never inject, so
+        # the grace expiry lets those proceed.
+        for _ in range(20):
+            if session.closed:
+                return
+            if session.native_forced_summary_active or session.native_forced_summary_done:
+                break
+            await asyncio.sleep(0.5)
+        # Phase 2: wait (bounded) for the active summary to finish speaking.
+        for _ in range(int(_DELIVERY_CONFIRM_SECONDS * 2)):
+            if session.closed:
+                return
+            if session.hermes_task is not None and not session.hermes_task.done():
+                return  # something else took the slot (shouldn't happen)
+            if session.native_forced_summary_done or not session.native_forced_summary_active:
+                break
+            await asyncio.sleep(0.5)
+        if session.closed or not session.background_queue:
+            return
+        item = session.background_queue.popleft()
+        text = str(item.get("text") or "").strip()
+        if not text:
+            return
+        call = ToolCallEvent(
+            call_id=f"queued-{session.event_seq + 1}",
+            name="hermes_run_task",
+            arguments={
+                "text": text,
+                "profile": item.get("profile"),
+                "mode": "background",
+            },
+        )
+        session.cancel_requested = False
+        task = asyncio.create_task(self._execute_brokered_tool(ws, session, call))
+        task.add_done_callback(_log_task_failure(session, "hermes_task"))
+        session.hermes_task = task
+        session.hermes_run_tier = "durable"
+        self._log(
+            session,
+            "voice.hermes_run.queued_started",
+            {
+                "type": "voice.hermes_run.queued_started",
+                "transcript_preview": _compact_status_text(text),
+                "queued_remaining": len(session.background_queue),
+            },
+        )
+        await self._begin_background_delivery(
+            ws,
+            session,
+            connection,
+            origin="queued",
+            call_id=None,
+            transcript=text,
+        )
 
     async def _deliver_pending_background_result(
         self,
@@ -2512,6 +3329,14 @@ class RealtimeAgentHandler:
         await self._inject_background_summary(
             ws, session, connection, result, cancel_current=not floor_idle
         )
+        # Same delivered-or-alarm guarantee as the attached background path:
+        # a resume-injected summary that never lands is force-emitted as text.
+        confirm = asyncio.create_task(
+            self._confirm_background_delivery(ws, session, dict(result))
+        )
+        confirm.add_done_callback(
+            _log_task_failure(session, "delivery_confirm_task")
+        )
 
     async def _await_floor_idle_for_result(
         self,
@@ -2521,12 +3346,186 @@ class RealtimeAgentHandler:
     ) -> bool:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if session.floor.consume_result_if_idle():
+            # The user is mid-utterance while live mic chunks are fresh — a
+            # delivery starting now would speak over them (and ended their
+            # recording, observed live). Hold until they've been quiet a
+            # beat; the deadline still bounds the wait.
+            input_quiet = (
+                time.monotonic() - session.native_last_input_audio_at
+                >= _DELIVERY_INPUT_QUIET_SECONDS
+            )
+            if input_quiet and session.floor.consume_result_if_idle():
                 return True
             await asyncio.sleep(0.05)
         # Timed out waiting for the floor; deliver anyway.
         session.floor.clear_result()
         return False
+
+    async def _seed_provider_with_delivered_result(
+        self,
+        session: RealtimeAgentSession,
+        result: dict[str, Any] | None,
+    ) -> None:
+        """Seed a relay-TTS-delivered background result into the provider's
+        conversation history so follow-ups can reference it.
+
+        Only for the fallback paths: on a provider-VOICED delivery the
+        provider's own response is already a history item, but on a fallback
+        the provider spoke a deferral ("I'll let you know") and relay TTS spoke
+        the answer — so the provider's history never contains the result, and a
+        follow-up ("what did that say?") fails or re-runs. Recording the
+        delivered answer as an assistant turn fixes that durably — unlike the
+        one-shot ``native_pending_delivery_note``, which only lands on the next
+        Hermes-routed turn. Best-effort: a dead/failing provider socket on the
+        death path is expected and swallowed.
+        """
+        connection = session.native_connection
+        if connection is None or not result:
+            return
+        answer = _forced_summary_fallback_text(result)
+        if not answer:
+            return
+        try:
+            await connection.append_context_item(role="assistant", text=answer)
+        except Exception as exc:  # noqa: BLE001 - seeding is best-effort
+            self._log(
+                session,
+                "voice.realtime_agent.result_seed_failed",
+                {
+                    "type": "voice.realtime_agent.result_seed_failed",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                },
+            )
+            return
+        self._log(
+            session,
+            "voice.realtime_agent.result_seeded",
+            {
+                "type": "voice.realtime_agent.result_seeded",
+                "chars": len(answer),
+                "preview": _compact_status_text(answer),
+            },
+        )
+
+    async def _speak_fallback_answer(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        result: dict[str, Any],
+        *,
+        reason: str,
+    ) -> None:
+        """Deliver the authoritative answer through relay TTS when the
+        provider cannot speak it (dead socket / failed response request).
+
+        Same mouth and delivery-note semantics as the validator's off-script
+        fallback in `_finish_forced_summary_provider_response` — the answer
+        always lands as audio even when the provider conversation is gone.
+        """
+        fallback_text = _forced_summary_fallback_text(result)
+        session.native_pending_delivery_note = _delivery_note(fallback_text)
+        session.native_forced_summary_active = False
+        session.native_forced_summary_done = True
+        session.native_forced_summary_response_id = None
+        session.native_forced_summary_result = None
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_committed = False
+        session.native_forced_summary_text_parts.clear()
+        response_id = f"delivery-fallback-{session.event_seq + 1}"
+        self._log(
+            session,
+            "voice.response.delivery_fallback",
+            {
+                "type": "voice.response.delivery_fallback",
+                "response_id": response_id,
+                "reason": reason,
+                "chars": len(fallback_text),
+            },
+        )
+        # Best-effort seed even here: the provider may be alive (request-failed,
+        # not socket-dead), in which case a follow-up should still find the
+        # answer in history. A truly dead socket just no-ops.
+        await self._seed_provider_with_delivered_result(session, result)
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_RESPONSE_STARTED,
+                "provider": session.provider,
+                "model": session.model,
+                "voice": session.voice,
+                "session_id": session.session_id,
+                "chat_session_id": session.chat_session_id,
+                "response_id": response_id,
+                "source": "hermes",
+                "delivery": "fallback",
+            },
+        )
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_RESPONSE_DELTA,
+                "source": "hermes",
+                "delta": fallback_text,
+                "response_id": response_id,
+                "delivery": "fallback",
+            },
+        )
+        await self._render_provider_audio(
+            ws,
+            session,
+            fallback_text,
+            {},
+            response_id=response_id,
+        )
+
+    async def _preempt_pending_forced_summary(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        *,
+        reason: str,
+    ) -> None:
+        """Reset forced-summary state for a new user turn.
+
+        When a forced/exact delivery is still in flight, a plain state wipe
+        would let its remaining deltas leak past the validator as a normal
+        response AND silently drop the undelivered answer. Cancel the stale
+        response and land the answer as text instead — speaking it now would
+        collide with the user's new turn. A delivery that already streamed
+        (committed) was heard, so it only needs the cancel.
+        """
+        was_active = session.native_forced_summary_active
+        pending = session.native_forced_summary_result
+        committed = session.native_forced_summary_committed
+        session.native_forced_summary_active = False
+        session.native_forced_summary_done = False
+        session.native_forced_summary_response_id = None
+        session.native_forced_summary_result = None
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_committed = False
+        session.native_forced_summary_text_parts.clear()
+        if not was_active:
+            return
+        # Concluded-by-preemption: the queued-run phase waits and the
+        # delivery-confirm alarm both treat the lifecycle as settled.
+        session.native_forced_summary_done = True
+        with contextlib.suppress(Exception):
+            await connection.cancel_response()
+        self._log(
+            session,
+            "voice.realtime_agent.delivery_preempted",
+            {
+                "type": "voice.realtime_agent.delivery_preempted",
+                "reason": reason,
+                "had_undelivered_result": pending is not None and not committed,
+                "committed": committed,
+            },
+        )
+        if pending is not None and not committed:
+            await self._emit_background_text_only(ws, session, pending)
 
     async def _inject_background_summary(
         self,
@@ -2543,6 +3542,7 @@ class RealtimeAgentHandler:
         session.native_forced_summary_response_id = None
         session.native_forced_summary_result = dict(result)
         session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_committed = False
         session.native_forced_summary_text_parts.clear()
         # Cancel only when a response is likely in flight (see caller). Cancelling
         # with nothing active makes xAI reply with a benign "no active response"
@@ -2551,7 +3551,18 @@ class RealtimeAgentHandler:
             with contextlib.suppress(Exception):
                 await connection.cancel_response()
         try:
-            await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+            exact_text = None
+            if (
+                session.result_delivery == "speak_verbatim"
+                and not _answer_is_structured(result)
+            ):
+                exact_text = _forced_summary_fallback_text(result)
+            await connection.request_response(
+                instructions=_result_delivery_prompt(
+                    session.result_delivery, transcript, result
+                ),
+                exact_text=exact_text,
+            )
         except Exception as exc:  # noqa: BLE001
             # The background_completed event + result are already recorded in the
             # event ring, so a resume will replay them; don't let a dead provider
@@ -2565,6 +3576,15 @@ class RealtimeAgentHandler:
                     "error": f"{exc.__class__.__name__}: {exc}",
                 },
             )
+            # The provider can't speak it, but the phone is (usually) still
+            # attached — deliver through relay TTS instead of waiting for the
+            # confirm alarm's text-only emit. Detached sessions keep the old
+            # behavior: the resume replay + close-path proactive push carry it.
+            attached = session.attached_ws
+            if attached is not None and not attached.closed:
+                await self._speak_fallback_answer(
+                    ws, session, result, reason="summary_request_failed"
+                )
 
     async def _emit_background_text_only(
         self,
@@ -2573,6 +3593,10 @@ class RealtimeAgentHandler:
         result: dict[str, Any],
     ) -> None:
         text = str(result.get("text") or result.get("answer") or result.get("summary") or "").strip()
+        # Text-only delivery also bypasses the provider's conversation — same
+        # next-turn correction as the fallback path.
+        if text:
+            session.native_pending_delivery_note = _delivery_note(text)
         response_id = f"background-visual-{session.event_seq + 1}"
         await self._send(
             ws,
@@ -2598,6 +3622,7 @@ class RealtimeAgentHandler:
                     "source": "hermes",
                     "delta": text,
                     "response_id": response_id,
+                    "delivery": "visual_only",
                 },
             )
         await self._send(
@@ -2641,6 +3666,17 @@ class RealtimeAgentHandler:
                 "last_tool_status": session.hermes_last_tool_status,
                 "last_tool_message": session.hermes_last_tool_message,
                 "completed_tool_count": session.hermes_completed_tool_count,
+                "queued_count": len(session.background_queue),
+                "queued_items": [
+                    {
+                        "position": idx + 1,
+                        "request_preview": _compact_status_text(
+                            str(item.get("text") or "")
+                        ),
+                    }
+                    for idx, item in enumerate(session.background_queue)
+                    if str(item.get("text") or "").strip()
+                ],
                 "interface": interface_context,
             }
         if call.name == "hermes_cancel":
@@ -2695,6 +3731,10 @@ class RealtimeAgentHandler:
             or None
         )
         final_parts: list[str] = []
+        # Redundant answer capture: the gateway streams drafting text as a
+        # `_thinking` pseudo-tool; if the response-delta path ever yields an
+        # empty answer, the drafted text is the answer of last resort.
+        thinking_parts: list[str] = []
         error_message: str | None = None
         session.cancel_requested = False
         session.hermes_run_status = "running"
@@ -2752,6 +3792,13 @@ class RealtimeAgentHandler:
                     content = str(hermes_event.get("content") or "")
                     if content and not final_parts:
                         final_parts.append(content)
+                elif (
+                    hermes_event.get("type") == "hermes.tool.delta"
+                    and str(hermes_event.get("tool_name") or "") == "_thinking"
+                ):
+                    drafted = str(hermes_event.get("delta") or "")
+                    if drafted:
+                        thinking_parts.append(drafted)
                 elif hermes_event.get("type") == "voice.error":
                     error_message = str(hermes_event.get("message") or "Hermes error")
                 for event_to_send in self._prepare_hermes_progress_events(session, hermes_event):
@@ -2782,6 +3829,23 @@ class RealtimeAgentHandler:
                 "interface": interface_context,
             }
         final_text = "".join(final_parts).strip()
+        if not final_text and thinking_parts:
+            # Answer of last resort from the drafted (_thinking) text. Deltas
+            # are usually incremental fragments (join), but some paths emit
+            # whole-snapshot deltas — if the last part dominates, prefer it
+            # over a self-duplicating join.
+            joined = "".join(thinking_parts).strip()
+            last = thinking_parts[-1].strip()
+            final_text = last if len(last) >= 0.6 * len(joined) else joined
+            self._log(
+                session,
+                "voice.hermes_run.answer_from_thinking",
+                {
+                    "type": "voice.hermes_run.answer_from_thinking",
+                    "run_id": session.hermes_run_id,
+                    "chars": len(final_text),
+                },
+            )
         speech_safe_text = _provider_safe_answer_for_speech(final_text)
         if session.hermes_run_status == "running":
             session.hermes_run_status = "completed"
@@ -2980,6 +4044,9 @@ class RealtimeAgentHandler:
     def _cancel_active_hermes(self, session: RealtimeAgentSession) -> None:
         session.cancel_requested = True
         session.hermes_run_status = "cancelled"
+        # Cancelling the active run also drops everything queued behind it —
+        # "stop" means stop, not "stop this one and start the next".
+        session.background_queue.clear()
         task = session.hermes_task
         if task is None or task.done():
             return
@@ -3284,6 +4351,16 @@ class RealtimeAgentHandler:
                 "response_id": response_id,
             },
         )
+        # The wav artifact is a debug tap: the audio already streamed to the
+        # client as PCM, and a single session's renders were observed at
+        # multiple MB. Keep it only when explicitly enabled; the retention
+        # sweep bounds even the kept ones.
+        keep_tap = bool(
+            getattr(self.config, "realtime_voice_debug_audio_tap", False)
+        )
+        if not keep_tap:
+            with contextlib.suppress(OSError):
+                Path(response.audio_path).unlink()
         await self._send(
             ws,
             session,
@@ -3292,7 +4369,7 @@ class RealtimeAgentHandler:
                 "provider": response.provider,
                 "model": response.model,
                 "voice": response.voice,
-                "audio_path": str(response.audio_path),
+                "audio_path": str(response.audio_path) if keep_tap else "",
                 "event_log_path": str(session.event_log_path),
                 "chat_session_id": session.chat_session_id,
                 "final_text": text,
@@ -3419,9 +4496,17 @@ class RealtimeAgentHandler:
             updates["background_default_mode"] = mode
         if "result_delivery" in payload:
             delivery = _bounded_string(payload["result_delivery"], "result_delivery", max_len=24)
-            if delivery not in ("speak_when_idle", "notify_then_speak", "visual_only"):
+            if delivery not in (
+                "speak_verbatim",
+                "speak_when_idle",
+                "notify_then_speak",
+                "visual_only",
+            ):
                 raise web.HTTPBadRequest(
-                    text="result_delivery must be speak_when_idle, notify_then_speak, or visual_only"
+                    text=(
+                        "result_delivery must be speak_verbatim, speak_when_idle, "
+                        "notify_then_speak, or visual_only"
+                    )
                 )
             updates["result_delivery"] = delivery
         if not updates:
@@ -3431,6 +4516,12 @@ class RealtimeAgentHandler:
     def _new_event_log_path(self, session_id: str) -> Path:
         run_dir = _run_dir(self.config)
         run_dir.mkdir(parents=True, exist_ok=True)
+        _sweep_run_dir(
+            run_dir,
+            retention_days=getattr(
+                self.config, "realtime_voice_run_retention_days", 14
+            ),
+        )
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
         safe_id = "".join(ch for ch in session_id if ch.isalnum())[:12]
         return run_dir / f"realtime-agent-{stamp}-{safe_id}.jsonl"
@@ -3459,6 +4550,11 @@ class RealtimeAgentHandler:
             "interface": _interface_context(session),
         }
 
+    @staticmethod
+    async def _close_superseded_websocket(ws: web.WebSocketResponse) -> None:
+        with contextlib.suppress(Exception):
+            await ws.close(code=4000, message=b"superseded by resumed route")
+
     async def _send(
         self,
         ws: web.WebSocketResponse | None,
@@ -3466,6 +4562,7 @@ class RealtimeAgentHandler:
         event: dict[str, Any],
         *,
         record: bool = True,
+        direct: bool = False,
     ) -> None:
         if "event_id" not in event:
             session.event_seq += 1
@@ -3480,7 +4577,7 @@ class RealtimeAgentHandler:
             if "audio_event_id" in snapshot:
                 session.audio_ring.append(snapshot)
         self._log(session, str(event["type"]), event)
-        target = session.attached_ws
+        target = ws if direct else session.attached_ws
         await self._send_json_best_effort(target, session, event)
 
     async def _send_json_best_effort(
@@ -3507,9 +4604,17 @@ class RealtimeAgentHandler:
         ws: web.WebSocketResponse,
         session: RealtimeAgentSession,
         message: str,
+        *,
+        direct: bool = False,
         **data: Any,
     ) -> None:
-        await self._send(ws, session, {"type": "voice.error", "message": message, **data})
+        await self._send(
+            ws,
+            session,
+            {"type": "voice.error", "message": message, **data},
+            record=not direct,
+            direct=direct,
+        )
 
     def _log(
         self,
@@ -3558,13 +4663,24 @@ def _native_instructions(session: RealtimeAgentSession) -> str:
         "or any information not present in this prompt/session context, call "
         "hermes_run_task instead of answering directly. If Hermes cannot verify "
         "the requested information, say that briefly instead of guessing. "
+        "If the user asks what is running, what is queued, whether the earlier "
+        "background task finished, or asks for current voice-task status, call "
+        "hermes_get_status rather than hermes_run_task; do not queue a status "
+        "question behind the work it is asking about. "
         "Provider-native realtime sessions are ephemeral; Hermes is the durable "
         "conversation memory. The relay may seed recent normal chat and realtime "
         "voice turns into this provider session. Use that seeded context for "
         "follow-up references such as 'this', 'that', 'it', 'the previous result', "
-        "or 'that integration' when it is sufficient. If the needed context is "
-        "missing, stale, tool-derived, or requires verification, call hermes_run_task "
-        "before answering. Do not say you lack context before a Hermes call. You "
+        "or 'that integration' when it is sufficient. A Hermes result already "
+        "delivered earlier in THIS conversation is in your history: if the user "
+        "only wants to hear it again, repeat or quote part of it, or reference "
+        "what it said (recall, not new work), answer directly from that history "
+        "and do NOT re-run a task you already completed. Call hermes_run_task "
+        "again only when the follow-up needs new, updated, deeper, or re-verified "
+        "information beyond what was already delivered. If the needed context is "
+        "missing, stale, or requires fresh data or verification you do not "
+        "already have, call hermes_run_task before answering. Do not say you lack "
+        "context before a Hermes call. You "
         "may speak one brief acknowledgement such as 'I'll check Hermes' or "
         "'I'll check that' before the tool call, then call hermes_run_task "
         "immediately. Do not give a substantive answer until Hermes returns. "
@@ -3822,7 +4938,7 @@ def _compact_status_text(value: str) -> str:
 
 
 def _provider_safe_answer_for_speech(value: str, *, max_chars: int = 1800) -> str:
-    text = value.strip()
+    text = _strip_tts_source_lines(value).strip()
     if not text:
         return ""
     compact = " ".join(text.split())
@@ -3837,6 +4953,56 @@ def _provider_safe_answer_for_speech(value: str, *, max_chars: int = 1800) -> st
         return compact
     excerpt = compact[: max_chars - 3].rstrip()
     return f"{excerpt}..."
+
+
+def _strip_tts_source_lines(value: str) -> str:
+    """Drop source/citation/path lines that are useful on screen but poor TTS."""
+    kept: list[str] = []
+    in_source_block = False
+    for raw_line in value.splitlines():
+        stripped = raw_line.strip()
+        lowered = stripped.lower()
+        if not stripped:
+            in_source_block = False
+            kept.append(raw_line)
+            continue
+        if lowered.startswith((
+            "source:",
+            "sources:",
+            "citation:",
+            "citations:",
+            "references:",
+        )):
+            in_source_block = True
+            continue
+        if in_source_block and _looks_like_source_list_line(stripped):
+            continue
+        kept.append(raw_line)
+    return "\n".join(kept)
+
+
+def _looks_like_source_list_line(line: str) -> bool:
+    marker_stripped = line.lstrip("-*•0123456789. )\t")
+    lowered = marker_stripped.lower()
+    if lowered.startswith(("source:", "citation:", "reference:")):
+        return True
+    if "\\" in marker_stripped:
+        return True
+    if "/" in marker_stripped and any(
+        part in lowered
+        for part in (
+            "/",
+            "personal/",
+            "household/",
+            "documents/",
+            "desktop/",
+            "downloads/",
+            "users/",
+            "home/",
+        )
+    ):
+        return True
+    return False
 
 
 def _try_parse_json(value: str) -> Any | None:
@@ -4037,6 +5203,8 @@ def _force_hermes_reason_for_transcript(text: str) -> str | None:
         ("right now", "current_time"),
         ("news", "current_data"),
         ("status", "status"),
+        ("queue", "status"),
+        ("queued", "status"),
         ("version", "versioned_data"),
         ("release", "versioned_data"),
         ("logs", "logs"),
@@ -4085,13 +5253,36 @@ def _forced_hermes_preamble_prompt(transcript: str) -> str:
     )
 
 
+def _delivery_note(delivered_text: str) -> str:
+    """Next-turn correction after a system-side (non-provider) delivery."""
+    return (
+        "Context correction: the earlier background task has ALREADY "
+        "COMPLETED, and its answer was already delivered to the user by the "
+        f"system voice: \"{delivered_text.strip()[:400]}\". Treat that task "
+        "as finished — do not say it is still running, and do not re-deliver "
+        "the answer unless the user asks for it again."
+    )
+
+
+def _queued_start_prompt(transcript: str) -> str:
+    return (
+        "The previous background task has finished and its queued follow-up "
+        "task is now starting in the background. Speak one very short, natural "
+        "transition — e.g. 'Now starting on the next one.' Do not answer the "
+        "request yet, do not call tools, and never say run IDs, session IDs, "
+        "or other identifiers aloud.\n\n"
+        f"Queued request now starting: {transcript.strip()[:1000]}"
+    )
+
+
 def _background_handoff_prompt(transcript: str) -> str:
     return (
         "The user's request is now running in the background and may take a "
         "little while. Speak one short, natural acknowledgement that you've "
         "started on it and will report back, for example: 'I'm on it — I'll let "
-        "you know.' Do not call tools, do not answer the request yet, and do not "
-        "ask for a run id.\n\n"
+        "you know.' Do not call tools, do not answer the request yet, and never "
+        "say run IDs, session IDs, or other identifiers aloud. There is no task "
+        "queue — do not offer to queue or claim to have queued anything.\n\n"
         f"User request: {transcript.strip()[:1000]}"
     )
 
@@ -4107,21 +5298,85 @@ def _forced_hermes_summary_prompt(transcript: str, result: dict[str, Any]) -> st
     if not answer:
         answer = "Hermes completed the request but did not return a spoken summary."
     summary = _provider_safe_answer_for_speech(answer, max_chars=1400)
+    # Deliberately NO run/session ids here — anything present in these
+    # instructions can end up spoken verbatim (observed live: the summary
+    # response read a full 32-char run id aloud). Identifiers stay in the
+    # client event stream, never in speech-composition context.
     metadata = {
-        "run_id": result.get("run_id"),
-        "session_id": result.get("session_id"),
         "tool_count": result.get("tool_count"),
         "last_tool_name": result.get("last_tool_name"),
     }
     return (
         "Hermes has already handled the user's previous voice request. "
-        "This is the final spoken answer step. Do not call any tools, do not "
-        "say you will check, and do not ask for a run id. Speak a concise "
-        "natural summary based only on the Hermes result below.\n\n"
+        "This is the final spoken answer step. Speak the answer from the "
+        "Hermes result below NOW, as a concise natural summary. Do not call "
+        "any tools, do not say you will check or report back later, and never "
+        "say run IDs, session IDs, or other identifiers aloud.\n\n"
         f"User request: {transcript.strip()[:1000]}\n"
         f"Hermes result: {summary}\n"
         f"Metadata: {json.dumps(metadata, sort_keys=True)}"
     )
+
+
+def _forced_hermes_exact_prompt(transcript: str, result: dict[str, Any]) -> str:
+    answer = str(
+        result.get("answer")
+        or result.get("text")
+        or result.get("summary")
+        or result.get("error")
+        or ""
+    ).strip()
+    if not answer:
+        answer = "Hermes completed the request but did not return a spoken summary."
+    speech = _provider_safe_answer_for_speech(answer, max_chars=1400)
+    # Same no-identifier rule as the summary prompt: anything present in
+    # these instructions can be spoken aloud, so ids never appear here.
+    return (
+        "Hermes has already handled the user's previous voice request. "
+        "This is the final spoken answer step. Read the answer below aloud "
+        "NOW, word for word as written. Do not paraphrase, shorten, reorder, "
+        "or add anything before or after it; only smooth over symbols or "
+        "formatting that cannot be spoken. Do not call any tools and do not "
+        "say you will check or report back later.\n\n"
+        f"User request: {transcript.strip()[:1000]}\n"
+        f"Answer to read: {speech}"
+    )
+
+
+def _answer_is_structured(result: dict[str, Any]) -> bool:
+    """True when the authoritative answer is a JSON object/array.
+
+    There is no meaningful word-for-word reading of structured output —
+    `_provider_safe_answer_for_speech` rewrites it into a summarize-this
+    meta-instruction, which would contradict the exact prompt's "do not
+    paraphrase" framing — so exact mode defers to the summary prompt.
+    """
+    answer = str(
+        result.get("answer")
+        or result.get("text")
+        or result.get("summary")
+        or result.get("error")
+        or ""
+    ).strip()
+    parsed = _try_parse_json(answer)
+    return isinstance(parsed, (dict, list))
+
+
+def _result_delivery_prompt(
+    result_delivery: str, transcript: str, result: dict[str, Any]
+) -> str:
+    """Per-response instructions for a provider-spoken result delivery.
+
+    Every spoken mode delivers through the realtime provider so the answer
+    keeps the session's voice and tone. ``speak_verbatim`` asks for an exact
+    reading of the authoritative Hermes answer (except structured JSON
+    answers, which have no meaningful verbatim reading); the other spoken
+    modes ask for a concise natural summary. The forced-summary validator
+    falls back to relay TTS either way when the provider goes off-script.
+    """
+    if result_delivery == "speak_verbatim" and not _answer_is_structured(result):
+        return _forced_hermes_exact_prompt(transcript, result)
+    return _forced_hermes_summary_prompt(transcript, result)
 
 
 def _forced_summary_tool_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -4150,11 +5405,79 @@ def _forced_summary_fallback_text(result: dict[str, Any]) -> str:
     return _provider_safe_answer_for_speech(answer, max_chars=1400)
 
 
-def _is_bad_forced_summary_response(text: str) -> bool:
-    return _bad_forced_summary_reason(text) is not None
+def _result_answer_text(result: dict[str, Any]) -> str:
+    """The authoritative answer text of a Hermes result, for validation."""
+    return str(
+        result.get("answer")
+        or result.get("text")
+        or result.get("summary")
+        or ""
+    ).strip()
 
 
-def _bad_forced_summary_reason(text: str) -> str | None:
+_ANSWER_EVIDENCE_STOPWORDS = frozenset(
+    (
+        "about", "after", "again", "along", "also", "back", "because", "been",
+        "before", "being", "between", "both", "cannot", "could", "does",
+        "doing", "done", "down", "each", "every", "finished", "from", "have",
+        "here", "hermes", "into", "just", "know", "like", "more", "most",
+        "much", "need", "only", "other", "over", "request", "result", "should",
+        "some", "successfully", "sure", "task", "than", "that", "them", "then",
+        "there", "these", "they", "this", "under", "very", "want", "well",
+        "were", "what", "when", "where", "which", "while", "will", "with",
+        "would", "your",
+    )
+)
+
+
+def _answer_evidence_tokens(answer: str) -> set[str]:
+    """Content-bearing tokens of the answer: any token with a digit, plus
+    words >= 4 chars that aren't generic filler. Used to check that a spoken
+    summary actually reflects the answer instead of deferral chatter."""
+    tokens: set[str] = set()
+    for raw in answer.lower().split():
+        token = raw.strip(".,;:!?'\"()[]{}—–-*`")
+        if not token:
+            continue
+        if any(ch.isdigit() for ch in token):
+            tokens.add(token)
+        elif len(token) >= 4 and token.isalpha() and token not in _ANSWER_EVIDENCE_STOPWORDS:
+            tokens.add(token)
+    return tokens
+
+
+def _summary_overlap_hits(summary: str, answer: str) -> int:
+    """Count WHOLE-WORD content tokens the summary shares with the answer.
+
+    Returns -1 when the answer has no content tokens to check against (a bare
+    'Done.') — the check is vacuous there. Whole-word matching matters:
+    substring matching let "will START automatically" (a queue acknowledgement)
+    count as evidence for an answer containing "starting" (observed live — a
+    completed answer was lost behind a queue-ack that early-committed on one
+    weak substring hit)."""
+    evidence = _answer_evidence_tokens(answer)
+    if not evidence:
+        return -1
+    words: set[str] = set()
+    for raw in summary.lower().split():
+        token = raw.strip(".,;:!?'\"()[]{}—–-*`")
+        if token:
+            words.add(token)
+    return len(evidence & words)
+
+
+def _summary_overlaps_answer(summary: str, answer: str) -> bool:
+    """True when the summary shares at least one whole-word content token with
+    the answer — positive evidence the model is actually delivering it.
+    Vacuously true when the answer has no content tokens."""
+    return _summary_overlap_hits(summary, answer) != 0
+
+
+def _is_bad_forced_summary_response(text: str, answer: str | None = None) -> bool:
+    return _bad_forced_summary_reason(text, answer) is not None
+
+
+def _bad_forced_summary_reason(text: str, answer: str | None = None) -> str | None:
     normalized = " ".join(text.lower().strip().split())
     if not normalized:
         return "empty_summary"
@@ -4175,15 +5498,46 @@ def _bad_forced_summary_reason(text: str) -> str | None:
         "what task you would like",
         "do you have",
         "handy",
+        # Deferral filler in what should be the final answer (observed live:
+        # "One moment while I look that up. I'll report back as soon as I
+        # have the info." spoken INSTEAD of a completed result — the answer
+        # was never delivered).
+        "one moment",
+        "i'll report back",
+        "i will report back",
+        "i'll look",
+        "i will look",
+        "looking that up",
+        "looking into",
+        "as soon as i have",
+        # Queue-speak in a FINAL answer (observed live: the summary response
+        # was "It's queued and will start automatically once the Minnesota
+        # check finishes. I'll let you know…" — a queue acknowledgement
+        # spoken instead of the completed result).
+        "i'll let you know",
+        "i will let you know",
+        "it's queued",
+        "is queued",
+        "queued and will",
+        "in the queue",
     )
+    # A phrase that appears in the AUTHORITATIVE ANSWER itself is not
+    # deferral evidence — a faithful exact reading of "your order is queued
+    # for Friday" must not be flagged for containing "is queued". Only
+    # phrases the model added on its own count against it.
+    answer_normalized = " ".join(answer.lower().strip().split()) if answer else ""
     for phrase in bad_phrases:
-        if phrase in normalized:
+        if phrase in normalized and phrase not in answer_normalized:
             return "acknowledgement_not_summary"
     if len(normalized) <= 80 and any(
         phrase in normalized
         for phrase in ("got it", "sure", "okay", "ok")
     ) and "check" in normalized:
         return "short_acknowledgement"
+    # Positive check (blocklists chase phrasings; this one doesn't): the
+    # summary must share content with the answer it claims to deliver.
+    if answer is not None and not _summary_overlaps_answer(text, answer):
+        return "no_answer_overlap"
     return None
 
 
@@ -4339,6 +5693,16 @@ def _is_benign_provider_error(message: str) -> bool:
     return "no active response" in lowered or "cancellation failed" in lowered
 
 
+def _is_provider_idle_timeout(message: str) -> bool:
+    """Match provider conversation-inactivity closures.
+
+    Observed live (xAI, 2026-07-08): "xAI Realtime error: Conversation timed
+    out after 900.0 seconds due to inactivity".
+    """
+    lowered = message.lower()
+    return "timed out" in lowered and "inactivity" in lowered
+
+
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -4366,6 +5730,37 @@ def _run_dir(config: RelayConfig) -> Path:
         return Path(configured).expanduser()
     home = Path(os.getenv("HERMES_RELAY_HOME", str(Path.home() / ".hermes-relay")))
     return home / "realtime-agent-runs"
+
+
+def _sweep_run_dir(run_dir: Path, *, retention_days: int) -> None:
+    """Drop session artifacts (JSONL flight logs + wav taps) past retention.
+
+    Runs at session-log creation, so a busy relay sweeps often and an idle
+    one accumulates nothing new. The logs carry conversation transcripts —
+    bounded retention is privacy hygiene as much as disk hygiene. 0 disables.
+    Best-effort: a sweep failure must never block a new voice session.
+    """
+    if retention_days <= 0:
+        return
+    cutoff = time.time() - retention_days * 86400
+    try:
+        candidates = list(run_dir.glob("realtime-agent-*"))
+    except OSError:
+        return
+    removed = 0
+    for path in candidates:
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        logger.info(
+            "Realtime-agent run sweep removed %d artifact(s) older than %d day(s)",
+            removed,
+            retention_days,
+        )
 
 
 def _config_path_for_payload(config: RelayConfig) -> Path:

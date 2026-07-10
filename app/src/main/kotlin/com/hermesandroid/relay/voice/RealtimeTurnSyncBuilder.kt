@@ -47,9 +47,36 @@ object RealtimeTurnSyncBuilder {
         return if (provenance.isBlank()) {
             trace.assistantText
         } else {
-            "${trace.assistantText}\n\n[Realtime Agent provider-native voice turn: $provenance]"
+            "${trace.assistantText}\n\n$PROVENANCE_PREFIX$provenance]"
         }
     }
 
+    /**
+     * Detect + strip the provenance marker [buildAssistantContent] appends to
+     * a synced provider-answered turn. Returns the assistant text with the
+     * marker removed, or null when no marker is present.
+     *
+     * Used by [com.hermesandroid.relay.network.upstream.ChatHandler.loadMessageHistory]
+     * so a synced turn coming back in server history renders with the quiet
+     * "Realtime Agent" badge instead of raw bracket noise — and so its
+     * superseded local clientOnly bubble can be dropped instead of showing
+     * the exchange twice. The marker must be the FINAL block of the content
+     * (a single bracket line, no embedded newline/bracket) so ordinary
+     * assistant prose that merely mentions the phrase is never stripped.
+     */
+    fun stripProvenanceMarker(content: String): String? {
+        val trimmed = content.trimEnd()
+        if (!trimmed.endsWith("]")) return null
+        val idx = trimmed.lastIndexOf("\n\n$PROVENANCE_PREFIX")
+        if (idx < 0) return null
+        val inner = trimmed.substring(
+            idx + 2 + PROVENANCE_PREFIX.length,
+            trimmed.length - 1,
+        )
+        if ('\n' in inner || ']' in inner) return null
+        return trimmed.substring(0, idx).trimEnd()
+    }
+
+    private const val PROVENANCE_PREFIX = "[Realtime Agent provider-native voice turn: "
     private const val MAX_CONTENT_CHARS = 4_000
 }

@@ -22,7 +22,7 @@ import json
 import sys
 from typing import Any
 
-from plugin.relay import tailscale
+from . import tailscale
 
 
 def _print_result(result: dict[str, Any] | None, *, as_json: bool) -> int:

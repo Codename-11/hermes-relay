@@ -18,6 +18,16 @@ store), with the repo root on PYTHONPATH:
     python scripts/realtime-provider-idle-probe.py --provider xai
     python scripts/realtime-provider-idle-probe.py --provider openai --windows 30,60,120
 
+xAI's server closes a conversation after 900s of inactivity (observed live
+2026-07-08), so the interesting windows are around that deadline. To reproduce
+the idle-close and then verify the broker's silent-PCM keepalive defeats it:
+
+    # repro: should die at ~900s with "timed out ... due to inactivity"
+    python scripts/realtime-provider-idle-probe.py --provider xai --windows 960
+
+    # fix: same window, pinging 100ms of silence every 240s like the broker
+    python scripts/realtime-provider-idle-probe.py --provider xai --windows 960 --keepalive-ms 240000
+
 Record the per-provider verdict in docs/realtime-voice-poc.md ("Idle tolerance").
 """
 
@@ -51,6 +61,37 @@ _PROVIDERS = {
 }
 
 
+def _probe_provider_options(provider_id: str) -> dict:
+    """Replicate the broker's credential injection (_provider_options).
+
+    The provider adapters resolve auth from provider_options first; the live
+    relay injects the Hermes xAI OAuth token there. Without this the probe
+    only works where raw env keys exist — which is exactly not the relay host.
+    """
+    options: dict = {}
+    if provider_id != "xai":
+        return options
+    try:
+        from plugin.relay.config import RelayConfig  # noqa: E402
+        from plugin.relay.realtime_voice import (  # noqa: E402
+            _read_relay_xai_oauth_token,
+        )
+        from plugin.relay.realtime_agent.providers.xai import (  # noqa: E402
+            _websocket_url_from_base,
+        )
+
+        token = _read_relay_xai_oauth_token(RelayConfig.from_env())
+        if token is not None:
+            options["oauth_access_token"] = token.access_token
+            ws_url = _websocket_url_from_base(token.base_url)
+            if ws_url:
+                options["url"] = ws_url
+            print(f"[probe] using relay xAI OAuth token (source: {token.source})")
+    except Exception as exc:  # noqa: BLE001 - probe reports and falls through
+        print(f"[probe] relay xAI OAuth lookup failed (env fallback): {exc!r}")
+    return options
+
+
 def _session_config(provider_id: str) -> RealtimeAgentSessionConfig:
     _, model, voice, rate = _PROVIDERS[provider_id]
     return RealtimeAgentSessionConfig(
@@ -61,7 +102,7 @@ def _session_config(provider_id: str) -> RealtimeAgentSessionConfig:
         profile=None,
         hermes_session_id=None,
         instructions="You are an idle-tolerance probe. Do not speak unless asked.",
-        provider_options={},
+        provider_options=_probe_provider_options(provider_id),
         tools=HERMES_TOOL_SCHEMAS,
     )
 
@@ -75,14 +116,59 @@ async def _drain_events(connection, stop: asyncio.Event, sink: list[str]) -> Non
                 sink.append(f"  ERROR payload={event.payload!r}")
             if stop.is_set():
                 return
+        # A clean stream end with no ERROR is still a socket death — stamp
+        # WHEN it happened (a pre-240s death means a keepalive mode was never
+        # actually exercised; observed once and misread as a mode failure).
+        sink.append(f"{time.monotonic():.1f}s events() stream ended (no error event)")
     except Exception as exc:  # noqa: BLE001 - probe wants the raw failure
         sink.append(f"{time.monotonic():.1f}s events() raised {exc!r}")
     finally:
         stop.set()
 
 
-async def probe(provider_id: str, windows: list[int]) -> int:
-    cls, *_ = _PROVIDERS[provider_id]
+async def _keepalive_pinger(
+    connection,
+    sample_rate: int,
+    interval_s: float,
+    stop: asyncio.Event,
+    sink: list[str],
+    mode: str = "audio",
+) -> None:
+    """Ping the provider on an interval while the probe idles.
+
+    Modes:
+    - ``audio``: 100ms of silent PCM (16-bit mono, never committed) — the
+      broker's original keepalive. VERDICT 2026-07-08: does NOT reset xAI's
+      900s conversation-inactivity timer (both runs died at exactly 900.0s).
+    - ``session_update``: re-send the session.update configure message — a
+      server-processed protocol message, the next candidate for "activity".
+    """
+    chunk = b"\x00" * max(2, int(sample_rate * 2 * 0.1))
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval_s)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            if mode == "session_update":
+                await connection.configure()
+                sink.append(f"{time.monotonic():.1f}s keepalive ping (session.update)")
+            else:
+                await connection.send_audio(chunk, sample_rate)
+                sink.append(f"{time.monotonic():.1f}s keepalive ping ({len(chunk)} bytes silence)")
+        except Exception as exc:  # noqa: BLE001 - probe wants the raw failure
+            sink.append(f"{time.monotonic():.1f}s keepalive send failed: {exc!r}")
+            return
+
+
+async def probe(
+    provider_id: str,
+    windows: list[int],
+    keepalive_ms: int = 0,
+    keepalive_mode: str = "audio",
+) -> int:
+    cls, *_, sample_rate = _PROVIDERS[provider_id]
     provider = cls()
     print(f"[probe] connecting {provider_id} ...")
     connection = await provider.connect(_session_config(provider_id))
@@ -91,6 +177,21 @@ async def probe(provider_id: str, windows: list[int]) -> int:
     stop = asyncio.Event()
     sink: list[str] = []
     reader = asyncio.create_task(_drain_events(connection, stop, sink))
+    pinger: asyncio.Task | None = None
+    if keepalive_ms > 0:
+        print(
+            f"[probe] keepalive enabled: {keepalive_mode} every {keepalive_ms / 1000:.0f}s"
+        )
+        pinger = asyncio.create_task(
+            _keepalive_pinger(
+                connection,
+                sample_rate,
+                keepalive_ms / 1000.0,
+                stop,
+                sink,
+                mode=keepalive_mode,
+            )
+        )
 
     verdict = "hold-floor-ok"
     try:
@@ -120,6 +221,10 @@ async def probe(provider_id: str, windows: list[int]) -> int:
                 await connection.cancel_response()
     finally:
         stop.set()
+        if pinger is not None:
+            pinger.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pinger
         with contextlib.suppress(Exception):
             await connection.close()
         reader.cancel()
@@ -142,9 +247,29 @@ def main() -> int:
         default="30,60,120",
         help="comma-separated idle windows in seconds",
     )
+    parser.add_argument(
+        "--keepalive-ms",
+        type=int,
+        default=0,
+        help="ping every N ms while idling (0 = off)",
+    )
+    parser.add_argument(
+        "--keepalive-mode",
+        choices=("audio", "session_update"),
+        default="audio",
+        help="ping type: silent PCM append (proven ineffective on xAI) or a "
+        "session.update re-send",
+    )
     args = parser.parse_args()
     windows = [int(w) for w in str(args.windows).split(",") if w.strip()]
-    return asyncio.run(probe(args.provider, windows))
+    return asyncio.run(
+        probe(
+            args.provider,
+            windows,
+            keepalive_ms=args.keepalive_ms,
+            keepalive_mode=args.keepalive_mode,
+        )
+    )
 
 
 if __name__ == "__main__":

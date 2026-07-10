@@ -187,7 +187,7 @@ def realtime_voice_settings(config: Any, profile: str | None) -> dict[str, Any]:
             getattr(config, "realtime_voice_progress_repeat_ms", 30000)
         ),
         "result_delivery": getattr(
-            config, "realtime_voice_result_delivery", "speak_when_idle"
+            config, "realtime_voice_result_delivery", "speak_verbatim"
         ),
         "max_background_runs": int(
             getattr(config, "realtime_voice_max_background_runs", 1)
