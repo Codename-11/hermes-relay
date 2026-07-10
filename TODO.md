@@ -6,19 +6,30 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
-## Active — next up (2026-07-07)
+## Active — 1.4.1 release verification (2026-07-10)
 
-Compaction-safe snapshot of where we are; details in the linked sections below.
+Implementation plan: `docs/plans/2026-07-09-1.4.1-chat-voice-enhancements.md`.
+Android 1.4.0 / versionCode 22 and plugin 1.4.0 were published on 2026-07-09.
+The 1.4.1 Chat and Voice waves are code-complete and merged into local `dev` for
+device validation. Version bumps, public release artifacts, push, tags, production
+deployment, and store upload remain separate owner-controlled steps.
 
-- **RELEASED — `android-v1.4.0` + `plugin-v1.4.0` (2026-07-09).** Android **1.4.0 / versionCode 22** and plugin **1.4.0** are published from the same release commit. Both GitHub releases, checksums, package artifacts, and Android signers were verified; Play accepted versionCode 22 and the production rollout was started. Extended on-device recovery stress testing and the force-stop persistence check remain explicitly deferred to the post-release validation item below.
-- **Voice bugs being worked now** — see "Voice — on-device findings" below for full detail:
-  1. Background/resume turn stuck on `Listening...` / `Still working...` — **fixed in code; current APK installed; extended live stress test deferred** (2026-07-09).
-  2. Tool-call status pills/ordering + stuck "Thinking" — fixed in code; final visual ordering re-check remains.
-  3. Tap/static click between sentences (`RealtimePcmPlayer` boundary) — still needs an on-device audio repro before fixing.
-- **Deferred post-release voice validation.** Repeat long-idle prewarm → record → background/foreground → route-change recovery, terminal retry exhaustion, repeated reopen/exit, cancel-without-ack, and force-stop persistence on physical devices. Capture both Android and relay traces for any recurrence; further recovery hardening or UX refinement may be required from those results.
-- **Screen-wake-lock — SHIPPED (2026-07-07).** See "Voice — on-device findings" below.
-- **Owner / Mizu — GitHub triage.** Close #64 as superseded, plus the queued open-issue comment/close/label batch (see "Open-issue resolution batch" below).
-- **Voice exact-mode signoff — PASSED (2026-07-09 e2e).** Both `grok-voice-latest` and the pinned `grok-voice-think-fast-1.0` deferred on model-generated exact delivery, so xAI exact mode now bypasses inference through provider-native `force_message`. The full on-device background path spoke the authoritative answer through xAI with no fallback, and a pure-recall follow-up repeated it from history without a second Hermes route/run. OpenAI's separate out-of-band delivery spike remains on its next-RC roadmap. Full detail + the background-tasks-as-chat UX asks + remaining audio/UI gaps are below.
+Before release preparation, keep these owner/device gates explicit:
+
+- Repeat the exact record → background/route loss → foreground reproduction on the
+  newly installed debug APK; no `Listening...` / `Still working...` row may strand.
+- Recheck long-run tool ordering, the screen wake lock, output waveform timing,
+  final-syllable tail, and the reported PCM tap/static between sentences.
+- Exercise the 1.4.1 Chat surfaces: streaming reflow, wide-table overflow, gallery
+  paging/zoom/sensitive actions, unread tracking, Demo mic gate, and task-card lifecycle.
+- Exercise commands and presets on Standard and Realtime Voice, including ordinary
+  prompts that resemble commands, explicit stop-vs-cancel behavior, Custom detection,
+  and preservation of route/provider/model/voice/concurrency/barge-in choices.
+- Repeat the Tink encrypted-session smoke: pair → force-stop → relaunch; the session
+  must persist without an encrypted-preferences startup crash.
+- Run release preparation separately: 1.4.1 versioning and public release artifacts,
+  then owner-controlled `dev` → `main` merge, tag, production deployment, and upload.
+- Complete the owner/Mizu GitHub triage batch, including closing #64 as superseded.
 
 ---
 
@@ -57,17 +68,15 @@ Theme: stop treating a background run as an ephemeral voice-only side effect —
 surface it in chat like any other turn and keep its result. Overlaps the "Voice
 background-run v2" chip roadmap below (items 3/4/7) but reframed around
 chat/history rather than the voice chip; unify rather than build twice.
-- **Titled background tasks.** Give each run a short title/label (first-line- or
-  model-derived) so it's identifiable in a list and in chat.
-- **Chat entry on kickoff + result.** Drop a chat entry when a background task
-  starts ("Background task: <title> — running") and settle the result into the same
-  thread when it finishes. Don't leave it voice-only.
-- **Results persisted in chat/history.** Show the background result cleanly in chat
-  history instead of discarding it after it's spoken — especially valuable for
-  follow-ups ("what did that say again?").
-- **Detail view (expand on tap).** Tapping a background-task chat entry expands to
-  the full run detail like a normal chat message / tool timeline (reuse
-  `SubagentLane`). Same intent as v2 items 3+4 — build once.
+- **First-class Chat task turn — CODE-COMPLETE for 1.4.1; device/cold-start
+  limits remain.** Promotion attaches a short objective title and running state to
+  the existing assistant row; progress, queued count, waiting/delivery, completion,
+  failure, cancellation, answer text, and expandable tool detail settle that same
+  identity. The authoritative answer persists in normal session history. Client-only
+  task-card metadata survives matched in-process history reconciliation but is not
+  reconstructed after a cold app restart because the server history schema does not
+  carry it. Verify the full live lifecycle and keep cold-start task metadata as a
+  separate durability decision rather than claiming it is solved.
 - **Realtime agent retains background-result context in-session — FALLBACK PATH
   DONE + SEEDING LIVE-VERIFIED (2026-07-09); NO-RERUN VERIFY PENDING.** On a FALLBACK delivery the broker now
   seeds the delivered answer into the provider's history as an assistant turn
@@ -186,10 +195,15 @@ green. Needs relay deploy + APK install + live verify.
   audio, history, and completion lifecycle. Structured results and summary modes
   remain model-generated; relay TTS remains the validator fallback. The on-device
   background path produced a clean `forced_summary_streaming` event and recall
-  reused the resulting provider history without another Hermes run. Post-audit hardening remains:
-  provider-death TTS fallback on all three delivery paths, confirm alarm on all
-  three, barge-in preemption-as-text, blocklist answer-exemption, and
-  structured-answer prompt routing.
+  reused the resulting provider history without another Hermes run.
+  **1.4.1 post-audit hardening is code-complete:** foreground Hermes results now
+  enter the same validation/confirmation lifecycle, non-structured Exact delivery
+  passes authoritative text to provider-native forced speech where supported,
+  structured answers keep instruction-driven routing, an answer equal to a short
+  acknowledgement is not falsely blocked, and provider tool-result/response-request
+  failure emits exactly one authoritative fallback before its terminal error. Live
+  verify foreground delivery and provider-failure fallback. Barge-in preemption as
+  durable visible text remains open.
 - **Audit leftovers (deliberate, small).** (1) DONE-chip respeak always
   renders via relay TTS — intentional determinism, but it voice-mismatches
   the exact mode's promise; candidate: provider-voiced respeak with TTS
@@ -206,14 +220,6 @@ wrappers, Android `DiagnosticsLog` Voice category) is in good shape — it
 carried every live-round forensics session. Three gaps before the release
 candidate:
 
-- **Run-dir retention + wav tap gating — DONE (2026-07-08).**
-  `run_retention_days` (default 14, 0 disables) sweeps JSONL + wav
-  artifacts at session-log creation; the render wav is a debug-only tap
-  (`debug_audio_tap`, default off) deleted after PCM streams.
-- **Delivery-outcome rollup — DONE (2026-07-08).**
-  `python -m plugin.relay.realtime_agent.report [--days N] [--json]`
-  tallies provider-spoken vs fallback deliveries with reasons; new
-  `forced_summary_delivered` marker makes clean deliveries countable.
 - **Buffered flight-recorder writes (minor).** `_log` open/appends per
   event on the event loop, including one line per audio chunk. Fine so
   far; switch to a buffered writer if voice sessions ever stutter under
@@ -225,16 +231,13 @@ Full findings with sources in
 `docs/plans/2026-07-08-openai-realtime-notes.md`. Headline: the OpenAI
 provider already exists and is broker-wired
 (`plugin/relay/realtime_agent/providers/openai.py`) but has never had a
-live round and defaults to a superseded model. Key provider contrasts vs
+recorded live round. The default is already updated to `gpt-realtime-2.1`.
+Key provider contrasts vs
 xAI: hard 60-min wall-clock session cap (not an inactivity timer),
 out-of-band responses (`conversation:"none"` + explicit `input`), async
 function calls, per-token pricing (2.1 audio $32/$64 per 1M; mini $10/$20)
 vs grok's flat $0.05/min.
 
-- **Bump OpenAI realtime default to `gpt-realtime-2.1` — CODE DONE
-  (2026-07-08).** Default bumped, `2.1-mini` + rollback `2` in the model
-  options. Remaining: live connect on 2.1 (covered by the live-verify
-  item below).
 - **Live-verify the OpenAI provider end-to-end.** Code-complete but no
   recorded live round (all forensics are grok-voice). Run the xAI
   on-device battery (pair → voice turn → `hermes_run_task` →
@@ -260,9 +263,6 @@ vs grok's flat $0.05/min.
   instructions, retiring `native_pending_delivery_note`. Success bar:
   provider history reads "done" (never "still running") after a promoted
   run, verified live.
-- **Guardrail test: only `hermes_*` tools advertised on OpenAI
-  realtime.** Assert `session.update` never advertises hosted-MCP or
-  non-Hermes tools. Success bar: test fails if any such tool appears.
 - **(Defer/eval-only) provider `semantic_vad` vs relay-owned floor.**
   Better turn-taking naturalness but moves barge-in ownership off
   `RealtimeFloor` — re-architecture, not RC scope.
@@ -274,9 +274,9 @@ tool-calling precision) as the new flagship; `grok-voice-fast-1.0` is
 deprecated and the `grok-voice-latest` ALIAS NOW RESOLVES TO THINK-FAST.
 We default to the alias everywhere (`config.py:106`,
 `providers/xai.py:31`), so the live model may have changed under us —
-xAI's docs explicitly say to pin versioned models in production. July also
-added 21 multilingual voices, speech tags, voice cloning, session
-resumption (30-min inactivity history retention), and a
+xAI's docs explicitly say to pin versioned models in production. The current
+platform documents five built-in expressive voices, 20+ spoken languages,
+speech tags, custom voice IDs, session resumption, and a
 `turn_detection.idle_timeout_ms` re-engagement knob.
 
 - **Decide pin-vs-alias, then re-baseline the live delivery rounds.** The
@@ -295,10 +295,12 @@ resumption (30-min inactivity history retention), and a
   if resumption is real, the idle-close-and-reseed handling can become
   reconnect-and-resume. Success bar: fresh empirical timeout/resume
   verdicts recorded in the POC doc.
-- **Surface the new voices + speech tags.** `provider_options.py` carries
-  a static grok voice list; refresh or fetch dynamically, and evaluate
-  speech tags against the enhanced-voice config contract. Success bar:
-  new voices selectable in Voice Settings against a live relay.
+- **xAI voice catalog + speech-tag UX are code-current; live verify only.** Dynamic
+  discovery uses xAI's paginated `/tts/voices` surface when auth is available; the
+  unauthenticated fallback matches the documented built-ins (`eve`, `ara`, `rex`,
+  `sal`, `leo`; verified 2026-07-09). Voice Settings and Voice Output already expose
+  the enhanced contract's expressive speech-tag toggle. Exercise both surfaces with
+  a live xAI relay before release.
 
 ## Voice — on-device findings (2026-07-08 e2e realtime test)
 
@@ -327,10 +329,6 @@ test.**
   (payload/metadata). Removed everywhere model-visible (get_status/cancel
   default to the active run; the client gets ids via events) + explicit
   "never say run/session IDs aloud" in all three instruction sites.
-- **Model claimed "I'll add that to the queue" — FIXED (relay, instruction).**
-  No queue exists (v2 item 2 not built). All handoff/busy instructions now
-  state "there is no task queue — do not offer to queue or claim to have
-  queued anything." True multi-task chip stacking remains the v2 queue item.
 - **Delivery spoke deferral filler instead of the answer — FIXED (relay).**
   The forced-summary validator caught run-id speech (that saved the Minnesota
   answer via fallback) but not "One moment while I look that up. I'll report
@@ -392,9 +390,9 @@ cancels). Ranked next increments, in value-per-complexity order:
    (at-least-once, unread) — same property as promotion; (c) live verify:
    during a long background run, ask a quick second question → answered
    inline; ask a second long thing → busy answer unchanged.
-2. **Task queue** — upgrade the busy answer from refusal to offer ("want me
-   to queue it?"): small FIFO in the broker session, start-next-on-completion
-   with a spoken handoff, chip shows "+1 queued". Pairs with (1).
+2. **Task queue — SHIPPED + LIVE-VERIFIED (2026-07-08).** FIFO cap 3,
+   start-next-on-completion, spoken transition, cancel-clears-queue, and the
+   `+N queued` chip all landed in the A-E batch above.
 3. **Chip tap-through to the transcript** — the run executes on a real
    gateway session, so full tool calls/outputs already live in that session's
    history; make the chip (or the finished turn) open it. Cheapest "see tool
@@ -407,9 +405,9 @@ cancels). Ranked next increments, in value-per-complexity order:
    native async function calling, leave the tool call pending and deliver the
    real `function_call_output` late instead of interim-ack + synthetic
    instruction text. Needs a live xAI parity check first.
-6. **Pending-result FIFO** — `pending_background_result` is a single slot
-   (correct for one run); generalize to an ordered list the day (1)/(2) land
-   so two results delivered during a detach don't race.
+6. **Pending-result FIFO** — `pending_background_result` is a single slot and
+   remains correct for the shipped serial queue. Generalize it only with N-way
+   concurrent background runs so multiple completions can race while detached.
 7. **Full N-way concurrent background runs — deliberately deferred.** Needs
    session-per-run topology (a gateway session serializes turns), which
    fragments conversation context, multiplies delivery/floor/failure modes,
@@ -578,13 +576,13 @@ every bubble) + grouping breaks on a >5min gap (`GROUP_GAP_MS`) so a resumed
 conversation gets its own beat; long-press haptic on the action menu; streaming dots
 gated to pre-first-token. Deferred:
 
-- **Streaming↔final render parity (kill the reflow).** `StreamingMarkdownContent`
-  renders raw markdown source (`## `, `**bold**`, `- item`) as plain 14sp text for the
-  whole turn, then swaps to the full renderer at completion — headings still pop
-  14sp→20sp on finalize (much reduced now that settled headings are small and lists no
-  longer resize, but not zero). Run the real renderer on the settled prefix and keep
-  only the trailing unterminated block raw. Riskier (partial-fence flicker) — needs
-  on-device testing. Highest-effort audit item.
+- **Streaming↔final render parity — conservative 1.4.1 slice implemented; live
+  reflow check remains.** Blank-terminated, unambiguous top-level prose/headings use
+  the final Markdown renderer during generation while the active tail stays raw.
+  Lists, quotes, tables, HTML, and fences intentionally remain lightweight until the
+  final parse because partial CommonMark containers can re-parent earlier blocks.
+  Verify that the chosen boundary removes the common heading/prose pop without
+  introducing partial-fence or list flicker.
 - **Bubble body 14sp → 15sp/21.** 14sp is the smallest body of the five reference
   apps. Bump markdown paragraph/text/list + the two plain `Text` sites
   (`MessageBubble.kt` user/system) together; keep ~1.4 leading so the ~272dp measure
@@ -594,9 +592,6 @@ gated to pre-first-token. Deferred:
   (every bubble tails). Switching to iMessage-style "tail on the last bubble only"
   changes the look — get design intent before flipping. `isLastInGroup` is now
   meaningful (grouping breaks on gaps) so it's ready if wanted.
-- **Wide tables.** GFM tables use the default renderer on ~272dp (columns crush);
-  code fences already horizontal-scroll. Add a custom `table` component in
-  `markdownComponents` with `horizontalScroll` + ~110dp min column + right-edge fade.
 - **Assistant bubble width decoupled from user.** Both cap at 300dp though only the
   assistant carries markdown/code; let the assistant run wider (~92% of available /
   340–360dp cap) so fences wrap/scroll later. Keep user ~300dp.
@@ -607,8 +602,8 @@ gated to pre-first-token. Deferred:
   text selection instead of opening Copy/Quote. Pick one owner (drop
   `SelectionContainer`, expose Copy via the menu — chat-app norm — or move actions to a
   kebab). Needs on-device confirmation of the current conflict first.
-- **Jump-to-bottom FAB unread badge** + drop the no-op tap ripple on bubbles
-  (`combinedClickable onClick={}` still ripples). Telegram pattern.
+- **Drop the no-op tap ripple on bubbles.** The 1.4.1 jump-to-bottom unread badge is
+  code-complete; `combinedClickable(onClick={})` still ripples on a normal bubble tap.
 - **Sessions-transport `animateItem` flash.** Stream-complete rebuilds the list with
   new ids → every visible bubble replays its enter animation (gateway transport,
   stable id, is unaffected). Reuse the streaming bubble's id for the final message.
@@ -757,8 +752,12 @@ Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_mes
   - **LOOK INTO (own item, owner-requested 2026-06-29): live `/api/ws` transport for a foregrounded Thread.** Goal: when a Thread is open in the app foreground, give it the *same* live experience as Chat (live `reasoning.delta` + tool-progress) by running the turn over the `/api/ws` dashboard-gateway transport into that `source=phone` session, instead of the notification-grade `proactive.reply` path. Spec the experiment: (1) does `session.resume` + `prompt.submit` on a `source=phone` session over `/api/ws` keep `source=phone` (not silently re-tag `tui`)? (2) does it bypass `PhoneAdapter` / the role_authorized reply loop, and does that matter when the user is the one typing? (3) reconcile the two send paths (foreground→`/api/ws`, background/notification→`proactive.reply`) without double-sends. If it holds, a Thread becomes "background-delivered like a DM, but live like Chat when you open it" — the best of both. Until verified, `proactive.reply` stays the only send path.
 - **Docs/user-docs for Threads (lockstep — author with the user-facing slices 4–5).** Dev refs are done (ADR 12 carries the unified-session decision + the two-"gateway" split). Still to write when the surface ships: a plain-language `user-docs/features/threads.md` — what a Thread *is*, **Chat vs Threads** (live foreground work vs. persistent, agent-reachable conversations), the two opt-in gates, that it's relay-only — plus a **brief in-app explainer** (e.g. a one-line hint on the Threads filter empty state or a small info affordance, not a wall of text), and `docs/relay-protocol.md` + relay-server route docs for the wire. Replace the stale user-docs "Coming Soon → Push Notifications" row; keep it distinct from the clipboard inbox and the inbound Notification Companion.
 - **More Threads fold-ins (capture now, build with the relevant slice).** (a) **Read-state back to the agent** — tell the gateway you saw a proactive message (Discord-style read receipt) so the agent knows; fold into the `proactive.reply.ack` design (#7). (b) **Cross-surface reply** — because a Thread is just a gateway session, a reply could come from the desktop CLI / dashboard too, not only the phone; near-free once unified, verify the reply routing. (c) **Priority/importance on a proactive message** — let the agent mark urgent vs FYI → notification importance / quiet-hours bypass; small payload field + maps to the notifier channel.
-- **Per-thread `chat_id`.** Everything is hardcoded `chat_id="phone"` (one thread) today; the adapter already plumbs `chat_id`, so varying it yields multiple threads (per topic, or the agent opening distinct conversations). Ties into the threaded surface.
-- **Message status + delivery state.** Surface sent / delivered / queued / failed per message in the thread (depends on outbound buffering's queued state) so the user knows whether the agent actually reached them.
+- **Agent-created per-thread `chat_id`.** User-created named Threads and arbitrary
+  `chat_id` routing are shipped. Remaining: expose a `send_message`-adjacent
+  agent affordance that can deliberately open/name a project Thread.
+- **Queued message state.** Sending/Delivered/Failed bubbles and relay reply ACKs
+  are shipped. Add an honest Queued state plus Cancel when the offline outbox
+  exists; do not infer delivery from socket enqueue alone.
 - **Auto-title the phone thread** like other sessions (first confirm whether the gateway already auto-titles platform sessions; wire it through if so).
 ### Discord/Telegram replacement — capability gaps (to fully retire reaching for them)
 
@@ -766,15 +765,27 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 
 - **Guaranteed background delivery (the biggest gap; no push today).** Delivery is **live-WSS-only** + a 24 h relay buffer; there is **no FCM/UnifiedPush** wake-up. If the app process is dead AND not holding a socket, a message waits for the next reconnect, and the relay buffer is ephemeral (lost on relay restart). Discord/Telegram feel instant because they wake the device via push even when the app is dead. Decide a **push transport**: **UnifiedPush/ntfy** (recommended — self-hostable, no Google dependency, upstream *already* ships an `ntfy` platform, on-brand for self-hosted) vs **FCM** (simplest UX but adds Play Services + a push relay; clashes with self-hosted ethos — at most the `googlePlay` flavor) vs **persistent foreground keep-alive service** holding the relay WSS (zero new infra, like `GatewayKeepAliveService`, but battery cost + Doze-fragile). Likely: UnifiedPush primary + foreground-keepalive fallback.
 - **Cron / background-job delivery is BROKEN** (already tracked above): `deliver=phone` standalone path → `Unknown platform: phone`. This is load-bearing for "receiver of crons/background jobs" — fix is required, not optional, for the replacement goal.
-- **Multi-thread is wired-for but never varied** (already tracked: per-thread `chat_id`). For real DM/channel parity the agent must *open distinct threads* (vary `chat_id` per topic/job), the app must render a **thread list** (N conversations, not one), and replies route back by `chat_id`+`reply_to` (already plumbed).
-- **Durable history / scrollback.** The relay buffer is ephemeral; a real messaging surface needs persisted scrollback. Read the gateway **session store** for the `phone` platform's history (relay-exposed read path) so reopening a thread shows the full conversation, not just buffered-while-away.
+- **Agent-initiated multi-thread creation remains.** The app already renders N
+  `source=phone` sessions, user-created Threads vary `chat_id`, and replies route
+  by `chat_id` + `reply_to`. The missing parity is letting the agent open/name a
+  distinct Thread for a topic or job.
+- **Durable history / scrollback — SHIPPED.** Threads reopen through the gateway
+  session store; the relay buffer is only the live/offline-delivery layer, not a
+  parallel history database.
 - **Profile = contact mapping (new idea, fold in).** Multiple Hermes **profiles** (distinct agent personas/configs) could each be a distinct thread *source*/"contact" — DMing different agents. Maps cleanly onto the per-thread `chat_id` + source-attribution work; lets the app feel like a contact list of agents.
 - **Per-thread notification controls + deep-link (Discord-parity affordances).** Per-thread notification channels, mute/DND/quiet-hours (Phase 3 partially), and a notification that **deep-links into the exact thread** (tap → land in that conversation) so dipping in/out while multitasking is frictionless.
 - **Agent-initiated rich content.** Agent → phone thread with **images/cards** (relay media infra + `InboundAttachmentCard`/`HermesCardBubble` already exist on the chat side — reuse). Inbound (phone → agent) reply media stays deferred (text-first), but outbound rich content is low-cost parity.
 - **In-thread "agent is working" indicator.** A typing/working state in the thread while the agent thinks/runs tools (Discord typing-dots parity) — the chat surface already has thinking indicators to reuse.
 
-- **Source/platform attribution + filtering in the drawer (NOW READY — owner-requested 2026-06-29; the gateway/Threads surface has shipped).** `/api/sessions` DOES expose `source` (confirmed live: `tui`, `cli`, `api_server`, `web`, `discord`, `telegram`, `cron`, `webhook`, `phone`). Build: **(a)** a clean **source badge** per session in the drawer — phone → the thread-spool (done); discord / telegram / cron / webhook / web → a small per-platform chip/icon (match hermes-desktop's convention); the app's own `tui`/`api_server` chats get no badge (or a subtle one). **(b)** a **filter** (drawer dropdown) to show/hide sources. **(c)** a **setting** (Chat settings) for the default — **hide the agent's other-gateway/automation sessions (cron / webhook / discord / telegram) by default** so the drawer shows just your chats + Threads, with a toggle to reveal them (the live default `state.db` is full of cron/discord/webhook noise). Persist the visibility prefs. Can't see the official desktop (no clone) — infer its chip styling; match exactly if specifics surface. Standard-path: read-only display of the upstream `source` field. Fold cross-restart **Thread-name persistence** (currently in-memory) into this drawer pass.
-- **Beta-gate the Threads featureset (owner direction 2026-06-29).** Mark Threads **Beta** with a clean badge in the UI (the Threads filter chip + the best-path "Threads" capability row) until the enhancements land. Full (non-beta) release is gated on: **live `/api/ws` transport for a foregrounded Thread** (an open Thread streams like Chat — the headline), per-session **unread**, the **`chat_id`-on-`/api/sessions` upstream fix** (so threads route after restart / cross-device), and **outbox/retry**.
+- **Source/platform attribution, filtering, and Thread-name persistence — SHIPPED.**
+  The drawer and Chat settings show source badges and persisted visibility filters;
+  `ThreadNameStore` persists user Thread names across restart and reapplies them to
+  session rows. Remaining Threads work is the explicit residual list above
+  (unread, outbox/retry, exact deep-link, agent-created named Threads, and live
+  foreground `/api/ws`).
+- **Threads Beta badges — SHIPPED.** The Threads filter and best-path capability
+  row render the shared `BetaChip`. Removing Beta remains gated on live foreground
+  `/api/ws`, per-session unread, upstream `chat_id` exposure, and outbox/retry.
 
 ## Voice — Standard-path parity follow-ups
 
@@ -826,18 +837,19 @@ The client-side mitigations shipped (see DEVLOG 2026-06-27): the `updateSessions
 
 ### Thinking indicator — post-v1.3.0 follow-ups
 
-The animated dot-matrix "thinking" indicator shipped in **android-v1.3.0** (Wave/Pulse/Bounce/Sparkle motions + Auto/accent colors, live preview in Chat settings; static when animations are off). Remaining:
+The animated dot-matrix "thinking" indicator shipped in **android-v1.3.0**
+(Wave/Pulse/Bounce/Sparkle motions + Auto/accent colors, live preview in Chat
+settings). The 1.4.1 path also honors app animation settings, OS animator scale,
+and TalkBack touch exploration. Remaining:
 
-- **OS-level reduce-motion / TalkBack** — currently gates only on the app's `animationEnabled` pref. Also honor OS reduce-motion + touch-exploration like `CleanChatMode` does (`rememberCleanMotionState().osAnimations`).
 - **Optional: promote to a full avatar style** — the alternative scope (a `DotMatrixAvatar` `AgentAvatar` shown everywhere via `LocalAvailableAvatars`, selected in Appearance). Deferred in favor of the narrower in-bubble indicator.
 
 ## Demo mode (2026-06-27) — deferred polish
 
 Shipped offline Demo / Explore mode (see DEVLOG 2026-06-27). Core is in; these are non-blocking polish items, none required for the Play "App access" fix:
 
-- **On-device verify (Studio).** Confirm: "Try the demo" on the onboarding Connect page and the standalone Connect screen lands on Chat showing the canned transcript (Markdown, tool-progress card, weather card, code block); the persistent banner shows and its Connect exits demo into the real wizard; demo runs in airplane mode with no network; Manage/Voice show the demo empty state; Bridge/Terminal show their pair-gate; backing out of demo Chat clears the flag so a real connection still works.
+- **On-device verify (Studio).** Confirm: "Try the demo" on the onboarding Connect page and the standalone Connect screen lands on Chat showing the canned transcript (Markdown, tool-progress card, weather card, code block); the persistent banner shows and its Connect exits demo into the real wizard; demo runs in airplane mode with no network; the Chat mic explains locally that Voice needs a connection and never attempts transcription; Manage/Voice show the demo empty state; Bridge/Terminal show their pair-gate; backing out of demo Chat clears the flag so a real connection still works.
 - **Demo composer is a silent no-op — DONE 2026-07-08.** `sendMessage` now intercepts while `isDemoMode`: echoes the user bubble and appends `DemoContent.composerReply` ("offline demo, can't answer for real — tap Connect in the banner"), both clientOnly so demo-exit's `clearMessages()` wipes them. Wired via `setDemoModeWiring` (unconditional in RelayApp — the client-gated chat init never runs in demo, so ChatViewModel's own handler is null there). On-device check rides the existing demo verify item above.
-- **Live voice mode in demo.** The voice-mode overlay (mic) launched from Chat isn't demo-gated — a tap would attempt a transcribe (fails gracefully, no crash). Add a demo notice / disable the mic in demo. (Voice settings screen already shows the demo empty state.)
 - **Light typewriter/stream simulation.** The transcript is statically populated; an optional per-token reveal on first entry would better convey the "streaming" feel. Acceptable as static for v1.
 - **Optional richer demo.** Could add a second tool type or an image attachment to the transcript to showcase more surfaces; kept minimal/one-file for now.
 
@@ -860,7 +872,6 @@ Client-side profile-lock + voice fixes (the items marked above) landed via a pla
 - **Per-profile voice on Standard (upstream).** `/api/audio/*` is host-global/text-only; the Standard surface still can't carry a per-request voice. Needs the upstream profile-voice / `/v1/audio/*` PR. Until then the client prefers the relay path; consider surfacing an honest "override needs Relay" state when Standard is the effective surface.
 - **Profile lock: ChatScreen glyph + export.** The optional lock glyph on the chat-header avatar was skipped (`ChatScreen.kt` is owned by a concurrent session). Decide whether the per-connection lock belongs in settings export/import (it rides the `profile_selections` DataStore).
 - **Unit tests — DONE 2026-06-21 (36/36 pass via `:app:testSideloadDebugUnitTest`).** `ProfileLockStoreTest` (9 — uses an in-memory `DataStore` harness; the file-backed factory hits a Windows write-rename/instance race), `ProfileControllerLockTest` (8, Robolectric), `CoerceAudioRouteTest` (7), `VoiceStatusGatesTest` (12).
-- **CHANGELOG.** Add `[Unreleased]` entries (Profile lock → Added; voice override + realtime → Fixed) at build-verify/PR time.
 - **On-device verification.** Override applies in 'auto'+relay; realtime survives a &gt;90s background task without stalling and stops over-narrating; Speaking waveform unfolds at first audible frame; profile lock hides pickers + holds on a missing profile; overlay shows the profile icon.
 
 ## Hands-free agentic voice backlog
@@ -869,33 +880,25 @@ Goal: make Hermes usable for hands-free work without leaving the operator blind
 
 to tool state, safety prompts, or the current task.
 
-- **Waveform output-start sync** — current input waveform timing feels good, but
+- **Waveform output-start sync — SHIPPED; on-device confirmation remains.**
+  Realtime output now gates on `RealtimePcmPlayer` playback-head movement or
+  playback-synchronized amplitude through `shouldMarkRealtimeOutputActive`,
+  matching the basic-TTS path. Confirm visually on-device with the 1.4.1 batch.
 
-the agent-output waveform can unfold and begin movement before audible speech
+- **Voice command layer — initial 1.4.1 subset code-complete; live verify and
+  navigation residuals remain.** Exact final transcripts can stop speech,
+  explicitly cancel the active background task, pause/resume Continuous mode,
+  repeat a settled background answer, and start a new Standard chat. Bare `stop`
+  and `cancel`, partial transcripts, and command-like ordinary prompts stay on the
+  normal Hermes route. Realtime `new chat` remains gated on a clean websocket
+  session-rebind boundary; `open overlay` and `return to Hermes` remain future
+  navigation commands. Verify barge-in Stop, pause during a background run, local
+  command Chat cleanup, and Continuous rearm on device.
 
-starts. Split "preparing audio" from "speaking audio" in the visual layer, or
-
-gate the unfolded Speaking waveform on the first real playback frame/audio
-
-amplitude. Processing can stay as the folded circular spinner until output is
-
-actually audible.
-
-- **Voice command layer** — reserve local commands that bypass normal agent
-
-routing: "pause", "resume", "stop talking", "cancel", "repeat that", "open
-
-overlay", "return to Hermes", and "new chat". These should work while the
-
-agent is thinking, speaking, or using tools.
-
-- **Spoken tool progress** — when Hermes uses tools, voice mode should speak
-
-short status updates such as "I'm checking the relay logs" or "I found an
-
-error" without waiting for final assistant text. Long tool calls should emit
-
-periodic, low-noise progress updates.
+- **Spoken tool progress — baseline shipped; broader hands-free policy remains.**
+  Realtime background runs already emit milestone speech plus coarse, low-noise
+  progress with repeat suppression. The 1.4.1 residual is a unified policy across
+  Voice engines and presets, not another parallel heartbeat implementation.
 
 - **Realtime tool timeline parity** — the voice overlay should render the same
 
@@ -915,11 +918,12 @@ the current voice task: active objective, last tool result, pending next step,
 
 and whether the agent is waiting on the user.
 
-- **Mode presets** — add presets such as Hands-free, Low latency, Careful tool
-
-mode, and Quiet/visual-only. Hands-free should favor Continuous listening,
-
-spoken tool progress, confirmations, and overlay availability.
+- **Mode presets — CODE-COMPLETE for 1.4.1; live apply/Custom-state verification
+  remains.** Hands-free, Low latency, Careful tools, and Quiet/visual-only compose
+  existing interaction and relay-promotion controls. They preserve engine, route,
+  provider, model, voice, credentials, concurrency, and Hands-free's existing
+  experimental barge-in choice. Relay update is server-first; local Voice/barge-in
+  values share one DataStore transaction, with relay rollback on local failure.
 
 - **Barge-in hardening** — keep barge-in experimental until echo/self-recording
 
@@ -1038,7 +1042,6 @@ Follow-ups:
 ## Attachments (shipped 2026-06-18 — `docs/plans/2026-06-18-attachment-experience.md`)
 
 - **B3 — download progress + cancel.** Inbound fetch is un-cancelable; the previews work scaffolded an indeterminate bar + nullable `onCancel`. Live wiring needs the fetch-path owner (`ChatViewModel`/`Attachment`) to expose determinate progress (Content-Length) + a cancel hook.
-- **A6 — multi-image gallery.** N images in one message → grid + swipe-across viewer (Telegram media-group parity).
 - **C5 — agent-side sensitivity config gate.** `RELAY_MEDIA_SENSITIVITY_HINTS` (env or per-profile) instructing the agent to annotate sensitive media via the prompt-builder. Transport (relay `X-Media-Sensitive` header + client blur) already ships; the agent isn't asked to set the bit yet.
 - **Relay thumbnails (D6).** Server-side thumbnail generation to avoid full-size download for cards/galleries. Needs an image lib (Pillow not currently a dep) — evaluate before adding.
 - **D5 — outbound upload progress.** No per-attachment progress during the 60s gateway PDF-render window.
@@ -1046,12 +1049,13 @@ Follow-ups:
 ## Voice overhaul (shipped 2026-06-18 — `docs/plans/2026-06-18-voice-overhaul.md`)
 
 - **Per-profile voice on Standard (upstream PR).** Upstream `/api/profiles/*` has no voice field and `/api/audio/*` is host-global. Long-term: PR a voice section to the profile config + make `/api/audio/*` honor the active/`?profile=` profile. The relay path already carries per-profile voice; ship that first.
-- ~~**Wire connectionId for per-profile voice namespacing.**~~ **Already shipped — stale entry (verified 2026-07-08).** The wiring landed in `0aa1b38` (2026-06-21, the same batch this list belongs to): `RelayApp` has a `LaunchedEffect(activeConnectionId, selectedProfile?.name)` calling `voiceViewModel.setVoicePrefsConnection(activeConnectionId)` *before* `onProfileChanged(...)`, and `applyVoicePrefsScope` pushes `(connectionId, profile)` into `VoicePreferencesRepository.setActiveScope`. Two connections with same-named profiles namespace separately.
-- **Realtime-PCM waveform output gating.** The basic-TTS output waveform is now Visualizer-accurate (gated on real playback amplitude), but the realtime path gates `outputAudioActive` on `audioSeen` (first decoded PCM bytes) in `VoiceViewModel.handleRealtimeVoiceEvent`, which can still lead audible output by the `RealtimePcmPlayer` start prebuffer. Gate realtime on actual playback-start (head moved) to match the basic-TTS path.
 
 ## Chat clean-mode + pets (shipped 2026-06-18 — `docs/plans/2026-06-18-chat-clean-mode-and-pets.md`)
 
-- **Part-A chat polish (optional bundle).** Per-code-block copy + horizontal scroll, visible copy affordance, mid-stream stall feedback, profile/skill-aware empty-state chips, the ~40-flow recomposition hotspot at the top of `ChatScreen`. (Sphere `contentDescription`/reduced-motion was handled by the clean-mode a11y work.)
+- **Part-A chat polish residuals.** Per-code-block copy, horizontal scroll, the
+  visible copy affordance, and mid-stream stall feedback are shipped. Remaining:
+  profile/skill-aware empty-state chips and the ~40-flow recomposition hotspot at
+  the top of `ChatScreen`.
 - **Pet hot-load + in-app add/remove (shipped 2026-06-20).** Pets now live-refresh: an `avatarsRefreshTick` keys the avatar `produceState` in `RelayApp`, and Appearance re-scans `pets/` on open and after in-app import/delete — no app restart. Appearance gained "Add a pet" (SAF `.zip` import via `PetImporter`, zip-slip/zip-bomb guarded + validated through `toAvatar`) and an "Installed pets" list with per-pet remove (`PetLoader.deletePet`, confirm dialog, Sphere fallback). Remaining:
   - **Sphere-skin parity.** Skins are still process-scoped + `adb push` only — the live tick and the importer cover pets, not skins. Extend the tick to `loadUserSkins` and add a `.json` skin import if hot-loading/adding skins in-app is wanted.
   - `**adb push` into `Android/data` hangs on Samsung scoped storage.** Confirmed: pushing a pet pack to `/sdcard/Android/data/<pkg>/files/pets/` stalls (no bytes written) although `adb shell ls` of the dir works. In-app `.zip` import is the supported path; `/sdcard/Download` pushes fine. Consider softening `docs/pet-spec.md` + user-docs to lead with in-app import over adb.

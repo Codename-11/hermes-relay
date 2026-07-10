@@ -70,10 +70,15 @@ import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoiceEngineMode
+import com.hermesandroid.relay.data.VoiceModePreset
+import com.hermesandroid.relay.data.VoiceModePresetState
 import com.hermesandroid.relay.data.VoicePreferencesRepository
+import com.hermesandroid.relay.data.VoicePresetPromotionSettings
 import com.hermesandroid.relay.data.VoiceSettings
+import com.hermesandroid.relay.data.detectVoiceModePreset
 import com.hermesandroid.relay.network.relay.RealtimeProviderInfo
 import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.relay.RealtimeVoicePromotion
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.relay.VoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
@@ -189,6 +194,97 @@ fun VoiceSettingsScreen(
     // are shown here as well as the inline "unavailable" labels.
     val snackbarHost = LocalSnackbarHost.current
     val scope = rememberCoroutineScope()
+    var presetApplying by remember { mutableStateOf(false) }
+
+    val presetState = VoiceModePresetState(
+        voiceSettings = voiceSettings,
+        bargeInPreferences = bargeInPrefs,
+        promotion = configState.realtimeConfig?.promotion?.toPresetSettings(),
+    )
+    val activePreset = detectVoiceModePreset(presetState)
+    val presetsReady = voiceClient != null && presetState.promotion != null
+
+    fun applyPreset(preset: VoiceModePreset) {
+        if (presetApplying) return
+        val client = voiceClient
+        val priorPromotion = presetState.promotion
+        if (client == null || priorPromotion == null) {
+            scope.launch {
+                snackbarHost.showSnackbar(
+                    "Realtime Agent background settings must be available before applying a preset.",
+                )
+            }
+            return
+        }
+        val target = preset.applyTo(presetState)
+        val update = preset.promotionUpdate
+        scope.launch {
+            presetApplying = true
+            try {
+                // Server first: if the relay rejects a preset, local controls
+                // stay untouched and the UI cannot falsely report it active.
+                val result = client.updateRealtimeAgentPromotion(
+                    promotionEnabled = update.enabled,
+                    promoteAfterMs = update.promoteAfterMs,
+                    spokenHandoff = update.spokenHandoff,
+                    resultDelivery = update.resultDelivery,
+                    backgroundDefaultMode = update.backgroundDefaultMode,
+                    progressSpokenAfterMs = update.progressSpokenAfterMs,
+                    progressRepeatMs = update.progressRepeatMs,
+                    maxBackgroundRuns = update.maxBackgroundRuns,
+                )
+                if (result.isFailure) {
+                    snackbarHost.showHumanError(
+                        classifyError(result.exceptionOrNull(), context = "voice_config"),
+                    )
+                    return@launch
+                }
+                settingsViewModel.setRealtimeConfig(result.getOrNull())
+
+                try {
+                    // One DataStore transaction covers Voice + barge-in.
+                    prefsRepo.applyModePreset(preset)
+                } catch (error: Exception) {
+                    // The network and DataStore cannot share one transaction.
+                    // Restore the captured relay values so a local write
+                    // failure does not leave a half-applied preset.
+                    val rollback = client.updateRealtimeAgentPromotion(
+                        promotionEnabled = priorPromotion.enabled,
+                        promoteAfterMs = priorPromotion.promoteAfterMs,
+                        spokenHandoff = priorPromotion.spokenHandoff,
+                        resultDelivery = priorPromotion.resultDelivery,
+                        backgroundDefaultMode = priorPromotion.backgroundDefaultMode,
+                        progressSpokenAfterMs = priorPromotion.progressSpokenAfterMs,
+                        progressRepeatMs = priorPromotion.progressRepeatMs,
+                        maxBackgroundRuns = priorPromotion.maxBackgroundRuns,
+                    )
+                    if (rollback.isSuccess) {
+                        settingsViewModel.setRealtimeConfig(rollback.getOrNull())
+                        snackbarHost.showHumanError(
+                            classifyError(error, context = "voice_config"),
+                        )
+                    } else {
+                        snackbarHost.showSnackbar(
+                            "Preset partly applied: Relay settings changed, but phone " +
+                                "settings could not be saved. Reapply a preset to recover.",
+                        )
+                    }
+                    return@launch
+                }
+
+                voiceViewModel.setInteractionMode(
+                    when (target.voiceSettings.interactionMode) {
+                        "hold" -> InteractionMode.HoldToTalk
+                        "continuous" -> InteractionMode.Continuous
+                        else -> InteractionMode.TapToTalk
+                    },
+                )
+                snackbarHost.showSnackbar("${preset.displayName} preset applied")
+            } finally {
+                presetApplying = false
+            }
+        }
+    }
 
     // WP-V2/V3: point the screen's prefs repo at the active (connection,
     // profile) scope so the per-profile engine/route/enhanced toggles read and
@@ -263,6 +359,13 @@ fun VoiceSettingsScreen(
                 currentEngine = currentEngine,
                 configState = configState,
                 selectedProfile = selectedProfile,
+            )
+
+            VoiceModePresetCard(
+                activePreset = activePreset,
+                enabled = presetsReady,
+                applying = presetApplying,
+                onSelect = ::applyPreset,
             )
 
             // --- Voice for this profile: engine + route ---
@@ -455,6 +558,98 @@ private fun scopeFallback(config: Any?): Boolean = when (config) {
     is VoiceOutputConfig -> config.fallbackToGlobal
     is RealtimeVoiceConfig -> config.fallbackToGlobal
     else -> false
+}
+
+private fun RealtimeVoicePromotion.toPresetSettings(): VoicePresetPromotionSettings =
+    VoicePresetPromotionSettings(
+        enabled = enabled,
+        promoteAfterMs = promoteAfterMs,
+        backgroundDefaultMode = backgroundDefaultMode,
+        spokenHandoff = spokenHandoff,
+        progressSpokenAfterMs = progressSpokenAfterMs,
+        progressRepeatMs = progressRepeatMs,
+        resultDelivery = resultDelivery,
+        maxBackgroundRuns = maxBackgroundRuns,
+    )
+
+// ---------------------------------------------------------------------------
+// Mode presets — compact bundles over controls already present on this screen.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun VoiceModePresetCard(
+    activePreset: VoiceModePreset?,
+    enabled: Boolean,
+    applying: Boolean,
+    onSelect: (VoiceModePreset) -> Unit,
+) {
+    SectionCard(title = "Mode preset") {
+        Text(
+            text = "Tune interaction, interruption, trace, and long-task delivery together.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // Two rows keep each target about 148dp wide on a 360dp screen after
+        // screen/card padding; all four labels remain readable without tiny
+        // type or ambiguous abbreviations.
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            VoiceModePreset.entries.chunked(2).forEach { rowPresets ->
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    rowPresets.forEachIndexed { index, preset ->
+                        SegmentedButton(
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = rowPresets.size,
+                            ),
+                            onClick = { onSelect(preset) },
+                            selected = activePreset == preset,
+                            enabled = enabled && !applying,
+                        ) {
+                            Text(
+                                text = preset.shortLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = activePreset?.displayName ?: "Custom",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            text = activePreset?.description
+                ?: "Your manual values do not exactly match a preset.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!enabled) {
+            Text(
+                text = "Connect Relay voice so background delivery can be " +
+                    "applied with the local controls.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (applying) {
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Engine, route, provider, model, voice, and credentials stay unchanged.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------

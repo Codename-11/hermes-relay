@@ -324,6 +324,8 @@ class FakeNativeConnection:
         self.text_inputs: list[str] = []
         self.tool_results: list[tuple[str, dict[str, Any]]] = []
         self.context_items: list[tuple[str, str]] = []
+        self.exact_response_texts: list[str] = []
+        self.response_instructions: list[str] = []
         self.request_response_count = 0
         self.clear_count = 0
         self.cancelled = False
@@ -366,6 +368,9 @@ class FakeNativeConnection:
         self.request_response_count += 1
         if instructions:
             self.text_inputs.append(instructions)
+            self.response_instructions.append(instructions)
+        if exact_text:
+            self.exact_response_texts.append(exact_text)
 
     async def close(self) -> None:
         self.closed = True
@@ -1847,18 +1852,31 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
                 "realtime_agent",
             )
 
+            self._server().realtime_agent.sessions[
+                body["session_id"]
+            ].result_delivery = "speak_verbatim"
             await ws.send_json({"type": "playback.drained", "call_id": "call-1"})
             for _ in range(20):
                 if fake_provider.connection.request_response_count:
                     break
                 await asyncio.sleep(0.01)
             self.assertEqual(fake_provider.connection.request_response_count, 1)
+            self.assertEqual(
+                fake_provider.connection.exact_response_texts,
+                ["Sure, I checked that."],
+            )
+            self.assertIn(
+                "word for word as written",
+                fake_provider.connection.response_instructions[-1],
+            )
         finally:
             await ws.close()
 
     async def test_provider_native_suppresses_tool_response_done_until_followup(
         self,
     ) -> None:
+        previous_confirm = broker_module._DELIVERY_CONFIRM_SECONDS
+        broker_module._DELIVERY_CONFIRM_SECONDS = 0.5
         token = await self._make_session()
         fake_broker = FakeHermesToolBroker()
         fake_provider = FakeNativeProvider()
@@ -1923,6 +1941,13 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             )
             await fake_provider.connection.emit(
                 ProviderEvent(
+                    ProviderEventKind.OUTPUT_TEXT_DELTA,
+                    response_id="resp-followup",
+                    payload={"delta": "Sure, I checked that."},
+                )
+            )
+            await fake_provider.connection.emit(
+                ProviderEvent(
                     ProviderEventKind.AUDIO_DELTA,
                     response_id="resp-followup",
                     payload={"audio": b"\3\0" * 80},
@@ -1936,7 +1961,7 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             )
 
             events: list[dict[str, Any]] = []
-            for _ in range(10):
+            for _ in range(30):
                 event = await self._next_ws_event(ws)
                 events.append(event)
                 if event["type"] == "voice.response.done":
@@ -1947,8 +1972,68 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             ]
             self.assertEqual(len(done_events), 1)
             self.assertEqual(done_events[0]["response_id"], "resp-followup")
+            delivery_events = [
+                event
+                for event in events
+                if event["type"]
+                in {
+                    "voice.response.started",
+                    "voice.response.delta",
+                    "voice.output_audio.delta",
+                    "voice.output_audio.done",
+                    "voice.response.done",
+                }
+            ]
+            self.assertTrue(delivery_events, events)
+            self.assertTrue(
+                all(event.get("delivery") == "forced_summary" for event in delivery_events),
+                delivery_events,
+            )
+            await asyncio.sleep(0.55)
+            log_text = self._server().realtime_agent.sessions[
+                body["session_id"]
+            ].event_log_path.read_text(encoding="utf-8")
+            self.assertNotIn("voice.realtime_agent.delivery_unconfirmed", log_text)
         finally:
+            broker_module._DELIVERY_CONFIRM_SECONDS = previous_confirm
             await ws.close()
+
+    async def test_delivery_confirm_ignores_a_stale_generation(self) -> None:
+        previous_confirm = broker_module._DELIVERY_CONFIRM_SECONDS
+        broker_module._DELIVERY_CONFIRM_SECONDS = 0
+        token = await self._make_session()
+        fake_provider = FakeNativeProvider()
+        handler = self._server().realtime_agent
+        handler.native_providers["xai_realtime"] = fake_provider
+        try:
+            resp = await self.client.post(
+                "/voice/realtime-agent/session",
+                json={
+                    "provider": "xai_realtime",
+                    "model": "grok-voice-latest",
+                    "voice": "leo",
+                    "chat_session_id": "chat-123",
+                },
+                headers=self._bearer(token),
+            )
+            self.assertEqual(resp.status, 200)
+            body = await resp.json()
+            session = handler.sessions[body["session_id"]]
+            session.native_forced_summary_generation = 2
+            session.native_forced_summary_done = False
+            session.native_forced_summary_committed = False
+            event_seq_before = session.event_seq
+
+            await handler._confirm_background_delivery(
+                None,  # type: ignore[arg-type] - stale generation returns before WS use
+                session,
+                {"answer": "stale answer"},
+                delivery_generation=1,
+            )
+
+            self.assertEqual(event_seq_before, session.event_seq)
+        finally:
+            broker_module._DELIVERY_CONFIRM_SECONDS = previous_confirm
 
     async def test_provider_native_suppresses_status_response_done_until_followup(
         self,
@@ -2451,15 +2536,124 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
             )
 
             events: list[dict[str, Any]] = []
-            for _ in range(20):
+            for _ in range(60):
                 event = await self._next_ws_event(ws)
                 events.append(event)
-                if event["type"] == "voice.error":
+                if event.get("error_code") == "provider_tool_result_send_failed":
                     break
 
-            error = next(event for event in events if event["type"] == "voice.error")
+            error = next(
+                event
+                for event in events
+                if event.get("error_code") == "provider_tool_result_send_failed"
+            )
             self.assertEqual(error["error_code"], "provider_tool_result_send_failed")
             self.assertEqual(error["call_id"], "call-closing")
+            fallback = [
+                event
+                for event in events
+                if event["type"] == "voice.response.delta"
+                and event.get("delivery") == "fallback"
+            ]
+            self.assertEqual(1, len(fallback), events)
+            self.assertEqual("Sure, I checked that.", fallback[0]["delta"])
+            self.assertLess(events.index(fallback[0]), events.index(error))
+            self.assertEqual(
+                1,
+                sum(event["type"] == "voice.response.done" for event in events),
+                events,
+            )
+            for _ in range(500):
+                if handler.sessions[body["session_id"]].closed:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(handler.sessions[body["session_id"]].closed)
+        finally:
+            await ws.close()
+
+    async def test_provider_native_response_request_failure_falls_back_once(self) -> None:
+        token = await self._make_session()
+        fake_broker = FakeHermesToolBroker()
+        fake_provider = FakeNativeProvider()
+        fake_provider.connection.fail_request_response = True
+        handler = self._server().realtime_agent
+        handler.hermes = fake_broker
+        handler.native_providers["xai_realtime"] = fake_provider
+        resp = await self.client.post(
+            "/voice/realtime-agent/session",
+            json={
+                "provider": "xai_realtime",
+                "model": "grok-voice-latest",
+                "voice": "leo",
+                "chat_session_id": "chat-123",
+            },
+            headers=self._bearer(token),
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        ws = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        try:
+            self.assertEqual((await self._next_ws_event(ws))["type"], "voice.session.ready")
+            await fake_provider.connection.emit(
+                ProviderEvent(
+                    ProviderEventKind.FUNCTION_CALL_COMPLETED,
+                    payload={
+                        "call": ToolCallEvent(
+                            call_id="call-response-fails",
+                            name="hermes_run_task",
+                            arguments={
+                                "text": "Check before the response request fails.",
+                                "session_id": "chat-123",
+                            },
+                        )
+                    },
+                )
+            )
+
+            for _ in range(20):
+                event = await self._next_ws_event(ws)
+                if event["type"] == "voice.playback_drain.requested":
+                    break
+            else:
+                self.fail("expected playback drain request")
+
+            await ws.send_json(
+                {"type": "playback.drained", "call_id": "call-response-fails"}
+            )
+            events: list[dict[str, Any]] = []
+            for _ in range(60):
+                event = await self._next_ws_event(ws)
+                events.append(event)
+                if event.get("error_code") == "provider_response_request_failed":
+                    break
+
+            error = next(
+                event
+                for event in events
+                if event.get("error_code") == "provider_response_request_failed"
+            )
+            self.assertEqual(error["error_code"], "provider_response_request_failed")
+            fallback = [
+                event
+                for event in events
+                if event["type"] == "voice.response.delta"
+                and event.get("delivery") == "fallback"
+            ]
+            self.assertEqual(1, len(fallback), events)
+            self.assertEqual("Sure, I checked that.", fallback[0]["delta"])
+            self.assertLess(events.index(fallback[0]), events.index(error))
+            self.assertEqual(
+                1,
+                sum(event["type"] == "voice.response.done" for event in events),
+                events,
+            )
+            for _ in range(500):
+                if handler.sessions[body["session_id"]].closed:
+                    break
+                await asyncio.sleep(0.01)
             self.assertTrue(handler.sessions[body["session_id"]].closed)
         finally:
             await ws.close()

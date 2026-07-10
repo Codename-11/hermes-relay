@@ -9,6 +9,8 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentState
+import com.hermesandroid.relay.data.BackgroundTaskPhase
+import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.DemoContent
@@ -152,6 +154,10 @@ class ChatViewModel : ViewModel() {
     private val realtimeAgentModels = mutableMapOf<String, String>()
     private val realtimeAgentVoices = mutableMapOf<String, String>()
     private val realtimeAgentProgressKeys = mutableMapOf<String, String>()
+    /** Background run ownership survives newer persistent-session Voice turns. */
+    private val realtimeAgentRunOwners = mutableMapOf<String, String>()
+    /** Delivery events omit run_id, so the completed run retains one owner. */
+    private var realtimeAgentPendingDeliveryOwner: String? = null
     private val terminalRealtimeAgentTurnIdsLock = Any()
     private val terminalRealtimeAgentTurnIds = LinkedHashSet<String>()
     private var nextInterfaceContextPrompt: String? = null
@@ -183,6 +189,8 @@ class ChatViewModel : ViewModel() {
 
         /** Upper bound on the rolling tool-call history flow. */
         const val TOOL_CALL_HISTORY_LIMIT = 10
+
+        private const val BACKGROUND_TASK_TITLE_LIMIT = 64
 
         /**
          * One-line capability nudge appended to the SSE `system_message` when a
@@ -3331,6 +3339,11 @@ class ChatViewModel : ViewModel() {
     fun cancelRealtimeAgentTurnLocally(assistantMessageId: String) {
         synchronized(terminalRealtimeAgentTurnIdsLock) {
             val handler = chatHandler ?: return
+            if (handler.messages.value.none { it.id == assistantMessageId }) {
+                clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
+                activeStream = null
+                return
+            }
             removeRealtimeAgentUserPlaceholder(
                 handler = handler,
                 assistantMessageId = assistantMessageId,
@@ -3347,6 +3360,35 @@ class ChatViewModel : ViewModel() {
                 handler.markStopped(assistantMessageId)
             }
             handler.onStreamComplete(assistantMessageId)
+            activeStream = null
+        }
+    }
+
+    /**
+     * Remove a transcript that was consumed as a phone-local Voice command.
+     * Unlike a cancelled Hermes turn, this exchange never belonged in server
+     * conversation history and must not render as `pause` → `Cancelled.`.
+     */
+    fun discardRealtimeAgentLocalCommandTurn(assistantMessageId: String) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            val handler = chatHandler ?: return
+            val userMessageId = realtimeAgentUserMessages[assistantMessageId]
+            val previousUserText = handler.messages.value
+                .lastOrNull {
+                    it.role == MessageRole.USER &&
+                        it.id != userMessageId &&
+                        it.content.isNotBlank() &&
+                        !it.content.equals("Listening...", ignoreCase = true)
+                }
+                ?.content
+            userMessageId?.let(handler::removeMessage)
+            handler.removeMessage(assistantMessageId)
+            if (previousUserText != null) {
+                handler.setLastSentMessage(previousUserText)
+            } else {
+                handler.clearLastSentMessage()
+            }
+            clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
             activeStream = null
         }
     }
@@ -3417,14 +3459,63 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    private fun backgroundTaskTitle(handler: ChatHandler, assistantMessageId: String): String {
+        val userMessageId = realtimeAgentUserMessages[assistantMessageId]
+        val objective = handler.messages.value
+            .firstOrNull { it.id == userMessageId }
+            ?.content
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.takeUnless { it.equals("Listening...", ignoreCase = true) }
+            .orEmpty()
+        if (objective.isBlank()) return "Background task"
+        return if (objective.length <= BACKGROUND_TASK_TITLE_LIMIT) {
+            objective
+        } else {
+            objective.take(BACKGROUND_TASK_TITLE_LIMIT - 1).trimEnd() + "…"
+        }
+    }
+
+    private fun backgroundToolStatus(toolName: String): String {
+        val label = toolName
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return if (label.isBlank()) "Working…" else "Running $label…"
+    }
+
     fun applyRealtimeAgentEvent(
         assistantMessageId: String,
         event: RealtimeVoiceEvent,
         showDetailedTrace: Boolean = false,
     ) {
         synchronized(terminalRealtimeAgentTurnIdsLock) {
-            if (assistantMessageId in terminalRealtimeAgentTurnIds) return
-            applyRealtimeAgentEventLocked(assistantMessageId, event, showDetailedTrace)
+            val eventOwner = realtimeAgentEventOwner(assistantMessageId, event)
+            if (eventOwner in terminalRealtimeAgentTurnIds) return
+            applyRealtimeAgentEventLocked(eventOwner, event, showDetailedTrace)
+        }
+    }
+
+    private fun realtimeAgentEventOwner(
+        latestAssistantMessageId: String,
+        event: RealtimeVoiceEvent,
+    ): String {
+        if (event.type == "hermes.run.promoted") return latestAssistantMessageId
+        event.runId
+            ?.takeIf { it.isNotBlank() }
+            ?.let(realtimeAgentRunOwners::get)
+            ?.let { return it }
+        if (!event.delivery.isNullOrBlank()) {
+            return realtimeAgentPendingDeliveryOwner ?: latestAssistantMessageId
+        }
+        return latestAssistantMessageId
+    }
+
+    private fun clearRealtimeAgentBackgroundOwnership(assistantMessageId: String) {
+        realtimeAgentRunOwners.entries.removeAll { it.value == assistantMessageId }
+        if (realtimeAgentPendingDeliveryOwner == assistantMessageId) {
+            realtimeAgentPendingDeliveryOwner = null
         }
     }
 
@@ -3465,6 +3556,15 @@ class ChatViewModel : ViewModel() {
                         hasTool = false,
                     ),
                 )
+                if (event.type == "voice.response.started") {
+                    handler.updateBackgroundTask(assistantMessageId) { task ->
+                        if (task.phase == BackgroundTaskPhase.DELIVERING) {
+                            task.copy(statusLine = "Delivering the answer…")
+                        } else {
+                            task
+                        }
+                    }
+                }
             }
             "hermes.message.started" -> Unit
             "voice.input_transcript.delta" -> {
@@ -3573,6 +3673,22 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = if (task.phase == BackgroundTaskPhase.WAITING) {
+                            BackgroundTaskPhase.RUNNING
+                        } else {
+                            task.phase
+                        },
+                        statusLine = event.message?.takeIf { it.isNotBlank() }
+                            ?: event.activeToolName
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let(::backgroundToolStatus)
+                            ?: task.statusLine,
+                        completedToolCount = event.completedToolCount
+                            ?: task.completedToolCount,
+                    )
+                }
             }
             "hermes.tool.started" -> {
                 realtimeAgentHermesBacked[assistantMessageId] = true
@@ -3662,9 +3778,58 @@ class ChatViewModel : ViewModel() {
                 if (showDetailedTrace) {
                     handler.onThinkingDelta(assistantMessageId, prompt)
                 }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = BackgroundTaskPhase.WAITING,
+                        statusLine = prompt,
+                    )
+                }
             }
             // Hermes completion means the tool result is ready; provider narration ends the turn.
             "hermes.run.completed" -> Unit
+            "hermes.run.promoted" -> {
+                realtimeAgentHermesBacked[assistantMessageId] = true
+                val taskId = event.runId?.takeIf { it.isNotBlank() }
+                    ?: "background-$assistantMessageId"
+                realtimeAgentRunOwners[taskId] = assistantMessageId
+                handler.setBackgroundTask(
+                    assistantMessageId,
+                    BackgroundTaskState(
+                        id = taskId,
+                        title = backgroundTaskTitle(handler, assistantMessageId),
+                        tier = event.tier?.takeIf { it.isNotBlank() } ?: "promoted",
+                        queuedCount = event.queuedCount ?: 0,
+                    ),
+                )
+            }
+            "hermes.run.queued" -> {
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(queuedCount = event.queuedCount ?: task.queuedCount)
+                }
+            }
+            "hermes.run.background_completed" -> {
+                if (event.success == false) {
+                    clearRealtimeAgentBackgroundOwnership(assistantMessageId)
+                } else {
+                    realtimeAgentPendingDeliveryOwner = assistantMessageId
+                }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    if (event.success == false) {
+                        task.copy(
+                            phase = BackgroundTaskPhase.FAILED,
+                            statusLine = event.message?.takeIf { it.isNotBlank() }
+                                ?: "Background task failed.",
+                            queuedCount = event.queuedCount ?: task.queuedCount,
+                        )
+                    } else {
+                        task.copy(
+                            phase = BackgroundTaskPhase.DELIVERING,
+                            statusLine = "Done — delivering the answer…",
+                            queuedCount = event.queuedCount ?: task.queuedCount,
+                        )
+                    }
+                }
+            }
             "voice.response.done" -> {
                 if (realtimeAgentHermesBacked[assistantMessageId] != true) {
                     val userMessageId = realtimeAgentUserMessages[assistantMessageId]
@@ -3690,8 +3855,22 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    if (task.phase == BackgroundTaskPhase.DELIVERING) {
+                        task.copy(
+                            phase = BackgroundTaskPhase.COMPLETE,
+                            statusLine = null,
+                            queuedCount = 0,
+                        )
+                    } else {
+                        task
+                    }
+                }
                 handler.onStreamComplete(assistantMessageId)
                 clearRealtimeAgentTurnTracking(assistantMessageId)
+                if (!event.delivery.isNullOrBlank()) {
+                    clearRealtimeAgentBackgroundOwnership(assistantMessageId)
+                }
                 activeStream = null
             }
             "hermes.run.cancelled" -> {
@@ -3700,6 +3879,12 @@ class ChatViewModel : ViewModel() {
                 // (chip-cancel racing completion, or a stale confirm). Only a
                 // bubble with no real content becomes "Cancelled."; anything
                 // else keeps its text and gets the Stopped badge instead.
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = BackgroundTaskPhase.CANCELLED,
+                        statusLine = "Cancelled.",
+                    )
+                }
                 removeRealtimeAgentUserPlaceholder(
                     handler = handler,
                     assistantMessageId = assistantMessageId,
@@ -3715,15 +3900,26 @@ class ChatViewModel : ViewModel() {
                     handler.markStopped(assistantMessageId)
                 }
                 handler.onStreamComplete(assistantMessageId)
+                clearRealtimeAgentBackgroundOwnership(assistantMessageId)
                 clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }
             "voice.error" -> {
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = BackgroundTaskPhase.FAILED,
+                        statusLine = event.message?.takeIf { it.isNotBlank() }
+                            ?: "Voice connection failed.",
+                    )
+                }
                 removeRealtimeAgentUserPlaceholder(
                     handler = handler,
                     assistantMessageId = assistantMessageId,
                 )
                 handler.onStreamError(event.message ?: "Realtime agent failed")
+                if (realtimeAgentPendingDeliveryOwner == assistantMessageId) {
+                    clearRealtimeAgentBackgroundOwnership(assistantMessageId)
+                }
                 clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }

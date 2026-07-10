@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Background work is now a first-class Chat turn.** Promoted realtime work appears as a titled task card that advances through working, waiting, delivery, and completion, with queued work and an expandable tool timeline attached to the same assistant response.
+- **Multi-image messages open as galleries.** Adjacent loaded images render in a compact grid and open at the selected image in a swipeable viewer while preserving sensitive-media reveal and original-file actions.
+- **Voice gains state-aware commands and mode presets.** Exact spoken commands can stop speech, explicitly cancel background work, pause or resume continuous listening, repeat a settled background answer, or start a new Standard voice chat. Hands-free, Low latency, Careful tools, and Quiet/visual-only presets tune existing interaction and long-task settings without changing voice identity/routing or silently enabling experimental barge-in.
+
+### Changed
+
+- **Streaming Chat content stays steadier and more readable.** Settled top-level prose and headings adopt final Markdown styling during generation, wide tables scroll with readable columns, the thinking indicator respects system motion and TalkBack settings, and the jump-to-bottom control counts new messages while the reader is away from the bottom.
+- **Offline Demo mode no longer starts Voice.** The mic action now explains locally that a Hermes connection is required.
+
+### Fixed
+
+- **Foreground Realtime Agent results use the protected delivery path.** Hermes tool results receive exact provider speech where supported, delivery validation and generation-scoped confirmation, and one authoritative relay-TTS fallback if the provider closes or rejects result delivery. Local Voice commands no longer leave synthetic `Cancelled.` turns in Chat or mute a later background answer.
+
 ## [1.4.0] - 2026-07-09
 
 ### Added

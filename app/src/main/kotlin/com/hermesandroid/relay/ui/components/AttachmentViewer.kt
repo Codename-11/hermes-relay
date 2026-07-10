@@ -15,7 +15,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -59,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,8 +81,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -98,6 +104,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 // ---------------------------------------------------------------------------
@@ -191,13 +198,62 @@ fun BlurredMedia(
 fun Modifier.zoomable(maxScale: Float = 6f): Modifier {
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
-    return this
-        .pointerInput(Unit) {
-            detectTransformGestures { _, pan, zoom, _ ->
-                scale = (scale * zoom).coerceIn(1f, maxScale)
-                offset = if (scale > 1f) offset + pan else Offset.Zero
-            }
+    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+
+    fun maxOffset(forScale: Float): Offset = Offset(
+        x = ((forScale - 1f) * viewportSize.width / 2f).coerceAtLeast(0f),
+        y = ((forScale - 1f) * viewportSize.height / 2f).coerceAtLeast(0f),
+    )
+
+    fun clampOffset(candidate: Offset, forScale: Float): Offset {
+        val max = maxOffset(forScale)
+        return Offset(
+            x = candidate.x.coerceIn(-max.x, max.x),
+            y = candidate.y.coerceIn(-max.y, max.y),
+        )
+    }
+
+    val transformState = rememberTransformableState { _, zoomChange, panChange, _ ->
+        val nextScale = (scale * zoomChange).coerceIn(1f, maxScale)
+        offset = if (nextScale > 1f) {
+            clampOffset(offset + panChange, nextScale)
+        } else {
+            Offset.Zero
         }
+        scale = nextScale
+    }
+    return this
+        .onSizeChanged {
+            viewportSize = it
+            offset = clampOffset(offset, scale)
+        }
+        // Let a one-finger drag bubble to HorizontalPager at 1×. Once the
+        // image is zoomed, the image owns panning; pinch zoom always works.
+        .transformable(
+            state = transformState,
+            canPan = { pan ->
+                if (scale <= 1f) {
+                    false
+                } else {
+                    val max = maxOffset(scale)
+                    val canMoveHorizontally = when {
+                        pan.x > 0f -> offset.x < max.x
+                        pan.x < 0f -> offset.x > -max.x
+                        else -> false
+                    }
+                    val canMoveVertically = when {
+                        pan.y > 0f -> offset.y < max.y
+                        pan.y < 0f -> offset.y > -max.y
+                        else -> false
+                    }
+                    if (abs(pan.x) >= abs(pan.y)) {
+                        canMoveHorizontally
+                    } else {
+                        canMoveVertically
+                    }
+                }
+            },
+        )
         .pointerInput(Unit) {
             detectTapGestures(
                 onDoubleTap = {
@@ -345,6 +401,7 @@ fun AttachmentViewer(
             MediaViewerToolbar(
                 title = title,
                 busy = busy,
+                actionsEnabled = !blurred,
                 onShare = onShare,
                 onSave = onSave,
                 onOpenExternal = onOpenExternal,
@@ -355,11 +412,204 @@ fun AttachmentViewer(
     }
 }
 
+/**
+ * Full-screen viewer for an image attachment group. The pager starts at the
+ * tapped tile, swipes horizontally at 1×, and keeps the existing per-image
+ * zoom, blur, Save, Share, and Open-externally behavior.
+ *
+ * [initiallyRevealedKeys] carries reveal state from the grid so a sensitive
+ * image that was already uncovered is not unexpectedly hidden again on open.
+ */
+@Composable
+internal fun AttachmentGalleryViewer(
+    attachments: List<Attachment>,
+    initialIndex: Int,
+    onDismiss: () -> Unit,
+    initiallyRevealedKeys: Set<String> = emptySet(),
+    modifier: Modifier = Modifier,
+) {
+    if (attachments.isEmpty()) return
+    if (attachments.size == 1) {
+        AttachmentViewer(
+            attachment = attachments.first(),
+            onDismiss = onDismiss,
+            modifier = modifier,
+            initiallyRevealed = galleryAttachmentKey(attachments.first(), 0) in
+                initiallyRevealedKeys,
+        )
+        return
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        val context = LocalContext.current
+        AllowDeviceRotation()
+        val scope = rememberCoroutineScope()
+        var busy by remember { mutableStateOf(false) }
+        val revealed = remember { mutableStateMapOf<String, Boolean>() }
+        LaunchedEffect(initiallyRevealedKeys) {
+            initiallyRevealedKeys.forEach { revealed[it] = true }
+        }
+        val pagerState = rememberPagerState(
+            initialPage = initialIndex.coerceIn(attachments.indices),
+            pageCount = { attachments.size },
+        )
+
+        val currentIndex = pagerState.currentPage.coerceIn(attachments.indices)
+        val attachment = attachments[currentIndex]
+        val currentKey = galleryAttachmentKey(attachment, currentIndex)
+        val blurMode = LocalMediaBlurMode.current
+        val currentBlurred = revealed[currentKey] != true &&
+            shouldBlurImage(blurMode, attachment.sensitive)
+        val title = attachment.fileName
+            ?: attachment.contentType.substringBefore(';').ifBlank { "Image" }
+        val toolbarTitle = "$title · ${currentIndex + 1} of ${attachments.size}"
+
+        // Capture the currently visible attachment in each click lambda. A
+        // swipe while IO is running must not redirect Save/Share to a new page.
+        fun runWithBytes(action: suspend (Attachment, ByteArray) -> Unit) {
+            if (currentBlurred || busy) return
+            val target = attachment
+            scope.launch {
+                busy = true
+                try {
+                    val bytes = attachmentBytes(context, target)
+                    if (bytes == null) {
+                        viewerToast(context, "Couldn't read this image")
+                        return@launch
+                    }
+                    action(target, bytes)
+                } catch (error: Exception) {
+                    viewerToast(
+                        context,
+                        error.message?.takeIf { it.isNotBlank() }
+                            ?: "Couldn't complete that image action",
+                    )
+                } finally {
+                    busy = false
+                }
+            }
+        }
+
+        val onShare = {
+            runWithBytes { target, bytes ->
+                val uri = MediaSaver.stageForShare(
+                    context,
+                    bytes,
+                    target.fileName,
+                    target.contentType,
+                )
+                MediaSaver.share(context, uri, target.contentType)
+            }
+        }
+        val onSave = {
+            runWithBytes { target, bytes ->
+                when (val result = MediaSaver.saveImage(
+                    context,
+                    bytes,
+                    target.fileName,
+                    target.contentType,
+                )) {
+                    is MediaSaver.SaveResult.Saved ->
+                        viewerToast(context, "Saved to ${result.location}")
+                    MediaSaver.SaveResult.UseShareInstead -> {
+                        val uri = MediaSaver.stageForShare(
+                            context,
+                            bytes,
+                            target.fileName,
+                            target.contentType,
+                        )
+                        MediaSaver.share(context, uri, target.contentType)
+                    }
+                    is MediaSaver.SaveResult.Failed ->
+                        viewerToast(context, "Save failed: ${result.message}")
+                }
+            }
+        }
+        val onOpenExternal: () -> Unit = openExternal@{
+            if (currentBlurred || busy) return@openExternal
+            val target = attachment
+            val cached = target.cachedUri
+            if (!cached.isNullOrBlank()) {
+                runCatching {
+                    MediaSaver.open(context, Uri.parse(cached), target.contentType)
+                }.onFailure {
+                    viewerToast(context, "Couldn't open this image")
+                }
+            } else {
+                runWithBytes { item, bytes ->
+                    val uri = MediaSaver.stageForShare(
+                        context,
+                        bytes,
+                        item.fileName,
+                        item.contentType,
+                    )
+                    MediaSaver.open(context, uri, item.contentType)
+                }
+            }
+        }
+
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.96f)),
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                beyondViewportPageCount = 0,
+                pageSpacing = 12.dp,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("attachment-gallery-pager"),
+            ) { page ->
+                val pageAttachment = attachments[page]
+                val pageKey = galleryAttachmentKey(pageAttachment, page)
+                val blurred = revealed[pageKey] != true && shouldBlurImage(
+                    blurMode,
+                    pageAttachment.sensitive,
+                )
+                ImageBody(
+                    attachment = pageAttachment,
+                    blurred = blurred,
+                    onReveal = { revealed[pageKey] = true },
+                )
+            }
+
+            MediaViewerToolbar(
+                title = toolbarTitle,
+                busy = busy,
+                actionsEnabled = !currentBlurred,
+                onShare = onShare,
+                onSave = onSave,
+                onOpenExternal = onOpenExternal,
+                onClose = onDismiss,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+
+            Text(
+                text = "${currentIndex + 1} / ${attachments.size}",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(bottom = 12.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
 /** The single shared control bar used across every attachment type. */
 @Composable
 private fun MediaViewerToolbar(
     title: String,
     busy: Boolean,
+    actionsEnabled: Boolean = true,
     onShare: () -> Unit,
     onSave: () -> Unit,
     onOpenExternal: () -> Unit,
@@ -393,13 +643,17 @@ private fun MediaViewerToolbar(
                 modifier = Modifier.size(18.dp).padding(end = 4.dp),
             )
         }
-        IconButton(onClick = onOpenExternal, colors = tint) {
+        IconButton(
+            onClick = onOpenExternal,
+            enabled = actionsEnabled && !busy,
+            colors = tint,
+        ) {
             Icon(Icons.Filled.OpenInNew, contentDescription = "Open externally")
         }
-        IconButton(onClick = onShare, colors = tint) {
+        IconButton(onClick = onShare, enabled = actionsEnabled && !busy, colors = tint) {
             Icon(Icons.Filled.Share, contentDescription = "Share")
         }
-        IconButton(onClick = onSave, colors = tint) {
+        IconButton(onClick = onSave, enabled = actionsEnabled && !busy, colors = tint) {
             Icon(Icons.Filled.Download, contentDescription = "Save")
         }
     }

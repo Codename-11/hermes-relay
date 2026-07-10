@@ -120,7 +120,41 @@ data class ChatMessage(
      * no status affix.
      */
     val deliveryStatus: MessageDeliveryStatus? = null,
+    /**
+     * Client-side lifecycle for a promoted/durable Hermes run that belongs to
+     * this assistant turn. The same message owns the state from promotion
+     * through delivery so Chat never needs a separate system notice and final
+     * reply for one task. On the normal post-turn history reconcile this field
+     * is carried forward with the rest of the client-only enrichment whenever
+     * the live message can be matched to its server row.
+     */
+    val backgroundTask: BackgroundTaskState? = null,
 )
+
+/** One Chat-visible identity for a promoted/durable realtime Hermes run. */
+data class BackgroundTaskState(
+    /** Relay run id when supplied; otherwise a stable id derived from the message. */
+    val id: String,
+    /** Short objective derived from the associated user turn. */
+    val title: String,
+    /** ADR 33 tier: `promoted` or `durable`. */
+    val tier: String = "promoted",
+    val phase: BackgroundTaskPhase = BackgroundTaskPhase.RUNNING,
+    /** Latest meaningful progress line, deliberately not a raw event trace. */
+    val statusLine: String? = null,
+    val completedToolCount: Int = 0,
+    val queuedCount: Int = 0,
+    val startedAt: Long = System.currentTimeMillis(),
+)
+
+enum class BackgroundTaskPhase {
+    RUNNING,
+    WAITING,
+    DELIVERING,
+    COMPLETE,
+    FAILED,
+    CANCELLED,
+}
 
 /**
  * Structured details about a phone-local voice intent that was dispatched

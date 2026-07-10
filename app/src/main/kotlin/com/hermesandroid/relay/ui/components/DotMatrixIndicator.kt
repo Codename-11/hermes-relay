@@ -109,6 +109,12 @@ data class ThinkingIndicatorConfig(
 /** Chat-root provided streaming-indicator config; see [ThinkingIndicatorConfig]. */
 val LocalThinkingIndicator = compositionLocalOf { ThinkingIndicatorConfig() }
 
+internal fun shouldAnimateDotMatrix(
+    appAnimationsEnabled: Boolean,
+    osAnimationsEnabled: Boolean,
+    touchExplorationEnabled: Boolean,
+): Boolean = appAnimationsEnabled && osAnimationsEnabled && !touchExplorationEnabled
+
 /**
  * A compact dot-matrix "thinking" animation — a small grid of dots evoking a
  * dot-matrix / LED display (the dot-anime-react concept reimplemented natively
@@ -142,10 +148,15 @@ fun DotMatrixIndicator(
     fps: Int = 30,
     animated: Boolean = true,
 ) {
+    val motion = rememberAccessibleMotionState()
     val phase = rememberAmbientPhase(
         periodMillis = pattern.periodMillis,
         fps = fps,
-        running = animated,
+        running = shouldAnimateDotMatrix(
+            appAnimationsEnabled = animated,
+            osAnimationsEnabled = motion.osAnimations,
+            touchExplorationEnabled = motion.touchExploration,
+        ),
     )
     val gridWidth = columnSpacing * (columns - 1)
     val gridHeight = rowSpacing * (rows - 1)

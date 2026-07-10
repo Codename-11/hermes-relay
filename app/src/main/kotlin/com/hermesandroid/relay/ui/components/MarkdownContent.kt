@@ -1,13 +1,18 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
-import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,8 +31,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.CollectionInfo
+import androidx.compose.ui.semantics.collectionInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -38,18 +48,33 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
+import androidx.compose.ui.unit.times
 import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.components.MarkdownComponentModel
+import com.mikepenz.markdown.compose.LocalMarkdownColors
+import com.mikepenz.markdown.compose.LocalMarkdownDimens
+import com.mikepenz.markdown.compose.elements.MarkdownDivider
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
+import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.compose.extendedspans.ExtendedSpans
 import com.mikepenz.markdown.compose.extendedspans.RoundedCornerSpanPainter
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownExtendedSpans
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.SyntaxThemes
+import kotlinx.coroutines.delay
+import org.intellij.markdown.ast.findChildOfType
+import org.intellij.markdown.flavours.gfm.GFMElementTypes.HEADER
+import org.intellij.markdown.flavours.gfm.GFMElementTypes.ROW
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes.CELL
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes.TABLE_SEPARATOR
 
 @Composable
 fun MarkdownContent(
@@ -61,7 +86,6 @@ fun MarkdownContent(
     val highlightsBuilder = remember(isDarkTheme) {
         Highlights.Builder().theme(SyntaxThemes.atom(darkMode = isDarkTheme))
     }
-
     Markdown(
         content = content,
         modifier = modifier,
@@ -133,6 +157,13 @@ fun MarkdownContent(
                 ),
             ),
         ),
+        // Tables get a phone-friendly minimum measure. The stock renderer uses
+        // one-line cells; our table component below keeps the same AST/inline
+        // annotator path but permits wrapping and exposes horizontal overflow.
+        dimens = markdownDimens(
+            tableCellWidth = 110.dp,
+            tableCellPadding = 12.dp,
+        ),
         components = markdownComponents(
             codeBlock = {
                 MarkdownHighlightedCodeBlock(
@@ -149,7 +180,8 @@ fun MarkdownContent(
                     highlightsBuilder = highlightsBuilder,
                     showHeader = true
                 )
-            }
+            },
+            table = { WideMarkdownTable(it) },
         ),
         extendedSpans = markdownExtendedSpans {
             remember { ExtendedSpans(RoundedCornerSpanPainter()) }
@@ -157,20 +189,141 @@ fun MarkdownContent(
     )
 }
 
+/**
+ * GFM table renderer tuned for a narrow chat bubble.
+ *
+ * Every column keeps the configured 110dp minimum and cells wrap instead of
+ * truncating to one line. Tables wider than the bubble scroll horizontally;
+ * the trailing fade is deliberately subtle and disappears once the reader has
+ * reached the final column.
+ */
+@Composable
+private fun WideMarkdownTable(model: MarkdownComponentModel) {
+    val columnsCount = remember(model.node) {
+        model.node.findChildOfType(HEADER)?.children?.count { it.type == CELL } ?: 0
+    }
+    if (columnsCount == 0) {
+        MarkdownTable(
+            content = model.content,
+            node = model.node,
+            style = model.typography.table,
+        )
+        return
+    }
+
+    val rowsCount = remember(model.node) {
+        model.node.children.count { it.type == ROW } + 1
+    }
+    val tableCellWidth = LocalMarkdownDimens.current.tableCellWidth
+    val tableWidth = columnsCount * tableCellWidth
+    val tableCornerSize = LocalMarkdownDimens.current.tableCornerSize
+    val tableBackground = LocalMarkdownColors.current.tableBackground
+    val scrollState = rememberScrollState()
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(tableCornerSize))
+            .background(tableBackground)
+            .semantics {
+                collectionInfo = CollectionInfo(
+                    rowCount = rowsCount,
+                    columnCount = columnsCount,
+                )
+            },
+    ) {
+        val scrollable = maxWidth < tableWidth
+        Box {
+            Column(
+                modifier = if (scrollable) {
+                    Modifier
+                        .horizontalScroll(scrollState)
+                        .requiredWidth(tableWidth)
+                } else {
+                    Modifier.fillMaxWidth()
+                },
+            ) {
+                var rowIndex = 1
+                model.node.children.forEach { child ->
+                    when (child.type) {
+                        HEADER -> MarkdownTableHeader(
+                            content = model.content,
+                            header = child,
+                            tableWidth = tableWidth,
+                            style = model.typography.table,
+                            verticalAlignment = Alignment.Top,
+                            maxLines = Int.MAX_VALUE,
+                            overflow = TextOverflow.Clip,
+                        )
+
+                        ROW -> {
+                            MarkdownTableRow(
+                                content = model.content,
+                                header = child,
+                                tableWidth = tableWidth,
+                                style = model.typography.table,
+                                rowIndex = rowIndex,
+                                verticalAlignment = Alignment.Top,
+                                maxLines = Int.MAX_VALUE,
+                                overflow = TextOverflow.Clip,
+                            )
+                            rowIndex++
+                        }
+
+                        TABLE_SEPARATOR -> MarkdownDivider()
+                    }
+                }
+            }
+
+            if (scrollable && scrollState.canScrollForward) {
+                Box(
+                    modifier = Modifier.matchParentSize(),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .fillMaxHeight()
+                            .width(28.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(Color.Transparent, tableBackground),
+                                ),
+                            ),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun StreamingMarkdownContent(
     content: String,
     textColor: Color,
-    modifier: Modifier = Modifier
+    isStreaming: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
-    val blocks = remember(content) { parseStreamingMarkdownBlocks(content) }
+    val blocks = remember(content, isStreaming) {
+        if (isStreaming) {
+            parseStreamingMarkdownBlocks(content)
+        } else {
+            listOf(StreamingMarkdownBlock.Markdown(content))
+        }
+    }
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        // Match the final renderer's block spacer so moving the active tail
+        // into the settled Markdown prefix does not add a second layout jump.
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         blocks.forEach { block ->
             when (block) {
+                is StreamingMarkdownBlock.Markdown -> MarkdownContent(
+                    content = block.content,
+                    textColor = textColor,
+                )
+
                 is StreamingMarkdownBlock.Text -> Text(
                     text = block.text,
                     style = MaterialTheme.typography.bodyMedium,
@@ -267,23 +420,96 @@ private fun CodeCopyButton(code: String) {
     }
 }
 
-private sealed interface StreamingMarkdownBlock {
+internal sealed interface StreamingMarkdownBlock {
+    data class Markdown(val content: String) : StreamingMarkdownBlock
     data class Text(val text: String) : StreamingMarkdownBlock
     data class Code(val language: String, val code: String) : StreamingMarkdownBlock
 }
 
-private fun parseStreamingMarkdownBlocks(content: String): List<StreamingMarkdownBlock> {
+/**
+ * Splits an in-flight response into stable Markdown and one structurally
+ * incomplete tail.
+ *
+ * Only conservative, blank-terminated top-level prose/heading blocks promote
+ * to the real renderer. Lists, quotes, tables, indented blocks, HTML, and code
+ * remain on the lightweight streaming surface until the message settles; those
+ * containers can legally absorb later lines, so promoting them early causes a
+ * visible re-parenting jump when the final CommonMark tree is parsed.
+ */
+internal fun parseStreamingMarkdownBlocks(content: String): List<StreamingMarkdownBlock> {
     if (content.isBlank()) return emptyList()
 
+    val normalized = content
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+    val blocks = mutableListOf<StreamingMarkdownBlock>()
+    val settledEnd = findStableMarkdownBoundary(normalized).coerceAtLeast(0)
+
+    if (settledEnd > 0) {
+        normalized.substring(0, settledEnd).trimEnd().let { stable ->
+            if (stable.isNotBlank()) blocks += StreamingMarkdownBlock.Markdown(stable)
+        }
+    }
+
+    val activeTail = normalized.substring(settledEnd)
+    if (activeTail.isNotBlank()) {
+        blocks += parseActiveStreamingTail(activeTail)
+    }
+
+    return blocks
+}
+
+/** Last unambiguous blank-line boundary in a contiguous simple-markdown prefix. */
+private fun findStableMarkdownBoundary(content: String): Int {
+    var offset = 0
+    var blockStart = 0
+    var activeFence: StreamingFence? = null
+    var lastStableBoundary = 0
+
+    while (offset < content.length) {
+        val newline = content.indexOf('\n', offset)
+        val lineEnd = if (newline >= 0) newline else content.length
+        val line = content.substring(offset, lineEnd)
+
+        activeFence = when (val current = activeFence) {
+            null -> streamingFence(line)
+            else -> if (isClosingFence(line, current)) null else current
+        }
+
+        // Whitespace-only lines can be meaningful indentation inside a list.
+        // Require a truly empty delimiter and stop at the first ambiguous
+        // container so every promoted prefix remains structurally final.
+        if (activeFence == null && newline >= 0 && line.isEmpty()) {
+            val candidate = content.substring(blockStart, offset).trimEnd()
+            if (candidate.isNotBlank() && !isConservativeStableBlock(candidate)) break
+            lastStableBoundary = newline + 1
+            blockStart = lastStableBoundary
+        }
+
+        if (newline < 0) break
+        offset = newline + 1
+    }
+
+    return lastStableBoundary
+}
+
+private fun isConservativeStableBlock(block: String): Boolean = block
+    .lineSequence()
+    .filter { it.isNotEmpty() }
+    .none { line ->
+        line.firstOrNull()?.isWhitespace() == true ||
+            AMBIGUOUS_STREAMING_BLOCK.matches(line)
+    }
+
+private fun parseActiveStreamingTail(content: String): List<StreamingMarkdownBlock> {
     val blocks = mutableListOf<StreamingMarkdownBlock>()
     val paragraph = StringBuilder()
     val code = StringBuilder()
-    var inFence = false
-    var activeFence = ""
+    var activeFence: StreamingFence? = null
     var language = ""
 
     fun flushParagraph() {
-        val text = paragraph.toString().trimEnd()
+        val text = paragraph.toString().trim('\n').trimEnd()
         if (text.isNotBlank()) {
             blocks += StreamingMarkdownBlock.Text(text)
         }
@@ -298,35 +524,30 @@ private fun parseStreamingMarkdownBlocks(content: String): List<StreamingMarkdow
         code.clear()
     }
 
-    val lines = content
-        .replace("\r\n", "\n")
-        .replace('\r', '\n')
-        .split('\n')
+    val lines = content.split('\n')
 
     lines.forEachIndexed { index, line ->
         val lineWithBreak = if (index == lines.lastIndex) line else "$line\n"
 
-        if (!inFence) {
-            val fence = streamingFenceMarker(line)
+        if (activeFence == null) {
+            val fence = streamingFence(line)
             if (fence != null) {
                 flushParagraph()
-                inFence = true
                 activeFence = fence
                 language = streamingFenceLanguage(line, fence)
             } else {
                 paragraph.append(lineWithBreak)
             }
-        } else if (streamingFenceMarker(line) == activeFence) {
+        } else if (isClosingFence(line, activeFence)) {
             flushCode()
-            inFence = false
-            activeFence = ""
+            activeFence = null
             language = ""
         } else {
             code.append(lineWithBreak)
         }
     }
 
-    if (inFence) {
+    if (activeFence != null) {
         flushCode()
     } else {
         flushParagraph()
@@ -335,18 +556,32 @@ private fun parseStreamingMarkdownBlocks(content: String): List<StreamingMarkdow
     return blocks
 }
 
-private fun streamingFenceMarker(line: String): String? {
+private data class StreamingFence(
+    val marker: Char,
+    val length: Int,
+)
+
+private fun streamingFence(line: String): StreamingFence? {
     val trimmed = line.trimStart()
-    return when {
-        trimmed.startsWith("```") -> "```"
-        trimmed.startsWith("~~~") -> "~~~"
-        else -> null
-    }
+    val marker = trimmed.firstOrNull()?.takeIf { it == '`' || it == '~' } ?: return null
+    val length = trimmed.takeWhile { it == marker }.length
+    return length.takeIf { it >= 3 }?.let { StreamingFence(marker, it) }
 }
 
-private fun streamingFenceLanguage(line: String, marker: String): String {
-    val tail = line.trimStart().removePrefix(marker).trim()
+private fun isClosingFence(line: String, activeFence: StreamingFence): Boolean {
+    val trimmed = line.trimStart()
+    if (trimmed.firstOrNull() != activeFence.marker) return false
+    val markerLength = trimmed.takeWhile { it == activeFence.marker }.length
+    return markerLength >= activeFence.length && trimmed.drop(markerLength).isBlank()
+}
+
+private fun streamingFenceLanguage(line: String, fence: StreamingFence): String {
+    val tail = line.trimStart().drop(fence.length).trim()
     return tail
-        .takeWhile { !it.isWhitespace() && it != '`' && it != '~' }
+        .takeWhile { !it.isWhitespace() && it != fence.marker }
         .take(32)
 }
+
+private val AMBIGUOUS_STREAMING_BLOCK = Regex(
+    """^(?:[-+*]\s|\d{1,9}[.)]\s|>|```|~~~|<|\||(?:-{3,}|={3,})\s*$).*""",
+)

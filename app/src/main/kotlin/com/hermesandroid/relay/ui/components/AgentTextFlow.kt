@@ -188,8 +188,8 @@ private fun Modifier.topFadeEdge(fade: Dp = 28.dp): Modifier = this
         )
     }
 
-/** Resolved motion/accessibility posture for clean mode. */
-private data class CleanMotionState(
+/** Shared OS motion/accessibility posture for animated chat affordances. */
+internal data class AccessibleMotionState(
     /** OS animator scale is non-zero (i.e. system animations are ON). */
     val osAnimations: Boolean,
     /** TalkBack-style touch exploration is active — faded text is unreadable
@@ -198,7 +198,7 @@ private data class CleanMotionState(
 )
 
 @Composable
-private fun rememberCleanMotionState(): CleanMotionState {
+internal fun rememberAccessibleMotionState(): AccessibleMotionState {
     val context = LocalContext.current
     // ANIMATOR_DURATION_SCALE == 0 is the platform "remove animations" / many
     // OEM "reduce motion" toggles. Read once on entry; a mid-mode toggle is
@@ -225,7 +225,10 @@ private fun rememberCleanMotionState(): CleanMotionState {
         a11y?.addTouchExplorationStateChangeListener(listener)
         onDispose { a11y?.removeTouchExplorationStateChangeListener(listener) }
     }
-    return CleanMotionState(osAnimations = osAnimations, touchExploration = touchExploration)
+    return AccessibleMotionState(
+        osAnimations = osAnimations,
+        touchExploration = touchExploration,
+    )
 }
 
 /**
@@ -511,7 +514,7 @@ fun CleanChatMode(
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val motion = rememberCleanMotionState()
+    val motion = rememberAccessibleMotionState()
     val sphereAnimated = animationEnabled && motion.osAnimations
     // Faded text is unreadable to touch exploration, so the text path goes
     // static (readable + announced) whenever TalkBack is exploring.

@@ -2,6 +2,7 @@ package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.HermesCard
@@ -242,9 +243,8 @@ class ChatHandler {
 
     // User-chosen Thread names (sessionId → name), authoritative over the
     // server's auto-title — applied in [updateSessions] so the gateway's async
-    // auto-titler can't clobber the name. Fed by ChatViewModel. In-memory for
-    // now (survives list refreshes within a session); cross-restart persistence
-    // is a follow-up (see TODO).
+    // auto-titler can't clobber the name. ChatViewModel hydrates this map from
+    // ThreadNameStore, so names survive both list refreshes and app restarts.
     private val userThreadNames = mutableMapOf<String, String>()
 
     /** Record a user-chosen name for one Thread session + re-apply it now. */
@@ -363,6 +363,31 @@ class ChatHandler {
     fun updateDeliveryStatus(messageId: String, status: MessageDeliveryStatus) {
         _messages.update { list ->
             list.map { if (it.id == messageId) it.copy(deliveryStatus = status) else it }
+        }
+    }
+
+    /** Attach the first Chat-visible state for a promoted/durable Hermes run. */
+    fun setBackgroundTask(messageId: String, task: BackgroundTaskState) {
+        _messages.update { list ->
+            list.map { message ->
+                if (message.id == messageId) message.copy(backgroundTask = task) else message
+            }
+        }
+    }
+
+    /** Update an existing task in place; no-op when the message/task is absent. */
+    fun updateBackgroundTask(
+        messageId: String,
+        transform: (BackgroundTaskState) -> BackgroundTaskState,
+    ) {
+        _messages.update { list ->
+            list.map { message ->
+                if (message.id == messageId && message.backgroundTask != null) {
+                    message.copy(backgroundTask = transform(message.backgroundTask))
+                } else {
+                    message
+                }
+            }
         }
     }
 
@@ -2814,6 +2839,10 @@ class ChatHandler {
 
     fun setLastSentMessage(text: String) {
         _lastSentMessage.value = text
+    }
+
+    fun clearLastSentMessage() {
+        _lastSentMessage.value = null
     }
 }
 
