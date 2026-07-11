@@ -1,6 +1,33 @@
 {
  "versions": [
   {
+   "version": "1.4.1",
+   "title": "Chat that keeps up",
+   "date": "2026-07-11",
+   "sections": [
+    {
+     "header": "Chat that stays with you",
+     "bullets": [
+      "Follow background terminal work from a compact process strip and expandable sheet. Its completed answer appears in the same conversation automatically.",
+      "Close and reopen while a reply runs: partial text, thinking, tool progress, background-task state, and pending approvals return in the same chat without repeating your prompt."
+     ]
+    },
+    {
+     "header": "Voice you can direct",
+     "bullets": [
+      "Use spoken commands to pause or resume listening, stop speech, cancel background work, repeat a finished result, or start Standard voice chat.",
+      "Hands-free, Low latency, Careful tools, and Quiet presets tune existing voice behavior without changing your selected voice or route."
+     ]
+    },
+    {
+     "header": "Clearer conversations",
+     "bullets": [
+      "Browse adjacent images as a gallery, read smoother streaming Markdown and wide tables, and see background-process completion as a compact process notice."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.0",
    "title": "Realtime voice that finishes the job",
    "date": "2026-07-09",

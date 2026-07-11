@@ -1,56 +1,46 @@
-# Hermes-Relay-Android v1.4.0
+# Hermes-Relay-Android v1.4.1
 
-**Release Date:** July 9, 2026
+**Release Date:** July 11, 2026
 
-**Since v1.3.0:** Realtime voice can keep a long task moving while you ask a quick follow-up, queue another long request, and deliver the finished answer in the selected realtime voice. Recovery is substantially stronger across backgrounding and route changes, model choices apply to the next session, and stale listening, thinking, reconnecting, and cancellation states no longer strand the voice screen. This release also adds model-catalog refresh, proactive notification rules, multi-device Bridge targeting, session-cleanup plumbing, and broad chat, startup, and security fixes.
+**Since v1.4.0:** Chat now keeps durable work visible and recoverable. Follow background terminal work from the conversation, receive its completion automatically, and reopen the app into the same in-flight answer with its visible progress intact. Voice adds practical spoken controls and mode presets, while streaming chat gets smoother Markdown, table, and image handling.
 
-v1.4.0 is recommended for everyone. Realtime Agent remains experimental and pairs with relay plugin v1.4.0; the no-plugin Standard chat and Vanilla Hermes voice paths remain upstream-compatible.
+v1.4.1 is recommended for everyone. Realtime Agent delivery hardening and voice presets pair with relay plugin v1.4.1; Standard chat and Vanilla Hermes voice remain compatible with unmodified upstream Hermes.
 
 ---
 
 ## Download
 
-**Installing on your phone?** Download **`hermes-relay-1.4.0-sideload-release.apk`** and tap it — that's the direct-install build with the full feature set (installs as `com.axiomlabs.hermesrelay.sideload`). Prefer the conservative build (no Device Control surface)? Get it from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+**Installing on your phone?** Download hermes-relay-1.4.1-sideload-release.apk and tap it — that's the direct-install build with the full feature set (installs as com.axiomlabs.hermesrelay.sideload). Prefer the conservative build (no Device Control surface)? Get it from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
-The other file, `hermes-relay-1.4.0-googlePlay-release.aab`, is an Android App Bundle for uploading to Play Console — it **cannot** be installed by tapping it on a phone.
+The other file, hermes-relay-1.4.1-googlePlay-release.aab, is an Android App Bundle for uploading to Play Console — it **cannot** be installed by tapping it on a phone.
 
-Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
+Verify integrity with SHA256SUMS.txt from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 
 ---
 
 ## Highlights
 
-### Realtime voice that finishes the job
+### Chat that keeps up
 
-- **Keep talking while work runs.** Quick follow-ups can be answered while one Hermes task runs in the background, and another long request can wait in a bounded queue instead of being discarded.
-- **Hear the authoritative answer.** Exact xAI delivery uses provider-native forced speech, finished-task answers can be replayed from the task chip, and TTS/text/notification fallbacks keep a result from disappearing when the realtime floor is unavailable.
-- **Stronger route recovery.** Recorded turns wait for relay-confirmed resume, unacknowledged audio is replayed without starting a second Hermes run, and long-lived sessions get a fresh bounded retry window when the route actually drops. Retired sockets and sessions cannot overwrite a newer connection.
-- **Clean lifecycle state.** Provider transcripts no longer impersonate active microphone capture; Stop settles local placeholders; exit detaches durable work while clearing session-owned UI; rejected, unacknowledged, or terminal cancels cannot leave an undismissable reconnecting task chip.
-- **Your model and voice selection sticks.** Realtime Agent model and voice choices are scoped to the active connection/profile, survive restart, and apply when the next session opens.
+- **See background work where it belongs.** Standard Chat surfaces active and recent background processes in a compact strip and expandable sheet with elapsed time, output, a targeted Stop action, and local Dismiss.
+- **Get the completion without asking again.** When Hermes finishes detached work, its follow-up answer appears in the originating conversation automatically. The server's internal completion marker stays in history but is shown as a compact process notice.
+- **Come back to the same answer.** Closing and reopening the app restores the partial reply, live reasoning, lifecycle status, tool and subagent states, background-task state, and any pending approval or clarification. The app reattaches when the server still has a live turn, otherwise it reconciles the finished transcript without repeating your prompt.
 
-### Chat and model management
+### Voice you can direct
 
-- **Long turns stay alive.** Gateway submits use the server's long-turn window and idle-progress checks, avoiding premature transport fallback and duplicate turns.
-- **Phone context reaches Hermes.** Voice-intent traces, card actions, and supported attachments now use payload channels the upstream server actually consumes; unsupported attachment paths report the gap instead of dropping it silently.
-- **Refresh model catalogs on demand.** Chat and Manage can explicitly reload dynamic/custom provider models, while Manage keeps unconfigured providers visible with key-setup guidance.
-- **Session cleanup groundwork.** The dashboard client supports export, prune preview/apply, archive, restore, and archived-session filtering for the Manage surface.
+- **Use natural spoken controls.** Pause or resume listening, stop speech, cancel background work, repeat a settled result, or start a new Standard voice chat.
+- **Choose an interaction preset.** Hands-free, Low latency, Careful tools, and Quiet presets adjust existing voice and long-task behavior without changing your voice identity or routing.
+- **Keep delivered answers authoritative.** Realtime delivery is generation-safe and uses one relay-TTS fallback if the provider cannot deliver a completed Hermes result.
 
-### Phone automation
+### Clearer conversations
 
-- **Notification triggers.** Opt-in rules can match app notifications and show a safe local "Ask Hermes?" prompt, with recent activity and a global pause switch.
-- **Multi-device Bridge targeting.** Relay tools can select a paired phone, foldable, tablet, or explicit device ID instead of assuming one Android client.
-
-### Reliability and security
-
-- **Older Android crash safety.** Collection calls that require Android 15 were removed from lower-API paths, and encrypted-storage dependencies are pinned to the compatible line.
-- **Bad server addresses fail safely.** Malformed relay, media, session, voice, and chat URLs surface a normal connection error instead of closing the app.
-- **Credential paths stay private.** Relay media delivery resolves symlinks and blocks credential, token, pairing, SSH, and system-config locations.
-- **Cleaner voice failures.** Duplicate error surfaces are gone, fallback speech animates the voice UI, routine provider idle expiry opens fresh on the next turn, and fresh sessions emit one ready event.
+- **Browse images together.** Adjacent images form a compact gallery that opens at the image you selected.
+- **Read while the reply streams.** Markdown settles into its final styling as text arrives, wide tables stay usable, and motion-sensitive indicators respect system accessibility settings.
 
 ---
 
 ## Upgrade notes
 
-- App-side release on **both** flavors. Realtime Agent background/recovery features require relay plugin **v1.4.0**; Standard chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.
-- `appVersionCode` is **22**.
-- Realtime Agent is still an experimental engine. Stable assistant speech remains available through **Hermes Chat + Voice Output**.
+- App version: **1.4.1** (versionCode **23**).
+- Realtime Agent improvements pair with relay plugin **1.4.1**.
+- Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.

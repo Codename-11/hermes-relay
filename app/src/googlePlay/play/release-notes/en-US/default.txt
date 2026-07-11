@@ -1,6 +1,12 @@
-v1.4.0 — Realtime voice that finishes the job.
+v1.4.1 - Chat that keeps up
 
-• Long voice tasks can queue, keep running while you ask quick follow-ups, and deliver answers in the selected realtime voice.
-• Voice sessions recover more reliably after background or route changes and clear stale task states.
-• Refresh model catalogs on demand; add opt-in notification rules and multi-device Bridge targeting.
-• Safer startup, server-address handling, long chat turns, and credential media access.
+Chat
+* Follow background work from a live process strip; its result appears automatically in the same conversation.
+* Reopen while an answer runs: partial text, thinking, tool progress, and approvals return.
+
+Voice
+* Speak commands to pause, resume, cancel, repeat a result, or start Standard voice chat.
+* Pick Hands-free, Low latency, Careful tools, or Quiet presets.
+
+Polish
+* Multi-image galleries plus smoother streaming Markdown and long tables.
