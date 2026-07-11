@@ -1,5 +1,182 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-10 — In-flight Chat turns recover across app recreation
+
+Current upstream Hermes can keep a running Dashboard/TUI Gateway session alive
+after its WebSocket transport disappears. `session.activate` rebinds an exact
+live session id, while `session.resume` can reuse a live session by its durable
+session key and returns `running`, `status`, and an `inflight` snapshot containing
+the user prompt plus partial assistant text. Those fields are enough to recover
+the live worker and transcript tail, but upstream intentionally does not persist
+Android's reasoning presentation, tool-card lifecycle, pending ask card, or
+client-owned background-task UI.
+
+Android now checkpoints one session-backed in-flight turn in the shared app
+DataStore. The snapshot is scoped by connection/profile and session, expires
+after 24 hours, and contains the user/assistant pair, partial answer, reasoning,
+tool and subagent states, lifecycle caption, background-task state, and the
+server-issued half of an interactive ask. Entered passwords/secrets are never
+written. Mutations are debounced during streaming and flushed immediately when
+the app backgrounds, when a tool/ask/session boundary changes, and during
+orderly ViewModel teardown.
+
+Returning to Chat first restores the rich local snapshot. Gateway sessions then
+activate the saved live id before accepting new deltas; if activation is absent
+or the live id has expired, Android resumes by durable session id. A running
+payload binds the normal event mapper so reasoning, tool, status, ask, and
+completion callbacks continue on the same bubble. A settled or unreachable
+worker uses the existing bounded, positionally anchored history recovery, which
+also covers sessions-SSE transport loss and route handoff. Explicit Stop and
+session/profile/connection changes retain their prior interrupt semantics and
+clear the checkpoint; lifecycle teardown detaches without sending
+`session.interrupt`.
+
+Regression coverage includes checkpoint round-trip/corruption/expiry, rich
+ChatHandler rehydration without duplicated repeated prompts, exact activation,
+durable-resume fallback, idle-session settlement, detach-without-interrupt, and
+a Robolectric reopen that continues reasoning/tool events and clears the saved
+turn after authoritative completion.
+
+## 2026-07-10 — Gateway background processes become visible Chat activity
+
+Current upstream Hermes exposes a session-scoped process registry over the same
+Dashboard/TUI Gateway socket Android already uses for Chat. `process.list`
+returns running and recently finished entries plus a bounded output tail;
+`process.kill` stops one process after verifying session ownership;
+`agent.terminal.output`, process status events, and terminal/process tool
+completion provide refresh and live-output signals. There is no structured
+process-start event, so Android follows the official Desktop reconciliation
+recipe: load after session prewarm, refresh on relevant events, and poll every
+five seconds only while a process remains running. Method-not-found is treated
+as an unsupported optional surface instead of a Chat transport failure.
+
+Live phone verification exposed a start-discovery gap: the Gateway emitted the
+assistant turn that confirmed a new process ID but no terminal/process
+`tool.complete` event, so Android could not begin the running-only poll and first
+found the row from a later reconnect/completion snapshot. Every exact-session
+`message.complete` now invalidates the process snapshot as a low-cost fallback;
+ordinary tool/status events remain the faster path when upstream emits them.
+
+Chat now exposes that state through a compact composer-adjacent background strip
+and a current-chat bottom sheet. Running and recent rows show command, elapsed
+time, completion/exit state, expandable live or snapshot output, exact-process
+Stop, and local Dismiss. Session/client generations reject stale responses after
+a chat or connection switch, and profile context is part of the ownership key
+because isolated profile databases can reuse stored session IDs. A newer async
+prewarm invalidates an older resume before it can replace the live session.
+Reconnects repopulate from `process.list`; the five-second safety poll pauses in
+the background unless the user explicitly enabled Gateway keep-alive, so it
+cannot reopen the socket after the normal background grace close. Raw process
+output is length-only in logcat, never placed in notifications, and ANSI/control
+sequences are removed before the plain-text mobile viewer renders it.
+
+Hermes intentionally persists a completed process notification as synthetic
+user-role input before starting the agent's follow-up turn. Android now recognizes
+the upstream formatter shape and presents that history item as a compact,
+expandable process notice rather than a human-authored bubble, while preserving
+its wire/history role and excluding it from edit-and-resend behavior.
+
+Focused Gateway transport, process-controller, notification-parser, and output
+viewer tests pass on both Android product flavors. Google Play and sideload debug
+lint report zero errors, and the sideload debug APK assembles successfully for
+physical-device validation.
+
+## 2026-07-10 — Gateway background completions return to ordinary Chat
+
+Upstream Hermes already associates a detached process with the originating
+Dashboard/TUI Gateway session. When that process completes, its notification
+poller injects a synthetic user event, runs a follow-up agent turn, emits the
+normal `message.start` / delta / completion lifecycle, and persists the reply.
+Android discarded that lifecycle because `GatewayChatClient` only allocated a
+turn mapper after a phone-initiated `sendTurn()`; with no request-scoped
+`activeTurn`, every event returned before session filtering or UI dispatch.
+
+The Gateway client now accepts a server-initiated turn only when an explicit
+event session exactly matches its active live session and the open Chat still
+matches the corresponding stored session. It allocates a fresh mapper, binds a
+real cancellable turn handle into `ChatViewModel`, and reuses the normal text,
+thinking, tool, ask, status, completion, notification, queue, and authoritative
+history-reconciliation paths. Foreign or untagged events remain fail-closed.
+The mapper also collapses the adjacent duplicate `message.start` pair currently
+emitted by the upstream completion poller, preventing a phantom boundary or
+duplicate placeholder.
+
+After a user Stop, the client retains a short exact-session drain tombstone for
+the interrupted turn. Its late deltas/terminal event are ignored before a
+same-session next prompt is submitted, so canceled output cannot reappear as an
+unsolicited answer or prematurely complete the newer turn.
+
+A cold foreground prewarm now refreshes the exact resumed session when no turn
+is active, recovering a completion that may have finished while the Gateway
+socket was closed without overwriting another session or live response.
+Regressions cover no-`sendTurn()` delivery, exact-session filtering, duplicate
+starts, error recovery, Chat rendering/finalization, Stop-to-interrupt behavior,
+late canceled terminals, queued-send draining, and disconnected history recovery.
+
+## 2026-07-09 — Android 1.4.1 Chat and Voice enhancement batch
+
+Chat now represents a promoted realtime background run as one first-class
+assistant turn. The same row moves through queued, running, waiting, delivering,
+complete, failed, or cancelled state and owns its tool detail and authoritative
+answer. Run IDs retain the initiating assistant-row identity across later turns,
+including local Voice commands, so delayed progress or delivery cannot settle a
+newer placeholder. Local pause, resume, stop, repeat, and cancel commands are
+removed from Chat history, quarantine their provider acknowledgement, and cannot
+become the target of Retry. The authoritative answer still persists through the
+existing session history, and the in-flight Chat checkpoint now preserves the
+client-only task-card metadata across a cold restart.
+
+Streaming Markdown can promote blank-terminated prose and headings without
+waiting for the final response, while structurally ambiguous lists, quotes,
+tables, HTML, and fences remain in the raw tail. GFM tables now wrap in readable
+minimum-width columns inside a horizontally scrollable surface. Contiguous image
+attachments render as a bounded gallery with selected-page full-screen paging,
+sensitive-action gating, original-byte Share/Save behavior, and no adjacent
+full-resolution preload. The thinking indicator follows app and system motion
+settings plus TalkBack, the jump-to-bottom affordance reports unread messages,
+and the Demo mic explains locally that Voice requires a real connection.
+
+Voice now intercepts only exact, final-transcript commands in states where the
+action is safe. Standard Voice supports a rearmed new-chat command; realtime
+new-chat remains gated until a persistent WebSocket can be rebound safely. Four
+presets compose existing Voice settings without replacing manual controls or
+silently enabling experimental barge-in. Preset application updates the relay
+first and rolls it back if local persistence fails, with an explicit recovery
+message if rollback also fails. Relay event parsing accepts the documented and
+legacy field aliases used by current broker events.
+
+Foreground Hermes results now use the same forced-summary lifecycle as protected
+background delivery. Non-structured verbatim results take the provider's exact
+text path where supported; structured results use constrained instructions.
+Provider send or response-request failures emit one authoritative fallback before
+the terminal error, and each delivery emits one completion boundary. Delivery
+confirmation is generation-scoped so an alarm from an older response cannot
+invalidate a newer one. Voice-command response suppression is callback-local,
+and forced deliveries remain audible after pause, stop, or background-cancel
+commands.
+
+Verification passed the focused Google Play and sideload Chat/Voice unit suites,
+including a forced clean rerun of the cross-turn ownership regression. Both
+Android lint flavors passed. The realtime route, promotion, validation, xAI, and
+OpenAI provider slice passed 94/94 tests. Device validation remains for gallery
+gestures, reduced-motion/TalkBack behavior, cross-turn background delivery,
+command phrasing, all four presets, provider failure fallback, and the existing
+route-loss/audio quality release gates.
+
+## 2026-07-09 — Android and plugin 1.4.0 released
+
+`android-v1.4.0` and `plugin-v1.4.0` were published from the same release
+commit. The plugin wheel, source archive, and checksum file were downloaded and
+verified after publication. The Android release exposes only the intended
+sideload APK, Google Play AAB, and matching checksum file; both downloaded
+artifacts matched their recorded hashes, and the APK/AAB certificate digests
+matched the release signer.
+
+Google Play accepted Android versionCode 22 as a production draft. The draft
+was then promoted to `completed`, starting the production rollout. Extended
+physical-device recovery stress testing remains deferred and is tracked in
+`TODO.md`; live findings may still require follow-up recovery hardening.
+
 ## 2026-07-09 — Android realtime turns survive background route loss
 
 An on-device foreground/resume failure left a realtime turn showing

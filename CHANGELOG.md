@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-07-11
+
+### Added
+
+- **Background work is visible in Standard Chat.** A live process strip opens a mobile process sheet with running or recent state, output, elapsed time, Stop, and Dismiss controls. It remains compatible with older Hermes servers that do not expose process details.
+- **Background work has a clearer Chat home.** Realtime work appears as a titled task card with working, waiting, delivery, and completion states, queued work, and an expandable tool timeline.
+- **Multi-image messages open as galleries.** Adjacent images render in a compact grid and open at the selected image in a swipeable viewer while preserving sensitive-media reveal and original-file actions.
+- **Voice gains commands and presets.** Spoken commands can stop speech, cancel background work, pause or resume listening, repeat a result, or start Standard voice chat. Hands-free, Low latency, Careful tools, and Quiet presets tune existing interaction settings.
+
+### Changed
+
+- **Streaming Chat content stays steadier and more readable.** Settled prose and headings adopt final Markdown styling during generation, wide tables scroll with readable columns, the thinking indicator respects system motion and TalkBack settings, and the jump-to-bottom control counts unread messages.
+- **Offline Demo mode no longer starts Voice.** The mic action now explains locally that a Hermes connection is required.
+
+### Fixed
+
+- **An in-flight Chat turn survives reopening the app.** Session-backed replies restore partial text, live reasoning, lifecycle status, tool/subagent cards, background-task state, and unanswered approval or clarification cards. Current Hermes gateways reattach to the same running turn; older or finished sessions reconcile from history without duplicating the prompt or losing the final answer.
+- **Realtime Agent delivery is protected.** Hermes results use exact provider speech where supported, delivery validation, generation-safe confirmation, and a single relay-TTS fallback if the provider closes or rejects delivery. Voice commands no longer leave synthetic cancellation turns or mute a later background answer.
+- **Standard Chat receives background-process completions automatically.** When Hermes completes detached work and starts a follow-up turn on the originating Gateway session, Android shows the unsolicited assistant stream in the open conversation and reconciles history after a cold reconnect. The synthetic process prompt is rendered as a compact process notice rather than a user-authored message.
+
 ## [1.4.0] - 2026-07-09
 
 ### Added

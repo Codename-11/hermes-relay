@@ -138,8 +138,8 @@ jobs:
 
       # The broad Gradle `test` aggregate currently hangs in deferred JVM test
       # suites tracked by issue #32. Keep CI release-relevant until that suite is
-      # split: pairing URL derivation plus connection switching are the stable
-      # Android regression slice for the active release work.
+      # split: run the stable connection slice plus focused Chat/Voice state,
+      # parser, layout, and accessibility regressions for the active release.
       - name: Run focused Android unit tests
         run: |
           ./gradlew :app:testSideloadDebugUnitTest \
@@ -149,6 +149,15 @@ jobs:
             --tests com.hermesandroid.relay.util.ServerAddressTest \
             --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
             --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
+            --tests com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest \
+            --tests com.hermesandroid.relay.voice.VoiceCommandInterpreterTest \
+            --tests com.hermesandroid.relay.data.VoiceModePresetTest \
+            --tests com.hermesandroid.relay.ui.components.BackgroundTaskCardTest \
+            --tests com.hermesandroid.relay.ui.components.DotMatrixIndicatorTest \
+            --tests com.hermesandroid.relay.ui.components.AttachmentGalleryLayoutTest \
+            --tests com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest \
+            --tests com.hermesandroid.relay.ui.screens.ChatUnreadStateTest \
             --console=plain
 
       # Upload reports only for failures. Successful PR report uploads add

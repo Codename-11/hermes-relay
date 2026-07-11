@@ -9,8 +9,18 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentState
+import com.hermesandroid.relay.data.BackgroundTaskPhase
+import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
+import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
+import com.hermesandroid.relay.data.ChatTurnBackgroundTaskCheckpoint
+import com.hermesandroid.relay.data.ChatTurnCheckpoint
+import com.hermesandroid.relay.data.ChatTurnCheckpointStore
+import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
+import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
+import com.hermesandroid.relay.data.DataStoreChatTurnCheckpointStore
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
@@ -32,7 +42,11 @@ import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayProcess
+import com.hermesandroid.relay.network.upstream.GatewayProcessCapability
+import com.hermesandroid.relay.network.upstream.GatewayProcessEvent
 import com.hermesandroid.relay.network.upstream.GatewaySessionModel
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
@@ -63,6 +77,7 @@ import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.util.isConnectivityError
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -75,6 +90,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -83,6 +100,7 @@ import kotlinx.serialization.json.contentOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Absolute per-session context-window usage in tokens — the data behind the
@@ -126,6 +144,32 @@ class ChatViewModel : ViewModel() {
      */
     private var streamRecovery: ChatStreamRecovery? = null
 
+    /** Durable UI checkpoint for the one recoverable, session-backed turn. */
+    private var chatTurnCheckpointStore: ChatTurnCheckpointStore? = null
+    private var activeTurnCheckpointSeed: ActiveTurnCheckpointSeed? = null
+    private var checkpointWriteJob: Job? = null
+    private var checkpointStatusJob: Job? = null
+    private var checkpointForegroundJob: Job? = null
+    private var checkpointRecoveryJob: Job? = null
+    private var lastCheckpointWriteAtMs = 0L
+    private val checkpointGeneration = AtomicLong(0L)
+    private val checkpointMutex = Mutex()
+
+    private data class ActiveTurnCheckpointSeed(
+        var contextKey: String?,
+        var sessionId: String,
+        var liveSessionId: String?,
+        var transport: String,
+        val userMessageId: String,
+        val userText: String,
+        val userTimestamp: Long,
+        var assistantMessageId: String,
+        val assistantTimestamp: Long,
+        val priorUserMessageCount: Int,
+        val baselineAssistantCount: Int,
+        val startedAt: Long,
+    )
+
     /** Test seam for the recovery poll cadence — production uses the defaults. */
     internal var recoveryTimingOverride: ChatStreamRecovery.Timing? = null
 
@@ -139,6 +183,7 @@ class ChatViewModel : ViewModel() {
 
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
+    private var backgroundProcessSessionJob: Job? = null
     private var connectionSwitchJob: Job? = null
     private var sessionRefreshJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
@@ -152,6 +197,10 @@ class ChatViewModel : ViewModel() {
     private val realtimeAgentModels = mutableMapOf<String, String>()
     private val realtimeAgentVoices = mutableMapOf<String, String>()
     private val realtimeAgentProgressKeys = mutableMapOf<String, String>()
+    /** Background run ownership survives newer persistent-session Voice turns. */
+    private val realtimeAgentRunOwners = mutableMapOf<String, String>()
+    /** Delivery events omit run_id, so the completed run retains one owner. */
+    private var realtimeAgentPendingDeliveryOwner: String? = null
     private val terminalRealtimeAgentTurnIdsLock = Any()
     private val terminalRealtimeAgentTurnIds = LinkedHashSet<String>()
     private var nextInterfaceContextPrompt: String? = null
@@ -183,6 +232,11 @@ class ChatViewModel : ViewModel() {
 
         /** Upper bound on the rolling tool-call history flow. */
         const val TOOL_CALL_HISTORY_LIMIT = 10
+
+        private const val BACKGROUND_TASK_TITLE_LIMIT = 64
+        private const val CHECKPOINT_WRITE_INTERVAL_MS = 750L
+        private const val MAX_CHECKPOINT_TEXT_CHARS = 200_000
+        private const val MAX_CHECKPOINT_TOOL_RESULT_CHARS = 20_000
 
         /**
          * One-line capability nudge appended to the SSE `system_message` when a
@@ -813,6 +867,10 @@ class ChatViewModel : ViewModel() {
         // the agent to the new profile (pulled live via sessionProfileProvider),
         // like the desktop spawning the profile's backend lazily on the next send.
         gateway.clearSession()
+        // The selected profile changes before RelayApp's coalesced context
+        // switch lands. Clear the old profile's process snapshot immediately
+        // so it can never linger under the new profile header.
+        selectBackgroundProcessSession(null)
         // Session-scoped YOLO/Fast/reasoning + the personality overlay don't
         // carry across the profile's fresh session — null them so a stale flag
         // or persona can't show (or be injected) until the new session.info
@@ -926,10 +984,51 @@ class ChatViewModel : ViewModel() {
      * rebuilt by ConnectionViewModel; this VM only dispatches turns on it.
      */
     private var gatewayClient: GatewayChatClient? = null
+    private var gatewayHistoryReconcileJob: Job? = null
+    private var gatewayProcessSource: GatewayProcessSource? = null
+    private val gatewayProcessController = GatewayProcessController(viewModelScope)
+
+    /** Session-scoped upstream shell processes shown beside the composer. */
+    val backgroundProcesses: StateFlow<List<GatewayProcess>> = gatewayProcessController.processes
+
+    /** Feature-detection state for gateways older than the process RPC surface. */
+    val backgroundProcessCapability: StateFlow<GatewayProcessCapability> =
+        gatewayProcessController.capability
+
+    val backgroundProcessesLoading: StateFlow<Boolean> = gatewayProcessController.loading
+    val stoppingProcessIds: StateFlow<Set<String>> = gatewayProcessController.stoppingProcessIds
+
+    fun refreshBackgroundProcesses() {
+        gatewayProcessController.refresh()
+    }
+
+    fun stopBackgroundProcess(processId: String) {
+        gatewayProcessController.stop(processId) { message ->
+            _transientNotice.tryEmit(message)
+        }
+    }
+
+    fun dismissBackgroundProcess(processId: String) {
+        gatewayProcessController.dismiss(processId)
+    }
 
     fun updateGatewayClient(client: GatewayChatClient?) {
-        val changed = gatewayClient !== client
+        val previousClient = gatewayClient
+        val changed = previousClient !== client
+        if (changed) {
+            previousClient?.setUnsolicitedTurnProvider(null)
+            previousClient?.setColdPrewarmSessionReadyListener(null)
+            previousClient?.setUnmatchedTurnCompleteListener(null)
+        }
         gatewayClient = client
+        if (changed) {
+            gatewayProcessSource = client?.let(::GatewayChatProcessSource)
+            gatewayProcessController.bind(
+                newSource = gatewayProcessSource,
+                sessionId = chatHandler?.currentSessionId?.value,
+                scopeKey = activeProfileContextKey,
+            )
+        }
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
         client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
@@ -960,6 +1059,24 @@ class ChatViewModel : ViewModel() {
             } else {
                 null
             }
+        }
+        client?.setUnsolicitedTurnProvider { storedSessionId ->
+            createGatewayInboundTurnRegistration(client, storedSessionId)
+        }
+        client?.setColdPrewarmSessionReadyListener { storedSessionId ->
+            scheduleGatewayHistoryReconcile(storedSessionId)
+            if (
+                gatewayClient === client &&
+                chatHandler?.currentSessionId?.value == storedSessionId
+            ) {
+                gatewayProcessController.sessionReady(storedSessionId)
+            }
+        }
+        client?.setUnmatchedTurnCompleteListener { storedSessionId, expectedText ->
+            scheduleGatewayHistoryReconcile(
+                storedSessionId = storedSessionId,
+                expectedAssistantText = expectedText,
+            )
         }
         // (Re)bind the session.info state sync to the live client so server-side
         // personality/model changes drive the UI. Cancelled when the client drops.
@@ -1002,6 +1119,275 @@ class ChatViewModel : ViewModel() {
                 _reasoningDisplay.value = null
             }
         }
+        if (changed && client != null && streamRecovery != null &&
+            AppForegroundTracker.isForeground.value
+        ) {
+            prewarmGateway()
+        }
+    }
+
+    /**
+     * Build one UI turn for a server-initiated gateway response. Upstream uses
+     * this path when a background process finishes: it injects a synthetic user
+     * event and starts an ordinary assistant turn without a phone `sendTurn()`.
+     */
+    private fun createGatewayInboundTurnRegistration(
+        client: GatewayChatClient,
+        storedSessionId: String,
+    ): GatewayInboundTurnRegistration? {
+        val handler = chatHandler ?: return null
+        fun matchesAdmissionContext(): Boolean =
+            gatewayClient === client &&
+                streamingEndpoint == "gateway" &&
+                chatHandler === handler &&
+                handler.currentSessionId.value == storedSessionId
+
+        val messageId = "gateway-inbound-${UUID.randomUUID()}"
+        var baselineAssistantCount = 0
+        var started = false
+        var accepted = false
+        var boundHandle: ActiveTurnHandle? = null
+        var inputTokens: Int? = null
+        var outputTokens: Int? = null
+
+        fun ownsTranscriptSession(): Boolean =
+            chatHandler === handler && handler.currentSessionId.value == storedSessionId
+
+        fun ownsBoundTurn(): Boolean =
+            accepted && boundHandle != null && activeStream === boundHandle && ownsTranscriptSession()
+
+        fun acceptsEvent(): Boolean = started && ownsBoundTurn()
+
+        fun settleBoundTurnState() {
+            if (activeStream === boundHandle) {
+                activeStream = null
+                _steerableTurn.value = false
+                _steerNotice.value = null
+            }
+            accepted = false
+            boundHandle = null
+        }
+
+        val callbacks = GatewayTurnCallbacks(
+            onSessionId = { },
+            onStart = {
+                if (!started && ownsBoundTurn()) {
+                    started = true
+                    cancelAnswerRecovery()
+                    intentionallyCancelled = false
+                    firstTokenNotified = false
+                    handler.activeAgentName = currentAgentDisplayName()
+                    handler.addPlaceholderMessage(
+                        ChatMessage(
+                            id = messageId,
+                            role = MessageRole.ASSISTANT,
+                            content = "",
+                            timestamp = System.currentTimeMillis(),
+                            isStreaming = true,
+                            agentName = handler.activeAgentName,
+                        ),
+                    )
+                }
+            },
+            onTextDelta = { delta ->
+                if (acceptsEvent()) {
+                    if (!firstTokenNotified) {
+                        firstTokenNotified = true
+                        AppAnalytics.onFirstTokenReceived()
+                    }
+                    handler.onTextDelta(messageId, delta)
+                }
+            },
+            onThinkingDelta = { delta ->
+                if (acceptsEvent()) handler.onThinkingDelta(messageId, delta)
+            },
+            onToolCallStart = { toolCallId, toolName ->
+                if (acceptsEvent()) handler.onToolCallStart(messageId, toolCallId, toolName)
+            },
+            onToolCallDone = { toolCallId, preview ->
+                if (acceptsEvent()) handler.onToolCallComplete(messageId, toolCallId, preview)
+            },
+            onToolCallFailed = { toolCallId, error ->
+                if (acceptsEvent()) handler.onToolCallFailed(messageId, toolCallId, error)
+            },
+            onTurnComplete = {
+                if (acceptsEvent()) handler.onTurnComplete(messageId)
+            },
+            onComplete = {
+                val canWriteTranscript = acceptsEvent()
+                val expectedText = handler.messages.value
+                    .lastOrNull { it.id == messageId }
+                    ?.content
+                    ?.takeIf { it.isNotBlank() }
+                if (canWriteTranscript) {
+                    finalizeTurnSideEffects(handler, messageId)
+                    AppAnalytics.onStreamComplete(inputTokens, outputTokens)
+                    scheduleGatewayHistoryReconcile(
+                        storedSessionId = storedSessionId,
+                        expectedAssistantText = expectedText,
+                    )
+                    drainQueue()
+                } else {
+                    settleBoundTurnState()
+                }
+            },
+            onUsage = { usage ->
+                if (acceptsEvent() && usage != null) {
+                    inputTokens = usage.resolvedInputTokens
+                    outputTokens = usage.resolvedOutputTokens
+                    handler.onUsageReceived(
+                        messageId,
+                        inputTokens,
+                        outputTokens,
+                        usage.resolvedTotalTokens,
+                        null,
+                    )
+                }
+            },
+            onError = { message ->
+                val canWriteTranscript = acceptsEvent()
+                if (canWriteTranscript) {
+                    AppAnalytics.onStreamError()
+                    handler.onStreamError(message)
+                    emitError(Exception(message), context = "send_message")
+                    settleBoundTurnState()
+                    _queuedMessages.value = emptyList()
+                    clearPendingAsk(approvalStamp = "deny")
+                    scheduleGatewayHistoryReconcile(
+                        storedSessionId = storedSessionId,
+                        baselineAssistantCount = baselineAssistantCount,
+                    )
+                } else {
+                    settleBoundTurnState()
+                }
+            },
+            onToolGenerating = { name ->
+                if (acceptsEvent()) handler.onToolGenerating(messageId, name)
+            },
+            onSubagentEvent = { event ->
+                if (acceptsEvent()) handler.onSubagentEvent(messageId, event)
+            },
+            onInteractionRequest = { ask ->
+                if (acceptsEvent()) presentInteractionAsk(handler, ask)
+            },
+            onStatusUpdate = { _, text ->
+                if (acceptsEvent()) {
+                    handler.setTurnStatus(text)
+                    if (text.trimStart().startsWith("❌")) handler.markError(messageId)
+                }
+            },
+        )
+        return GatewayInboundTurnRegistration(
+            callbacks = callbacks,
+            onHandle = { handle ->
+                if (matchesAdmissionContext() && activeStream == null && !handler.isStreaming.value) {
+                    // Admission and its transcript baseline are both captured
+                    // on the callback/main dispatcher. Reading activeStream or
+                    // messages on the WebSocket thread can observe a local
+                    // turn before its queued completion callback has settled.
+                    baselineAssistantCount = handler.messages.value.count {
+                        it.role == MessageRole.ASSISTANT && !it.clientOnly
+                    }
+                    boundHandle = handle
+                    accepted = true
+                    activeStream = handle
+                    activeStreamIsGateway = true
+                    _steerableTurn.value = true
+                    true
+                } else {
+                    false
+                }
+            },
+        )
+    }
+
+    /**
+     * Reconcile one server-initiated Gateway turn through persisted history.
+     * Waits for Chat to become idle and rejects a response if the local
+     * transcript changed during the HTTP read, preventing stale history from
+     * erasing a newer turn. [expectedAssistantText] also waits through the
+     * small message.complete→persistence gap; [baselineAssistantCount] serves
+     * the same purpose after a transport error whose final text is not known
+     * locally. A count avoids comparing raw persisted MEDIA/CARD markers with
+     * their stripped live rendering.
+     */
+    private fun scheduleGatewayHistoryReconcile(
+        storedSessionId: String,
+        expectedAssistantText: String? = null,
+        baselineAssistantCount: Int? = null,
+    ) {
+        val handler = chatHandler ?: return
+        if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) return
+        gatewayHistoryReconcileJob?.cancel()
+        gatewayHistoryReconcileJob = viewModelScope.launch {
+            val expected = expectedAssistantText?.trim()?.takeIf { it.isNotEmpty() }
+            // A locally-started SSE/realtime turn may own Chat when the
+            // background completion arrives. Waiting for that turn must not
+            // consume the bounded persistence-retry budget below: foreground
+            // turns routinely last longer than that small server-write gap.
+            while (activeStream != null || handler.isStreaming.value) {
+                if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) {
+                    return@launch
+                }
+                delay(100L)
+            }
+            repeat(20) {
+                if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) {
+                    return@launch
+                }
+                if (activeStream != null || handler.isStreaming.value) {
+                    // A new local turn started after the initial idle wait.
+                    // Keep this recovery pending until Chat is available again,
+                    // without spending a persistence attempt.
+                    while (activeStream != null || handler.isStreaming.value) {
+                        if (chatHandler !== handler ||
+                            handler.currentSessionId.value != storedSessionId
+                        ) {
+                            return@launch
+                        }
+                        delay(100L)
+                    }
+                }
+
+                val transcriptSnapshot = handler.messages.value
+                val serverMessages = loadGatewaySessionHistory(storedSessionId)
+                if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) {
+                    return@launch
+                }
+                if (activeStream != null ||
+                    handler.isStreaming.value ||
+                    handler.messages.value !== transcriptSnapshot
+                ) {
+                    delay(100L)
+                    return@repeat
+                }
+
+                val serverAssistantContents = serverMessages
+                    .filter { it.role.equals("assistant", ignoreCase = true) }
+                    .mapNotNull { it.contentText?.trim() }
+                val authoritativeTurnPresent = when {
+                    expected != null -> serverAssistantContents.any { it == expected }
+                    baselineAssistantCount != null ->
+                        serverAssistantContents.size > baselineAssistantCount
+                    else -> serverMessages.isNotEmpty()
+                }
+                if (!authoritativeTurnPresent) {
+                    if (expected == null && baselineAssistantCount == null) {
+                        gatewayHistoryReconcileJob = null
+                        return@launch
+                    }
+                    delay(250L)
+                    return@repeat
+                }
+
+                handler.loadMessageHistory(serverMessages)
+                refreshSessions()
+                scheduleTitleReconcile(storedSessionId)
+                gatewayHistoryReconcileJob = null
+                return@launch
+            }
+            gatewayHistoryReconcileJob = null
+        }
     }
 
     /** One-shot `config.get personality` over a ready socket → drives the collector. */
@@ -1021,7 +1407,55 @@ class ChatViewModel : ViewModel() {
      * Driven by a foreground/visibility effect in ChatScreen.
      */
     fun prewarmGateway() {
-        gatewayClient?.prewarm(chatHandler?.currentSessionId?.value)
+        val client = gatewayClient
+        val handler = chatHandler ?: return
+        val sessionId = handler.currentSessionId.value
+        selectBackgroundProcessSession(sessionId)
+        if (sessionId == null) {
+            client?.prewarm(null)
+        } else {
+            // Preserve the original warm-up path before persistence wiring is
+            // available (early composition and JVM tests). Production installs
+            // the store from initializeMedia before Chat becomes ready.
+            if (chatTurnCheckpointStore == null) {
+                val gateway = client ?: return
+                // GatewayChatClient owns an IO scope, so this can progress even
+                // while a paused/blocked UI dispatcher is being recreated.
+                // Its cold-ready listener performs history/process refresh.
+                gateway.prewarm(sessionId)
+                return
+            }
+            if (activeStream == null && (streamRecovery == null || client != null)) {
+                if (checkpointRecoveryJob?.isActive == true) return
+                checkpointRecoveryJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    val claimed = recoverPersistedTurnIfNeeded(client, handler, sessionId)
+                    if (!claimed &&
+                        gatewayClient === client &&
+                        chatHandler === handler &&
+                        handler.currentSessionId.value == sessionId
+                    ) {
+                        if (client?.prewarmAwait(sessionId) == true) {
+                            gatewayProcessController.sessionReady(sessionId)
+                        }
+                    }
+                    checkpointRecoveryJob = null
+                }
+                return
+            }
+            // prewarm() only emits the existing "cold ready" callback when it
+            // had to resume. An already-live session still needs its initial
+            // process snapshot when Chat opens, so confirm it explicitly.
+            viewModelScope.launch {
+                if (
+                    client?.prewarmAwait(sessionId) == true &&
+                    gatewayClient === client &&
+                    chatHandler === handler &&
+                    handler.currentSessionId.value == sessionId
+                ) {
+                    gatewayProcessController.sessionReady(sessionId)
+                }
+            }
+        }
     }
 
     // === Gateway desktop-parity state ===
@@ -1174,6 +1608,14 @@ class ChatViewModel : ViewModel() {
     private var displayAliasProvider: () -> String? = { null }
     private var activeProfileContextKey: String? = null
 
+    /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
+    private fun selectBackgroundProcessSession(
+        sessionId: String?,
+        scopeKey: String? = activeProfileContextKey,
+    ) {
+        gatewayProcessController.selectSession(sessionId, scopeKey)
+    }
+
     /**
      * Wire the agent-profile provider. The provider is typically a lambda
      * that reads from
@@ -1260,10 +1702,21 @@ class ChatViewModel : ViewModel() {
      */
     private suspend fun loadSessionHistory(sessionId: String): List<MessageItem> {
         if (streamingEndpoint == "gateway") {
-            val scoped = profileMessageLoader?.invoke(sessionId)
-            if (scoped != null) {
-                scoped.getOrNull()?.let { return it }
-            }
+            return loadGatewaySessionHistory(sessionId)
+        }
+        return apiClient?.getMessages(sessionId) ?: emptyList()
+    }
+
+    /**
+     * Read a Gateway-owned session through the active profile even if the live
+     * transport has just downgraded to SSE. Detached completion belongs to the
+     * profile/session that created it; consulting the mutable endpoint here can
+     * otherwise fall through to the shared API database.
+     */
+    private suspend fun loadGatewaySessionHistory(sessionId: String): List<MessageItem> {
+        val scoped = profileMessageLoader?.invoke(sessionId)
+        if (scoped != null) {
+            scoped.getOrNull()?.let { return it }
         }
         return apiClient?.getMessages(sessionId) ?: emptyList()
     }
@@ -1579,7 +2032,23 @@ class ChatViewModel : ViewModel() {
 
     fun initialize(apiClient: HermesApiClient, chatHandler: ChatHandler) {
         this.apiClient = apiClient
+        if (this.chatHandler !== chatHandler) {
+            checkpointStatusJob?.cancel()
+            checkpointStatusJob = null
+        }
         this.chatHandler = chatHandler
+        ensureCheckpointObservers()
+        selectBackgroundProcessSession(chatHandler.currentSessionId.value)
+        backgroundProcessSessionJob?.cancel()
+        backgroundProcessSessionJob = viewModelScope.launch {
+            // ChatHandler is the single source of truth for session ownership.
+            // Collecting it catches every path (drawer switch, new send, voice
+            // sync, profile/connection change) without relying on a growing set
+            // of mirrored setSessionId call sites.
+            chatHandler.currentSessionId.collect { sessionId ->
+                selectBackgroundProcessSession(sessionId)
+            }
+        }
         // A handler created after the persisted Thread names loaded still gets
         // them, so a named Thread keeps its name across restart / reconnect.
         chatHandler.setUserThreadNames(persistedThreadNames)
@@ -1614,6 +2083,7 @@ class ChatViewModel : ViewModel() {
                     .sortedByDescending { it.completedAtMs ?: it.startedAtMs }
                     .take(TOOL_CALL_HISTORY_LIMIT)
                 _toolCallHistory.value = events
+                scheduleCheckpointWrite()
             }
         }
     }
@@ -1632,6 +2102,8 @@ class ChatViewModel : ViewModel() {
      */
     fun bindDemoHandler(handler: ChatHandler) {
         this.chatHandler = handler
+        backgroundProcessSessionJob?.cancel()
+        selectBackgroundProcessSession(null)
         toolHistoryJob?.cancel()
         toolHistoryJob = viewModelScope.launch {
             handler.messages.collect { msgs ->
@@ -1674,6 +2146,10 @@ class ChatViewModel : ViewModel() {
         mediaCacheWriter: MediaCacheWriter
     ) {
         this.appContext = context.applicationContext
+        if (chatTurnCheckpointStore == null) {
+            chatTurnCheckpointStore = DataStoreChatTurnCheckpointStore(context.applicationContext)
+        }
+        ensureCheckpointObservers()
         this.relayHttpClient = relayHttpClient
         this.mediaSettingsRepo = mediaSettingsRepo
         this.mediaCacheWriter = mediaCacheWriter
@@ -1687,6 +2163,12 @@ class ChatViewModel : ViewModel() {
                 onMediaBarePathRequested(messageId, originalPath)
             }
         }
+    }
+
+    /** JVM-test seam; production is wired to the app-wide relay DataStore. */
+    internal fun setChatTurnCheckpointStore(store: ChatTurnCheckpointStore?) {
+        chatTurnCheckpointStore = store
+        ensureCheckpointObservers()
     }
 
     fun fetchSkills() {
@@ -1704,11 +2186,21 @@ class ChatViewModel : ViewModel() {
         // same-connection route blip and reconnects its own socket, keeping the
         // live session), so cancelling here would needlessly kill a recoverable
         // turn. Leave it running; it completes on the gateway client.
+        val droppedSseCheckpoint = if (!activeStreamIsGateway) buildTurnCheckpoint() else null
         if (!activeStreamIsGateway) {
             activeStream?.cancel()
             activeStream = null
         }
         this.apiClient = client
+        if (droppedSseCheckpoint != null) {
+            chatHandler?.let { handler ->
+                startCheckpointHistoryRecovery(
+                    handler,
+                    droppedSseCheckpoint,
+                    "The chat route changed while the reply was in flight.",
+                )
+            }
+        }
         fetchSkills()
         fetchPersonalities()
         fetchModels()
@@ -1728,6 +2220,7 @@ class ChatViewModel : ViewModel() {
         connectionSwitchJob?.cancel()
         connectionSwitchJob = viewModelScope.launch {
             events.collect { newConnectionId ->
+                clearTurnCheckpoint()
                 historyLoadGeneration.incrementAndGet()
                 sessionRefreshGeneration.incrementAndGet()
                 intentionallyCancelled = true
@@ -1759,6 +2252,7 @@ class ChatViewModel : ViewModel() {
                     handler.clearSessions()
                     handler.setSessionId(null)
                 }
+                selectBackgroundProcessSession(null)
                 // Forward the null session id to the persisted
                 // last-session-id slot so the old connection's session
                 // doesn't bleed into the new connection on next launch.
@@ -1770,6 +2264,7 @@ class ChatViewModel : ViewModel() {
     fun switchProfileContext(contextKey: String, sessionId: String?) {
         val client = apiClient
         val handler = chatHandler ?: return
+        val isInitialContextBinding = activeProfileContextKey == null
         handler.activeAgentName = currentAgentDisplayName()
         if (
             activeProfileContextKey == contextKey &&
@@ -1784,10 +2279,16 @@ class ChatViewModel : ViewModel() {
             handler.currentSessionId.value == sessionId
         ) {
             activeProfileContextKey = contextKey
+            activeTurnCheckpointSeed?.contextKey = contextKey
+            scheduleCheckpointWrite(immediate = true)
+            selectBackgroundProcessSession(sessionId, contextKey)
             _initialChatSettled.value = true
             return
         }
 
+        // Initial cold-start binding is not a user switch. Its persisted
+        // session may own the in-flight checkpoint we are about to recover.
+        if (!isInitialContextBinding) clearTurnCheckpoint()
         activeStream?.let { stream ->
             intentionallyCancelled = true
             stream.cancel()
@@ -1825,8 +2326,10 @@ class ChatViewModel : ViewModel() {
         pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
+        selectBackgroundProcessSession(sessionId, contextKey)
         if (sessionId != null) {
             onSessionChanged?.invoke(sessionId)
+            if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
         }
 
         if (sessionId == null || client == null) {
@@ -2004,10 +2507,12 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
 
         // Cancel any in-flight stream (and any answer-recovery poller)
+        clearTurnCheckpoint()
         activeStream?.cancel()
         activeStream = null
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        selectBackgroundProcessSession(null)
 
         // Gateway transport: a new chat is a fresh DRAFT with NO session id.
         // Pre-creating an api_server session would hand the next turn a concrete
@@ -2092,6 +2597,7 @@ class ChatViewModel : ViewModel() {
      */
     fun startNewThread(name: String) {
         val handler = chatHandler ?: return
+        clearTurnCheckpoint()
         activeStream?.cancel()
         activeStream = null
         cancelAnswerRecovery(settleUi = false)
@@ -2104,6 +2610,7 @@ class ChatViewModel : ViewModel() {
         // sendMessageInternal's pendingThread branch).
         gatewayClient?.clearSession()
         handler.setSessionId(null)
+        selectBackgroundProcessSession(null)
         handler.clearMessages()
         _contextUsage.value = null
         _contextWindow.value = null
@@ -2159,6 +2666,7 @@ class ChatViewModel : ViewModel() {
 
         // Cancel any in-flight stream (and any answer-recovery poller — the
         // switched-to session must not receive the old turn's reconcile).
+        clearTurnCheckpoint()
         intentionallyCancelled = true
         activeStream?.cancel()
         activeStream = null
@@ -2166,6 +2674,7 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
+        selectBackgroundProcessSession(sessionId)
         handler.clearMessages()
         _contextUsage.value = null
         _contextWindow.value = null
@@ -2177,6 +2686,7 @@ class ChatViewModel : ViewModel() {
         pendingYolo = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
+        if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
 
         // Load message history (profile-scoped on gateway so a non-default
         // profile's sessions resolve against their own DB).
@@ -2212,6 +2722,9 @@ class ChatViewModel : ViewModel() {
 
         // Optimistic removal
         handler.removeSession(sessionId)
+        if (handler.currentSessionId.value == null) {
+            selectBackgroundProcessSession(null)
+        }
         if (handler.currentSessionId.value == null) {
             onSessionChanged?.invoke(null)
         }
@@ -2479,9 +2992,13 @@ class ChatViewModel : ViewModel() {
      * Secrets/passwords never touch chat content: the cards carry input
      * slots whose submissions flow through [answerAsk] only.
      */
-    private fun presentInteractionAsk(handler: ChatHandler, ask: GatewayAsk) {
-        val now = System.currentTimeMillis()
-        val cardKey = ask.requestId
+    private fun presentInteractionAsk(
+        handler: ChatHandler,
+        ask: GatewayAsk,
+        restored: ChatTurnAskCheckpoint? = null,
+    ) {
+        val now = restored?.receivedAt ?: System.currentTimeMillis()
+        val cardKey = restored?.cardKey ?: ask.requestId
             ?: "approval-${handler.currentSessionId.value ?: "session"}-$now"
         val expiresAt = ask.timeoutSeconds.takeIf { it > 0 }?.let { now + it * 1_000L }
         val card = when (ask.kind) {
@@ -2573,9 +3090,15 @@ class ChatViewModel : ViewModel() {
                 ),
             )
         }
-        val messageId = "ask-$cardKey"
+        val messageId = restored?.messageId ?: "ask-$cardKey"
         handler.appendAskCardMessage(messageId, card)
-        _pendingAsk.value = PendingAsk(ask = ask, messageId = messageId, cardKey = cardKey)
+        _pendingAsk.value = PendingAsk(
+            ask = ask,
+            messageId = messageId,
+            cardKey = cardKey,
+            receivedAt = now,
+        )
+        scheduleCheckpointWrite(immediate = true)
     }
 
     /**
@@ -2631,7 +3154,10 @@ class ChatViewModel : ViewModel() {
                     // Collapse only after the server confirms — a failed RPC
                     // must leave the card answerable for a retry.
                     handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
-                    if (_pendingAsk.value === pending) _pendingAsk.value = null
+                    if (_pendingAsk.value === pending) {
+                        _pendingAsk.value = null
+                        scheduleCheckpointWrite(immediate = true)
+                    }
                 },
                 onFailure = { e ->
                     answeredAskIds.remove(cardKey)
@@ -2651,6 +3177,7 @@ class ChatViewModel : ViewModel() {
     private fun clearPendingAsk(approvalStamp: String) {
         val pending = _pendingAsk.value ?: return
         _pendingAsk.value = null
+        scheduleCheckpointWrite(immediate = true)
         if (pending.ask.kind == GatewayAsk.Kind.APPROVAL) {
             chatHandler?.recordCardDispatch(pending.messageId, pending.cardKey, approvalStamp)
         }
@@ -2895,6 +3422,539 @@ class ChatViewModel : ViewModel() {
 
     // === Dropped-stream answer recovery (issue #166) ===
 
+    /** Rebind lightweight checkpoint observers whenever the active handler changes. */
+    private fun ensureCheckpointObservers() {
+        val handler = chatHandler
+        if (handler != null && checkpointStatusJob == null) {
+            checkpointStatusJob = viewModelScope.launch {
+                handler.turnStatus.collect { scheduleCheckpointWrite() }
+            }
+        }
+        if (checkpointForegroundJob == null) {
+            checkpointForegroundJob = viewModelScope.launch {
+                AppForegroundTracker.isForeground.collect { foreground ->
+                    if (!foreground) scheduleCheckpointWrite(immediate = true)
+                }
+            }
+        }
+    }
+
+    private fun beginTurnCheckpoint(
+        handler: ChatHandler,
+        sessionId: String,
+        transport: String,
+        userMessageId: String,
+        userText: String,
+        assistantMessageId: String,
+        assistantTimestamp: Long,
+    ) {
+        val userMessage = handler.messages.value.lastOrNull { it.id == userMessageId }
+        val snapshot = handler.messages.value
+        val generation = checkpointGeneration.incrementAndGet()
+        checkpointWriteJob?.cancel()
+        activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
+            contextKey = activeProfileContextKey,
+            sessionId = sessionId,
+            liveSessionId = null,
+            transport = transport,
+            userMessageId = userMessageId,
+            userText = userMessage?.content ?: userText,
+            userTimestamp = userMessage?.timestamp ?: System.currentTimeMillis(),
+            assistantMessageId = assistantMessageId,
+            assistantTimestamp = assistantTimestamp,
+            priorUserMessageCount = (snapshot.count { it.role == MessageRole.USER } - 1)
+                .coerceAtLeast(0),
+            baselineAssistantCount = snapshot.count {
+                it.role == MessageRole.ASSISTANT && !it.clientOnly
+            },
+            startedAt = assistantTimestamp,
+        )
+        // Remove a prior turn immediately. The first rich write for this turn
+        // follows after the placeholder/session id exists; a sessionless turn
+        // must never leave an older recoverable checkpoint behind.
+        chatTurnCheckpointStore?.let { store ->
+            viewModelScope.launch {
+                checkpointMutex.withLock {
+                    if (generation == checkpointGeneration.get()) {
+                        runCatching { store.clear() }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun adoptTurnCheckpoint(checkpoint: ChatTurnCheckpoint) {
+        checkpointGeneration.incrementAndGet()
+        checkpointWriteJob?.cancel()
+        activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
+            contextKey = checkpoint.contextKey,
+            sessionId = checkpoint.sessionId,
+            liveSessionId = checkpoint.liveSessionId,
+            transport = checkpoint.transport,
+            userMessageId = checkpoint.user.id,
+            userText = checkpoint.user.content,
+            userTimestamp = checkpoint.user.timestamp,
+            assistantMessageId = checkpoint.assistant.id,
+            assistantTimestamp = checkpoint.assistant.timestamp,
+            priorUserMessageCount = checkpoint.priorUserMessageCount,
+            baselineAssistantCount = checkpoint.baselineAssistantCount,
+            startedAt = checkpoint.startedAt,
+        )
+    }
+
+    private fun updateTurnCheckpointSession(sessionId: String) {
+        activeTurnCheckpointSeed?.let { seed ->
+            seed.sessionId = sessionId
+            seed.liveSessionId = gatewayClient?.currentLiveSessionId(sessionId)
+            scheduleCheckpointWrite(immediate = true)
+        }
+    }
+
+    private fun updateTurnCheckpointAssistantId(messageId: String) {
+        activeTurnCheckpointSeed?.assistantMessageId = messageId
+        scheduleCheckpointWrite(immediate = true)
+    }
+
+    private fun updateTurnCheckpointTransport(transport: String) {
+        activeTurnCheckpointSeed?.transport = transport
+        scheduleCheckpointWrite()
+    }
+
+    private fun buildTurnCheckpoint(): ChatTurnCheckpoint? {
+        val seed = activeTurnCheckpointSeed ?: return null
+        val handler = chatHandler ?: return null
+        if (seed.transport != "gateway" && seed.transport != "sessions") return null
+        val contextKey = seed.contextKey ?: activeProfileContextKey ?: return null
+        val sessionId = seed.sessionId.takeIf { it.isNotBlank() } ?: return null
+        if (handler.currentSessionId.value != sessionId) return null
+        val assistant = handler.messages.value.lastOrNull { it.id == seed.assistantMessageId }
+            ?: handler.messages.value.lastOrNull {
+                it.role == MessageRole.ASSISTANT && it.isStreaming && !it.clientOnly
+            }
+            ?: return null
+        if (assistant.id != seed.assistantMessageId) seed.assistantMessageId = assistant.id
+        val pending = _pendingAsk.value
+        val now = System.currentTimeMillis()
+        return ChatTurnCheckpoint(
+            contextKey = contextKey,
+            sessionId = sessionId,
+            liveSessionId = gatewayClient?.currentLiveSessionId(sessionId) ?: seed.liveSessionId,
+            transport = seed.transport,
+            user = ChatTurnUserCheckpoint(
+                id = seed.userMessageId,
+                content = seed.userText.take(MAX_CHECKPOINT_TEXT_CHARS),
+                timestamp = seed.userTimestamp,
+            ),
+            assistant = ChatTurnAssistantCheckpoint(
+                id = assistant.id,
+                content = assistant.content.take(MAX_CHECKPOINT_TEXT_CHARS),
+                timestamp = assistant.timestamp,
+                isStreaming = assistant.isStreaming,
+                thinkingContent = assistant.thinkingContent.take(MAX_CHECKPOINT_TEXT_CHARS),
+                isThinkingStreaming = assistant.isThinkingStreaming,
+                inputTokens = assistant.inputTokens,
+                outputTokens = assistant.outputTokens,
+                totalTokens = assistant.totalTokens,
+                estimatedCost = assistant.estimatedCost,
+                agentName = assistant.agentName,
+                badges = assistant.badges,
+                cards = assistant.cards,
+                cardDispatches = assistant.cardDispatches,
+                toolCalls = assistant.toolCalls.map { tool ->
+                    ChatTurnToolCheckpoint(
+                        id = tool.id,
+                        name = tool.name,
+                        result = tool.result?.take(MAX_CHECKPOINT_TOOL_RESULT_CHARS),
+                        success = tool.success,
+                        isComplete = tool.isComplete,
+                        error = tool.error?.take(MAX_CHECKPOINT_TOOL_RESULT_CHARS),
+                        runId = tool.runId,
+                        provenance = tool.provenance,
+                        startedAt = tool.startedAt,
+                        completedAt = tool.completedAt,
+                        isGenerating = tool.isGenerating,
+                        taskIndex = tool.taskIndex,
+                        taskLabel = tool.taskLabel,
+                    )
+                },
+                backgroundTask = assistant.backgroundTask?.let { task ->
+                    ChatTurnBackgroundTaskCheckpoint(
+                        id = task.id,
+                        title = task.title,
+                        tier = task.tier,
+                        phase = task.phase.name,
+                        statusLine = task.statusLine,
+                        completedToolCount = task.completedToolCount,
+                        queuedCount = task.queuedCount,
+                        startedAt = task.startedAt,
+                    )
+                },
+            ),
+            turnStatus = handler.turnStatus.value,
+            priorUserMessageCount = seed.priorUserMessageCount,
+            baselineAssistantCount = seed.baselineAssistantCount,
+            pendingAsk = pending?.let { ask ->
+                ChatTurnAskCheckpoint(
+                    kind = ask.ask.kind.name,
+                    requestId = ask.ask.requestId,
+                    text = ask.ask.text,
+                    choices = ask.ask.choices,
+                    envVar = ask.ask.envVar,
+                    timeoutSeconds = ask.ask.timeoutSeconds,
+                    messageId = ask.messageId,
+                    cardKey = ask.cardKey,
+                    receivedAt = ask.receivedAt,
+                )
+            },
+            startedAt = seed.startedAt,
+            updatedAt = now,
+        )
+    }
+
+    private fun scheduleCheckpointWrite(immediate: Boolean = false) {
+        val store = chatTurnCheckpointStore ?: return
+        if (activeTurnCheckpointSeed == null) return
+        if (!immediate && checkpointWriteJob?.isActive == true) return
+        val generation = checkpointGeneration.get()
+        if (immediate) checkpointWriteJob?.cancel()
+        val delayMs = if (immediate) {
+            0L
+        } else {
+            (CHECKPOINT_WRITE_INTERVAL_MS -
+                (System.currentTimeMillis() - lastCheckpointWriteAtMs)).coerceAtLeast(0L)
+        }
+        checkpointWriteJob = viewModelScope.launch {
+            if (delayMs > 0L) delay(delayMs)
+            val checkpoint = buildTurnCheckpoint() ?: return@launch
+            checkpointMutex.withLock {
+                if (generation == checkpointGeneration.get() && activeTurnCheckpointSeed != null) {
+                    if (runCatching { store.write(checkpoint) }.isSuccess) {
+                        lastCheckpointWriteAtMs = System.currentTimeMillis()
+                    }
+                }
+            }
+            checkpointWriteJob = null
+        }
+    }
+
+    private fun clearTurnCheckpoint() {
+        activeTurnCheckpointSeed = null
+        val generation = checkpointGeneration.incrementAndGet()
+        checkpointWriteJob?.cancel()
+        checkpointWriteJob = null
+        val store = chatTurnCheckpointStore ?: return
+        viewModelScope.launch {
+            checkpointMutex.withLock {
+                if (generation == checkpointGeneration.get() && activeTurnCheckpointSeed == null) {
+                    runCatching { store.clear() }
+                }
+            }
+        }
+    }
+
+    /** Last-chance synchronous flush before the ViewModel scope is cancelled. */
+    private fun flushTurnCheckpointForTeardown() {
+        val store = chatTurnCheckpointStore ?: return
+        val checkpoint = buildTurnCheckpoint() ?: return
+        checkpointWriteJob?.cancel()
+        runCatching {
+            runBlocking(kotlinx.coroutines.Dispatchers.IO) { store.write(checkpoint) }
+        }
+    }
+
+    private fun restorePendingAsk(handler: ChatHandler, checkpoint: ChatTurnCheckpoint) {
+        val saved = checkpoint.pendingAsk ?: return
+        val expiresAt = saved.timeoutSeconds.takeIf { it > 0 }
+            ?.let { saved.receivedAt + it * 1_000L }
+        if (expiresAt != null && expiresAt <= System.currentTimeMillis()) return
+        val kind = runCatching { GatewayAsk.Kind.valueOf(saved.kind) }.getOrNull() ?: return
+        presentInteractionAsk(
+            handler = handler,
+            ask = GatewayAsk(
+                kind = kind,
+                requestId = saved.requestId,
+                text = saved.text,
+                choices = saved.choices,
+                envVar = saved.envVar,
+                timeoutSeconds = saved.timeoutSeconds,
+            ),
+            restored = saved,
+        )
+    }
+
+    private fun ownsTurnCheckpoint(checkpoint: ChatTurnCheckpoint, handler: ChatHandler): Boolean {
+        val seed = activeTurnCheckpointSeed ?: return false
+        return chatHandler === handler &&
+            handler.currentSessionId.value == checkpoint.sessionId &&
+            activeProfileContextKey == checkpoint.contextKey &&
+            seed.sessionId == checkpoint.sessionId &&
+            seed.assistantMessageId == checkpoint.assistant.id
+    }
+
+    /**
+     * Restore and, when upstream still owns the worker, reattach to the exact
+     * live Gateway turn. Returns true when a checkpoint owned this prewarm.
+     */
+    private suspend fun recoverPersistedTurnIfNeeded(
+        client: GatewayChatClient?,
+        handler: ChatHandler,
+        sessionId: String,
+    ): Boolean {
+        val store = chatTurnCheckpointStore ?: return false
+        val checkpoint = runCatching { store.read() }.getOrNull() ?: return false
+        if (checkpoint.contextKey != activeProfileContextKey ||
+            checkpoint.sessionId != sessionId ||
+            checkpoint.transport !in setOf("gateway", "sessions")
+        ) {
+            return false
+        }
+        if (activeStream != null) return true
+        if (streamRecovery != null) {
+            if (checkpoint.transport == "gateway" && client != null) {
+                // Upgrade a history-only cold-start recovery as soon as the
+                // Gateway client becomes available; live events are preferable
+                // and the same checkpoint/history guard still covers gaps.
+                cancelAnswerRecovery(settleUi = false)
+            } else {
+                return true
+            }
+        }
+
+        adoptTurnCheckpoint(checkpoint)
+        val initialHistory = runCatching { loadSessionHistory(sessionId) }.getOrDefault(emptyList())
+        if (!ownsTurnCheckpoint(checkpoint, handler)) return true
+        if (initialHistory.isNotEmpty()) handler.loadMessageHistory(initialHistory)
+        handler.restoreInFlightTurn(checkpoint)
+
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Api,
+            severity = DiagnosticSeverity.Info,
+            title = "Restoring an unfinished chat turn",
+            detail = "session=$sessionId transport=${checkpoint.transport}",
+        )
+
+        if (checkpoint.transport == "gateway" && client != null) {
+            val callbacks = recoveredGatewayCallbacks(handler, checkpoint)
+            val recovery = client.recoverTurn(
+                storedId = sessionId,
+                preferredLiveId = checkpoint.liveSessionId,
+                callbacks = callbacks,
+            ).getOrNull()
+            if (!ownsTurnCheckpoint(checkpoint, handler)) {
+                recovery?.handle?.detach()
+                return true
+            }
+            if (recovery?.running == true && recovery.handle != null) {
+                activeStream = recovery.handle
+                activeStreamIsGateway = true
+                activeTurnCheckpointSeed?.liveSessionId = recovery.liveSessionId
+                handler.restoreInFlightTurn(
+                    checkpoint = checkpoint,
+                    upstreamAssistantText = recovery.inflight?.assistant,
+                )
+                handler.setTurnStatus(
+                    checkpoint.turnStatus?.takeIf { it.isNotBlank() }
+                        ?: "Reconnected — Hermes is still working…",
+                )
+                restorePendingAsk(handler, checkpoint)
+                scheduleCheckpointWrite(immediate = true)
+                gatewayProcessController.sessionReady(sessionId)
+                return true
+            }
+
+            // A non-running live payload is authoritative. If the final
+            // assistant row is already durable, settle immediately instead of
+            // showing a 15-second two-poll recovery delay.
+            val durableAssistantCount = initialHistory.count {
+                it.role.equals("assistant", ignoreCase = true)
+            }
+            if (recovery != null && durableAssistantCount > checkpoint.baselineAssistantCount) {
+                handler.loadMessageHistory(initialHistory)
+                finalizeTurnSideEffects(handler, checkpoint.assistant.id)
+                refreshSessions()
+                scheduleTitleReconcile(sessionId)
+                drainQueue()
+                return true
+            }
+        }
+
+        startCheckpointHistoryRecovery(
+            handler = handler,
+            checkpoint = checkpoint,
+            cause = "The live turn could not be reattached; waiting for persisted history.",
+        )
+        return true
+    }
+
+    private fun recoveredGatewayCallbacks(
+        handler: ChatHandler,
+        checkpoint: ChatTurnCheckpoint,
+    ): GatewayTurnCallbacks {
+        val messageId = checkpoint.assistant.id
+        fun owns(): Boolean = ownsTurnCheckpoint(checkpoint, handler)
+        return GatewayTurnCallbacks(
+            onSessionId = { },
+            onStart = { },
+            onTextDelta = { delta ->
+                if (owns()) handler.onTextDelta(messageId, delta)
+            },
+            onThinkingDelta = { delta ->
+                if (owns()) handler.onThinkingDelta(messageId, delta)
+            },
+            onToolCallStart = { toolCallId, toolName ->
+                if (owns()) {
+                    handler.onToolCallStart(messageId, toolCallId, toolName)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
+            onToolCallDone = { toolCallId, preview ->
+                if (owns()) {
+                    handler.onToolCallComplete(messageId, toolCallId, preview)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
+            onToolCallFailed = { toolCallId, error ->
+                if (owns()) {
+                    handler.onToolCallFailed(messageId, toolCallId, error)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
+            onTurnComplete = {
+                if (owns()) {
+                    handler.onTurnComplete(messageId)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
+            onComplete = {
+                if (owns()) {
+                    finalizeTurnSideEffects(handler, messageId)
+                    val expectedSessionId = checkpoint.sessionId
+                    viewModelScope.launch {
+                        val history = loadSessionHistory(expectedSessionId)
+                        if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
+                            handler.loadMessageHistory(history)
+                            refreshSessions()
+                            scheduleTitleReconcile(expectedSessionId)
+                        }
+                        drainQueue()
+                    }
+                }
+            },
+            onUsage = { usage ->
+                if (owns() && usage != null) {
+                    handler.onUsageReceived(
+                        messageId,
+                        usage.resolvedInputTokens,
+                        usage.resolvedOutputTokens,
+                        usage.resolvedTotalTokens,
+                        null,
+                    )
+                }
+            },
+            onError = { error ->
+                if (owns()) {
+                    activeStream = null
+                    _steerableTurn.value = false
+                    _steerNotice.value = null
+                    val latest = buildTurnCheckpoint() ?: checkpoint
+                    startCheckpointHistoryRecovery(handler, latest, error)
+                }
+            },
+            onToolGenerating = { name ->
+                if (owns()) {
+                    handler.onToolGenerating(messageId, name)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
+            onSubagentEvent = { event ->
+                if (owns()) {
+                    handler.onSubagentEvent(messageId, event)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
+            onInteractionRequest = { ask ->
+                if (owns()) presentInteractionAsk(handler, ask)
+            },
+            onStatusUpdate = { _, text ->
+                if (owns()) {
+                    handler.setTurnStatus(text)
+                    if (text.trimStart().startsWith("❌")) handler.markError(messageId)
+                }
+            },
+        )
+    }
+
+    /** Bounded durable-history fallback shared by process restore and Gateway loss. */
+    private fun startCheckpointHistoryRecovery(
+        handler: ChatHandler,
+        checkpoint: ChatTurnCheckpoint,
+        cause: String,
+    ) {
+        cancelAnswerRecovery(settleUi = false)
+        if (activeTurnCheckpointSeed == null) adoptTurnCheckpoint(checkpoint)
+        activeStream = null
+        _recoveringAnswer.value = true
+        handler.restoreInFlightTurn(checkpoint)
+        handler.setTurnStatus("Reconnecting to the active turn…")
+        scheduleCheckpointWrite(immediate = true)
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Api,
+            severity = DiagnosticSeverity.Warning,
+            title = "Live chat reattach unavailable — recovering from history",
+            detail = cause,
+        )
+
+        val recovery = ChatStreamRecovery(
+            scope = viewModelScope,
+            fetchHistory = { loadSessionHistory(checkpoint.sessionId) },
+            timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
+        )
+        streamRecovery = recovery
+        recovery.start(
+            pendingUserText = checkpoint.user.content,
+            priorUserMessageCount = checkpoint.priorUserMessageCount,
+            onIntermediateHistory = { items ->
+                if (streamRecovery === recovery && ownsTurnCheckpoint(checkpoint, handler)) {
+                    handler.loadMessageHistory(items)
+                    handler.restoreInFlightTurn(checkpoint)
+                    handler.setTurnStatus("Reconnecting to the active turn…")
+                }
+            },
+            onRecovered = { items ->
+                if (streamRecovery === recovery) {
+                    streamRecovery = null
+                    _recoveringAnswer.value = false
+                    if (handler.currentSessionId.value == checkpoint.sessionId) {
+                        handler.loadMessageHistory(items)
+                        finalizeTurnSideEffects(handler, checkpoint.assistant.id)
+                        refreshSessions()
+                        scheduleTitleReconcile(checkpoint.sessionId)
+                        drainQueue()
+                    }
+                }
+            },
+            onGaveUp = { reason ->
+                if (streamRecovery === recovery) {
+                    streamRecovery = null
+                    _recoveringAnswer.value = false
+                    val message = when (reason) {
+                        ChatStreamRecovery.GiveUpReason.RUN_NOT_FOUND ->
+                            "The unfinished message was not found on the server — please resend."
+                        ChatStreamRecovery.GiveUpReason.TIMED_OUT ->
+                            "The unfinished reply did not complete in the recovery window."
+                    }
+                    clearTurnCheckpoint()
+                    AppAnalytics.onStreamError()
+                    handler.onStreamError(message)
+                    clearTurnCheckpoint()
+                    emitError(Exception(message), context = "send_message")
+                    _queuedMessages.value = emptyList()
+                    clearPendingAsk(approvalStamp = "Resolved")
+                }
+            },
+        )
+    }
+
     /**
      * Terminal side effects every successfully finished turn shares — the
      * normal stream completion ([startStream]'s onCompleteCb) and a recovered
@@ -2903,6 +3963,7 @@ class ChatViewModel : ViewModel() {
      */
     private fun finalizeTurnSideEffects(handler: ChatHandler, messageId: String) {
         handler.onStreamComplete(messageId)
+        clearTurnCheckpoint()
         activeStream = null
         _steerableTurn.value = false
         _steerNotice.value = null
@@ -2983,6 +4044,10 @@ class ChatViewModel : ViewModel() {
         placeholderMessageId: String,
         cause: String,
     ) {
+        buildTurnCheckpoint()?.let { checkpoint ->
+            startCheckpointHistoryRecovery(handler, checkpoint, cause)
+            return
+        }
         cancelAnswerRecovery(settleUi = false)
         _recoveringAnswer.value = true
         handler.setTurnStatus("Reconnecting to your answer…")
@@ -3191,6 +4256,7 @@ class ChatViewModel : ViewModel() {
                 sessionId ?: "",
                 text.trim(),
                 assistantMessageId,
+                messageId,
                 attachments,
                 interfaceContextPrompt,
             )
@@ -3201,6 +4267,7 @@ class ChatViewModel : ViewModel() {
                 sessionId,
                 text.trim(),
                 assistantMessageId,
+                messageId,
                 attachments,
                 interfaceContextPrompt,
             )
@@ -3235,6 +4302,7 @@ class ChatViewModel : ViewModel() {
                             session.id,
                             text.trim(),
                             assistantMessageId,
+                            messageId,
                             attachments,
                             interfaceContextPrompt,
                         )
@@ -3331,6 +4399,11 @@ class ChatViewModel : ViewModel() {
     fun cancelRealtimeAgentTurnLocally(assistantMessageId: String) {
         synchronized(terminalRealtimeAgentTurnIdsLock) {
             val handler = chatHandler ?: return
+            if (handler.messages.value.none { it.id == assistantMessageId }) {
+                clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
+                activeStream = null
+                return
+            }
             removeRealtimeAgentUserPlaceholder(
                 handler = handler,
                 assistantMessageId = assistantMessageId,
@@ -3347,6 +4420,35 @@ class ChatViewModel : ViewModel() {
                 handler.markStopped(assistantMessageId)
             }
             handler.onStreamComplete(assistantMessageId)
+            activeStream = null
+        }
+    }
+
+    /**
+     * Remove a transcript that was consumed as a phone-local Voice command.
+     * Unlike a cancelled Hermes turn, this exchange never belonged in server
+     * conversation history and must not render as `pause` → `Cancelled.`.
+     */
+    fun discardRealtimeAgentLocalCommandTurn(assistantMessageId: String) {
+        synchronized(terminalRealtimeAgentTurnIdsLock) {
+            val handler = chatHandler ?: return
+            val userMessageId = realtimeAgentUserMessages[assistantMessageId]
+            val previousUserText = handler.messages.value
+                .lastOrNull {
+                    it.role == MessageRole.USER &&
+                        it.id != userMessageId &&
+                        it.content.isNotBlank() &&
+                        !it.content.equals("Listening...", ignoreCase = true)
+                }
+                ?.content
+            userMessageId?.let(handler::removeMessage)
+            handler.removeMessage(assistantMessageId)
+            if (previousUserText != null) {
+                handler.setLastSentMessage(previousUserText)
+            } else {
+                handler.clearLastSentMessage()
+            }
+            clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
             activeStream = null
         }
     }
@@ -3417,14 +4519,63 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    private fun backgroundTaskTitle(handler: ChatHandler, assistantMessageId: String): String {
+        val userMessageId = realtimeAgentUserMessages[assistantMessageId]
+        val objective = handler.messages.value
+            .firstOrNull { it.id == userMessageId }
+            ?.content
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.takeUnless { it.equals("Listening...", ignoreCase = true) }
+            .orEmpty()
+        if (objective.isBlank()) return "Background task"
+        return if (objective.length <= BACKGROUND_TASK_TITLE_LIMIT) {
+            objective
+        } else {
+            objective.take(BACKGROUND_TASK_TITLE_LIMIT - 1).trimEnd() + "…"
+        }
+    }
+
+    private fun backgroundToolStatus(toolName: String): String {
+        val label = toolName
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return if (label.isBlank()) "Working…" else "Running $label…"
+    }
+
     fun applyRealtimeAgentEvent(
         assistantMessageId: String,
         event: RealtimeVoiceEvent,
         showDetailedTrace: Boolean = false,
     ) {
         synchronized(terminalRealtimeAgentTurnIdsLock) {
-            if (assistantMessageId in terminalRealtimeAgentTurnIds) return
-            applyRealtimeAgentEventLocked(assistantMessageId, event, showDetailedTrace)
+            val eventOwner = realtimeAgentEventOwner(assistantMessageId, event)
+            if (eventOwner in terminalRealtimeAgentTurnIds) return
+            applyRealtimeAgentEventLocked(eventOwner, event, showDetailedTrace)
+        }
+    }
+
+    private fun realtimeAgentEventOwner(
+        latestAssistantMessageId: String,
+        event: RealtimeVoiceEvent,
+    ): String {
+        if (event.type == "hermes.run.promoted") return latestAssistantMessageId
+        event.runId
+            ?.takeIf { it.isNotBlank() }
+            ?.let(realtimeAgentRunOwners::get)
+            ?.let { return it }
+        if (!event.delivery.isNullOrBlank()) {
+            return realtimeAgentPendingDeliveryOwner ?: latestAssistantMessageId
+        }
+        return latestAssistantMessageId
+    }
+
+    private fun clearRealtimeAgentBackgroundOwnership(assistantMessageId: String) {
+        realtimeAgentRunOwners.entries.removeAll { it.value == assistantMessageId }
+        if (realtimeAgentPendingDeliveryOwner == assistantMessageId) {
+            realtimeAgentPendingDeliveryOwner = null
         }
     }
 
@@ -3465,6 +4616,15 @@ class ChatViewModel : ViewModel() {
                         hasTool = false,
                     ),
                 )
+                if (event.type == "voice.response.started") {
+                    handler.updateBackgroundTask(assistantMessageId) { task ->
+                        if (task.phase == BackgroundTaskPhase.DELIVERING) {
+                            task.copy(statusLine = "Delivering the answer…")
+                        } else {
+                            task
+                        }
+                    }
+                }
             }
             "hermes.message.started" -> Unit
             "voice.input_transcript.delta" -> {
@@ -3573,6 +4733,22 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = if (task.phase == BackgroundTaskPhase.WAITING) {
+                            BackgroundTaskPhase.RUNNING
+                        } else {
+                            task.phase
+                        },
+                        statusLine = event.message?.takeIf { it.isNotBlank() }
+                            ?: event.activeToolName
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let(::backgroundToolStatus)
+                            ?: task.statusLine,
+                        completedToolCount = event.completedToolCount
+                            ?: task.completedToolCount,
+                    )
+                }
             }
             "hermes.tool.started" -> {
                 realtimeAgentHermesBacked[assistantMessageId] = true
@@ -3662,9 +4838,58 @@ class ChatViewModel : ViewModel() {
                 if (showDetailedTrace) {
                     handler.onThinkingDelta(assistantMessageId, prompt)
                 }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = BackgroundTaskPhase.WAITING,
+                        statusLine = prompt,
+                    )
+                }
             }
             // Hermes completion means the tool result is ready; provider narration ends the turn.
             "hermes.run.completed" -> Unit
+            "hermes.run.promoted" -> {
+                realtimeAgentHermesBacked[assistantMessageId] = true
+                val taskId = event.runId?.takeIf { it.isNotBlank() }
+                    ?: "background-$assistantMessageId"
+                realtimeAgentRunOwners[taskId] = assistantMessageId
+                handler.setBackgroundTask(
+                    assistantMessageId,
+                    BackgroundTaskState(
+                        id = taskId,
+                        title = backgroundTaskTitle(handler, assistantMessageId),
+                        tier = event.tier?.takeIf { it.isNotBlank() } ?: "promoted",
+                        queuedCount = event.queuedCount ?: 0,
+                    ),
+                )
+            }
+            "hermes.run.queued" -> {
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(queuedCount = event.queuedCount ?: task.queuedCount)
+                }
+            }
+            "hermes.run.background_completed" -> {
+                if (event.success == false) {
+                    clearRealtimeAgentBackgroundOwnership(assistantMessageId)
+                } else {
+                    realtimeAgentPendingDeliveryOwner = assistantMessageId
+                }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    if (event.success == false) {
+                        task.copy(
+                            phase = BackgroundTaskPhase.FAILED,
+                            statusLine = event.message?.takeIf { it.isNotBlank() }
+                                ?: "Background task failed.",
+                            queuedCount = event.queuedCount ?: task.queuedCount,
+                        )
+                    } else {
+                        task.copy(
+                            phase = BackgroundTaskPhase.DELIVERING,
+                            statusLine = "Done — delivering the answer…",
+                            queuedCount = event.queuedCount ?: task.queuedCount,
+                        )
+                    }
+                }
+            }
             "voice.response.done" -> {
                 if (realtimeAgentHermesBacked[assistantMessageId] != true) {
                     val userMessageId = realtimeAgentUserMessages[assistantMessageId]
@@ -3690,8 +4915,22 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 }
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    if (task.phase == BackgroundTaskPhase.DELIVERING) {
+                        task.copy(
+                            phase = BackgroundTaskPhase.COMPLETE,
+                            statusLine = null,
+                            queuedCount = 0,
+                        )
+                    } else {
+                        task
+                    }
+                }
                 handler.onStreamComplete(assistantMessageId)
                 clearRealtimeAgentTurnTracking(assistantMessageId)
+                if (!event.delivery.isNullOrBlank()) {
+                    clearRealtimeAgentBackgroundOwnership(assistantMessageId)
+                }
                 activeStream = null
             }
             "hermes.run.cancelled" -> {
@@ -3700,6 +4939,12 @@ class ChatViewModel : ViewModel() {
                 // (chip-cancel racing completion, or a stale confirm). Only a
                 // bubble with no real content becomes "Cancelled."; anything
                 // else keeps its text and gets the Stopped badge instead.
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = BackgroundTaskPhase.CANCELLED,
+                        statusLine = "Cancelled.",
+                    )
+                }
                 removeRealtimeAgentUserPlaceholder(
                     handler = handler,
                     assistantMessageId = assistantMessageId,
@@ -3715,15 +4960,26 @@ class ChatViewModel : ViewModel() {
                     handler.markStopped(assistantMessageId)
                 }
                 handler.onStreamComplete(assistantMessageId)
+                clearRealtimeAgentBackgroundOwnership(assistantMessageId)
                 clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }
             "voice.error" -> {
+                handler.updateBackgroundTask(assistantMessageId) { task ->
+                    task.copy(
+                        phase = BackgroundTaskPhase.FAILED,
+                        statusLine = event.message?.takeIf { it.isNotBlank() }
+                            ?: "Voice connection failed.",
+                    )
+                }
                 removeRealtimeAgentUserPlaceholder(
                     handler = handler,
                     assistantMessageId = assistantMessageId,
                 )
                 handler.onStreamError(event.message ?: "Realtime agent failed")
+                if (realtimeAgentPendingDeliveryOwner == assistantMessageId) {
+                    clearRealtimeAgentBackgroundOwnership(assistantMessageId)
+                }
                 clearRealtimeAgentTurnTracking(assistantMessageId, quarantine = true)
                 activeStream = null
             }
@@ -3885,6 +5141,7 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
         message: String,
         assistantMessageId: String,
+        userMessageId: String,
         attachments: List<Attachment>? = null,
         interfaceContextPrompt: String? = null,
     ) {
@@ -3935,13 +5192,24 @@ class ChatViewModel : ViewModel() {
         // endpoints keep their existing error behavior.
         var dispatchedSseEndpoint: String? = null
 
+        val assistantTimestamp = System.currentTimeMillis()
+        beginTurnCheckpoint(
+            handler = handler,
+            sessionId = sessionId,
+            transport = streamingEndpoint,
+            userMessageId = userMessageId,
+            userText = message,
+            assistantMessageId = assistantMessageId,
+            assistantTimestamp = assistantTimestamp,
+        )
+
         // Show placeholder "thinking" message immediately — filled when first delta arrives
         handler.addPlaceholderMessage(
             ChatMessage(
                 id = assistantMessageId,
                 role = MessageRole.ASSISTANT,
                 content = "",
-                timestamp = System.currentTimeMillis(),
+                timestamp = assistantTimestamp,
                 isStreaming = true,
                 agentName = handler.activeAgentName,
                 // Voice-mode turns carry a per-turn interface context (the
@@ -3961,6 +5229,7 @@ class ChatViewModel : ViewModel() {
             // Only replaces empty+streaming messages (the placeholder), not completed turns.
             handler.replaceMessageId(currentMessageId, serverMsgId)
             currentMessageId = serverMsgId
+            updateTurnCheckpointAssistantId(serverMsgId)
         }
         val onTextDeltaCb = { delta: String ->
             if (!firstTokenNotified) {
@@ -3974,16 +5243,20 @@ class ChatViewModel : ViewModel() {
         }
         val onToolCallStartCb = { toolCallId: String, toolName: String ->
             handler.onToolCallStart(currentMessageId, toolCallId, toolName)
+            scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
             handler.onToolCallComplete(currentMessageId, toolCallId, resultPreview)
+            scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallFailedCb = { toolCallId: String, errorMsg: String? ->
             handler.onToolCallFailed(currentMessageId, toolCallId, errorMsg)
+            scheduleCheckpointWrite(immediate = true)
         }
         // Turn complete — one assistant message finished, but the run may continue
         val onTurnCompleteCb = {
             handler.onTurnComplete(currentMessageId)
+            scheduleCheckpointWrite(immediate = true)
         }
         val onCompleteCb = {
             // Double-finalize guard: if a straggler completion arrives while
@@ -4105,6 +5378,7 @@ class ChatViewModel : ViewModel() {
                 _steerableTurn.value = false
                 _steerNotice.value = null
                 clearPendingAsk(approvalStamp = "deny")
+                clearTurnCheckpoint()
             } else if (
                 dispatchedSseEndpoint == "sessions" &&
                 errorSessionId != null &&
@@ -4127,6 +5401,26 @@ class ChatViewModel : ViewModel() {
                 activeStream = null
                 _steerableTurn.value = false
                 _steerNotice.value = null
+            } else if (
+                dispatchedSseEndpoint == null &&
+                activeStreamIsGateway &&
+                errorSessionId != null
+            ) {
+                // A Gateway mapper/socket failure does not prove the server
+                // stopped. Preserve the rich local checkpoint and use the same
+                // bounded persisted-history recovery as a process reopen.
+                activeStream = null
+                _steerableTurn.value = false
+                _steerNotice.value = null
+                val checkpoint = buildTurnCheckpoint()
+                if (checkpoint != null) {
+                    startCheckpointHistoryRecovery(handler, checkpoint, errorMsg)
+                } else {
+                    AppAnalytics.onStreamError()
+                    handler.onStreamError(errorMsg)
+                    emitError(Exception(errorMsg), context = "send_message")
+                    clearTurnCheckpoint()
+                }
             } else {
                 AppAnalytics.onStreamError()
                 handler.onStreamError(errorMsg)
@@ -4157,6 +5451,7 @@ class ChatViewModel : ViewModel() {
                 _steerableTurn.value = false
                 _steerNotice.value = null
                 clearPendingAsk(approvalStamp = "deny")
+                clearTurnCheckpoint()
             }
         }
 
@@ -4249,6 +5544,7 @@ class ChatViewModel : ViewModel() {
         // transport). Warns once per dispatch about any attachment it can't carry.
         fun dispatchSse(endpoint: String): ActiveTurnHandle {
             dispatchedSseEndpoint = endpoint
+            updateTurnCheckpointTransport(endpoint)
             warnIfAttachmentsDropped(endpoint)
             return when (endpoint) {
             "runs" -> client.sendRunStream(
@@ -4258,6 +5554,7 @@ class ChatViewModel : ViewModel() {
                     voiceIntentMessages = voiceIntentMessages,
                     onSessionId = { sid ->
                         handler.setSessionId(sid)
+                        updateTurnCheckpointSession(sid)
                         onSessionChanged?.invoke(sid)
                     },
                     onMessageStarted = onMessageStartedCb,
@@ -4361,6 +5658,7 @@ class ChatViewModel : ViewModel() {
             } else {
                 streamingEndpoint
             }
+        updateTurnCheckpointTransport(effectiveEndpoint)
         // Remember whether this turn runs on the gateway client (vs an SSE
         // EventSource) so a mid-turn route handoff doesn't cancel it — only the
         // `else` branch below dispatches on the gateway.
@@ -4405,6 +5703,9 @@ class ChatViewModel : ViewModel() {
                                 ),
                             )
                             handler.setSessionId(sid)
+                            updateTurnCheckpointSession(sid)
+                            selectBackgroundProcessSession(sid)
+                            gatewayProcessController.sessionReady(sid)
                             onSessionChanged?.invoke(sid)
                             // The brand-new chat now has a session — apply any
                             // YOLO toggled before the first send as a SESSION-
@@ -4412,6 +5713,7 @@ class ChatViewModel : ViewModel() {
                             // skipped the global env leak).
                             applyPendingYoloAfterSessionCreate()
                         },
+                        onStart = { },
                         onTextDelta = onTextDeltaCb,
                         onThinkingDelta = onThinkingDeltaCb,
                         onToolCallStart = onToolCallStartCb,
@@ -4423,9 +5725,11 @@ class ChatViewModel : ViewModel() {
                         onError = onErrorCb,
                         onToolGenerating = { name ->
                             handler.onToolGenerating(currentMessageId, name)
+                            scheduleCheckpointWrite(immediate = true)
                         },
                         onSubagentEvent = { event ->
                             handler.onSubagentEvent(currentMessageId, event)
+                            scheduleCheckpointWrite(immediate = true)
                         },
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)
@@ -4547,6 +5851,7 @@ class ChatViewModel : ViewModel() {
         // Gateway cancel issues session.interrupt, which force-denies any
         // blocked approval server-side — stamp the card to match.
         clearPendingAsk(approvalStamp = "deny")
+        clearTurnCheckpoint()
         AppAnalytics.onStreamCancelled()
         chatHandler?.let { handler ->
             val streamingMsg = handler.messages.value.findLast { it.isStreaming }
@@ -5072,12 +6377,24 @@ class ChatViewModel : ViewModel() {
     }
 
     override fun onCleared() {
-        super.onCleared()
-        activeStream?.cancel()
+        flushTurnCheckpointForTeardown()
+        gatewayClient?.setUnsolicitedTurnProvider(null)
+        gatewayClient?.setColdPrewarmSessionReadyListener(null)
+        gatewayClient?.setUnmatchedTurnCompleteListener(null)
+        gatewayHistoryReconcileJob?.cancel()
+        gatewayHistoryReconcileJob = null
+        backgroundProcessSessionJob?.cancel()
+        backgroundProcessSessionJob = null
+        gatewayProcessController.close()
+        // UI/process teardown must not interrupt a server-side Gateway turn.
+        // The durable checkpoint + session.activate/session.resume own reentry.
+        activeStream?.detach()
+        activeStream = null
         // viewModelScope teardown already cancels the poller job; this just
         // drops the reference symmetrically.
         streamRecovery?.cancel()
         streamRecovery = null
+        super.onCleared()
     }
 
     private fun appendRealtimeThinkingStatus(
@@ -5114,6 +6431,25 @@ class ChatViewModel : ViewModel() {
     }
 }
 
+/** Production adapter for the independently-testable process controller. */
+private class GatewayChatProcessSource(
+    private val client: GatewayChatClient,
+) : GatewayProcessSource {
+    override val capability: StateFlow<GatewayProcessCapability>
+        get() = client.processCapability
+
+    override suspend fun listProcesses(): Result<List<GatewayProcess>> = client.listProcesses()
+
+    override suspend fun killProcess(processId: String): Result<Unit> =
+        client.killProcess(processId)
+
+    override fun setEventListener(listener: ((GatewayProcessEvent) -> Unit)?) {
+        client.setProcessEventListener(listener)
+    }
+
+    override fun isPollingAllowed(): Boolean = client.isBackgroundProcessPollingAllowed()
+}
+
 /**
  * One live gateway interactive ask plus where its local card lives in chat.
  * [cardKey] is the [com.hermesandroid.relay.data.HermesCard.id] — the ask's
@@ -5124,6 +6460,7 @@ data class PendingAsk(
     /** ChatMessage id of the local ask-card message (`ask-<cardKey>`). */
     val messageId: String,
     val cardKey: String,
+    val receivedAt: Long = System.currentTimeMillis(),
 )
 
 /**

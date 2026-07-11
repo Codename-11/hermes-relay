@@ -25,6 +25,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -32,7 +33,9 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -49,8 +52,9 @@ import java.util.concurrent.atomic.AtomicLong
  * in a background thread that keeps emitting on the id it was STARTED with,
  * regardless of WS state. So a mid-turn socket drop is recovered by
  * reconnecting the socket and KEEPING the in-flight session id (see
- * [attemptMidTurnRejoin]) — NOT by `session.resume`, which mints a brand-new
- * id + a fresh agent rebuilt from DB and would orphan the still-running turn.
+ * [attemptMidTurnRejoin]). Current upstream Hermes can also rebind a detached
+ * live session through `session.activate` / `session.resume`; the direct socket
+ * rejoin remains compatible with older gateways and avoids an extra RPC.
  * No background reconnect loops; a fresh send reconnects on demand.
  *
  * Auth: every connect attempt mints a FRESH single-use ws-ticket (30s TTL)
@@ -151,6 +155,8 @@ class GatewayChatClient(
         private const val CONNECT_FAILURE_COOLDOWN_MS = 5_000L
         private const val RATE_LIMIT_COOLDOWN_MS = 300_000L
         private const val CONNECT_ATTEMPTS = 2
+        private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
+        private const val CANCELLED_TURN_SUBMIT_WAIT_MS = 2_000L
 
         /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
         private const val MAX_TURN_REJOINS = 4
@@ -212,6 +218,14 @@ class GatewayChatClient(
 
     private val _connectionState = MutableStateFlow(GatewayConnectionState.Idle)
     val connectionState: StateFlow<GatewayConnectionState> = _connectionState.asStateFlow()
+
+    /**
+     * Per-socket feature probe for upstream's session-scoped `process.*` RPCs.
+     * Method-not-found marks the current socket unsupported; reconnecting resets
+     * this to [GatewayProcessCapability.Unknown] so a server upgrade is noticed.
+     */
+    private val _processCapability = MutableStateFlow(GatewayProcessCapability.Unknown)
+    val processCapability: StateFlow<GatewayProcessCapability> = _processCapability.asStateFlow()
 
     /**
      * Active personality the gateway is applying, as a config value ("none" when
@@ -286,6 +300,8 @@ class GatewayChatClient(
     private var readySignal: CompletableDeferred<Unit>? = null
 
     private val rpcId = AtomicLong(1)
+    /** Invalidates an older async prewarm when a newer session selection wins. */
+    private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
 
     /** Live (per-connection) session id ←→ the stored DB id it was resumed/created from. */
@@ -294,6 +310,10 @@ class GatewayChatClient(
 
     @Volatile
     private var storedSessionId: String? = null
+
+    /** Profile namespace that owns [liveSessionId]; stored IDs are not globally unique. */
+    @Volatile
+    private var liveSessionProfile: String? = null
 
     /**
      * Supplies the profile to bind each `session.create` / `session.resume` to —
@@ -330,6 +350,49 @@ class GatewayChatClient(
 
     @Volatile
     private var activeTurn: GatewayTurn? = null
+
+    /**
+     * Upstream may emit the interrupted turn's tail and terminal event after
+     * `session.interrupt` returns. Keep a short exact-session tombstone so that
+     * tail cannot be mistaken for an unsolicited completion or complete a
+     * newly submitted turn. A same-session send briefly waits for this drain
+     * before `prompt.submit`; once a turn actually started, its tombstone stays
+     * until the required terminal event even when that submit wait elapses.
+     */
+    @Volatile
+    private var cancelledTurnDrain: CancelledTurnDrain? = null
+
+    private data class CancelledTurnDrain(
+        val storedSessionId: String,
+        val liveSessionId: String,
+        val submitWaitUntilMs: Long,
+        val terminalRequired: Boolean,
+    )
+
+    /**
+     * Creates UI callbacks when the server starts a turn that has no matching
+     * [sendTurn] call (for example a background-process completion). The
+     * provider is consulted only for an explicit `message.start` whose live
+     * session id exactly matches this client's active session.
+     */
+    @Volatile
+    private var unsolicitedTurnProvider: ((storedSessionId: String) -> GatewayInboundTurnRegistration?)? = null
+
+    /** Recover persisted events that may have completed while the socket was closed. */
+    @Volatile
+    private var coldPrewarmSessionReadyListener: ((storedSessionId: String) -> Unit)? = null
+
+    /** Exact-session completion observed without a bound live mapper. */
+    @Volatile
+    private var unmatchedTurnCompleteListener:
+        ((storedSessionId: String, expectedAssistantText: String?) -> Unit)? = null
+
+    /**
+     * Connection-level process listener. Unlike [GatewayTurnCallbacks], this is
+     * consulted even when there is no locally initiated [activeTurn].
+     */
+    @Volatile
+    private var processEventListener: ((GatewayProcessEvent) -> Unit)? = null
 
     /**
      * Which upload RPC name this socket understands — set after the first
@@ -411,7 +474,10 @@ class GatewayChatClient(
         // alive AND the requested session already live). A "cold" turn re-pays
         // ticket/ws/session — exactly the asymmetry vs always-connected desktop.
         val socketWarm = webSocket != null && readySignal?.isCompleted == true
-        val sessionWarm = liveSessionId != null && storedSessionId == sessionId && sessionId != null
+        val sessionWarm = liveSessionId != null &&
+            storedSessionId == sessionId &&
+            sessionId != null &&
+            liveSessionProfile == currentSessionProfile()
         turn.tracer.warm(socketWarm && sessionWarm)
         scope.launch {
             try {
@@ -428,6 +494,7 @@ class GatewayChatClient(
                     }
                 }
                 if (turn.cancelled) return@launch
+                if (!awaitCancelledTurnDrain(turn, storedSessionId)) return@launch
                 activeTurn = turn
                 turn.armWatchdog()
                 val submitted = rpc(
@@ -457,7 +524,7 @@ class GatewayChatClient(
                         )
                         return@launch
                     }
-                    activeTurn = null
+                    if (activeTurn === turn) activeTurn = null
                     turn.disarmWatchdog()
                     throw GatewayPreflightException(
                         submitted.exceptionOrNull()?.message ?: "prompt.submit failed",
@@ -470,7 +537,7 @@ class GatewayChatClient(
                 // read-the-absence exercise.
                 Log.i(TAG, "Gateway turn submitted (session=$storedSessionId)")
             } catch (e: Exception) {
-                activeTurn = null
+                if (activeTurn === turn) activeTurn = null
                 if (!turn.cancelled) {
                     Log.w(TAG, "Gateway preflight failed: ${e.message}")
                     turn.tracer.done("preflight-fail")
@@ -483,8 +550,11 @@ class GatewayChatClient(
 
     /** Drop the remembered session so the next send creates a fresh one. */
     fun clearSession() {
+        prewarmRequestGeneration.incrementAndGet()
         liveSessionId = null
         storedSessionId = null
+        liveSessionProfile = null
+        cancelledTurnDrain = null
     }
 
     /**
@@ -495,6 +565,10 @@ class GatewayChatClient(
      * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.activeGatewayChatClient].
      */
     fun hasActiveTurn(): Boolean = activeTurn?.ended == false
+
+    /** Live id to persist beside a durable stored id while a turn is active. */
+    fun currentLiveSessionId(storedId: String): String? =
+        liveSessionId?.takeIf { storedSessionId == storedId }
 
     /**
      * Point this client at a new dashboard route (e.g. LAN→Tailscale after a
@@ -528,6 +602,30 @@ class GatewayChatClient(
         if (!enabled && !AppForegroundTracker.isForeground.value) scheduleBackgroundClose()
     }
 
+    /** Process polling must not silently undo the normal background socket close. */
+    fun isBackgroundProcessPollingAllowed(): Boolean =
+        AppForegroundTracker.isForeground.value || keepAliveInBackground
+
+    fun setUnsolicitedTurnProvider(
+        provider: ((storedSessionId: String) -> GatewayInboundTurnRegistration?)?,
+    ) {
+        unsolicitedTurnProvider = provider
+    }
+
+    fun setColdPrewarmSessionReadyListener(listener: ((storedSessionId: String) -> Unit)?) {
+        coldPrewarmSessionReadyListener = listener
+    }
+
+    fun setUnmatchedTurnCompleteListener(
+        listener: ((storedSessionId: String, expectedAssistantText: String?) -> Unit)?,
+    ) {
+        unmatchedTurnCompleteListener = listener
+    }
+
+    fun setProcessEventListener(listener: ((GatewayProcessEvent) -> Unit)?) {
+        processEventListener = listener
+    }
+
     /**
      * Establish the socket (and resume an existing session) ahead of the
      * user's first send, so a warm turn reaches first token in tens of ms
@@ -557,15 +655,150 @@ class GatewayChatClient(
      * session, so this path is the common case, not the edge case).
      */
     suspend fun prewarmAwait(storedSessionId: String?): Boolean {
+        val requestGeneration = prewarmRequestGeneration.incrementAndGet()
+        val requestedProfile = currentSessionProfile()
+        val wasLiveForRequestedSession = storedSessionId != null &&
+            liveSessionId != null &&
+            this.storedSessionId == storedSessionId &&
+            liveSessionProfile == requestedProfile
         try {
             connectMutex.withLock {
                 ensureConnected()
-                if (storedSessionId != null) resumeForPrewarm(storedSessionId)
+                if (storedSessionId != null) {
+                    resumeForPrewarm(storedSessionId, requestedProfile, requestGeneration)
+                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "Gateway prewarm skipped: ${e.message}")
         }
-        return liveSessionId != null
+        val sessionReady = storedSessionId != null &&
+            liveSessionId != null &&
+            this.storedSessionId == storedSessionId &&
+            liveSessionProfile == requestedProfile
+        if (!wasLiveForRequestedSession && sessionReady) {
+            callbackDispatcher {
+                coldPrewarmSessionReadyListener?.invoke(storedSessionId)
+            }
+        }
+        return sessionReady
+    }
+
+    /**
+     * Reattach callbacks to a turn that survived the Android UI/process.
+     *
+     * New Hermes gateways expose `session.activate`, which attaches the new
+     * WebSocket transport to the exact live id saved in the client checkpoint.
+     * If that id has already been reaped (or the method is unavailable), fall
+     * back to `session.resume` by durable session id. Its `running` + `inflight`
+     * fields decide whether a live mapper is installed or history should settle
+     * the turn instead.
+     */
+    suspend fun recoverTurn(
+        storedId: String,
+        preferredLiveId: String?,
+        callbacks: GatewayTurnCallbacks,
+    ): Result<GatewaySessionRecovery> = runCatching {
+        require(storedId.isNotBlank()) { "stored session id required" }
+        val requestedProfile = currentSessionProfile()
+        connectMutex.withLock {
+            val existing = activeTurn
+            if (existing != null && !existing.ended) {
+                throw GatewayRpcException("a gateway turn is already attached")
+            }
+            ensureConnected()
+
+            var response: JsonObject? = null
+            var boundTurn: GatewayTurn? = null
+
+            if (!preferredLiveId.isNullOrBlank()) {
+                // Bind before session.activate: upstream swaps the live session's
+                // transport during the RPC, so an immediate next delta must not
+                // fall through the active-turn gate while the ack is in flight.
+                liveSessionId = preferredLiveId
+                storedSessionId = storedId
+                liveSessionProfile = requestedProfile
+                boundTurn = GatewayTurn(
+                    callbacks = dispatchOn(callbacks),
+                    dedupeAdjacentMessageStarts = true,
+                ).also { turn ->
+                    turn.markRecoveredStarted()
+                    activeTurn = turn
+                }
+                val activated = rpc(
+                    "session.activate",
+                    buildJsonObject {
+                        put("session_id", preferredLiveId)
+                    },
+                )
+                response = activated.getOrNull()
+                if (response == null) {
+                    if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.detach()
+                    boundTurn = null
+                    Log.d(
+                        TAG,
+                        "Exact live-session activation unavailable; resuming durable session " +
+                            "(${activated.exceptionOrNull()?.message})",
+                    )
+                }
+            }
+
+            if (response == null) {
+                response = rpc(
+                    "session.resume",
+                    buildJsonObject {
+                        put("session_id", storedId)
+                        put("cols", DEFAULT_COLS)
+                        requestedProfile?.let { put("profile", it) }
+                    },
+                ).getOrElse { error -> throw error }
+            }
+
+            val recoveredLiveId = response.stringField("session_id")
+                ?: throw GatewayRpcException("session recovery returned no session_id")
+            liveSessionId = recoveredLiveId
+            storedSessionId = storedId
+            liveSessionProfile = requestedProfile
+            updateCancelledDrainLiveSession(storedId, recoveredLiveId)
+            (response["info"] as? JsonObject)?.let { applySessionInfo(it) }
+
+            val inflight = (response["inflight"] as? JsonObject)?.let { value ->
+                GatewayInflightTurn(
+                    user = value.stringField("user").orEmpty(),
+                    assistant = value.stringField("assistant").orEmpty(),
+                    streaming = value.booleanField("streaming") == true,
+                )
+            }
+            val running = response.booleanField("running") == true || inflight?.streaming == true
+
+            if (running) {
+                if (boundTurn == null || boundTurn.ended) {
+                    boundTurn = GatewayTurn(
+                        callbacks = dispatchOn(callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                    ).also { turn ->
+                        turn.markRecoveredStarted()
+                        activeTurn = turn
+                    }
+                }
+                boundTurn.armWatchdog()
+            } else {
+                if (boundTurn != null) {
+                    if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.detach()
+                }
+                boundTurn = null
+            }
+
+            GatewaySessionRecovery(
+                storedSessionId = storedId,
+                liveSessionId = recoveredLiveId,
+                running = running,
+                status = response.stringField("status"),
+                inflight = inflight,
+                handle = boundTurn?.takeUnless { it.ended },
+            )
+        }
     }
 
     /**
@@ -667,6 +900,61 @@ class GatewayChatClient(
         }
         return rpc("commands.catalog", JsonObject(emptyMap()))
             .onSuccess { commandsCatalogCache = it }
+    }
+
+    /**
+     * Fetch the current chat session's running and recently-finished background
+     * processes. Callers never provide a session id: this wrapper resolves and
+     * sends the exact LIVE gateway id, not the stored history id exposed to UI.
+     *
+     * A remembered stored session is resumed after a socket reconnect. A brand-
+     * new chat has no server process ownership yet and therefore returns an empty
+     * snapshot without creating an otherwise-empty session.
+     */
+    suspend fun listProcesses(): Result<List<GatewayProcess>> {
+        if (_processCapability.value == GatewayProcessCapability.Unsupported) {
+            return Result.failure(processFeatureUnsupported())
+        }
+        if (liveSessionId == null && storedSessionId == null) {
+            return Result.success(emptyList())
+        }
+        val sid = ensureLiveProcessSession().getOrElse { return Result.failure(it) }
+        val result = rpc(
+            "process.list",
+            buildJsonObject { put("session_id", sid) },
+        )
+        if (result.isFailure) {
+            markProcessUnsupportedIfNeeded(result.exceptionOrNull())
+            return Result.failure(result.exceptionOrNull() ?: GatewayRpcException("process.list failed"))
+        }
+        _processCapability.value = GatewayProcessCapability.Supported
+        return Result.success(
+            ((result.getOrThrow()["processes"] as? JsonArray).orEmpty()).mapNotNull(::parseGatewayProcess),
+        )
+    }
+
+    /** Stop one process owned by the current live gateway session. */
+    suspend fun killProcess(processId: String): Result<Unit> {
+        if (processId.isBlank()) {
+            return Result.failure(GatewayRpcException("process id required"))
+        }
+        if (_processCapability.value == GatewayProcessCapability.Unsupported) {
+            return Result.failure(processFeatureUnsupported())
+        }
+        val sid = ensureLiveProcessSession().getOrElse { return Result.failure(it) }
+        val result = rpc(
+            "process.kill",
+            buildJsonObject {
+                put("session_id", sid)
+                put("process_id", processId)
+            },
+        )
+        if (result.isFailure) {
+            markProcessUnsupportedIfNeeded(result.exceptionOrNull())
+            return Result.failure(result.exceptionOrNull() ?: GatewayRpcException("process.kill failed"))
+        }
+        _processCapability.value = GatewayProcessCapability.Supported
+        return Result.success(Unit)
     }
 
     /**
@@ -911,6 +1199,11 @@ class GatewayChatClient(
     fun shutdown() {
         activeTurn?.cancel()
         activeTurn = null
+        cancelledTurnDrain = null
+        unsolicitedTurnProvider = null
+        coldPrewarmSessionReadyListener = null
+        unmatchedTurnCompleteListener = null
+        processEventListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
         // Stop the foreground collector — a replaced client must not keep
@@ -951,6 +1244,7 @@ class GatewayChatClient(
 
     private suspend fun connectOnce() {
         val connectStart = System.nanoTime()
+        _processCapability.value = GatewayProcessCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
             throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
@@ -989,28 +1283,39 @@ class GatewayChatClient(
      * (no [GatewayTurn] context). Failure is silent — the real send's
      * [ensureSession] will resume-or-create properly.
      */
-    private suspend fun resumeForPrewarm(storedId: String) {
-        // Never resume while a turn is in flight: a resume mints a NEW live
-        // session id, and the running turn's events (still tagged with the
-        // OLD id) would then be filtered out as "foreign" — orphaning the
-        // turn and letting a stale reconcile repaint an earlier reply. This
-        // is the screen-return (prewarm) variant of the same hazard the
-        // mid-turn rejoin avoids by NOT resuming.
+    private suspend fun resumeForPrewarm(
+        storedId: String,
+        requestedProfile: String?,
+        requestGeneration: Long,
+    ) {
+        // Never change session binding while this client already owns a live
+        // mapper. Current upstream may reuse the same live session, while older
+        // builds mint a new id; either way the existing mapper owns recovery.
         if (activeTurn != null) return
-        if (liveSessionId != null && storedSessionId == storedId) return
+        if (
+            liveSessionId != null &&
+            storedSessionId == storedId &&
+            liveSessionProfile == requestedProfile
+        ) return
         val resumed = rpc(
             "session.resume",
             buildJsonObject {
                 put("session_id", storedId)
                 put("cols", DEFAULT_COLS)
-                currentSessionProfile()?.let { put("profile", it) }
+                requestedProfile?.let { put("profile", it) }
             },
         )
         val result = resumed.getOrNull()
         val live = result?.stringField("session_id")
-        if (live != null) {
+        if (
+            live != null &&
+            activeTurn == null &&
+            prewarmRequestGeneration.get() == requestGeneration
+        ) {
             liveSessionId = live
             storedSessionId = storedId
+            liveSessionProfile = requestedProfile
+            updateCancelledDrainLiveSession(storedId, live)
             // Paint the session's real model/provider/effort/etc NOW from the
             // resume result's embedded `info` (same shape session.info carries),
             // so a reopened session shows its ACTUAL model immediately instead of
@@ -1055,13 +1360,84 @@ class GatewayChatClient(
         }
     }
 
+    /** Resolve a process RPC against the exact live id, resuming after reconnect when possible. */
+    private suspend fun ensureLiveProcessSession(): Result<String> {
+        val requestedProfile = currentSessionProfile()
+        liveSessionId?.takeIf { liveSessionProfile == requestedProfile }
+            ?.let { return Result.success(it) }
+        val rememberedStoredId = storedSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        val requestGeneration = prewarmRequestGeneration.incrementAndGet()
+        return try {
+            connectMutex.withLock {
+                ensureConnected()
+                if (liveSessionId == null || liveSessionProfile != requestedProfile) {
+                    resumeForPrewarm(rememberedStoredId, requestedProfile, requestGeneration)
+                }
+            }
+            val resumedLiveId = liveSessionId
+            if (
+                resumedLiveId != null &&
+                storedSessionId == rememberedStoredId &&
+                liveSessionProfile == requestedProfile
+            ) {
+                Result.success(resumedLiveId)
+            } else {
+                Result.failure(GatewayRpcException("could not resume live session"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun parseGatewayProcess(element: kotlinx.serialization.json.JsonElement): GatewayProcess? {
+        val process = element as? JsonObject ?: return null
+        val id = process.stringField("session_id")?.takeIf { it.isNotBlank() } ?: return null
+        return GatewayProcess(
+            id = id,
+            command = process.stringField("command").orEmpty(),
+            cwd = process.stringField("cwd"),
+            pid = (process["pid"] as? JsonPrimitive)?.longOrNull,
+            startedAt = process.stringField("started_at"),
+            uptimeSeconds = (process["uptime_seconds"] as? JsonPrimitive)?.longOrNull ?: 0L,
+            status = process.stringField("status") ?: "unknown",
+            outputPreview = process.stringField("output_preview")?.takeIf { it.isNotEmpty() },
+            outputTail = process.stringField("output_tail")?.takeIf { it.isNotEmpty() },
+            exitCode = (process["exit_code"] as? JsonPrimitive)?.intOrNull,
+            detached = (process["detached"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            notifyOnComplete = (process["notify_on_complete"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            sessionScoped = (process["session_scoped"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            watchPatterns = (process["watch_patterns"] as? JsonArray).orEmpty()
+                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+            watchHit = (process["watch_hit"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        )
+    }
+
+    private fun markProcessUnsupportedIfNeeded(error: Throwable?) {
+        if (error.isMethodNotFound()) {
+            _processCapability.value = GatewayProcessCapability.Unsupported
+        }
+    }
+
+    private fun processFeatureUnsupported(): GatewayRpcException =
+        GatewayRpcException("background process RPCs are not supported by this gateway", JSONRPC_METHOD_NOT_FOUND)
+
     /** Must hold [connectMutex]. Resolves [liveSessionId] for the requested stored id. */
     private suspend fun ensureSession(
         requestedStoredId: String?,
         newSessionTitle: String?,
         turn: GatewayTurn,
     ) {
-        if (liveSessionId != null && storedSessionId == requestedStoredId && requestedStoredId != null) {
+        val requestedProfile = currentSessionProfile()
+        if (requestedStoredId != null && requestedStoredId != storedSessionId) {
+            cancelledTurnDrain = null
+        }
+        if (
+            liveSessionId != null &&
+            storedSessionId == requestedStoredId &&
+            requestedStoredId != null &&
+            liveSessionProfile == requestedProfile
+        ) {
             return
         }
 
@@ -1071,7 +1447,7 @@ class GatewayChatClient(
                 buildJsonObject {
                     put("session_id", requestedStoredId)
                     put("cols", DEFAULT_COLS)
-                    currentSessionProfile()?.let { put("profile", it) }
+                    requestedProfile?.let { put("profile", it) }
                 },
             )
             val result = resumed.getOrNull()
@@ -1079,6 +1455,8 @@ class GatewayChatClient(
             if (live != null) {
                 liveSessionId = live
                 storedSessionId = requestedStoredId
+                liveSessionProfile = requestedProfile
+                updateCancelledDrainLiveSession(requestedStoredId, live)
                 (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
                 return
             }
@@ -1094,7 +1472,7 @@ class GatewayChatClient(
             buildJsonObject {
                 put("cols", DEFAULT_COLS)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
-                currentSessionProfile()?.let { put("profile", it) }
+                requestedProfile?.let { put("profile", it) }
                 // Bind the in-chat overrides to the new session as its
                 // per-session overrides. Upstream tui_gateway session.create
                 // reads `model`/`provider` (→ model_override), `reasoning_effort`
@@ -1121,6 +1499,8 @@ class GatewayChatClient(
         val stored = created.stringField("stored_session_id") ?: live
         liveSessionId = live
         storedSessionId = stored
+        liveSessionProfile = requestedProfile
+        if (cancelledTurnDrain?.storedSessionId != stored) cancelledTurnDrain = null
         turn.callbacks.onSessionId(stored)
     }
 
@@ -1201,7 +1581,7 @@ class GatewayChatClient(
         // delta types log length only, everything else logs a payload
         // excerpt so on-device diagnosis doesn't read absences.
         when (type) {
-            "message.delta", "reasoning.delta", "thinking.delta" ->
+            "message.delta", "reasoning.delta", "thinking.delta", "agent.terminal.output" ->
                 Log.d(TAG, "GW ← $type (${payload?.toString()?.length ?: 0} chars)")
             else ->
                 Log.d(TAG, "GW ← $type | ${payload?.toString()?.take(300) ?: "{}"}")
@@ -1226,16 +1606,108 @@ class GatewayChatClient(
             payload?.let { applySessionInfo(it) }
         }
 
-        val turn = activeTurn ?: return
         // Foreign-session events (another client's chat on the same gateway) are not ours.
         if (eventSessionId != null && liveSessionId != null && eventSessionId != liveSessionId) {
             return
         }
+        dispatchProcessEvent(type, payload, eventSessionId)
+        if (consumeCancelledTurnEvent(type, eventSessionId)) return
+        var turn = activeTurn
+        if (turn == null && type == "message.start") {
+            // Unsolicited turns are accepted only with an explicit exact live-
+            // session match. This gateway stream is process-wide; treating a
+            // missing id as ours would leak another desktop tab's response.
+            val liveId = liveSessionId
+            val storedId = storedSessionId
+            if (!eventSessionId.isNullOrBlank() &&
+                eventSessionId == liveId &&
+                !storedId.isNullOrBlank()
+            ) {
+                val registration = unsolicitedTurnProvider?.invoke(storedId)
+                if (registration != null) {
+                    val inboundTurn = GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                    )
+                    if (bindInboundTurn(registration, inboundTurn)) {
+                        turn = inboundTurn
+                        activeTurn = inboundTurn
+                        inboundTurn.armWatchdog()
+                        Log.i(TAG, "Accepted unsolicited gateway turn for session=$storedId")
+                    } else {
+                        Log.i(TAG, "Deferred unsolicited gateway turn for session=$storedId")
+                    }
+                }
+            }
+        }
+        if (turn == null) {
+            // A foreground SSE/realtime turn may already own Chat, or the
+            // socket may have reconnected after message.start. The exact
+            // terminal event is still authoritative and persisted upstream;
+            // recover it through history once the UI becomes idle.
+            val storedId = storedSessionId
+            if (type == "message.complete" &&
+                !eventSessionId.isNullOrBlank() &&
+                eventSessionId == liveSessionId &&
+                !storedId.isNullOrBlank()
+            ) {
+                val expectedText = payload?.stringField("text")
+                callbackDispatcher {
+                    unmatchedTurnCompleteListener?.invoke(storedId, expectedText)
+                }
+            }
+            return
+        }
         turn.onEvent(type, payload)
         if (turn.ended) {
-            activeTurn = null
+            if (activeTurn === turn) activeTurn = null
             if (AppForegroundTracker.isForeground.value.not()) scheduleBackgroundClose()
         }
+    }
+
+    /**
+     * Deliver session-scoped process events before the active-turn gate. The
+     * gateway socket is process-wide, so an exact non-blank live id match is
+     * required; missing/foreign ids must never leak another window's process.
+     */
+    private fun dispatchProcessEvent(type: String, payload: JsonObject?, eventSessionId: String?) {
+        val liveId = liveSessionId ?: return
+        if (eventSessionId.isNullOrBlank() || eventSessionId != liveId) return
+        val event = when (type) {
+            "tool.complete" -> when (payload?.stringField("name")) {
+                "terminal", "process" -> GatewayProcessEvent.Invalidated(
+                    GatewayProcessEvent.Trigger.TOOL_COMPLETE,
+                )
+                else -> null
+            }
+            "status.update" -> if (payload?.stringField("kind") == "process") {
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.STATUS_UPDATE)
+            } else {
+                null
+            }
+            // Some upstream tool paths complete a background terminal launch
+            // without emitting tool.start/tool.complete to this UI session.
+            // The assistant still closes the initiating turn normally, so use
+            // that exact-session boundary as a cheap authoritative discovery
+            // fallback. process.list then starts the running-only poller.
+            "message.complete" -> GatewayProcessEvent.Invalidated(
+                GatewayProcessEvent.Trigger.MESSAGE_COMPLETE,
+            )
+            "agent.terminal.output" -> {
+                val processId = payload?.stringField("process_id")
+                val chunk = payload?.stringField("chunk")
+                if (!processId.isNullOrBlank() && chunk != null) {
+                    GatewayProcessEvent.Output(processId, chunk)
+                } else {
+                    null
+                }
+            }
+            "terminal.close" -> payload?.stringField("process_id")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { GatewayProcessEvent.TerminalClosed(it) }
+            else -> null
+        } ?: return
+        callbackDispatcher { processEventListener?.invoke(event) }
     }
 
     private fun onSocketDown(reason: String) {
@@ -1249,6 +1721,7 @@ class GatewayChatClient(
         liveSessionId = null
         attachMethodForSocket = null
         commandsCatalogCache = null
+        _processCapability.value = GatewayProcessCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
@@ -1256,7 +1729,7 @@ class GatewayChatClient(
         pendingRpcs.clear()
         val turn = activeTurn ?: return
         if (turn.ended) {
-            activeTurn = null
+            if (activeTurn === turn) activeTurn = null
             return
         }
         // A rejoin already owns recovery — a connect attempt failing inside
@@ -1276,7 +1749,7 @@ class GatewayChatClient(
                 }
             }
         } else {
-            activeTurn = null
+            if (activeTurn === turn) activeTurn = null
             turn.failFromTransport("Connection to the gateway was lost")
         }
     }
@@ -1288,13 +1761,10 @@ class GatewayChatClient(
      * Recover an in-flight turn after a mid-turn socket loss by reconnecting
      * the SOCKET ONLY and keeping [preservedLiveId] as the live session id.
      *
-     * Why not `session.resume`: upstream resume mints a brand-new session id
-     * and rebuilds a fresh agent from persisted DB history — it does NOT
-     * reattach to the running turn's thread, which keeps emitting on the OLD
-     * id over the shared gateway stream. Resuming would point our event filter
-     * at the wrong id and orphan the turn (the server finishes it and the
-     * answer is dropped — confirmed on-device). A bare reconnect lets the tail
-     * — including the final `message.complete` — keep matching this turn.
+     * A bare reconnect lets the tail — including the final
+     * `message.complete` — keep matching without another RPC. Current upstream
+     * can rebind live sessions too, but older builds cannot, so this remains the
+     * lowest-common-denominator same-client recovery path.
      *
      * Retries with backoff for up to [midTurnRejoinWindowMs] so a multi-second
      * radio blip doesn't abandon the turn. Events emitted while the socket was
@@ -1354,6 +1824,7 @@ class GatewayChatClient(
         liveSessionId = null
         attachMethodForSocket = null
         commandsCatalogCache = null
+        _processCapability.value = GatewayProcessCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
     }
 
@@ -1499,8 +1970,9 @@ class GatewayChatClient(
 
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
+        dedupeAdjacentMessageStarts: Boolean = false,
     ) : ActiveTurnHandle {
-        private val mapper = GatewayEventMapper(callbacks)
+        private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
 
         /** t0 = construction ≈ sendTurn entry (the moment the user sent). */
         val tracer = TurnLatencyTracer("gateway")
@@ -1564,6 +2036,11 @@ class GatewayChatClient(
             watchdog = null
         }
 
+        /** Recovery attaches after the original prompt.submit, so it is already started. */
+        fun markRecoveredStarted() {
+            started = true
+        }
+
         /** Transport-level failure after submit — surface as a stream error once. */
         fun failFromTransport(message: String) {
             disarmWatchdog()
@@ -1578,8 +2055,19 @@ class GatewayChatClient(
             cancelled = true
             disarmWatchdog()
             tracer.done("cancelled")
-            if (activeTurn === this) activeTurn = null
+            if (activeTurn === this) {
+                armCancelledTurnDrain(terminalRequired = started)
+                activeTurn = null
+            }
             interruptServerSide()
+        }
+
+        override fun detach() {
+            if (ended) return
+            cancelled = true
+            disarmWatchdog()
+            tracer.done("detached")
+            if (activeTurn === this) activeTurn = null
         }
 
         private fun interruptServerSide() {
@@ -1592,9 +2080,104 @@ class GatewayChatClient(
         }
     }
 
+    private fun armCancelledTurnDrain(terminalRequired: Boolean) {
+        val storedId = storedSessionId ?: return
+        val liveId = liveSessionId ?: return
+        cancelledTurnDrain = CancelledTurnDrain(
+            storedSessionId = storedId,
+            liveSessionId = liveId,
+            submitWaitUntilMs = System.currentTimeMillis() + CANCELLED_TURN_SUBMIT_WAIT_MS,
+            terminalRequired = terminalRequired,
+        )
+    }
+
+    private fun updateCancelledDrainLiveSession(storedId: String, liveId: String) {
+        val drain = cancelledTurnDrain ?: return
+        if (drain.storedSessionId == storedId) {
+            cancelledTurnDrain = drain.copy(liveSessionId = liveId)
+        }
+    }
+
+    /** Ignore the canceled turn's exact-session tail through its terminal event. */
+    private fun consumeCancelledTurnEvent(type: String, eventSessionId: String?): Boolean {
+        val drain = cancelledTurnDrain ?: return false
+        if (!drain.terminalRequired && System.currentTimeMillis() >= drain.submitWaitUntilMs) {
+            if (cancelledTurnDrain === drain) cancelledTurnDrain = null
+            return false
+        }
+        if (eventSessionId != drain.liveSessionId) return false
+        if (type == "message.complete" || type == "error") {
+            if (cancelledTurnDrain === drain) cancelledTurnDrain = null
+        }
+        Log.d(TAG, "Ignored canceled gateway turn event: $type")
+        return true
+    }
+
+    /**
+     * Preserve same-session event ordering after Stop. The interrupt terminal
+     * normally drains immediately. The wait is bounded so a slow cooperative
+     * interrupt does not indefinitely delay the next submit, but a started
+     * turn's tombstone remains until its terminal event and continues draining
+     * the old tail in front of the server-serialized next prompt.
+     */
+    private suspend fun awaitCancelledTurnDrain(
+        turn: GatewayTurn,
+        targetStoredSessionId: String?,
+    ): Boolean {
+        while (!turn.cancelled) {
+            val drain = cancelledTurnDrain ?: return true
+            if (drain.storedSessionId != targetStoredSessionId) return true
+            if (System.currentTimeMillis() >= drain.submitWaitUntilMs) {
+                if (!drain.terminalRequired && cancelledTurnDrain === drain) {
+                    cancelledTurnDrain = null
+                }
+                return true
+            }
+            delay(25L)
+        }
+        return false
+    }
+
+    /**
+     * Serialize inbound ownership onto the callback/main dispatcher before any
+     * mapper callback is posted. A local SSE turn can otherwise start between
+     * the socket event and UI binding and lose its cancellable handle.
+     */
+    private fun bindInboundTurn(
+        registration: GatewayInboundTurnRegistration,
+        turn: GatewayTurn,
+    ): Boolean {
+        val pending = AtomicBoolean(true)
+        val completed = CountDownLatch(1)
+        var accepted = false
+        try {
+            callbackDispatcher {
+                try {
+                    if (pending.compareAndSet(true, false)) {
+                        accepted = registration.onHandle(turn)
+                    }
+                } finally {
+                    completed.countDown()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Inbound turn dispatcher rejected callback", e)
+            return false
+        }
+        if (!completed.await(INBOUND_BIND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            // If the callback has not started, expire it so a late main-thread
+            // delivery cannot bind a handle the client already discarded. If
+            // it has started, wait for that short ownership check to finish.
+            if (pending.compareAndSet(true, false)) return false
+            completed.await()
+        }
+        return accepted
+    }
+
     /** Wrap callbacks so every invocation lands on the callback dispatcher (main thread). */
     private fun dispatchOn(callbacks: GatewayTurnCallbacks) = GatewayTurnCallbacks(
         onSessionId = { v -> callbackDispatcher { callbacks.onSessionId(v) } },
+        onStart = { callbackDispatcher { callbacks.onStart() } },
         onTextDelta = { v -> callbackDispatcher { callbacks.onTextDelta(v) } },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
         onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
@@ -1664,3 +2247,6 @@ private fun Throwable?.isMethodNotFound(): Boolean {
 
 private fun JsonObject.stringField(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull
+
+private fun JsonObject.booleanField(key: String): Boolean? =
+    (get(key) as? JsonPrimitive)?.booleanOrNull

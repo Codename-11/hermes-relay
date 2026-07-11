@@ -37,6 +37,9 @@ import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
+import com.hermesandroid.relay.voice.VoiceCommandAction
+import com.hermesandroid.relay.voice.VoiceCommandContext
+import com.hermesandroid.relay.voice.VoiceCommandInterpreter
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
 import com.hermesandroid.relay.voice.LocalBridgeDispatcher
@@ -663,6 +666,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var realtimeAmplitudeDecayJob: Job? = null
     private var firstFrameWatchdogJob: Job? = null
     private var continuousLoopArmed: Boolean = false
+    /**
+     * Remembers an explicit hands-free pause across the one manual mic turn
+     * needed to say "resume continuous listening". A normal utterance after
+     * that tap still clears the flag and keeps the existing tap-to-rearm
+     * behavior.
+     */
+    private var continuousListeningPaused: Boolean = false
+    /** One final-transcript window opened specifically by barge-in playback. */
+    private var responseInterruptedForVoiceCommand: Boolean = false
     private var lastRealtimeAudioDeltaAtMs: Long = 0L
 
     /**
@@ -1123,6 +1135,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         if (mode != InteractionMode.Continuous) {
             continuousLoopArmed = false
+            continuousListeningPaused = false
             continuousResumeJob?.cancel()
             continuousResumeJob = null
         }
@@ -1139,6 +1152,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         if (mode == InteractionMode.Continuous && _uiState.value.voiceMode) {
             continuousLoopArmed = true
+            continuousListeningPaused = false
             when (_uiState.value.state) {
                 VoiceState.Idle, VoiceState.Error -> startListening()
                 else -> Unit
@@ -1327,6 +1341,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         resetBrokeredToolSpeechState()
         resetRealtimeSpeechCoalescer()
         continuousLoopArmed = false
+        continuousListeningPaused = false
         continuousResumeJob?.cancel()
         continuousResumeJob = null
         realtimeAmplitudeDecayJob?.cancel()
@@ -1650,6 +1665,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         streamObserverJob?.cancel()
         streamObserverJob = null
         continuousLoopArmed = false
+        continuousListeningPaused = false
         continuousResumeJob?.cancel()
         continuousResumeJob = null
         realtimeAmplitudeDecayJob?.cancel()
@@ -1694,6 +1710,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     fun startListening() {
+        // A direct mic tap starts a normal capture. Only the recorder opened by
+        // onBargeInDetected may carry response-interruption command context.
+        responseInterruptedForVoiceCommand = false
         val rec = recorder
         if (rec == null) {
             setError("Recorder not initialized")
@@ -1708,6 +1727,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         continuousResumeJob?.cancel()
         continuousResumeJob = null
+        // A manual mic tap after an explicit pause arms this capture so it can
+        // become either the exact "resume" command or a normal prompt. Keep
+        // continuousListeningPaused until the final transcript boundary: the
+        // command handler clears it explicitly in either branch.
         continuousLoopArmed = _uiState.value.interactionMode == InteractionMode.Continuous
         lastRealtimeAudioDeltaAtMs = 0L
         realtimeAmplitudeDecayJob?.cancel()
@@ -1792,6 +1815,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         listeningStartedAtMs = 0L
 
         if (shouldDiscardVoiceCapture(captureDurationMs, inputPcm.size)) {
+            responseInterruptedForVoiceCommand = false
             try { file.delete() } catch (_: Exception) { /* ignore */ }
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
@@ -1824,6 +1848,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         durationMs < MIN_VOICE_CAPTURE_DURATION_MS
 
     private fun cancelListeningWithoutProcessing(title: String, detail: String? = null) {
+        responseInterruptedForVoiceCommand = false
         silenceWatchdogJob?.cancel()
         silenceWatchdogJob = null
         listeningStartedAtMs = 0L
@@ -1865,6 +1890,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun pauseContinuousMode() {
         continuousLoopArmed = false
+        continuousListeningPaused = _uiState.value.interactionMode == InteractionMode.Continuous
         continuousResumeJob?.cancel()
         continuousResumeJob = null
         realtimeAmplitudeDecayJob?.cancel()
@@ -1885,6 +1911,29 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false) }
             }
         }
+    }
+
+    /**
+     * Re-arm an explicitly paused Continuous loop and immediately return to
+     * live listening. This is intentionally a no-op outside Continuous mode;
+     * a spoken resume phrase must never switch the user's saved interaction
+     * mode behind their back.
+     */
+    fun resumeContinuousMode() {
+        if (_uiState.value.interactionMode != InteractionMode.Continuous) return
+        continuousListeningPaused = false
+        continuousLoopArmed = true
+        continuousResumeJob?.cancel()
+        continuousResumeJob = null
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Idle,
+                amplitude = 0f,
+                outputAudioActive = false,
+                responseText = "Continuous listening resumed.",
+            )
+        }
+        startListening()
     }
 
     /**
@@ -2337,6 +2386,129 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // Voice turn processing
     // ---------------------------------------------------------------------
 
+    private fun voiceCommandContext(
+        responseActiveOverride: Boolean? = null,
+        allowNewChat: Boolean = true,
+        responseWasInterrupted: Boolean = false,
+    ): VoiceCommandContext {
+        val ui = _uiState.value
+        val backgroundPhase = ui.backgroundRun?.phase
+        val backgroundTaskActive = backgroundPhase == BackgroundRunPhase.RUNNING ||
+            backgroundPhase == BackgroundRunPhase.RECONNECTING
+        val backgroundDeliveryActive = backgroundPhase == BackgroundRunPhase.DELIVERING
+        val responseActive = responseWasInterrupted ||
+            (responseActiveOverride ?: (
+                ui.state == VoiceState.Speaking ||
+                    chatViewModel?.isStreaming?.value == true ||
+                    providerRealtimeAgentTurnActive.get()
+                ))
+
+        return VoiceCommandContext(
+            responseActive = responseActive,
+            backgroundTaskActive = backgroundTaskActive,
+            backgroundAnswerAvailable = backgroundPhase == BackgroundRunPhase.DONE &&
+                realtimeAgentControl != null,
+            continuousModeSelected = ui.interactionMode == InteractionMode.Continuous,
+            continuousListeningActive = ui.interactionMode == InteractionMode.Continuous &&
+                continuousLoopArmed &&
+                !continuousListeningPaused,
+            continuousListeningPaused = continuousListeningPaused,
+            canStartNewChat = allowNewChat &&
+                !responseActive &&
+                !backgroundTaskActive &&
+                !backgroundDeliveryActive &&
+                chatViewModel?.isStreaming?.value != true,
+        )
+    }
+
+    /**
+     * Intercept one committed transcript at the last local boundary before it
+     * would become a normal Hermes prompt. Returns the typed action when the
+     * transcript was consumed, or null when it must continue through ordinary
+     * intent/chat routing.
+     */
+    private fun tryHandleFinalVoiceCommand(
+        transcript: String,
+        responseActiveOverride: Boolean? = null,
+        fromRealtime: Boolean = false,
+        realtimeControl: RealtimeAgentSessionControl? = null,
+    ): VoiceCommandAction? {
+        // A persistent Realtime Agent websocket is bound to the chat session
+        // it opened with. Starting a new chat requires an explicit session
+        // reset/rebind boundary that this callback does not own, so leave that
+        // typed action for the Standard path (and a future realtime coordinator).
+        val responseWasInterrupted = responseInterruptedForVoiceCommand
+        responseInterruptedForVoiceCommand = false
+        val context = voiceCommandContext(
+            responseActiveOverride = responseActiveOverride,
+            allowNewChat = !fromRealtime,
+            responseWasInterrupted = responseWasInterrupted,
+        )
+        val action = VoiceCommandInterpreter.interpretFinalTranscript(transcript, context)
+        if (action == null) {
+            // The user manually tapped the mic after an explicit pause and said
+            // an ordinary prompt. Preserve the existing tap-to-rearm behavior.
+            if (continuousListeningPaused && continuousLoopArmed) {
+                continuousListeningPaused = false
+            }
+            return null
+        }
+
+        Log.i(TAG, "Hands-free voice command action=$action source=${if (fromRealtime) "realtime" else "stt"}")
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Voice,
+            severity = DiagnosticSeverity.Info,
+            title = "Hands-free voice command",
+            detail = action.name,
+        )
+
+        if (fromRealtime) {
+            chatViewModel?.discardRealtimeAgentLocalCommandTurn(rtAssistantMessageId)
+        }
+
+        val backgroundOwnsResponse = preserveRealtimeTurnOnStop(
+            _uiState.value.backgroundRun?.phase,
+        )
+
+        when (action) {
+            VoiceCommandAction.StopResponse -> interruptSpeaking()
+            VoiceCommandAction.CancelBackgroundTask -> cancelBackgroundRun()
+            VoiceCommandAction.PauseContinuousListening -> pauseContinuousMode()
+            VoiceCommandAction.ResumeContinuousListening -> {
+                if (fromRealtime && !backgroundOwnsResponse) {
+                    realtimeControl?.cancel()
+                }
+                resumeContinuousMode()
+            }
+            VoiceCommandAction.RepeatBackgroundAnswer -> {
+                // Cancel only the provider's would-be conversational answer,
+                // then use the existing relay respeak command for the durable
+                // result. The completed background task itself cannot be lost.
+                if (fromRealtime) realtimeControl?.cancel()
+                respeakBackgroundResult()
+            }
+            VoiceCommandAction.StartNewChat -> {
+                chatViewModel?.createNewChat()
+                val resumeContinuous = _uiState.value.interactionMode == InteractionMode.Continuous
+                continuousListeningPaused = false
+                continuousLoopArmed = resumeContinuous
+                _uiState.update {
+                    it.copy(
+                        state = VoiceState.Idle,
+                        outputAudioActive = false,
+                        responseText = "New chat started.",
+                    )
+                }
+                if (resumeContinuous) startListening()
+            }
+        }
+        // The callback-local response gate owns late audio/text for this
+        // command. Keep the session-global gate open so a preserved background
+        // task can deliver even when Pause/Stop called interruptSpeaking().
+        if (fromRealtime) realtimeAudioSuppressed = false
+        return action
+    }
+
     private suspend fun processVoiceInput(
         audioFile: File,
         inputPcm: ByteArray,
@@ -2433,6 +2605,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val transcribeResult = audioClient.transcribe(audioFile)
         val sttLatencyMs = System.currentTimeMillis() - sttStartedAtMs
         if (transcribeResult.isFailure) {
+            responseInterruptedForVoiceCommand = false
             val err = transcribeResult.exceptionOrNull()
             Log.w(TAG, "transcribe failed: ${err?.message}")
             DiagnosticsLog.record(
@@ -2446,6 +2619,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         val userText = transcribeResult.getOrNull().orEmpty()
         if (userText.isBlank()) {
+            responseInterruptedForVoiceCommand = false
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Warning,
@@ -2463,6 +2637,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 sttCallCount = s.sttCallCount + 1,
             )
         }
+
+        // This is the Standard route's committed STT boundary. Commands are
+        // intentionally checked here — never while recorder amplitude or a
+        // partial transcript is still changing — and before bridge/chat intent
+        // routing can consume the phrase as an ordinary prompt.
+        _uiState.update {
+            it.copy(
+                outputAudioActive = false,
+                transcribedText = userText,
+            )
+        }
+        if (tryHandleFinalVoiceCommand(userText) != null) return
 
         _uiState.update {
             it.copy(
@@ -2826,6 +3012,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         var hadActiveTurnWhenSessionEnded = false
+        var suppressLocalCommandResponse = false
         val result = try {
             client.runRealtimeAgent(
                 prompt = userText,
@@ -2854,11 +3041,39 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         return@runRealtimeAgent
                     }
                     realtimeAgentControl = control
-                    chatVm.applyRealtimeAgentEvent(
-                        assistantMessageId = rtAssistantMessageId,
-                        event = event,
-                        showDetailedTrace = realtimeTraceDetails,
-                    )
+                    val providerResponseEvent = event.type == "voice.response.started" ||
+                        event.type == "voice.response.delta" ||
+                        event.type == "voice.playback_drain.requested" ||
+                        event.type == "voice.output_audio.delta" ||
+                        event.type == "voice.output_audio.done" ||
+                        event.type == "voice.response.done"
+                    val deliveryResponseEvent = !event.delivery.isNullOrBlank()
+                    if (suppressLocalCommandResponse && deliveryResponseEvent) {
+                        // A completed background task owns this response, not the
+                        // intercepted local command. Let authoritative delivery
+                        // through and retire the command-only gate.
+                        suppressLocalCommandResponse = false
+                        realtimeAudioSuppressed = false
+                    }
+                    val suppressCommandResponse =
+                        suppressLocalCommandResponse && providerResponseEvent
+                    if (!suppressCommandResponse) {
+                        chatVm.applyRealtimeAgentEvent(
+                            assistantMessageId = rtAssistantMessageId,
+                            event = event,
+                            showDetailedTrace = realtimeTraceDetails,
+                        )
+                    }
+                    if (suppressCommandResponse) {
+                        if (event.type == "voice.response.done") {
+                            providerRealtimeAgentTurnActive.set(
+                                realtimeTurnActiveAfterResponseDone(_uiState.value.backgroundRun?.phase),
+                            )
+                            suppressLocalCommandResponse = false
+                            realtimeAudioSuppressed = false
+                        }
+                        return@runRealtimeAgent
+                    }
                     when (event.type) {
                 "voice.input_transcript.delta" -> {
                     event.delta?.let { inputTranscript.append(it) }
@@ -2871,14 +3086,33 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.input_transcript.final" -> {
+                    // A committed transcript starts a new turn boundary. A
+                    // cancelled local command may not receive response.done,
+                    // so never carry its suppression into the next utterance.
+                    suppressLocalCommandResponse = false
                     inputTranscript.clear()
                     inputTranscript.append(event.text ?: rtUserText)
+                    val finalTranscript = inputTranscript.toString()
                     _uiState.update {
                         it.copy(
                             state = VoiceState.Thinking,
                             outputAudioActive = false,
-                            transcribedText = inputTranscript.toString(),
+                            transcribedText = finalTranscript,
                         )
+                    }
+                    val command = tryHandleFinalVoiceCommand(
+                        transcript = finalTranscript,
+                        responseActiveOverride = providerRealtimeAgentTurnActive.get(),
+                        fromRealtime = true,
+                        realtimeControl = control,
+                    )
+                    if (command != null) {
+                        // Re-speak output is intentionally allowed through;
+                        // it is the requested durable answer, not the
+                        // provider's conversational response to this phrase.
+                        suppressLocalCommandResponse =
+                            command != VoiceCommandAction.RepeatBackgroundAnswer
+                        return@runRealtimeAgent
                     }
                 }
                 "voice.response.started", "hermes.run.started" -> {
@@ -4721,6 +4955,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // interruptSpeaking landed us in Idle — flip to Listening and
         // pre-warm the recorder so the first ~100 ms of user speech
         // isn't clipped by recorder cold-start.
+        responseInterruptedForVoiceCommand = true
         _uiState.update {
             it.copy(
                 state = VoiceState.Listening,
@@ -4734,6 +4969,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 rec.startRecording()
             } catch (t: Throwable) {
+                responseInterruptedForVoiceCommand = false
                 Log.w(TAG, "barge-in pre-warm recorder failed: ${t.message}")
                 surfaceError(t, context = "record")
                 return
@@ -4804,6 +5040,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 lastInterruptedAtChunkIndex = null
                 return@launch
             }
+
+            responseInterruptedForVoiceCommand = false
 
             // Silence after interrupt. If resume is off, drop the tail
             // and return to Idle (the user wanted a hard cancel semantic).

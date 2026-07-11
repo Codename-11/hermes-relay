@@ -1,22 +1,12 @@
-v1.4.0 - Realtime voice that finishes the job
+v1.4.1 - Chat that keeps up
+
+Chat
+* Follow background work from a live process strip; its result appears automatically in the same conversation.
+* Reopen while an answer runs: partial text, thinking, tool progress, and approvals return.
 
 Voice
-* Keep talking while long work runs: quick follow-ups can be
-  answered, another long request can queue, and the finished
-  answer stays in your selected realtime voice.
-* Background and route changes recover more reliably. Stale
-  listening, thinking, reconnecting, and cancel states clear
-  instead of trapping the voice screen.
-* Pick a Realtime Agent model and voice per connection/profile;
-  the next session uses it and the choice survives restart.
+* Speak commands to pause, resume, cancel, repeat a result, or start Standard voice chat.
+* Pick Hands-free, Low latency, Careful tools, or Quiet presets.
 
-More control
-* Refresh provider model catalogs from Chat or Manage.
-* Opt-in notification rules can offer a local "Ask Hermes?"
-  action, and Bridge tools can target a specific Android device.
-
-Reliability
-* Long chats avoid premature transport fallback, phone context
-  reaches upstream Hermes on supported paths, malformed server
-  addresses fail safely, and credential files cannot be served
-  through relay media.
+Polish
+* Multi-image galleries plus smoother streaming Markdown and long tables.

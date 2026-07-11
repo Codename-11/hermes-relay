@@ -4,7 +4,9 @@ import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -24,6 +26,8 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -50,6 +54,12 @@ class GatewayClientHarness(
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     var failTicketMint = false
     var resumeFails = false
+
+    @Volatile
+    var recoveryRunning = false
+
+    @Volatile
+    var recoveryAssistant = ""
 
     @Volatile
     var steerStatus = "queued"
@@ -109,9 +119,47 @@ class GatewayClientHarness(
                 }
                 "session.resume" ->
                     if (resumeFails) null
-                    else buildJsonObject { put("session_id", "live-resumed") }
+                    else recoveryPayload("live-resumed")
+                "session.activate" -> recoveryPayload(
+                    (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
+                )
                 "prompt.submit" -> buildJsonObject { put("ok", true) }
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
+                "process.list" -> buildJsonObject {
+                    put(
+                        "processes",
+                        json.parseToJsonElement(
+                            """
+                            [
+                              {
+                                "session_id": "proc-17",
+                                "command": "./gradlew test",
+                                "cwd": "/workspace/app",
+                                "pid": 4812,
+                                "started_at": "2026-07-10T09:30:00",
+                                "uptime_seconds": 42,
+                                "status": "running",
+                                "output_preview": "running tests",
+                                "output_tail": "running tests\n42 tests completed",
+                                "notify_on_complete": true,
+                                "session_scoped": true,
+                                "watch_patterns": ["BUILD SUCCESSFUL"],
+                                "watch_hit": false
+                              },
+                              {
+                                "session_id": "proc-18",
+                                "command": "npm run lint",
+                                "uptime_seconds": 7,
+                                "status": "exited",
+                                "exit_code": 1,
+                                "detached": true
+                              }
+                            ]
+                            """.trimIndent(),
+                        ),
+                    )
+                }
+                "process.kill" -> buildJsonObject { put("status", "killed") }
                 "session.steer" -> buildJsonObject {
                     put("status", steerStatus)
                     put("text", (params["text"] as? JsonPrimitive)?.contentOrNull ?: "")
@@ -195,6 +243,19 @@ class GatewayClientHarness(
 
     private val autoRespondEnabled = autoRespond
 
+    private fun recoveryPayload(sessionId: String): JsonObject = buildJsonObject {
+        put("session_id", sessionId)
+        put("running", recoveryRunning)
+        put("status", if (recoveryRunning) "streaming" else "idle")
+        if (recoveryRunning) {
+            put("inflight", buildJsonObject {
+                put("user", "research this")
+                put("assistant", recoveryAssistant)
+                put("streaming", true)
+            })
+        }
+    }
+
     init {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -245,13 +306,16 @@ class GatewayClientHarness(
     fun awaitPendingAck(): PendingAck =
         pendingAcks.poll(5, TimeUnit.SECONDS) ?: error("suppressed ack never captured")
 
-    /** Release a withheld ack with a generic success result. */
-    fun releaseAck(ack: PendingAck) {
+    /** Release a withheld ack with a caller-supplied or generic success result. */
+    fun releaseAck(
+        ack: PendingAck,
+        result: JsonObject = buildJsonObject { put("ok", true) },
+    ) {
         ack.ws.send(
             buildJsonObject {
                 put("jsonrpc", "2.0")
                 put("id", ack.id)
-                put("result", buildJsonObject { put("ok", true) })
+                put("result", result)
             }.toString(),
         )
     }
@@ -293,11 +357,14 @@ class GatewayChatClientTest {
     private var unsupportedMarked = false
 
     private class Recorder {
+        val starts = AtomicInteger(0)
         val textDeltas = ConcurrentLinkedQueue<String>()
         val thinkingDeltas = ConcurrentLinkedQueue<String>()
         val sessionIds = ConcurrentLinkedQueue<String>()
         val errors = ConcurrentLinkedQueue<String>()
         val interactions = ConcurrentLinkedQueue<GatewayAsk>()
+        val toolStarts = ConcurrentLinkedQueue<Pair<String, String>>()
+        val toolDone = ConcurrentLinkedQueue<Pair<String, String?>>()
 
         // ConcurrentLinkedQueue rejects nulls — unnamed generating events store "".
         val toolGenerating = ConcurrentLinkedQueue<String>()
@@ -308,10 +375,11 @@ class GatewayChatClientTest {
 
         val callbacks = GatewayTurnCallbacks(
             onSessionId = { sessionIds += it },
+            onStart = { starts.incrementAndGet() },
             onTextDelta = { textDeltas += it },
             onThinkingDelta = { thinkingDeltas += it },
-            onToolCallStart = { _, _ -> },
-            onToolCallDone = { _, _ -> },
+            onToolCallStart = { id, name -> toolStarts += id to name },
+            onToolCallDone = { id, result -> toolDone += id to result },
             onToolCallFailed = { _, _ -> },
             onTurnComplete = { },
             onComplete = { completeLatch.countDown() },
@@ -425,6 +493,187 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `unsolicited assistant turn for resumed session streams without sendTurn`() = runBlocking {
+        val r = Recorder()
+        val registrations = ConcurrentLinkedQueue<String>()
+        val processEvents = ConcurrentLinkedQueue<GatewayProcessEvent>()
+        val processEventLatch = CountDownLatch(1)
+        client.setProcessEventListener {
+            processEvents += it
+            processEventLatch.countDown()
+        }
+        client.setUnsolicitedTurnProvider { storedSessionId ->
+            registrations += storedSessionId
+            GatewayInboundTurnRegistration(
+                callbacks = r.callbacks,
+                onHandle = { true },
+            )
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Background task finished.") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Background task finished.") },
+                "live-resumed",
+            ),
+        )
+
+        assertTrue("unsolicited turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue("turn completion did not invalidate process inventory", processEventLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("stored-session"), registrations.toList())
+        assertEquals(1, r.starts.get())
+        assertEquals(listOf("Background task finished."), r.textDeltas.toList())
+        assertEquals(
+            listOf(GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.MESSAGE_COMPLETE)),
+            processEvents.toList(),
+        )
+        assertFalse(harness.rpcLog.any { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `unsolicited starts without exact live session are ignored`() = runBlocking {
+        val r = Recorder()
+        val registrations = AtomicInteger(0)
+        client.setUnsolicitedTurnProvider {
+            registrations.incrementAndGet()
+            GatewayInboundTurnRegistration(r.callbacks) { true }
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(harness.eventFrame("message.start", null, null))
+        serverWs.send(harness.eventFrame("message.start", null, "someone-else"))
+
+        assertFalse("foreign turn was accepted", r.completeLatch.await(300, TimeUnit.MILLISECONDS))
+        assertEquals(0, registrations.get())
+        assertEquals(0, r.starts.get())
+    }
+
+    @Test
+    fun `cold prewarm reports resumed stored session once`() = runBlocking {
+        val resumedSessions = ConcurrentLinkedQueue<String>()
+        val resumedLatch = CountDownLatch(1)
+        client.setColdPrewarmSessionReadyListener { storedSessionId ->
+            resumedSessions += storedSessionId
+            resumedLatch.countDown()
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        assertTrue("cold resume was not reported", resumedLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(client.prewarmAwait("stored-session"))
+        Thread.sleep(100)
+
+        assertEquals(listOf("stored-session"), resumedSessions.toList())
+    }
+
+    @Test
+    fun `newer prewarm selection wins when an older resume completes late`() = runBlocking {
+        harness.suppressAckMethods += "session.resume"
+
+        val old = async(Dispatchers.IO) { client.prewarmAwait("old-session") }
+        val oldAck = harness.awaitPendingAck()
+
+        // Starting the newer request advances the desired-session generation
+        // even though it must wait for the older request's connect mutex.
+        val newer = async(Dispatchers.IO) { client.prewarmAwait("new-session") }
+        delay(100)
+        harness.releaseAck(
+            oldAck,
+            buildJsonObject { put("session_id", "live-old") },
+        )
+        assertFalse(old.await())
+
+        val newerAck = harness.awaitPendingAck()
+        harness.releaseAck(
+            newerAck,
+            buildJsonObject { put("session_id", "live-new") },
+        )
+        assertTrue(newer.await())
+
+        client.listProcesses().getOrThrow()
+        val params = harness.awaitRpc("process.list")
+        assertEquals("live-new", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `same stored session id is resumed again when profile namespace changes`() = runBlocking {
+        var profile = "profile-a"
+        client.sessionProfileProvider = { profile }
+        assertTrue(client.prewarmAwait("same-stored-id"))
+
+        profile = "profile-b"
+        assertTrue(client.prewarmAwait("same-stored-id"))
+
+        val resumes = harness.awaitRpcCount("session.resume", 2)
+        assertEquals(
+            "profile-a",
+            (resumes[0]["profile"] as? JsonPrimitive)?.contentOrNull,
+        )
+        assertEquals(
+            "profile-b",
+            (resumes[1]["profile"] as? JsonPrimitive)?.contentOrNull,
+        )
+    }
+
+    @Test
+    fun `unsolicited error clears turn so the next unsolicited response can arrive`() = runBlocking {
+        val recorders = ConcurrentLinkedQueue<Recorder>()
+        client.setUnsolicitedTurnProvider {
+            val recorder = Recorder()
+            recorders += recorder
+            GatewayInboundTurnRegistration(recorder.callbacks) { true }
+        }
+
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "error",
+                buildJsonObject { put("message", "first failed") },
+                "live-resumed",
+            ),
+        )
+
+        val first = awaitRecorder(recorders, 1)
+        assertTrue(first.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("first failed"), first.errors.toList())
+
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "second worked") },
+                "live-resumed",
+            ),
+        )
+
+        val second = awaitRecorder(recorders, 2)
+        assertTrue(second.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("second worked"), second.textDeltas.toList())
+    }
+
+    private fun awaitRecorder(recorders: ConcurrentLinkedQueue<Recorder>, count: Int): Recorder {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline) {
+            if (recorders.size >= count) return recorders.elementAt(count - 1)
+            Thread.sleep(20)
+        }
+        error("recorder $count was never registered")
+    }
+
+    @Test
     fun `model options refresh flag rides gateway rpc only on explicit refresh`() = runBlocking {
         val normal = client.modelOptions().getOrThrow()
         val normalParams = harness.awaitRpc("model.options")
@@ -435,6 +684,154 @@ class GatewayChatClientTest {
         val refreshParams = harness.awaitRpcCount("model.options", 2).last()
         assertEquals("openai", refreshed.currentProvider)
         assertTrue((refreshParams["refresh"] as? JsonPrimitive)?.booleanOrNull == true)
+    }
+
+    @Test
+    fun `process list uses live session id and parses typed snapshot`() = runBlocking {
+        assertTrue(client.prewarmAwait("stored-session"))
+
+        val processes = client.listProcesses().getOrThrow()
+
+        val params = harness.awaitRpc("process.list")
+        assertEquals("live-resumed", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(GatewayProcessCapability.Supported, client.processCapability.value)
+        assertEquals(2, processes.size)
+        assertEquals(
+            GatewayProcess(
+                id = "proc-17",
+                command = "./gradlew test",
+                cwd = "/workspace/app",
+                pid = 4812L,
+                startedAt = "2026-07-10T09:30:00",
+                uptimeSeconds = 42L,
+                status = "running",
+                outputPreview = "running tests",
+                outputTail = "running tests\n42 tests completed",
+                notifyOnComplete = true,
+                sessionScoped = true,
+                watchPatterns = listOf("BUILD SUCCESSFUL"),
+            ),
+            processes[0],
+        )
+        assertTrue(processes[0].isRunning)
+        assertEquals(1, processes[1].exitCode)
+        assertTrue(processes[1].detached)
+        assertFalse(processes[1].isRunning)
+    }
+
+    @Test
+    fun `process kill uses exact live session and process id`() = runBlocking {
+        assertTrue(client.prewarmAwait("stored-session"))
+
+        assertTrue(client.killProcess("proc-17").isSuccess)
+
+        val params = harness.awaitRpc("process.kill")
+        assertEquals("live-resumed", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("proc-17", (params["process_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(GatewayProcessCapability.Supported, client.processCapability.value)
+    }
+
+    @Test
+    fun `process method not found disables repeat probes for current socket`() = runBlocking {
+        harness.methodNotFound.add("process.list")
+        assertTrue(client.prewarmAwait("stored-session"))
+
+        assertTrue(client.listProcesses().isFailure)
+        assertEquals(GatewayProcessCapability.Unsupported, client.processCapability.value)
+        assertEquals(1, harness.rpcLog.count { it.first == "process.list" })
+
+        assertTrue(client.listProcesses().isFailure)
+        assertEquals(1, harness.rpcLog.count { it.first == "process.list" })
+    }
+
+    @Test
+    fun `process events bypass active turn gate but require exact live session`() = runBlocking {
+        val events = ConcurrentLinkedQueue<GatewayProcessEvent>()
+        val eventLatch = CountDownLatch(5)
+        client.setProcessEventListener {
+            events += it
+            eventLatch.countDown()
+        }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+
+        serverWs.send(
+            harness.eventFrame(
+                "agent.terminal.output",
+                buildJsonObject { put("process_id", "foreign"); put("chunk", "do not leak") },
+                "someone-else",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject { put("name", "browser"); put("tool_id", "tool-ignored") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject { put("name", "terminal"); put("tool_id", "tool-1") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "status.update",
+                buildJsonObject { put("kind", "process"); put("text", "process proc-17 completed") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "agent.terminal.output",
+                buildJsonObject { put("process_id", "proc-17"); put("chunk", "BUILD SUCCESSFUL\n") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "terminal.close",
+                buildJsonObject { put("process_id", "proc-17") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "foreign turn") },
+                "someone-else",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "missing session id") },
+                null,
+            ),
+        )
+        // Upstream can omit tool lifecycle events for a background launch;
+        // every exact-session turn completion is therefore a list fallback.
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Started as proc-17") },
+                "live-resumed",
+            ),
+        )
+
+        assertTrue("process events were dropped without an active turn", eventLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(
+            listOf(
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.TOOL_COMPLETE),
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.STATUS_UPDATE),
+                GatewayProcessEvent.Output("proc-17", "BUILD SUCCESSFUL\n"),
+                GatewayProcessEvent.TerminalClosed("proc-17"),
+                GatewayProcessEvent.Invalidated(GatewayProcessEvent.Trigger.MESSAGE_COMPLETE),
+            ),
+            events.toList(),
+        )
     }
 
     @Test
@@ -1128,6 +1525,147 @@ class GatewayChatClientTest {
         assertTrue("late ack timeout fired the SSE fallback (duplicate turn)", r.preflightFailures.isEmpty())
         assertTrue(r.errors.isEmpty())
         assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `recoverTurn activates exact live session and continues deltas and tool events`() {
+        harness.recoveryRunning = true
+        harness.recoveryAssistant = "partial answer"
+        val recorder = Recorder()
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "live-original",
+                callbacks = recorder.callbacks,
+            ).getOrThrow()
+        }
+
+        assertTrue(recovery.running)
+        assertEquals("live-original", recovery.liveSessionId)
+        assertEquals("partial answer", recovery.inflight?.assistant)
+        assertNotNull(recovery.handle)
+        assertEquals(1, harness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, harness.rpcLog.count { it.first == "session.resume" })
+
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(
+            harness.eventFrame(
+                "reasoning.delta",
+                buildJsonObject { put("text", "still thinking") },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.start",
+                buildJsonObject {
+                    put("tool_id", "tool-1")
+                    put("name", "terminal")
+                },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject {
+                    put("tool_id", "tool-1")
+                    put("name", "terminal")
+                    put("summary", "tests passed")
+                },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", " final") },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "partial answer final") },
+                "live-original",
+            ),
+        )
+
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("still thinking"), recorder.thinkingDeltas.toList())
+        assertEquals(listOf("tool-1" to "terminal"), recorder.toolStarts.toList())
+        assertEquals(listOf("tool-1" to "tests passed"), recorder.toolDone.toList())
+        assertEquals(listOf(" final"), recorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `recoverTurn falls back to durable resume when activate is unsupported`() {
+        harness.methodNotFound += "session.activate"
+        harness.recoveryRunning = true
+        val recorder = Recorder()
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "expired-live-id",
+                callbacks = recorder.callbacks,
+            ).getOrThrow()
+        }
+
+        assertTrue(recovery.running)
+        assertEquals("live-resumed", recovery.liveSessionId)
+        assertNotNull(recovery.handle)
+        assertEquals(1, harness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(1, harness.rpcLog.count { it.first == "session.resume" })
+
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "recovered") },
+                "live-resumed",
+            ),
+        )
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("recovered"), recorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `recoverTurn returns no handle for an already-settled session`() {
+        harness.recoveryRunning = false
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "live-original",
+                callbacks = Recorder().callbacks,
+            ).getOrThrow()
+        }
+
+        assertFalse(recovery.running)
+        assertEquals("idle", recovery.status)
+        assertNull(recovery.handle)
+        assertFalse(client.hasActiveTurn())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `detaching recovered handle does not interrupt server turn`() {
+        harness.recoveryRunning = true
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "live-original",
+                callbacks = Recorder().callbacks,
+            ).getOrThrow()
+        }
+
+        recovery.handle!!.detach()
+        Thread.sleep(100)
+
+        assertFalse(client.hasActiveTurn())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
     }
 
     @Test

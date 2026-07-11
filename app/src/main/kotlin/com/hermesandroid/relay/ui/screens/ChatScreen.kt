@@ -50,6 +50,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -99,6 +101,9 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -145,7 +150,9 @@ import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.BackgroundTaskCard
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
 import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
@@ -160,10 +167,13 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.ContextMeterBar
+import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
+import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.SyntheticProcessNotificationNotice
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
@@ -406,6 +416,7 @@ fun ChatScreen(
     onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
+    val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
     var voiceCompactMode by remember { mutableStateOf(false) }
     val chatAlpha by animateFloatAsState(
         targetValue = if (voiceUiState.voiceMode && !voiceCompactMode) 0.4f else 1f,
@@ -436,9 +447,11 @@ fun ChatScreen(
     ) { granted ->
         if (granted) {
             micPermissionDenied = false
-            if (pendingVoiceEnter) {
+            if (pendingVoiceEnter && !isDemoMode) {
                 pendingVoiceEnter = false
                 voiceViewModel.enterVoiceMode()
+            } else {
+                pendingVoiceEnter = false
             }
         } else {
             pendingVoiceEnter = false
@@ -490,6 +503,9 @@ fun ChatScreen(
     val sessions by chatViewModel.sessions.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val backgroundProcesses by chatViewModel.backgroundProcesses.collectAsState()
+    val backgroundProcessesLoading by chatViewModel.backgroundProcessesLoading.collectAsState()
+    val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
@@ -554,15 +570,15 @@ fun ChatScreen(
         connectionViewModel.resolveStreamingEndpoint(streamingEndpointPref) == "gateway"
     }
 
-    // Pre-warm the gateway (connect + resume the current session) whenever the
-    // chat surface is visible, the app is foregrounded, and the gateway is the
-    // resolved transport — so the first send is warm (tens of ms to first
-    // token) instead of paying the cold connect + session.resume on the send
-    // path. Best-effort / idempotent; re-fires on return-to-foreground.
+    // Recover any durable in-flight chat checkpoint whenever Chat returns to
+    // the foreground. On Gateway this also pre-warms/re-attaches the socket;
+    // sessions-SSE falls back to bounded persisted-history reconciliation.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
     LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
-        if (isGatewayTransport && appForeground && chatReady) {
+        if (appForeground && chatReady) {
             chatViewModel.prewarmGateway()
+        }
+        if (isGatewayTransport && appForeground && chatReady) {
             chatViewModel.refreshModelOptions()
             chatViewModel.refreshReasoningSettings()
         }
@@ -646,6 +662,13 @@ fun ChatScreen(
     var showCommandPalette by remember { mutableStateOf(false) }
     var showModelSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
+    var showBackgroundProcesses by remember { mutableStateOf(false) }
+
+    // A process inventory is scoped to one gateway session. Never leave a
+    // sheet opened onto a different chat after a drawer/profile switch.
+    LaunchedEffect(currentSessionId, selectedProfile?.name, activeConnection?.id) {
+        showBackgroundProcesses = false
+    }
 
     // Server command dispatch can ask the composer to prefill (e.g. /undo).
     LaunchedEffect(chatViewModel) {
@@ -961,8 +984,26 @@ fun ChatScreen(
     // streaming auto-scroll effect respects this — it will not yank the
     // user back to the latest token while they are reading history.
     // Reset to false the moment the user returns to the bottom.
-    var userScrolledAway by remember { mutableStateOf(false) }
+    var userScrolledAway by remember(currentSessionId) { mutableStateOf(false) }
     var programmaticBottomScroll by remember { mutableStateOf(false) }
+    val currentUnreadSnapshot = remember(messages) { messages.toUnreadSnapshot() }
+    var lastReadSnapshot by remember(currentSessionId) {
+        mutableStateOf(currentUnreadSnapshot)
+    }
+    LaunchedEffect(currentSessionId, currentUnreadSnapshot, userScrolledAway) {
+        if (!userScrolledAway) lastReadSnapshot = currentUnreadSnapshot
+    }
+    val unreadMessageCount = remember(
+        currentUnreadSnapshot,
+        lastReadSnapshot,
+        userScrolledAway,
+    ) {
+        if (userScrolledAway) {
+            countUnreadMessages(currentUnreadSnapshot, lastReadSnapshot)
+        } else {
+            0
+        }
+    }
 
     suspend fun scrollConversationToBottom(animated: Boolean) {
         programmaticBottomScroll = true
@@ -2045,6 +2086,7 @@ fun ChatScreen(
 
                         items(messages.size, key = { messages[it].id }) { index ->
                             val message = messages[index]
+                            val processNotification = message.hermesProcessNotificationOrNull()
 
                             // Skip empty bubbles (content stripped by annotation parser, no tool calls,
                             // no attachments). Attachments keep the bubble alive for inbound media;
@@ -2053,6 +2095,7 @@ fun ChatScreen(
                                 message.toolCalls.isEmpty() &&
                                 message.attachments.isEmpty() &&
                                 message.cards.isEmpty() &&
+                                message.backgroundTask == null &&
                                 !message.isStreaming
                             ) return@items
 
@@ -2072,10 +2115,43 @@ fun ChatScreen(
                                 DateSeparator(timestamp = message.timestamp)
                             }
 
-                            MessageBubble(
+                            val hasBackgroundTask = message.backgroundTask != null
+                            val shouldRenderBubble =
+                                !hasBackgroundTask ||
+                                    message.content.isNotBlank() ||
+                                    message.thinkingContent.isNotBlank() ||
+                                    message.attachments.isNotEmpty() ||
+                                    message.cards.isNotEmpty()
+
+                            message.backgroundTask?.let { task ->
+                                BackgroundTaskCard(
+                                    task = task,
+                                    toolCalls = message.toolCalls,
+                                    showTimeline = toolDisplay != "off",
+                                    modifier = Modifier
+                                        .padding(
+                                            top = if (isFirstInGroup) 6.dp else 2.dp,
+                                            bottom = if (shouldRenderBubble) 3.dp else 0.dp,
+                                        )
+                                        .animateItem(),
+                                )
+                            }
+
+                            if (processNotification != null) {
+                                SyntheticProcessNotificationNotice(
+                                    notification = processNotification,
+                                    modifier = Modifier
+                                        .padding(top = if (isFirstInGroup) 6.dp else 2.dp)
+                                        .animateItem(),
+                                )
+                            } else if (shouldRenderBubble) MessageBubble(
                                 message = message,
                                 modifier = Modifier
-                                    .padding(top = if (isFirstInGroup) 6.dp else 1.dp)
+                                    .padding(
+                                        top = if (hasBackgroundTask) 1.dp
+                                        else if (isFirstInGroup) 6.dp
+                                        else 1.dp,
+                                    )
                                     .animateItem(),
                                 maxBubbleWidth = maxBubbleWidth,
                                 showThinking = showThinking,
@@ -2172,7 +2248,7 @@ fun ChatScreen(
                                 }
                             }
 
-                            if (toolDisplay != "off") {
+                            if (toolDisplay != "off" && !hasBackgroundTask) {
                                 // Subagent children (taskIndex != null) group
                                 // into lanes after the top-level tool cards;
                                 // the null group renders exactly as before.
@@ -2231,7 +2307,16 @@ fun ChatScreen(
                             .zIndex(8f)
                     ) {
                         SmallFloatingActionButton(
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .semantics {
+                                    contentDescription = if (unreadMessageCount > 0) {
+                                        "Scroll to bottom, $unreadMessageCount unread " +
+                                            if (unreadMessageCount == 1) "message" else "messages"
+                                    } else {
+                                        "Scroll to bottom"
+                                    }
+                                },
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 scope.launch {
@@ -2244,10 +2329,25 @@ fun ChatScreen(
                             },
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         ) {
-                            Icon(
-                                Icons.Filled.KeyboardArrowDown,
-                                contentDescription = "Scroll to bottom"
-                            )
+                            BadgedBox(
+                                badge = {
+                                    if (unreadMessageCount > 0) {
+                                        Badge(
+                                            modifier = Modifier.clearAndSetSemantics { },
+                                        ) {
+                                            Text(
+                                                if (unreadMessageCount > 99) "99+"
+                                                else unreadMessageCount.toString(),
+                                            )
+                                        }
+                                    }
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = null,
+                                )
+                            }
                         }
                     }
 
@@ -2259,6 +2359,14 @@ fun ChatScreen(
                             .padding(bottom = 8.dp)
                     )
                 }
+            }
+
+            if (isGatewayTransport) {
+                GatewayBackgroundProcessStrip(
+                    processes = backgroundProcesses,
+                    loading = backgroundProcessesLoading,
+                    onClick = { showBackgroundProcesses = true },
+                )
             }
 
             // Inline slash command autocomplete
@@ -2659,24 +2767,34 @@ fun ChatScreen(
                     }
                 },
                 onVoice = {
-                    if (voiceReady) {
-                        requestVoiceMode()
-                    } else {
-                        android.widget.Toast.makeText(
-                            context,
-                            when (standardVoiceAvailability) {
-                                com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
-                                    standardVoiceSignInRouteHint?.let { route ->
-                                        "Voice needs a one-time sign-in on the $route route — open Manage"
-                                    } ?: "Voice needs dashboard sign-in — open Manage to sign in"
-                                com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
-                                    "This Hermes build has no voice routes — update hermes-agent or pair Relay"
-                                else ->
-                                    "Voice needs a reachable Hermes dashboard or Relay voice route"
-                            },
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
+                    dispatchChatVoiceAction(
+                        isDemoMode = isDemoMode,
+                        voiceReady = voiceReady,
+                        onDemoNotice = {
+                            Toast.makeText(
+                                context,
+                                "Voice is unavailable in the offline demo — connect to Hermes to use it",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        },
+                        onStartVoice = requestVoiceMode,
+                        onSetupNotice = {
+                            Toast.makeText(
+                                context,
+                                when (standardVoiceAvailability) {
+                                    com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
+                                        standardVoiceSignInRouteHint?.let { route ->
+                                            "Voice needs a one-time sign-in on the $route route — open Manage"
+                                        } ?: "Voice needs dashboard sign-in — open Manage to sign in"
+                                    com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
+                                        "This Hermes build has no voice routes — update hermes-agent or pair Relay"
+                                    else ->
+                                        "Voice needs a reachable Hermes dashboard or Relay voice route"
+                                },
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                    )
                 },
                 onStop = {
                     chatViewModel.cancelStream()
@@ -2915,6 +3033,18 @@ fun ChatScreen(
                 showCommandPalette = false
             },
             onDismiss = { showCommandPalette = false }
+        )
+    }
+
+    if (showBackgroundProcesses) {
+        GatewayBackgroundProcessSheet(
+            processes = backgroundProcesses,
+            loading = backgroundProcessesLoading,
+            stoppingProcessIds = stoppingProcessIds,
+            onRefresh = chatViewModel::refreshBackgroundProcesses,
+            onStop = chatViewModel::stopBackgroundProcess,
+            onDismissProcess = chatViewModel::dismissBackgroundProcess,
+            onDismiss = { showBackgroundProcesses = false },
         )
     }
 

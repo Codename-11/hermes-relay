@@ -374,4 +374,31 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
     suspend fun setRealtimePersistentSession(enabled: Boolean) {
         dataStore.edit { it[KEY_REALTIME_PERSISTENT_SESSION] = enabled }
     }
+
+    /**
+     * Atomically apply the phone-side portion of [preset]. Only fields owned by
+     * the preset are written, so route/provider/model/voice overrides and other
+     * preferences remain untouched. Barge-in shares this DataStore and is
+     * updated in the same transaction so observers never see a half-applied
+     * local preset.
+     */
+    suspend fun applyModePreset(preset: VoiceModePreset) {
+        val local = preset.localSettings
+        val bargeIn = preset.bargeInUpdate
+        dataStore.edit { prefs ->
+            prefs[KEY_INTERACTION_MODE] = local.interactionMode
+            prefs[KEY_SILENCE_THRESHOLD_MS] = local.silenceThresholdMs.coerceAtLeast(500L)
+            prefs[KEY_REALTIME_TRACE_DETAILS] = local.realtimeTraceDetails
+            prefs[KEY_REALTIME_PERSISTENT_SESSION] = local.realtimePersistentSession
+            bargeIn.enabled?.let {
+                prefs[BargeInPreferencesRepository.KEY_ENABLED] = it
+            }
+            bargeIn.sensitivity?.let {
+                prefs[BargeInPreferencesRepository.KEY_SENSITIVITY] = it.name
+            }
+            bargeIn.resumeAfterInterruption?.let {
+                prefs[BargeInPreferencesRepository.KEY_RESUME_AFTER_INTERRUPTION] = it
+            }
+        }
+    }
 }

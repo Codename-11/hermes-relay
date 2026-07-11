@@ -395,21 +395,16 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Use a stable lightweight renderer while streaming.
-                        // The full parser/highlighter can rebuild block shapes
-                        // on every partial fence/token and visibly flicker.
+                        // Settled blocks keep the real Markdown renderer while
+                        // only the structurally incomplete tail stays raw. The
+                        // same composable settles the final tail so retained
+                        // parser state survives the streaming -> final handoff.
                         if (markdownBody.isNotEmpty()) {
-                            if (message.isStreaming) {
-                                StreamingMarkdownContent(
-                                    content = markdownBody,
-                                    textColor = textColor
-                                )
-                            } else {
-                                MarkdownContent(
-                                    content = markdownBody,
-                                    textColor = textColor
-                                )
-                            }
+                            StreamingMarkdownContent(
+                                content = markdownBody,
+                                textColor = textColor,
+                                isStreaming = message.isStreaming,
+                            )
                         }
                     }
                 }
@@ -453,22 +448,34 @@ fun MessageBubble(
                     }
                 }
 
-                // Attachments — dispatched through the unified InboundAttachmentCard
-                // so outbound and inbound attachments share the same render pipeline.
-                // Outbound attachments (user-authored) always have state=LOADED so
-                // they route straight to the LOADED branch; inbound attachments (via
-                // MEDIA markers) cycle through LOADING → LOADED / FAILED as the
-                // background fetch progresses.
+                // Attachments — two or more loaded images collapse into one
+                // grid + swipe-across gallery. Every other item stays on the
+                // unified InboundAttachmentCard path, and layout items retain
+                // their original ChatMessage.attachments indices so retry /
+                // manual-fetch callbacks cannot drift after grouping.
                 if (message.attachments.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    message.attachments.forEachIndexed { index, attachment ->
-                        InboundAttachmentCard(
-                            attachment = attachment,
-                            onRetry = { onAttachmentRetry(message.id, index) },
-                            onManualFetch = { onAttachmentManualFetch(message.id, index) },
-                            maxWidth = maxBubbleWidth - 24.dp,
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        )
+                    val attachmentItems = remember(message.attachments) {
+                        attachmentLayoutItems(message.attachments)
+                    }
+                    attachmentItems.forEach { item ->
+                        when (item) {
+                            is AttachmentLayoutItem.Gallery -> AttachmentGallery(
+                                attachments = item.attachmentIndices.map(message.attachments::get),
+                                maxWidth = maxBubbleWidth - 24.dp,
+                                modifier = Modifier.padding(vertical = 2.dp),
+                            )
+                            is AttachmentLayoutItem.Single -> {
+                                val index = item.attachmentIndex
+                                InboundAttachmentCard(
+                                    attachment = message.attachments[index],
+                                    onRetry = { onAttachmentRetry(message.id, index) },
+                                    onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                                    maxWidth = maxBubbleWidth - 24.dp,
+                                    modifier = Modifier.padding(vertical = 2.dp),
+                                )
+                            }
+                        }
                     }
                 }
 
