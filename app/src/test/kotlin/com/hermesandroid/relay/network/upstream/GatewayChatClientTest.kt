@@ -26,6 +26,8 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -52,6 +54,12 @@ class GatewayClientHarness(
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     var failTicketMint = false
     var resumeFails = false
+
+    @Volatile
+    var recoveryRunning = false
+
+    @Volatile
+    var recoveryAssistant = ""
 
     @Volatile
     var steerStatus = "queued"
@@ -111,7 +119,10 @@ class GatewayClientHarness(
                 }
                 "session.resume" ->
                     if (resumeFails) null
-                    else buildJsonObject { put("session_id", "live-resumed") }
+                    else recoveryPayload("live-resumed")
+                "session.activate" -> recoveryPayload(
+                    (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
+                )
                 "prompt.submit" -> buildJsonObject { put("ok", true) }
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
                 "process.list" -> buildJsonObject {
@@ -232,6 +243,19 @@ class GatewayClientHarness(
 
     private val autoRespondEnabled = autoRespond
 
+    private fun recoveryPayload(sessionId: String): JsonObject = buildJsonObject {
+        put("session_id", sessionId)
+        put("running", recoveryRunning)
+        put("status", if (recoveryRunning) "streaming" else "idle")
+        if (recoveryRunning) {
+            put("inflight", buildJsonObject {
+                put("user", "research this")
+                put("assistant", recoveryAssistant)
+                put("streaming", true)
+            })
+        }
+    }
+
     init {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -339,6 +363,8 @@ class GatewayChatClientTest {
         val sessionIds = ConcurrentLinkedQueue<String>()
         val errors = ConcurrentLinkedQueue<String>()
         val interactions = ConcurrentLinkedQueue<GatewayAsk>()
+        val toolStarts = ConcurrentLinkedQueue<Pair<String, String>>()
+        val toolDone = ConcurrentLinkedQueue<Pair<String, String?>>()
 
         // ConcurrentLinkedQueue rejects nulls — unnamed generating events store "".
         val toolGenerating = ConcurrentLinkedQueue<String>()
@@ -352,8 +378,8 @@ class GatewayChatClientTest {
             onStart = { starts.incrementAndGet() },
             onTextDelta = { textDeltas += it },
             onThinkingDelta = { thinkingDeltas += it },
-            onToolCallStart = { _, _ -> },
-            onToolCallDone = { _, _ -> },
+            onToolCallStart = { id, name -> toolStarts += id to name },
+            onToolCallDone = { id, result -> toolDone += id to result },
             onToolCallFailed = { _, _ -> },
             onTurnComplete = { },
             onComplete = { completeLatch.countDown() },
@@ -1499,6 +1525,147 @@ class GatewayChatClientTest {
         assertTrue("late ack timeout fired the SSE fallback (duplicate turn)", r.preflightFailures.isEmpty())
         assertTrue(r.errors.isEmpty())
         assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `recoverTurn activates exact live session and continues deltas and tool events`() {
+        harness.recoveryRunning = true
+        harness.recoveryAssistant = "partial answer"
+        val recorder = Recorder()
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "live-original",
+                callbacks = recorder.callbacks,
+            ).getOrThrow()
+        }
+
+        assertTrue(recovery.running)
+        assertEquals("live-original", recovery.liveSessionId)
+        assertEquals("partial answer", recovery.inflight?.assistant)
+        assertNotNull(recovery.handle)
+        assertEquals(1, harness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, harness.rpcLog.count { it.first == "session.resume" })
+
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(
+            harness.eventFrame(
+                "reasoning.delta",
+                buildJsonObject { put("text", "still thinking") },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.start",
+                buildJsonObject {
+                    put("tool_id", "tool-1")
+                    put("name", "terminal")
+                },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject {
+                    put("tool_id", "tool-1")
+                    put("name", "terminal")
+                    put("summary", "tests passed")
+                },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", " final") },
+                "live-original",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "partial answer final") },
+                "live-original",
+            ),
+        )
+
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("still thinking"), recorder.thinkingDeltas.toList())
+        assertEquals(listOf("tool-1" to "terminal"), recorder.toolStarts.toList())
+        assertEquals(listOf("tool-1" to "tests passed"), recorder.toolDone.toList())
+        assertEquals(listOf(" final"), recorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `recoverTurn falls back to durable resume when activate is unsupported`() {
+        harness.methodNotFound += "session.activate"
+        harness.recoveryRunning = true
+        val recorder = Recorder()
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "expired-live-id",
+                callbacks = recorder.callbacks,
+            ).getOrThrow()
+        }
+
+        assertTrue(recovery.running)
+        assertEquals("live-resumed", recovery.liveSessionId)
+        assertNotNull(recovery.handle)
+        assertEquals(1, harness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(1, harness.rpcLog.count { it.first == "session.resume" })
+
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "recovered") },
+                "live-resumed",
+            ),
+        )
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("recovered"), recorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `recoverTurn returns no handle for an already-settled session`() {
+        harness.recoveryRunning = false
+
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "live-original",
+                callbacks = Recorder().callbacks,
+            ).getOrThrow()
+        }
+
+        assertFalse(recovery.running)
+        assertEquals("idle", recovery.status)
+        assertNull(recovery.handle)
+        assertFalse(client.hasActiveTurn())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `detaching recovered handle does not interrupt server turn`() {
+        harness.recoveryRunning = true
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "stored-42",
+                preferredLiveId = "live-original",
+                callbacks = Recorder().callbacks,
+            ).getOrThrow()
+        }
+
+        recovery.handle!!.detach()
+        Thread.sleep(100)
+
+        assertFalse(client.hasActiveTurn())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
     }
 
     @Test

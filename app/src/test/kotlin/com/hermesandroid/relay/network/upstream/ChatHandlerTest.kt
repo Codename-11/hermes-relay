@@ -3,6 +3,10 @@ package com.hermesandroid.relay.network.upstream
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
+import com.hermesandroid.relay.data.ChatTurnCheckpoint
+import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
+import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
@@ -1448,6 +1452,73 @@ class ChatHandlerTest {
         val orphan = handler.messages.value.single { it.id == "realtime-agent-1" }
         assertEquals("spoken answer", orphan.content)
         assertFalse(orphan.realtimeTurn!!.syncedToServer)
+    }
+
+    @Test
+    fun restoreInFlightTurn_restoresThinkingAndToolState_withoutDuplicatingPersistedUser() {
+        handler.addUserMessage(createUserMessage("old-user", "Earlier"))
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "old-assistant",
+                role = MessageRole.ASSISTANT,
+                content = "Earlier answer",
+                timestamp = 2L,
+                isStreaming = true,
+            ),
+        )
+        handler.onStreamComplete("old-assistant")
+        // Models history having persisted the pending user before Android
+        // reopens; the restore must not append a second identical row.
+        handler.addUserMessage(createUserMessage("server-user", "Run the checks"))
+        val checkpoint = ChatTurnCheckpoint(
+            contextKey = "connection/profile",
+            sessionId = "stored-1",
+            liveSessionId = "live-1",
+            transport = "gateway",
+            user = ChatTurnUserCheckpoint("local-user", "Run the checks", 3L),
+            assistant = ChatTurnAssistantCheckpoint(
+                id = "assistant-live",
+                content = "I am checking",
+                timestamp = 4L,
+                thinkingContent = "Inspect the project first",
+                isThinkingStreaming = true,
+                toolCalls = listOf(
+                    ChatTurnToolCheckpoint(
+                        id = "tool-1",
+                        name = "terminal",
+                        isComplete = false,
+                        startedAt = 5L,
+                    ),
+                    ChatTurnToolCheckpoint(
+                        id = "tool-2",
+                        name = "search",
+                        result = "3 matches",
+                        success = true,
+                        isComplete = true,
+                        startedAt = 6L,
+                        completedAt = 7L,
+                    ),
+                ),
+            ),
+            turnStatus = "Running terminal",
+            priorUserMessageCount = 1,
+            baselineAssistantCount = 1,
+            startedAt = 4L,
+            updatedAt = 8L,
+        )
+
+        handler.restoreInFlightTurn(checkpoint, upstreamAssistantText = "I am checking the tests")
+
+        assertEquals(2, handler.messages.value.count { it.role == MessageRole.USER })
+        val restored = handler.messages.value.single { it.id == "assistant-live" }
+        assertEquals("I am checking the tests", restored.content)
+        assertEquals("Inspect the project first", restored.thinkingContent)
+        assertTrue(restored.isThinkingStreaming)
+        assertFalse(restored.toolCalls[0].isComplete)
+        assertTrue(restored.toolCalls[1].isComplete)
+        assertEquals(true, restored.toolCalls[1].success)
+        assertTrue(handler.isStreaming.value)
+        assertEquals("Running terminal", handler.turnStatus.value)
     }
 
     // --- Helper ---

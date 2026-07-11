@@ -29,6 +29,11 @@ Before release preparation, keep these owner/device gates explicit:
   and both must survive a socket-close/foreground history refresh without crossing
   into a different session or profile. Backgrounding with keep-alive disabled must
   also let the Gateway socket close normally instead of polling it back open.
+- Start a long Standard Chat turn, wait for visible reasoning plus at least one
+  running tool card, then background/force-stop/reopen the app. The same session
+  must restore its partial answer, thinking/status line, tool state, and any live
+  approval card; new deltas must continue without a duplicate prompt, and a turn
+  that finished while offline must settle from history instead of staying busy.
 - Exercise commands and presets on Standard and Realtime Voice, including ordinary
   prompts that resemble commands, explicit stop-vs-cancel behavior, Custom detection,
   and preservation of route/provider/model/voice/concurrency/barge-in choices.
@@ -75,15 +80,15 @@ Theme: stop treating a background run as an ephemeral voice-only side effect —
 surface it in chat like any other turn and keep its result. Overlaps the "Voice
 background-run v2" chip roadmap below (items 3/4/7) but reframed around
 chat/history rather than the voice chip; unify rather than build twice.
-- **First-class Chat task turn — CODE-COMPLETE for 1.4.1; device/cold-start
-  limits remain.** Promotion attaches a short objective title and running state to
+- **First-class Chat task turn — CODE-COMPLETE for 1.4.1; device verification
+  remains.** Promotion attaches a short objective title and running state to
   the existing assistant row; progress, queued count, waiting/delivery, completion,
   failure, cancellation, answer text, and expandable tool detail settle that same
-  identity. The authoritative answer persists in normal session history. Client-only
-  task-card metadata survives matched in-process history reconciliation but is not
-  reconstructed after a cold app restart because the server history schema does not
-  carry it. Verify the full live lifecycle and keep cold-start task metadata as a
-  separate durability decision rather than claiming it is solved.
+  identity. The authoritative answer persists in normal session history. The new
+  in-flight Chat checkpoint preserves client-only task-card metadata while a turn is
+  still running across a cold app restart. Metadata for an already-completed task is
+  still absent from the server history schema after the checkpoint is cleared; keep
+  that terminal-history case as a separate durability decision.
 - **Realtime agent retains background-result context in-session — FALLBACK PATH
   DONE + SEEDING LIVE-VERIFIED (2026-07-09); NO-RERUN VERIFY PENDING.** On a FALLBACK delivery the broker now
   seeds the delivered answer into the provider's history as an assistant turn

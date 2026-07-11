@@ -52,8 +52,9 @@ import java.util.concurrent.atomic.AtomicLong
  * in a background thread that keeps emitting on the id it was STARTED with,
  * regardless of WS state. So a mid-turn socket drop is recovered by
  * reconnecting the socket and KEEPING the in-flight session id (see
- * [attemptMidTurnRejoin]) — NOT by `session.resume`, which mints a brand-new
- * id + a fresh agent rebuilt from DB and would orphan the still-running turn.
+ * [attemptMidTurnRejoin]). Current upstream Hermes can also rebind a detached
+ * live session through `session.activate` / `session.resume`; the direct socket
+ * rejoin remains compatible with older gateways and avoids an extra RPC.
  * No background reconnect loops; a fresh send reconnects on demand.
  *
  * Auth: every connect attempt mints a FRESH single-use ws-ticket (30s TTL)
@@ -565,6 +566,10 @@ class GatewayChatClient(
      */
     fun hasActiveTurn(): Boolean = activeTurn?.ended == false
 
+    /** Live id to persist beside a durable stored id while a turn is active. */
+    fun currentLiveSessionId(storedId: String): String? =
+        liveSessionId?.takeIf { storedSessionId == storedId }
+
     /**
      * Point this client at a new dashboard route (e.g. LAN→Tailscale after a
      * sustained network change). If a turn is in flight, the current socket is
@@ -676,6 +681,124 @@ class GatewayChatClient(
             }
         }
         return sessionReady
+    }
+
+    /**
+     * Reattach callbacks to a turn that survived the Android UI/process.
+     *
+     * New Hermes gateways expose `session.activate`, which attaches the new
+     * WebSocket transport to the exact live id saved in the client checkpoint.
+     * If that id has already been reaped (or the method is unavailable), fall
+     * back to `session.resume` by durable session id. Its `running` + `inflight`
+     * fields decide whether a live mapper is installed or history should settle
+     * the turn instead.
+     */
+    suspend fun recoverTurn(
+        storedId: String,
+        preferredLiveId: String?,
+        callbacks: GatewayTurnCallbacks,
+    ): Result<GatewaySessionRecovery> = runCatching {
+        require(storedId.isNotBlank()) { "stored session id required" }
+        val requestedProfile = currentSessionProfile()
+        connectMutex.withLock {
+            val existing = activeTurn
+            if (existing != null && !existing.ended) {
+                throw GatewayRpcException("a gateway turn is already attached")
+            }
+            ensureConnected()
+
+            var response: JsonObject? = null
+            var boundTurn: GatewayTurn? = null
+
+            if (!preferredLiveId.isNullOrBlank()) {
+                // Bind before session.activate: upstream swaps the live session's
+                // transport during the RPC, so an immediate next delta must not
+                // fall through the active-turn gate while the ack is in flight.
+                liveSessionId = preferredLiveId
+                storedSessionId = storedId
+                liveSessionProfile = requestedProfile
+                boundTurn = GatewayTurn(
+                    callbacks = dispatchOn(callbacks),
+                    dedupeAdjacentMessageStarts = true,
+                ).also { turn ->
+                    turn.markRecoveredStarted()
+                    activeTurn = turn
+                }
+                val activated = rpc(
+                    "session.activate",
+                    buildJsonObject {
+                        put("session_id", preferredLiveId)
+                    },
+                )
+                response = activated.getOrNull()
+                if (response == null) {
+                    if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.detach()
+                    boundTurn = null
+                    Log.d(
+                        TAG,
+                        "Exact live-session activation unavailable; resuming durable session " +
+                            "(${activated.exceptionOrNull()?.message})",
+                    )
+                }
+            }
+
+            if (response == null) {
+                response = rpc(
+                    "session.resume",
+                    buildJsonObject {
+                        put("session_id", storedId)
+                        put("cols", DEFAULT_COLS)
+                        requestedProfile?.let { put("profile", it) }
+                    },
+                ).getOrElse { error -> throw error }
+            }
+
+            val recoveredLiveId = response.stringField("session_id")
+                ?: throw GatewayRpcException("session recovery returned no session_id")
+            liveSessionId = recoveredLiveId
+            storedSessionId = storedId
+            liveSessionProfile = requestedProfile
+            updateCancelledDrainLiveSession(storedId, recoveredLiveId)
+            (response["info"] as? JsonObject)?.let { applySessionInfo(it) }
+
+            val inflight = (response["inflight"] as? JsonObject)?.let { value ->
+                GatewayInflightTurn(
+                    user = value.stringField("user").orEmpty(),
+                    assistant = value.stringField("assistant").orEmpty(),
+                    streaming = value.booleanField("streaming") == true,
+                )
+            }
+            val running = response.booleanField("running") == true || inflight?.streaming == true
+
+            if (running) {
+                if (boundTurn == null || boundTurn.ended) {
+                    boundTurn = GatewayTurn(
+                        callbacks = dispatchOn(callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                    ).also { turn ->
+                        turn.markRecoveredStarted()
+                        activeTurn = turn
+                    }
+                }
+                boundTurn.armWatchdog()
+            } else {
+                if (boundTurn != null) {
+                    if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.detach()
+                }
+                boundTurn = null
+            }
+
+            GatewaySessionRecovery(
+                storedSessionId = storedId,
+                liveSessionId = recoveredLiveId,
+                running = running,
+                status = response.stringField("status"),
+                inflight = inflight,
+                handle = boundTurn?.takeUnless { it.ended },
+            )
+        }
     }
 
     /**
@@ -1165,12 +1288,9 @@ class GatewayChatClient(
         requestedProfile: String?,
         requestGeneration: Long,
     ) {
-        // Never resume while a turn is in flight: a resume mints a NEW live
-        // session id, and the running turn's events (still tagged with the
-        // OLD id) would then be filtered out as "foreign" — orphaning the
-        // turn and letting a stale reconcile repaint an earlier reply. This
-        // is the screen-return (prewarm) variant of the same hazard the
-        // mid-turn rejoin avoids by NOT resuming.
+        // Never change session binding while this client already owns a live
+        // mapper. Current upstream may reuse the same live session, while older
+        // builds mint a new id; either way the existing mapper owns recovery.
         if (activeTurn != null) return
         if (
             liveSessionId != null &&
@@ -1641,13 +1761,10 @@ class GatewayChatClient(
      * Recover an in-flight turn after a mid-turn socket loss by reconnecting
      * the SOCKET ONLY and keeping [preservedLiveId] as the live session id.
      *
-     * Why not `session.resume`: upstream resume mints a brand-new session id
-     * and rebuilds a fresh agent from persisted DB history — it does NOT
-     * reattach to the running turn's thread, which keeps emitting on the OLD
-     * id over the shared gateway stream. Resuming would point our event filter
-     * at the wrong id and orphan the turn (the server finishes it and the
-     * answer is dropped — confirmed on-device). A bare reconnect lets the tail
-     * — including the final `message.complete` — keep matching this turn.
+     * A bare reconnect lets the tail — including the final
+     * `message.complete` — keep matching without another RPC. Current upstream
+     * can rebind live sessions too, but older builds cannot, so this remains the
+     * lowest-common-denominator same-client recovery path.
      *
      * Retries with backoff for up to [midTurnRejoinWindowMs] so a multi-second
      * radio blip doesn't abandon the turn. Events emitted while the socket was
@@ -1919,6 +2036,11 @@ class GatewayChatClient(
             watchdog = null
         }
 
+        /** Recovery attaches after the original prompt.submit, so it is already started. */
+        fun markRecoveredStarted() {
+            started = true
+        }
+
         /** Transport-level failure after submit — surface as a stream error once. */
         fun failFromTransport(message: String) {
             disarmWatchdog()
@@ -1938,6 +2060,14 @@ class GatewayChatClient(
                 activeTurn = null
             }
             interruptServerSide()
+        }
+
+        override fun detach() {
+            if (ended) return
+            cancelled = true
+            disarmWatchdog()
+            tracer.done("detached")
+            if (activeTurn === this) activeTurn = null
         }
 
         private fun interruptServerSide() {
@@ -2117,3 +2247,6 @@ private fun Throwable?.isMethodNotFound(): Boolean {
 
 private fun JsonObject.stringField(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull
+
+private fun JsonObject.booleanField(key: String): Boolean? =
+    (get(key) as? JsonPrimitive)?.booleanOrNull

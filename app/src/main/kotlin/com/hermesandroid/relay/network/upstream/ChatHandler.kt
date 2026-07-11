@@ -2,9 +2,11 @@ package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.BackgroundTaskPhase
 import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
@@ -886,6 +888,136 @@ class ChatHandler {
         _messages.update { list ->
             (list + message).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
+    }
+
+    /**
+     * Rehydrate the last client-owned state of an unfinished turn.
+     *
+     * The caller loads server history first. That means the user row may already
+     * be present while the assistant row is not yet durable; positional matching
+     * avoids duplicating short repeated prompts. Rich assistant-only state is
+     * then restored so thinking and tool cards do not reset to an empty spinner.
+     */
+    fun restoreInFlightTurn(
+        checkpoint: ChatTurnCheckpoint,
+        upstreamAssistantText: String? = null,
+    ) {
+        val user = checkpoint.user
+        val assistant = checkpoint.assistant
+        val upstreamText = upstreamAssistantText.orEmpty()
+        val currentAssistant = _messages.value.lastOrNull { it.id == assistant.id }
+        val restoredContent = listOf(
+            assistant.content,
+            upstreamText,
+            currentAssistant?.content.orEmpty(),
+        ).maxByOrNull { it.length }.orEmpty()
+        val checkpointTools = assistant.toolCalls.map { tool ->
+            ToolCall(
+                id = tool.id,
+                name = tool.name,
+                args = null,
+                result = tool.result,
+                success = tool.success,
+                isComplete = tool.isComplete,
+                error = tool.error,
+                runId = tool.runId,
+                provenance = tool.provenance,
+                startedAt = tool.startedAt,
+                completedAt = tool.completedAt,
+                isGenerating = tool.isGenerating,
+                taskIndex = tool.taskIndex,
+                taskLabel = tool.taskLabel,
+            )
+        }
+        val currentTools = currentAssistant?.toolCalls.orEmpty()
+        val restoredTools = buildList {
+            checkpointTools.forEach { checkpointTool ->
+                val live = currentTools.firstOrNull {
+                    (it.id != null && it.id == checkpointTool.id) ||
+                        (it.id == null && checkpointTool.id == null &&
+                            it.name == checkpointTool.name &&
+                            it.taskIndex == checkpointTool.taskIndex)
+                }
+                add(live ?: checkpointTool)
+            }
+            currentTools.filterTo(this) { live ->
+                checkpointTools.none { checkpointTool ->
+                    (live.id != null && live.id == checkpointTool.id) ||
+                        (live.id == null && checkpointTool.id == null &&
+                            live.name == checkpointTool.name &&
+                            live.taskIndex == checkpointTool.taskIndex)
+                }
+            }
+        }
+        val restoredBackgroundTask = assistant.backgroundTask?.let { task ->
+            BackgroundTaskState(
+                id = task.id,
+                title = task.title,
+                tier = task.tier,
+                phase = runCatching { BackgroundTaskPhase.valueOf(task.phase) }
+                    .getOrDefault(BackgroundTaskPhase.RUNNING),
+                statusLine = task.statusLine,
+                completedToolCount = task.completedToolCount,
+                queuedCount = task.queuedCount,
+                startedAt = task.startedAt,
+            )
+        }
+        val restoredAssistant = ChatMessage(
+            id = assistant.id,
+            role = MessageRole.ASSISTANT,
+            content = restoredContent,
+            timestamp = assistant.timestamp,
+            isStreaming = true,
+            toolCalls = restoredTools,
+            thinkingContent = listOf(
+                assistant.thinkingContent,
+                currentAssistant?.thinkingContent.orEmpty(),
+            ).maxByOrNull { it.length }.orEmpty(),
+            isThinkingStreaming = currentAssistant?.isThinkingStreaming
+                ?: assistant.isThinkingStreaming,
+            inputTokens = currentAssistant?.inputTokens ?: assistant.inputTokens,
+            outputTokens = currentAssistant?.outputTokens ?: assistant.outputTokens,
+            totalTokens = currentAssistant?.totalTokens ?: assistant.totalTokens,
+            estimatedCost = currentAssistant?.estimatedCost ?: assistant.estimatedCost,
+            agentName = currentAssistant?.agentName ?: assistant.agentName ?: activeAgentName,
+            badges = (assistant.badges + currentAssistant?.badges.orEmpty()).distinct(),
+            cards = currentAssistant?.cards?.takeIf { it.isNotEmpty() } ?: assistant.cards,
+            cardDispatches = currentAssistant?.cardDispatches?.takeIf { it.isNotEmpty() }
+                ?: assistant.cardDispatches,
+            backgroundTask = currentAssistant?.backgroundTask ?: restoredBackgroundTask,
+        )
+
+        activeAgentName = restoredAssistant.agentName ?: activeAgentName
+        _messages.update { current ->
+            val withoutOldAssistant = current.filterNot { it.id == assistant.id }
+            val users = withoutOldAssistant.filter { it.role == MessageRole.USER }
+            val positionalUser = users.getOrNull(checkpoint.priorUserMessageCount)
+            val hasUser = withoutOldAssistant.any { it.id == user.id } ||
+                positionalUser?.content?.trim() == user.content.trim()
+            val withUser = if (hasUser) {
+                withoutOldAssistant
+            } else {
+                withoutOldAssistant + ChatMessage(
+                    id = user.id,
+                    role = MessageRole.USER,
+                    content = user.content,
+                    timestamp = user.timestamp,
+                )
+            }
+            val insertBeforeAsk = withUser.indexOfFirst {
+                it.clientOnly && it.id.startsWith("ask-")
+            }
+            val restored = if (insertBeforeAsk >= 0) {
+                withUser.toMutableList().apply { add(insertBeforeAsk, restoredAssistant) }
+            } else {
+                withUser + restoredAssistant
+            }
+            restored.let { list ->
+                if (list.size > MAX_MESSAGES) list.drop(list.size - MAX_MESSAGES) else list
+            }
+        }
+        _isStreaming.value = true
+        _turnStatus.value = checkpoint.turnStatus ?: "Reconnecting to the active turn…"
     }
 
     fun clearMessages() {
