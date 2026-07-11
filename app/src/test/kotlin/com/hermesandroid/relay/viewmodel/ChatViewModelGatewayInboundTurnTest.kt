@@ -3,6 +3,12 @@ package com.hermesandroid.relay.viewmodel
 import android.os.Handler
 import android.os.Looper
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
+import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
+import com.hermesandroid.relay.data.ChatTurnCheckpoint
+import com.hermesandroid.relay.data.ChatTurnCheckpointStore
+import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
+import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
@@ -43,6 +49,18 @@ import java.util.concurrent.atomic.AtomicInteger
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ChatViewModelGatewayInboundTurnTest {
+
+    private class MemoryCheckpointStore(
+        var checkpoint: ChatTurnCheckpoint? = null,
+    ) : ChatTurnCheckpointStore {
+        override suspend fun read(): ChatTurnCheckpoint? = checkpoint
+        override suspend fun write(checkpoint: ChatTurnCheckpoint) {
+            this.checkpoint = checkpoint
+        }
+        override suspend fun clear() {
+            checkpoint = null
+        }
+    }
 
     private lateinit var gatewayHarness: GatewayClientHarness
     private lateinit var apiServer: MockWebServer
@@ -226,6 +244,117 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun reopenedChatRestoresRichStateAndReattachesLiveGatewayTurn() {
+        val now = System.currentTimeMillis()
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = PROFILE_CONTEXT,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("pending-user", "Research this", now - 2_000L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "pending-assistant",
+                    content = "Partial",
+                    timestamp = now - 1_900L,
+                    thinkingContent = "Inspecting sources",
+                    isThinkingStreaming = true,
+                    toolCalls = listOf(
+                        ChatTurnToolCheckpoint(
+                            id = "tool-1",
+                            name = "terminal",
+                            isComplete = false,
+                            startedAt = now - 1_500L,
+                        ),
+                    ),
+                ),
+                turnStatus = "Running terminal",
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                pendingAsk = ChatTurnAskCheckpoint(
+                    kind = "APPROVAL",
+                    text = "Allow the command?",
+                    timeoutSeconds = 0,
+                    messageId = "ask-approval-1",
+                    cardKey = "approval-1",
+                    receivedAt = now - 1_000L,
+                ),
+                startedAt = now - 1_900L,
+                updatedAt = now,
+            ),
+        )
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Partial answer from upstream"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        // Cold process start: ConnectionViewModel's fresh handler has not yet
+        // adopted the persisted lastSessionId when the profile context binds.
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.messages.value.any { it.id == "pending-assistant" } &&
+                handler.isStreaming.value
+        }
+        val restored = handler.messages.value.single { it.id == "pending-assistant" }
+        assertEquals("Partial answer from upstream", restored.content)
+        assertEquals("Inspecting sources", restored.thinkingContent)
+        assertEquals("terminal", restored.toolCalls.single().name)
+        assertFalse(restored.toolCalls.single().isComplete)
+        assertEquals("Running terminal", handler.turnStatus.value)
+        assertEquals("approval-1", viewModel.pendingAsk.value?.cardKey)
+        assertTrue(handler.messages.value.any { it.id == "ask-approval-1" && it.cards.isNotEmpty() })
+        assertTrue(
+            handler.messages.value.indexOfFirst { it.id == "pending-assistant" } <
+                handler.messages.value.indexOfFirst { it.id == "ask-approval-1" },
+        )
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "tool.complete",
+                buildJsonObject {
+                    put("tool_id", "tool-1")
+                    put("name", "terminal")
+                    put("summary", "done")
+                },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", " and finished") },
+                "live-resumed",
+            ),
+        )
+        persistedHistory = listOf(
+            MessageItem(id = "server-user", role = "user", content = JsonPrimitive("Research this")),
+            MessageItem(
+                id = "server-assistant",
+                role = "assistant",
+                content = JsonPrimitive("Partial answer from upstream and finished"),
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Partial answer from upstream and finished") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { !handler.isStreaming.value }
+        shadowOf(Looper.getMainLooper()).idle()
+        awaitCondition { checkpointStore.checkpoint == null }
+        assertTrue(handler.messages.value.any {
+            it.role == MessageRole.ASSISTANT &&
+                it.content == "Partial answer from upstream and finished"
+        })
+    }
+
+    @Test
     fun lateCanceledCompletionDrainsBeforeImmediateNextTurn() {
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
         serverWs.send(
@@ -322,6 +451,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
         viewModel.prewarmGateway()
         gatewayHarness.awaitServerSocket()
+        gatewayHarness.awaitRpcCount("session.resume", 2)
 
         awaitCondition {
             handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
@@ -437,6 +567,7 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Idle }
         viewModel.prewarmGateway()
         serverWs = gatewayHarness.awaitServerSocket()
+        gatewayHarness.awaitRpcCount("session.resume", 2)
 
         // Reconnected midway through the synthetic turn: no message.start is
         // replayed, so the delta is intentionally ignored and completion drives
@@ -546,6 +677,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
     companion object {
         private const val STORED_SESSION_ID = "stored-session"
+        private const val PROFILE_CONTEXT = "connection-a/profile-default"
         private const val BACKGROUND_ANSWER = "Background task finished."
     }
 }

@@ -1890,3 +1890,43 @@ convention and `CLAUDE.md` prose, never by structure or test:
 - `.github/workflows/ci-android.yml` (boundary test in the explicit `--tests` list)
 - `.github/workflows/ci-contract.yml` (vanilla-upstream route-contract job)
 - `docs/plans/upstream-relay-isolation.md`
+
+## ADR 35 — In-flight Chat recovery is session-centric and client-checkpointed
+
+**Status:** Accepted (2026-07-10).
+
+**Context.** A session-backed agent turn can outlive Android's Activity, process,
+or WebSocket. Current upstream Hermes can reattach an exact live Gateway session
+and reports whether it is still running plus its user/partial-assistant text, but
+that server snapshot does not contain Android presentation state such as live
+reasoning, tool/subagent card phases, lifecycle captions, pending ask cards, or a
+client-owned background-task chip. Persisted history becomes authoritative only
+after the turn settles and therefore cannot restore the in-between UI.
+
+**Decision.** Treat Chat recovery as session-centric instead of request-centric:
+
+1. Persist at most one active, session-backed turn in the shared Android
+   DataStore, scoped by connection/profile context and durable session id, with a
+   24-hour expiry. Store the visible assistant state and server-issued ask, but
+   never an entered password/secret or approval response.
+2. On reopen, restore that UI immediately, then recover in this order: exact
+   `session.activate` using the saved live id; `session.resume` using the durable
+   id; bounded, positionally anchored history reconciliation.
+3. Separate **detach** from **cancel**. Lifecycle teardown releases local callbacks
+   without `session.interrupt`; explicit Stop and session/profile/connection
+   switches retain their interrupt-and-clear behavior.
+4. Apply the same history fallback to sessions-SSE transport drops and route
+   handoffs. A final persisted transcript replaces the checkpoint and clears it.
+
+**Consequences.** Reopening Chat can continue the same assistant bubble with its
+last-known reasoning and tool state instead of inventing a second prompt or empty
+spinner. Tool state that changed while no client was attached remains explicitly
+last-known until a new event or authoritative history reconcile arrives. Older
+Hermes builds without live activation degrade to durable history recovery.
+
+**Key files:**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/data/ChatTurnCheckpointStore.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/GatewayChatClient.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/ChatHandler.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt`

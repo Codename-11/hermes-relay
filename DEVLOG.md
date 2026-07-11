@@ -1,5 +1,42 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-10 — In-flight Chat turns recover across app recreation
+
+Current upstream Hermes can keep a running Dashboard/TUI Gateway session alive
+after its WebSocket transport disappears. `session.activate` rebinds an exact
+live session id, while `session.resume` can reuse a live session by its durable
+session key and returns `running`, `status`, and an `inflight` snapshot containing
+the user prompt plus partial assistant text. Those fields are enough to recover
+the live worker and transcript tail, but upstream intentionally does not persist
+Android's reasoning presentation, tool-card lifecycle, pending ask card, or
+client-owned background-task UI.
+
+Android now checkpoints one session-backed in-flight turn in the shared app
+DataStore. The snapshot is scoped by connection/profile and session, expires
+after 24 hours, and contains the user/assistant pair, partial answer, reasoning,
+tool and subagent states, lifecycle caption, background-task state, and the
+server-issued half of an interactive ask. Entered passwords/secrets are never
+written. Mutations are debounced during streaming and flushed immediately when
+the app backgrounds, when a tool/ask/session boundary changes, and during
+orderly ViewModel teardown.
+
+Returning to Chat first restores the rich local snapshot. Gateway sessions then
+activate the saved live id before accepting new deltas; if activation is absent
+or the live id has expired, Android resumes by durable session id. A running
+payload binds the normal event mapper so reasoning, tool, status, ask, and
+completion callbacks continue on the same bubble. A settled or unreachable
+worker uses the existing bounded, positionally anchored history recovery, which
+also covers sessions-SSE transport loss and route handoff. Explicit Stop and
+session/profile/connection changes retain their prior interrupt semantics and
+clear the checkpoint; lifecycle teardown detaches without sending
+`session.interrupt`.
+
+Regression coverage includes checkpoint round-trip/corruption/expiry, rich
+ChatHandler rehydration without duplicated repeated prompts, exact activation,
+durable-resume fallback, idle-session settlement, detach-without-interrupt, and
+a Robolectric reopen that continues reasoning/tool events and clears the saved
+turn after authoritative completion.
+
 ## 2026-07-10 — Gateway background processes become visible Chat activity
 
 Current upstream Hermes exposes a session-scoped process registry over the same
@@ -86,8 +123,8 @@ including local Voice commands, so delayed progress or delivery cannot settle a
 newer placeholder. Local pause, resume, stop, repeat, and cancel commands are
 removed from Chat history, quarantine their provider acknowledgement, and cannot
 become the target of Retry. The authoritative answer still persists through the
-existing session history; reconstructing client-only task-card metadata after a
-cold restart remains a separate durability follow-up.
+existing session history, and the in-flight Chat checkpoint now preserves the
+client-only task-card metadata across a cold restart.
 
 Streaming Markdown can promote blank-terminated prose and headings without
 waiting for the final response, while structurally ambiguous lists, quotes,

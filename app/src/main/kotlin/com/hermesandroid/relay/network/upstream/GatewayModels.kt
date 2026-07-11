@@ -81,7 +81,32 @@ fun resolveStreamingEndpointPreference(
  */
 fun interface ActiveTurnHandle {
     fun cancel()
+
+    /**
+     * Release this client's callbacks without interrupting server-side work.
+     * Gateway turns override this for process/UI teardown; transports that
+     * cannot be reattached retain their existing cancel behavior.
+     */
+    fun detach() = cancel()
 }
+
+/** Partial text checkpoint returned by current upstream Hermes on live resume. */
+data class GatewayInflightTurn(
+    val user: String,
+    val assistant: String,
+    val streaming: Boolean,
+)
+
+/** Result of reattaching Android to an existing durable Gateway session. */
+data class GatewaySessionRecovery(
+    val storedSessionId: String,
+    val liveSessionId: String,
+    val running: Boolean,
+    val status: String?,
+    val inflight: GatewayInflightTurn?,
+    /** Non-null only when subsequent turn events are bound to [GatewayTurnCallbacks]. */
+    val handle: ActiveTurnHandle?,
+)
 
 /**
  * One server-side interactive ask. The agent thread upstream is BLOCKED

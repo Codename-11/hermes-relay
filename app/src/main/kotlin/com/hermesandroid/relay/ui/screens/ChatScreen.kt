@@ -570,15 +570,15 @@ fun ChatScreen(
         connectionViewModel.resolveStreamingEndpoint(streamingEndpointPref) == "gateway"
     }
 
-    // Pre-warm the gateway (connect + resume the current session) whenever the
-    // chat surface is visible, the app is foregrounded, and the gateway is the
-    // resolved transport — so the first send is warm (tens of ms to first
-    // token) instead of paying the cold connect + session.resume on the send
-    // path. Best-effort / idempotent; re-fires on return-to-foreground.
+    // Recover any durable in-flight chat checkpoint whenever Chat returns to
+    // the foreground. On Gateway this also pre-warms/re-attaches the socket;
+    // sessions-SSE falls back to bounded persisted-history reconciliation.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
     LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
-        if (isGatewayTransport && appForeground && chatReady) {
+        if (appForeground && chatReady) {
             chatViewModel.prewarmGateway()
+        }
+        if (isGatewayTransport && appForeground && chatReady) {
             chatViewModel.refreshModelOptions()
             chatViewModel.refreshReasoningSettings()
         }
