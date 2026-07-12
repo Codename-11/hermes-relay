@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "canonical_locale": "en",
+  "verification_definitions": {
+    "canonical": "English source text that defines product meaning.",
+    "ai-translated": "AI-assisted translation that passed technical checks but has no recorded fluent review.",
+    "community-reviewed": "Reviewed or substantively corrected by at least one fluent contributor.",
+    "verified": "Comprehensively reviewed in context by a fluent contributor across the shipped surface."
+  },
+  "locales": {
+    "en": {
+      "native_name": "English",
+      "verification": "canonical",
+      "review_refs": [],
+      "surfaces": {
+        "android": "canonical",
+        "readme": "canonical",
+        "user_docs": "canonical"
+      }
+    },
+    "zh-Hans": {
+      "native_name": "简体中文",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "surfaces": {
+        "android": "complete",
+        "readme": "maintained-summary",
+        "user_docs": "core-pages"
+      }
+    }
+  }
+}

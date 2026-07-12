@@ -1,0 +1,53 @@
+name: Translation correction
+description: Report or propose a clearer translation for one locale.
+title: "[Translation]: "
+labels: ["translation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English defines the product meaning. Translation corrections are applied to the canonical locale catalog and credited through Git history.
+  - type: input
+    id: locale
+    attributes:
+      label: Language and locale
+      placeholder: Spanish (es), Simplified Chinese (zh-Hans), etc.
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Screen and current text
+      description: Name the screen, resource key if known, and current translated wording.
+    validations:
+      required: true
+  - type: textarea
+    id: correction
+    attributes:
+      label: Suggested correction
+      description: Include the corrected text and what the English source means in this context.
+    validations:
+      required: true
+  - type: dropdown
+    id: proficiency
+    attributes:
+      label: Language familiarity
+      options:
+        - Native speaker
+        - Fluent speaker
+        - Professional translator
+        - Learner or machine-assisted report
+        - Prefer not to say
+    validations:
+      required: true
+  - type: checkboxes
+    id: sensitive
+    attributes:
+      label: Sensitive meaning
+      options:
+        - label: This affects permissions, privacy, security, destructive actions, payments, or recovery instructions.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Optional screenshot, regional preference, or explanation of why the existing wording is misleading.

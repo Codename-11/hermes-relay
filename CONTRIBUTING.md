@@ -137,7 +137,11 @@ python scripts/check-android-locales.py
 ./gradlew lint
 ```
 
-Also identify a fluent reviewer or explain the device and language review used.
+Update `docs/localization-status.json` with the actual review level. AI-assisted
+translations may ship as `ai-translated`; do not claim fluent review unless a
+review reference is recorded. Focused correction PRs from fluent contributors
+are the canonical way to improve wording and can advance a locale to
+`community-reviewed` or `verified` under `docs/translation-playbook.md`.
 Translated READMEs use separate `README.<locale>.md` files; `README.md` remains
 the canonical project description. User docs may be added incrementally under
 `user-docs/<locale>/`, with links back to canonical English reference material.

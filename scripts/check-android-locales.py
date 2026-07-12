@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -13,9 +14,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_SRC = REPO_ROOT / "app" / "src"
+STATUS_PATH = REPO_ROOT / "docs" / "localization-status.json"
 LOCALE_DIR = re.compile(r"^values-(?:[a-z]{2,3}(?:-r[A-Z]{2})?|b\+[A-Za-z0-9+]+)$")
 PRINTF = re.compile(r"%(?:(\d+)\$)?[-#+ 0,(<]*\d*(?:\.\d+)?([A-Za-z%])")
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+VERIFICATION_STATES = {"canonical", "ai-translated", "community-reviewed", "verified"}
 
 
 @dataclass(frozen=True)
@@ -178,6 +181,60 @@ def validate_locale_config(errors: list[str]) -> None:
         )
 
 
+def validate_status_registry(errors: list[str]) -> None:
+    try:
+        data = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"{STATUS_PATH.relative_to(REPO_ROOT)}: cannot read status registry: {exc}", errors)
+        return
+
+    if data.get("schema_version") != 1:
+        fail("localization status schema_version must be 1", errors)
+    if data.get("canonical_locale") != "en":
+        fail("localization status canonical_locale must be 'en'", errors)
+
+    locales = data.get("locales")
+    if not isinstance(locales, dict):
+        fail("localization status locales must be an object", errors)
+        return
+
+    discovered = {
+        qualifier_to_tag(path.name)
+        for path in (APP_SRC / "main" / "res").iterdir()
+        if path.is_dir() and LOCALE_DIR.match(path.name) and (path / "strings.xml").is_file()
+    }
+    expected = {"en", *discovered}
+    if set(locales) != expected:
+        fail(
+            f"localization status locales {sorted(locales)} do not match shipped locales {sorted(expected)}",
+            errors,
+        )
+
+    for tag, entry in locales.items():
+        if not isinstance(entry, dict):
+            fail(f"localization status {tag!r} must be an object", errors)
+            continue
+        verification = entry.get("verification")
+        if verification not in VERIFICATION_STATES:
+            fail(f"localization status {tag!r} has invalid verification {verification!r}", errors)
+        if tag == "en" and verification != "canonical":
+            fail("English localization status must be canonical", errors)
+        if tag != "en" and verification == "canonical":
+            fail(f"non-English locale {tag!r} cannot be canonical", errors)
+        if not isinstance(entry.get("native_name"), str) or not entry["native_name"].strip():
+            fail(f"localization status {tag!r} requires native_name", errors)
+        review_refs = entry.get("review_refs")
+        if not isinstance(review_refs, list) or any(not isinstance(ref, str) for ref in review_refs):
+            fail(f"localization status {tag!r} review_refs must be a string array", errors)
+        elif verification in {"community-reviewed", "verified"} and not review_refs:
+            fail(f"localization status {tag!r} requires review_refs for {verification}", errors)
+        elif any(not ref.startswith("https://github.com/") for ref in review_refs):
+            fail(f"localization status {tag!r} review_refs must be GitHub URLs", errors)
+        surfaces = entry.get("surfaces")
+        if not isinstance(surfaces, dict) or surfaces.get("android") not in {"canonical", "complete"}:
+            fail(f"localization status {tag!r} must track the Android surface", errors)
+
+
 def main() -> int:
     errors: list[str] = []
     locale_count = sum(
@@ -186,6 +243,7 @@ def main() -> int:
         if source_set.is_dir()
     )
     validate_locale_config(errors)
+    validate_status_registry(errors)
     if locale_count == 0:
         errors.append("No Android locale catalogs were discovered")
     if errors:

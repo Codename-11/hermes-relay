@@ -4,6 +4,13 @@ English is the canonical product language. Android currently ships Simplified
 Chinese as `values-b+zh+Hans`; additional languages can be added without changing
 the runtime architecture.
 
+Translation coverage and linguistic verification are separate. Shipped locale
+status is recorded in `docs/localization-status.json` as `ai-translated`,
+`community-reviewed`, or `verified`. AI-assisted catalogs may ship after the
+technical gates pass; the status must not imply human review that did not occur.
+See `docs/translation-playbook.md` for the required translation and critique
+workflow.
+
 Users can switch between System default, English, and Simplified Chinese from
 Settings → Appearance → Language. The picker stays synchronized with Android's
 per-app language setting; Android 12 and lower use AppCompat's automatic locale
@@ -66,8 +73,8 @@ new UI cannot silently remain English.
 9. Test the locale on an emulator or device, including in-app and Android-system
    language switching, process restart, text expansion, and
    accessibility.
-10. Add the language to the README language links and update the translation
-   status table below.
+10. Add the language to the README language links and status registry. New
+   AI-assisted locales start as `ai-translated` with empty `review_refs`.
 
 ## README and user documentation
 
@@ -83,12 +90,16 @@ should link to the canonical English page rather than copying stale content.
 | User docs | Canonical | Quick start and core navigation |
 | Maintainer `docs/` and ADRs | Canonical | English fallback |
 
-## Translation pull requests
+## Translation corrections and pull requests
 
 Keep translation PRs scoped to one locale or one clearly described catalog
 refresh. Do not include signing changes, custom APK release workflows, version
-bumps, or fork-specific branding. The PR must identify a reviewer fluent in the
-target language or explain how the translation was verified.
+bumps, or fork-specific branding. AI-assisted translation is accepted when its
+method and verification state are recorded honestly. Fluent review is
+encouraged, not fabricated or treated as a prerequisite for initial coverage.
+Community correction PRs are the canonical way to fix misses; once reviewed,
+add their PR URLs to `review_refs` and advance the locale only to the
+verification level actually completed.
 
 If a valuable translation PR becomes too stale to merge safely, maintainers may
 salvage it onto current `dev` under the contributor-credit policy in
