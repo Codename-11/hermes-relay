@@ -63,6 +63,7 @@ class ChatStreamRecovery(
         val pollIntervalMs: Long = 5_000L,
         val maxPollIntervalMs: Long = 30_000L,
         val recoveryWindowMs: Long = 30L * 60_000L,
+        val maxConsecutiveFetchFailures: Int = 3,
     )
 
     enum class GiveUpReason {
@@ -72,6 +73,9 @@ class ChatStreamRecovery(
          * turn, or the transcript diverged. No answer can arrive; resend.
          */
         RUN_NOT_FOUND,
+
+        /** The profile-scoped transcript could not be read repeatedly. */
+        HISTORY_UNAVAILABLE,
 
         /** The recovery window elapsed without a stable answer. */
         TIMED_OUT,
@@ -119,6 +123,7 @@ class ChatStreamRecovery(
             var lastSignature: String? = null
             var lastSurfacedCount = -1
             var unanchoredPolls = 0
+            var consecutiveFetchFailures = 0
             while (elapsedMs < timing.recoveryWindowMs) {
                 delay(delayMs)
                 elapsedMs += delayMs
@@ -129,8 +134,14 @@ class ChatStreamRecovery(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
-                    continue // unreachable — keep waiting for the network
+                    consecutiveFetchFailures++
+                    if (consecutiveFetchFailures >= timing.maxConsecutiveFetchFailures) {
+                        onGaveUp(GiveUpReason.HISTORY_UNAVAILABLE)
+                        return@launch
+                    }
+                    continue
                 }
+                consecutiveFetchFailures = 0
                 if (items.isEmpty()) continue
 
                 when (val anchor = resolveAnchor(items, pending, priorUsers)) {
