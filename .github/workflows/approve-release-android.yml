@@ -1,0 +1,110 @@
+# Hermes-Relay-Android — explicit public release approval
+#
+# Run from main only after the private Play preflight is clean and the release
+# PR has merged. Creating the stable tag is the public release decision; the
+# tag-triggered release workflow submits Play first, then publishes GitHub.
+
+name: Approve Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Approved Android version (for example 1.4.3)"
+        required: true
+        type: string
+      confirm_play_checks:
+        description: "I reviewed and accept the Play pre-review and pre-launch results"
+        required: true
+        type: boolean
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: approve-android-release
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    name: Verify preflight and create release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate approval request
+        id: metadata
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          CONFIRM_PLAY_CHECKS: ${{ inputs.confirm_play_checks }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Approve Android Release must run from main, not $GITHUB_REF"
+            exit 1
+          fi
+          if [ "$CONFIRM_PLAY_CHECKS" != "true" ]; then
+            echo "::error::Play checks must be reviewed and explicitly accepted"
+            exit 1
+          fi
+
+          TOML_VERSION=$(grep -oP 'appVersionName\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
+          if [ "$REQUESTED_VERSION" != "$TOML_VERSION" ]; then
+            echo "::error::Requested version $REQUESTED_VERSION does not match appVersionName $TOML_VERSION"
+            exit 1
+          fi
+
+          echo "version=$TOML_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Verify this exact release tree passed Play preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_TREE: ${{ steps.metadata.outputs.tree }}
+        run: |
+          ARTIFACT_NAME="play-preflight-${VERSION}-${RELEASE_TREE}"
+          COUNT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
+            --jq '[.artifacts[] | select(.expired == false)] | length')
+          if [ "$COUNT" -lt 1 ]; then
+            echo "::error::No successful Play preflight found for version $VERSION with tree $RELEASE_TREE"
+            exit 1
+          fi
+          echo "Verified Play preflight proof: $ARTIFACT_NAME"
+
+      - name: Ensure release tag does not already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          if gh api "/repos/${GITHUB_REPOSITORY}/git/ref/tags/android-v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag android-v${VERSION} already exists"
+            exit 1
+          fi
+
+      - name: Create approved Android release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/android-v${VERSION}" \
+            -f sha="$GITHUB_SHA"
+
+      - name: Start the tag release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          gh workflow run release-android.yml \
+            --ref="android-v${VERSION}" \
+            -f version="$VERSION"
+
+      - name: Approval summary
+        run: |
+          echo "## Android release approved" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Created \`android-v${{ steps.metadata.outputs.version }}\` from main at \`$GITHUB_SHA\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "The release workflow was dispatched at that tag. It will submit the preflighted Play draft before creating the public GitHub Release." >> "$GITHUB_STEP_SUMMARY"

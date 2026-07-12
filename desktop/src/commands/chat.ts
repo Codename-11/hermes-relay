@@ -29,6 +29,7 @@ import { renderLogo } from '../lib/logo.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { deleteSession, saveSession } from '../remoteSessions.js'
+import { runRelayChatTurn, type RelayChatTurnHandle } from '../relayChat.js'
 import { CliRenderer } from '../renderer.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
@@ -400,6 +401,121 @@ async function readAllStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8').trim()
 }
 
+/** Opt-in Relay chat-channel mode. The default gateway/TUI path below remains
+ * unchanged; this mode exists for paired clients that want one WSS carrier and
+ * the first-class typed stream.event lifecycle. */
+async function runRelayChatMode(
+  args: ParsedArgs,
+  relay: RelayTransport,
+  renderer: CliRenderer,
+  tearDown: () => void
+): Promise<number> {
+  let sessionId = flag(args, 'conversation') ?? flag(args, 'session') ?? undefined
+  const profile = flag(args, 'profile') ?? undefined
+
+  const runPrompt = (prompt: string): RelayChatTurnHandle =>
+    runRelayChatTurn(relay, prompt, renderer, {
+      sessionId,
+      profile,
+      onSessionId: value => {
+        sessionId = value
+      }
+    })
+
+  process.stderr.write('Chat transport: Relay WSS typed stream v1\n')
+  if (sessionId) {
+    process.stderr.write(`Conversation ${sessionId}\n`)
+  }
+
+  const oneShotPrompt = args.positional.join(' ').trim()
+  if (oneShotPrompt) {
+    try {
+      await runPrompt(oneShotPrompt).promise
+      tearDown()
+      return 0
+    } catch (error) {
+      process.stderr.write(`\nerror: ${rpcErrorMessage(error)}\n`)
+      tearDown()
+      return 1
+    }
+  }
+
+  if (!process.stdin.isTTY) {
+    const piped = (await readAllStdin()).trim()
+    if (!piped) {
+      process.stderr.write('no input on stdin; exiting.\n')
+      tearDown()
+      return 0
+    }
+    try {
+      await runPrompt(piped).promise
+      tearDown()
+      return 0
+    } catch (error) {
+      process.stderr.write(`\nerror: ${rpcErrorMessage(error)}\n`)
+      tearDown()
+      return 1
+    }
+  }
+
+  process.stderr.write('\n' + renderLogo({ theme: makeTheme({ noColor: !!args.flags['no-color'] }) }))
+  process.stderr.write(
+    '\nRelay chat mode. Type a message, /help for commands, /quit to exit. Ctrl+C cancels and disconnects.\n'
+  )
+  const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true })
+  let currentTurn: RelayChatTurnHandle | null = null
+  let exitCode = 0
+  let interrupted = false
+
+  rl.on('SIGINT', () => {
+    if (currentTurn) {
+      interrupted = true
+      exitCode = 130
+      currentTurn.cancel()
+      currentTurn = null
+      process.stderr.write('\n[interrupted; relay chat disconnected]\n')
+      rl.close()
+    } else {
+      process.stderr.write('\nbye\n')
+      rl.close()
+    }
+  })
+
+  while (!interrupted) {
+    let line: string
+    try {
+      line = await rl.question('\n> ')
+    } catch {
+      break
+    }
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+    if (trimmed === '/quit' || trimmed === '/exit' || trimmed === ':q') {
+      break
+    }
+    if (trimmed === '/help') {
+      process.stderr.write('Commands: /help, /quit, /exit, :q\n')
+      continue
+    }
+
+    currentTurn = runPrompt(trimmed)
+    try {
+      await currentTurn.promise
+    } catch (error) {
+      process.stderr.write(`\nerror: ${rpcErrorMessage(error)}\n`)
+      exitCode = 1
+    } finally {
+      currentTurn = null
+    }
+  }
+
+  rl.close()
+  tearDown()
+  return exitCode
+}
+
 export async function chatCommand(args: ParsedArgs): Promise<number> {
   const renderer = new CliRenderer({
     json: !!args.flags.json,
@@ -468,6 +584,22 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
   }
 
   setupGracefulExit({ cleanups: [tearDown] })
+
+  if (args.flags['relay-chat']) {
+    // Authentication already completed in connectAndAuth(). The raw chat
+    // channel does not require the TUI gateway.ready/session RPC bootstrap.
+    const storedForBanner = await getSession(url)
+    const bannerRole = resolvedRole ?? storedForBanner?.endpointRole ?? null
+    process.stderr.write(
+      buildConnectBanner({
+        url,
+        serverVersion: relay.serverVersion,
+        meta: relay.authMeta,
+        endpointRole: bannerRole
+      }) + '\n'
+    )
+    return runRelayChatMode(args, relay, renderer, tearDown)
+  }
 
   const ready = waitForReady(gw)
   gw.start()

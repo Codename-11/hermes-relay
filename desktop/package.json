@@ -44,6 +44,7 @@
     "dev": "tsx src/cli.ts",
     "dev:install": "node scripts/dev-install.mjs",
     "type-check": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test tests/**/*.test.ts",
     "clean": "rimraf dist"
   },
   "engines": {

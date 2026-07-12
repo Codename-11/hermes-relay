@@ -8,13 +8,13 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.view.animation.DecelerateInterpolator
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.appcompat.app.AppCompatActivity
 import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
@@ -24,7 +24,7 @@ import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.NavRouteRequest
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     private val connectionViewModel: ConnectionViewModel by viewModels()
 

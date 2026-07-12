@@ -195,7 +195,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 **Decision:** Replace hardcoded slash command list with dynamic sources. Add a searchable command palette (bottom sheet) alongside inline autocomplete.
 
 **Why:**
-- Commands come from three sources: 29 gateway built-in commands (from `hermes_cli/commands.py` — `GATEWAY_KNOWN_COMMANDS`), dynamic personality commands (from `config.agent.personalities`), and server skills (from `GET /api/skills`).
+- Commands come from three sources: 29 gateway built-in commands (from `hermes_cli/commands.py` — `GATEWAY_KNOWN_COMMANDS`), dynamic personality commands (from `config.agent.personalities`), and server skills (from native `GET /v1/skills`).
 - The built-in gateway commands are currently hardcoded because hermes-agent has no `/api/commands` endpoint. This is a potential upstream contribution (see below).
 - The command palette provides browse-by-category, search, and multi-line descriptions — essential when there are 120+ commands.
 - Inline autocomplete remains for fast typing: type `/` and it filters immediately.
@@ -228,7 +228,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 **Sources:**
 - **Gateway built-ins** (29): from `hermes_cli/commands.py` `GATEWAY_KNOWN_COMMANDS`. Currently hardcoded — no API endpoint exists. See `docs/upstream-contributions.md` for a proposed `GET /api/commands`.
 - **Personalities**: generated dynamically from `GET /api/config` → `config.agent.personalities`.
-- **Skills**: fetched from `GET /api/skills` with name, description, and category.
+- **Skills**: fetched from native `GET /v1/skills` with name and description; legacy detail metadata is optional compatibility data.
 
 ### 11. Animated Splash Screen
 
@@ -1930,3 +1930,50 @@ Hermes builds without live activation degrade to durable history recovery.
 - `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/GatewayChatClient.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/ChatHandler.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt`
+
+## ADR 36 — Play preflight precedes public Android distribution
+
+**Status:** Accepted (2026-07-12).
+
+**Context.** The Android tag workflow historically created the public GitHub
+Release—including the installable sideload APK—before uploading a Production
+draft to Play. Play can surface compatibility and pre-launch failures only after
+an artifact is uploaded, so a Play-detected release blocker could arrive after
+the project had already committed publicly to the same version on GitHub. A
+manual Play rollout button did not protect the earlier sideload publication.
+
+**Decision.** Stable Android releases use two explicit phases:
+
+1. **Private Play preflight.** A manual workflow builds and signs final artifacts
+   from `dev` or untagged `main`, runs source and minified-DEX compatibility
+   checks, and uploads the Google Play AAB as a Production draft. It records a
+   short-lived proof keyed by version and Git tree hash; no GitHub Release or
+   public sideload APK is created.
+2. **Public approval.** After Play's pre-review and pre-launch results are
+   reviewed, a separate workflow on `main` requires explicit confirmation and
+   the exact preflighted tree. It creates the stable tag. The release workflow
+   changes the existing Production draft to `completed` first and creates the
+   public GitHub Release only after Play accepts that submission.
+
+The proof uses the Git tree rather than commit SHA so the required `dev` →
+`main` no-ff merge may create a different commit without invalidating identical
+release contents. Any content change invalidates approval and requires another
+private preflight.
+
+**Consequences.**
+
+- Play-detected blockers can stop a release before the sideload APK is public.
+- Stable tags cannot bypass missing preflight proof, changed contents, missing
+  Play credentials, or a failed Play production submission.
+- Pushing a stable tag remains a recovery path, but the tag workflow enforces
+  the same tree proof.
+- Play reports remain an additional signal, not a complete correctness proof;
+  local/CI tests and final DEX scanning remain mandatory.
+
+**Key files:**
+
+- `.github/workflows/play-preflight-android.yml`
+- `.github/workflows/approve-release-android.yml`
+- `.github/workflows/release-android.yml`
+- `scripts/check-android-collection-apis.py`
+- `RELEASE.md`

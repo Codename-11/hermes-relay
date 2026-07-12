@@ -1,18 +1,20 @@
-# Hermes-Relay-Android v1.4.2
+# Hermes-Relay-Android v1.4.3
 
 **Release Date:** July 11, 2026
 
-**Since v1.4.1:** Hermes-Relay now supports Simplified Chinese throughout the Android app. Android's per-app language settings can switch between English and Simplified Chinese, and the localization structure, validation, and contributor documentation make future languages easier to add safely.
+**Since v1.4.2:** The app language can now be changed directly from Settings → Appearance. Choose System default, English, or Simplified Chinese without leaving Hermes-Relay.
 
-v1.4.2 is recommended for Simplified Chinese users and anyone contributing a translation. This is an Android and documentation release; it does not require a relay plugin update. Standard chat and Vanilla Hermes voice remain compatible with unmodified upstream Hermes.
+v1.4.3 is recommended for multilingual users. The picker stays synchronized with Android's per-app language setting and persists the choice on Android 12 and lower. This Android-only patch does not require a relay plugin update.
+
+Release packaging now also rejects Java 21 list endpoint calls that are unavailable before Android API 35, covering both first-party Kotlin and bundled dependency bytecode.
 
 ---
 
 ## Download
 
-**Installing on your phone?** Download hermes-relay-1.4.2-sideload-release.apk and tap it — that's the direct-install build with the full feature set (installs as com.axiomlabs.hermesrelay.sideload). Prefer the conservative build (no Device Control surface)? Get it from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+**Installing on your phone?** Download hermes-relay-1.4.3-sideload-release.apk and tap it — that's the direct-install build with the full feature set (installs as com.axiomlabs.hermesrelay.sideload). Prefer the conservative build (no Device Control surface)? Get it from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
-The other file, hermes-relay-1.4.2-googlePlay-release.aab, is an Android App Bundle for uploading to Play Console — it **cannot** be installed by tapping it on a phone.
+The other file, hermes-relay-1.4.3-googlePlay-release.aab, is an Android App Bundle for uploading to Play Console — it **cannot** be installed by tapping it on a phone.
 
 Verify integrity with SHA256SUMS.txt from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 
@@ -20,22 +22,26 @@ Verify integrity with SHA256SUMS.txt from the same release. See the [Sideload gu
 
 ## Highlights
 
-### Simplified Chinese throughout the app
+### Change language without leaving the app
 
-- **Use the complete Android experience in Simplified Chinese.** Onboarding, connection setup, Chat, Manage, Voice, settings, diagnostics, notifications, accessibility labels, and both product flavors are localized.
-- **Switch languages with Android.** Supported Android versions expose English and Simplified Chinese through the system's per-app language settings; other versions follow the device language.
-- **Get locale-correct counts.** Connection scan results and queued-message counts use Android plurals instead of English-only suffix formatting.
+- **Pick the app language in Appearance.** System default, English, and 简体中文 are available in a wrapping, accessible selector.
+- **Stay synchronized with Android.** A selection made in Hermes-Relay appears in Android's per-app language setting, and a system-side selection is reflected in the app.
+- **Keep older devices supported.** AppCompat stores and restores the language choice on Android 12 and lower.
 
-### Translation support that can grow
+### Built for the existing localization system
 
-- **Prevent incomplete catalogs.** CI checks resource names, plural structure, and format-argument parity against canonical English resources.
-- **Start from documented conventions.** A localization guide, translated README, and Simplified Chinese user-doc entry points define how to add and maintain another language.
-- **Preserve contributor credit.** The contribution workflow documents how maintainers salvage valuable stale translation PRs onto current `dev` while retaining original authorship.
+- The picker reads the same English and Simplified Chinese catalogs introduced in 1.4.2.
+- Future locales use the same explicit registry: add the catalog, locale-configuration entry, picker label, and tag-resolution test.
+
+### Safer Android compatibility checks
+
+- Kotlin source checks reject `removeFirst()` and `removeLast()` list calls in favor of explicit indexed removal.
+- Release CI scans the final minified APK DEX, catching incompatible calls introduced by transitive dependencies or build-tool changes.
 
 ---
 
 ## Upgrade notes
 
-- App version: **1.4.2** (versionCode **24**).
+- App version: **1.4.3** (versionCode **25**).
 - No relay plugin update is required for localization support.
 - Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.

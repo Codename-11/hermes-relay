@@ -57,6 +57,7 @@ const BOOLEAN_FLAGS = new Set([
   'reveal-tokens',
   'raw',
   'no-tools',
+  'relay-chat',
   'grant-tools',
   'auto-grant-tools',
   'log-human',
@@ -194,6 +195,8 @@ Flags:
   --raw                  shell: skip auto-exec; drop into bare tmux/bash
   --watch-editor         shell/chat: poll tmux/$VSCODE and send active_editor hints every 5s
   --no-tools             chat/shell: disable local tool handlers (fs, exec, search)
+  --relay-chat           chat: use Relay chat.send + typed stream.event over WSS
+                         instead of the default TUI gateway session transport
   --experimental-computer-use
                          chat/shell/daemon: advertise experimental desktop_computer_*
                          tools (screenshots + mouse/keyboard). Three-stage safety:

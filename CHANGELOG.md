@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop chat can use Relay typed streaming over WSS.** The opt-in `--relay-chat` mode sends `chat.send`, renders typed `stream.event` v1 assistant/tool/artifact/memory/skill/error lifecycles, de-duplicates reconnect events, and preserves the existing gateway chat path as the default.
+
+## [1.4.3] - 2026-07-11
+
+### Added
+
+- **Language switching is available inside the app.** Settings → Appearance now offers System default, English, and Simplified Chinese, stays synchronized with Android's per-app language setting, and persists the choice on Android 12 and lower.
+
+### Fixed
+
+- **Release builds reject unsupported collection APIs.** CI now scans Kotlin sources and final minified APK bytecode for Java 21 list endpoint calls that can crash on Android versions before API 35.
+
 ## [1.4.2] - 2026-07-11
 
 ### Added
@@ -1534,7 +1548,8 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.2...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.3...HEAD
+[1.4.3]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.2...android-v1.4.3
 [1.4.2]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.1...android-v1.4.2
 [1.4.1]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.0...android-v1.4.1
 [1.4.0]: https://github.com/Codename-11/hermes-relay/compare/android-v1.3.0...android-v1.4.0

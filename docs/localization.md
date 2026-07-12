@@ -4,6 +4,11 @@ English is the canonical product language. Android currently ships Simplified
 Chinese as `values-b+zh+Hans`; additional languages can be added without changing
 the runtime architecture.
 
+Users can switch between System default, English, and Simplified Chinese from
+Settings → Appearance → Language. The picker stays synchronized with Android's
+per-app language setting; Android 12 and lower use AppCompat's automatic locale
+storage.
+
 ## Android resource contract
 
 - Canonical resources live in `app/src/main/res/values/strings.xml`.
@@ -49,13 +54,19 @@ new UI cannot silently remain English.
 2. Copy the English resource structure into the new locale directory.
 3. Add the BCP-47 tag to `app/src/main/res/xml/locales_config.xml` so Android
    13+ exposes the language in per-app system settings.
-4. Translate user-facing text while preserving resource names, markup, escapes,
+4. Add the language tag to `AppLanguage`, add its picker label to every catalog,
+   and cover tag resolution in `AppLanguageTest`. Use the language's own name
+   for its label so it remains recognizable after an accidental switch.
+5. Add the new option to the label map in `AppearanceSettingsScreen`.
+6. Translate user-facing text while preserving resource names, markup, escapes,
    and format arguments.
-5. Add any matching flavor catalogs.
-6. Run `python scripts/check-android-locales.py` and Android lint.
-7. Test the locale on an emulator or device, including text expansion and
+7. Add any matching flavor catalogs.
+8. Run `python scripts/check-android-locales.py`, the focused Android unit tests,
+   and Android lint.
+9. Test the locale on an emulator or device, including in-app and Android-system
+   language switching, process restart, text expansion, and
    accessibility.
-8. Add the language to the README language links and update the translation
+10. Add the language to the README language links and update the translation
    status table below.
 
 ## README and user documentation

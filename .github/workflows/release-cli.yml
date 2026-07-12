@@ -15,7 +15,7 @@ jobs:
       run:
         working-directory: desktop
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js (for npm ci + tsc)
         uses: actions/setup-node@v6
@@ -104,10 +104,10 @@ jobs:
       run:
         working-directory: desktop
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -176,13 +176,13 @@ jobs:
     steps:
       # Needed so CLI_RELEASE_NOTES.md is available to render into the release body
       # (the other publish-release steps only consume downloaded build artifacts).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Extract CLI version
         id: version
         run: echo "version=${GITHUB_REF_NAME#cli-v}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
 

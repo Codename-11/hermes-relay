@@ -361,7 +361,7 @@ Bottom navigation bar with 4 tabs:
   3. Remaining top-bar actions (session drawer hamburger, ambient toggle, etc.).
 - **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete.
 - **Chat view** — message bubbles with markdown rendering, streaming text, tool call cards (Off/Compact/Detailed display modes)
-- **Input bar** — text field with 4096 char limit, `/` palette button, send button, stop button during streaming. Inline autocomplete on `/` keystroke + full searchable command palette (bottom sheet). Commands sourced from: 29 gateway built-ins, dynamic personalities from `config.agent.personalities`, and server skills from `GET /api/skills`.
+- **Input bar** — text field with 4096 char limit, `/` palette button, send button, stop button during streaming. Inline autocomplete on `/` keystroke + full searchable command palette (bottom sheet). Commands sourced from: 29 gateway built-ins, dynamic personalities from `config.agent.personalities`, and server skills from native `GET /v1/skills`.
 - **Empty state** — Logo + "Start a conversation" + suggestion chips that populate input
 - **Agent sheet — Profile section (v0.6.0, updated 2026-05-18)** — upstream Hermes profiles auto-discovered by the relay at `~/.hermes/profiles/*/`. Selecting one routes chat/session calls to that profile's advertised `api_server_url` when present, giving proper Hermes isolation for sessions, memory, tools, provider auth, and SOUL/default model. If no profile API route is advertised, the app falls back to overlaying `model` + `SOUL.md` (as `system_message`) on the active Connection's API server. Selection is persisted per Connection/profile context. Hidden when the server advertises no profiles. See `docs/decisions.md` §21.
 - **Agent sheet — Personality section** — personalities fetched from `GET /api/config` (`config.agent.personalities`). Shows server default (from `config.display.personality`) + all configured. Active personality name shown on assistant chat bubbles.
@@ -504,7 +504,7 @@ Additional API endpoints used:
 5. DELETE /api/sessions/{session_id} → delete session
 6. GET /api/sessions/{session_id}/messages → fetch message history
 7. GET /api/config → personalities (for personality picker, `config.agent.personalities`)
-8. GET /api/skills → available skills (for command palette + autocomplete)
+8. GET /v1/skills → available skills (for command palette + autocomplete)
 ```
 
 Key classes:

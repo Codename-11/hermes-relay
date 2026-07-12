@@ -80,7 +80,7 @@ Commands are fetched dynamically from your server wherever possible:
   `/verbose`, `/voice`
 - **Info** — `/help`, `/status`, `/usage`, `/insights`, `/commands`
 - **Personalities** — generated from server config (`config.agent.personalities`)
-- **Skills** — fetched from `GET /api/skills`, grouped by category
+- **Skills** — fetched from native `GET /v1/skills`; legacy detail routes remain available only where the optional compatibility layer provides them
 
 ## Tool execution
 

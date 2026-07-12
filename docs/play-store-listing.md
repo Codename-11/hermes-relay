@@ -85,14 +85,15 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.2 - Simplified Chinese
+v1.4.3 - Language picker
 
 Language
-* Use onboarding, Chat, Manage, Voice, settings, diagnostics, and notifications in Simplified Chinese.
-* Switch between English and Simplified Chinese through Android's app-language settings.
+* Open Settings > Appearance to choose System default, English, or Simplified Chinese.
+* Your choice stays synchronized with Android's per-app language setting.
+* Android 12 and lower now persist the same in-app selection.
 
-Contributing
-* Locale validation and new contributor docs make future translations safer to add.
+Compatibility
+* Release builds now reject collection APIs that can crash on older Android versions.
 ```
 
 ## Category

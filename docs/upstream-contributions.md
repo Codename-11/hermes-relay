@@ -39,7 +39,7 @@ Improvements that would benefit hermes-relay (and other frontends) if added to [
 
 **Impact:** All frontends (hermes-relay, hermes-workspace, ClawPort) could dynamically show available commands without hardcoding. New commands added upstream would appear automatically.
 
-**Workaround (current):** 29 gateway commands hardcoded in `ChatScreen.kt`, manually synced with `hermes_cli/commands.py`. Personality commands generated from `GET /api/config`. Skills from `GET /api/skills`.
+**Workaround (current):** 29 gateway commands hardcoded in `ChatScreen.kt`, manually synced with `hermes_cli/commands.py`. Personality commands generated from `GET /api/config`. Skills come from native `GET /v1/skills`.
 
 ## 2. Personality Switching via Dedicated API Parameter
 

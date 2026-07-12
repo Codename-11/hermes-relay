@@ -51,7 +51,7 @@ jobs:
 
       - name: Checkout repository
         if: env.IS_RELEASE_PR != 'true' && env.IS_BOT_PR != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Depth 2 includes the pull_request merge commit's first parent, which
           # lets the next step detect whether this PR changes the workflow file.

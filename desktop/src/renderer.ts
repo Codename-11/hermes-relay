@@ -170,6 +170,29 @@ export class CliRenderer {
         return
       }
 
+      case 'artifact.created': {
+        if (this.opts.quiet) {
+          return
+        }
+        this.breakLine()
+        const title = ev.payload.title ?? ev.payload.path ?? 'artifact'
+        const target = ev.payload.url ?? ev.payload.path
+        const suffix = target ? ` ${this.c(ANSI.dim, `— ${target}`)}` : ''
+        process.stdout.write(`${this.c(ANSI.cyan, '↳')} ${this.c(ANSI.bold, title)}${suffix}\n`)
+        return
+      }
+
+      case 'memory.updated':
+      case 'skill.loaded': {
+        if (this.opts.quiet) {
+          return
+        }
+        const label = ev.type === 'memory.updated' ? 'memory updated' : 'skill loaded'
+        const detail = ev.payload.detail ? `: ${ev.payload.detail}` : ''
+        process.stderr.write(this.c(ANSI.dim, `[${label}${detail}]`) + '\n')
+        return
+      }
+
       case 'error': {
         this.breakLine()
         const msg = ev.payload?.message ?? 'unknown error'
