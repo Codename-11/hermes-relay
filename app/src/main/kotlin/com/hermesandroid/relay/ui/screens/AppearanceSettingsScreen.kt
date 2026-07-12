@@ -49,6 +49,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -68,6 +69,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.AppLanguage
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkin
@@ -201,6 +203,73 @@ fun AppearanceSettingsScreen(
                                 appTheme = appTheme,
                                 selected = appTheme.id == selectedTheme.id,
                                 onClick = { connectionViewModel.setAppTheme(appTheme.id) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Language section — AppCompat keeps this synchronized with the
+            // Android 13+ per-app language setting and persists it on older OSes.
+            Text(
+                text = stringResource(R.string.appearance_language),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme,
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.appearance_language_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    val selectedLanguage = AppLanguage.fromLanguageTags(
+                        AppCompatDelegate.getApplicationLocales().toLanguageTags(),
+                    )
+                    val languageLabels = mapOf(
+                        AppLanguage.SYSTEM_DEFAULT to stringResource(R.string.appearance_language_system),
+                        AppLanguage.ENGLISH to stringResource(R.string.appearance_language_english),
+                        AppLanguage.SIMPLIFIED_CHINESE to stringResource(R.string.appearance_language_simplified_chinese),
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        AppLanguage.entries.forEach { language ->
+                            FilterChip(
+                                selected = language == selectedLanguage,
+                                onClick = {
+                                    AppCompatDelegate.setApplicationLocales(language.toLocaleList())
+                                },
+                                label = { Text(languageLabels.getValue(language)) },
+                                leadingIcon = if (language == selectedLanguage) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Filled.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
                             )
                         }
                     }

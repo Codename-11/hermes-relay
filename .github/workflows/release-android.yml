@@ -11,9 +11,19 @@ on:
   push:
     tags:
       - "android-v*"
+  # Approve Android Release creates its tag with GITHUB_TOKEN, whose tag event
+  # does not recursively start workflows. It explicitly dispatches this file
+  # at that tag instead. Manual tag pushes continue to use the push trigger.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Approved Android version"
+        required: true
+        type: string
 
 permissions:
   contents: write
+  actions: read
   id-token: write
 
 jobs:
@@ -22,12 +32,26 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      version_code: ${{ steps.version.outputs.version_code }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/android-v}" >> $GITHUB_OUTPUT
+        env:
+          DISPATCHED_VERSION: ${{ inputs.version }}
+        run: |
+          REF_VERSION="${GITHUB_REF#refs/tags/android-v}"
+          if [ "$GITHUB_REF" = "$REF_VERSION" ]; then
+            REF_VERSION="$DISPATCHED_VERSION"
+          fi
+          if [ -n "$DISPATCHED_VERSION" ] && [ "$DISPATCHED_VERSION" != "$REF_VERSION" ]; then
+            echo "::error::Dispatched version $DISPATCHED_VERSION does not match ref version $REF_VERSION"
+            exit 1
+          fi
+          VERSION_CODE=$(grep -oP 'appVersionCode\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
+          echo "version=$REF_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Verify version sync
         run: |
@@ -44,13 +68,30 @@ jobs:
 
           echo "Version validated: $TAG_VERSION"
 
+      - name: Require successful Play preflight for this exact release tree
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          RELEASE_TREE=$(git rev-parse 'HEAD^{tree}')
+          ARTIFACT_NAME="play-preflight-${VERSION}-${RELEASE_TREE}"
+          COUNT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
+            --jq '[.artifacts[] | select(.expired == false)] | length')
+          if [ "$COUNT" -lt 1 ]; then
+            echo "::error::No successful Play preflight found for version $VERSION with tree $RELEASE_TREE"
+            echo "Run Play Preflight from the final dev tree, review Play's checks, merge that unchanged tree to main, then approve the release."
+            exit 1
+          fi
+          echo "Play preflight proof found: $ARTIFACT_NAME"
+
   ci:
     name: CI Checks
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -62,6 +103,12 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: false
+
+      - name: Validate release metadata and Android API compatibility
+        run: |
+          python3 scripts/check-version-tracks.py
+          python3 scripts/check-android-locales.py
+          python3 scripts/check-android-collection-apis.py
 
       # Keep the tag release gate aligned with CI — Android's broad Gradle
       # `test` aggregate currently hangs in deferred JVM suites tracked by
@@ -79,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -116,6 +163,12 @@ jobs:
         #   app/build/outputs/bundle/sideloadRelease/hermes-relay-<version>-sideload-release.aab
         run: ./gradlew bundleRelease assembleRelease
 
+      - name: Scan release DEX for unsupported collection APIs
+        run: |
+          python3 scripts/check-android-collection-apis.py \
+            --apk app/build/outputs/apk/googlePlay/release/*.apk \
+            --apk app/build/outputs/apk/sideload/release/*.apk
+
       - name: List produced artifacts (debug aid)
         run: |
           echo "=== APK outputs ==="
@@ -135,6 +188,32 @@ jobs:
           sha256sum apk/sideload/release/*.apk bundle/googlePlayRelease/*.aab > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      - name: Require Play credentials for stable release
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        if: ${{ !contains(needs.validate.outputs.version, '-') }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON is required for stable Android releases"
+            exit 1
+          fi
+
+      - name: Submit preflighted Play draft to production review
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        if: ${{ !contains(needs.validate.outputs.version, '-') }}
+        run: |
+          trap 'rm -f play-service-account.json' EXIT
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > play-service-account.json
+          ./gradlew promoteGooglePlayReleaseArtifact \
+            --update=production \
+            --version-code=${{ needs.validate.outputs.version_code }} \
+            --release-status=completed \
+            --release-name="Hermes-Relay ${{ needs.validate.outputs.version }}"
+
+      # Public distribution happens only after Play accepts the production
+      # submission above. This keeps a Play-detected release blocker from
+      # appearing after the sideload APK is already public.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -142,55 +221,12 @@ jobs:
           tag_name: android-v${{ needs.validate.outputs.version }}
           body_path: RELEASE_NOTES.md
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
-          # Deliberate 2-asset policy (#144): attach ONLY
-          # `hermes-relay-<version>-sideload-release.apk` (the file users
-          # install by tapping — full Device Control feature set) and
-          # `hermes-relay-<version>-googlePlay-release.aab` (the Play Console
-          # upload bundle — NOT tap-installable on a phone), plus the
-          # SHA256SUMS.txt covering exactly those two files. GitHub sorts
-          # assets alphabetically, so extra files made the non-installable
-          # .aab list first and confused new users. The parity twins
-          # (googlePlay APK, sideload AAB) are still BUILT by the step above
-          # and reproducible from the tag via CI, just not attached.
-          # NEVER rename the sideload APK: the in-app update checker
-          # (update/UpdateChecker.kt) matches assets by ".apk" + "sideload"
-          # in the name, and user-docs verify steps cite the filename.
+          # Deliberate 2-asset policy (#144): attach ONLY the installable
+          # sideload APK and Play AAB, plus checksums covering those files.
           files: |
             app/build/outputs/apk/sideload/release/*.apk
             app/build/outputs/bundle/googlePlayRelease/*.aab
             app/build/outputs/SHA256SUMS.txt
-
-      - name: Upload to Play Console (production draft)
-        env:
-          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
-          HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
-          HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
-        # Runs only when the Play service-account secret is configured AND this is
-        # a stable tag (prereleases — versions containing a dash — are skipped so
-        # an `-rc.N` build never lands on the production listing). HERMES_KEYSTORE_PATH
-        # was exported into $GITHUB_ENV by the "Decode release keystore" step above
-        # and persists across steps in this job, so the AAB is release-signed.
-        #
-        # `publishGooglePlayReleaseBundle` is the flavor-scoped task — only the
-        # googlePlay AAB is uploaded (sideload is disabled via playConfigs in
-        # app/build.gradle.kts). The play{} block pins releaseStatus = DRAFT, so the
-        # build lands on the Production track as a DRAFT: CI does the upload, a human
-        # clicks "Start rollout" in Play Console. A bad tag can never auto-go-live.
-        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON != '' && !contains(needs.validate.outputs.version, '-') }}
-        run: |
-          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > play-service-account.json
-          ./gradlew publishGooglePlayReleaseBundle --track=production
-          rm -f play-service-account.json
-
-      - name: Play upload skipped (no secret)
-        env:
-          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON == '' }}
-        run: |
-          echo "ℹ️  PLAY_SERVICE_ACCOUNT_JSON not set — skipped Play Console upload." \
-            "GitHub Release artifacts are still published; upload to Play manually" \
-            "(see RELEASE.md §5)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Release summary
         env:

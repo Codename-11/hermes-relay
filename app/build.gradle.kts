@@ -245,6 +245,7 @@ dependencies {
 
     // Activity
     implementation(libs.activity.compose)
+    implementation(libs.appcompat)
 
     // Core
     implementation(libs.core.ktx)

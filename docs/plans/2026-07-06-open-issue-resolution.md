@@ -20,7 +20,7 @@ never posts to GitHub on the owner's behalf.
 | #124 crash: NetworkOnMainThread on TLS teardown | **Fixed** — `802385c` (PR #125), shipped android-v1.2.3 | Owner closes |
 | #70 v1.0.0 force-close on connect | **Fixed** — keyset crash `48ddba5` (android-v1.1.0); in-thread TLS crash = #124, fixed android-v1.2.3 | Owner closes |
 | #94 Z Fold7 Play crash tracker | Hardening shipped — `a455e46` (android-v1.2.0); vitals confirmation pending | Owner: Play Console check, then close |
-| #121 desktop typed stream.event chat renderer | Feature, `cli-v*` track | Scheduled for next CLI release, not this batch |
+| #121 desktop typed stream.event chat renderer | Feature, `cli-v*` track | **Implemented on `dev` 2026-07-12**; remains in Desktop Unreleased for the next CLI tag |
 
 All tag-containment claims above were verified with `git merge-base --is-ancestor`,
 not taken from issue comments.
@@ -137,9 +137,9 @@ Independent of code fixes (docs that ride a code fix land on that branch):
    tag (with WS-E's release-format change already on `dev` so the new tag
    demonstrates it). #131/#129/#124/#70/#94 need closure only.
 3. **plugin-v1.3.1** — WS-B merges after the v1.3.0 tag exists.
-4. **CLI** — #121 is scheduled for the next `cli-v*` milestone (typed
-   `stream.event` renderer + golden-stream test; relay side already ships the
-   typed passthrough).
+4. **CLI** — #121 is implemented on `dev` (typed `stream.event` renderer,
+   Relay WSS chat mode, and golden-stream test; relay side already ships the
+   typed passthrough) and remains queued for the next `cli-v*` milestone.
 
 ## Verification gates
 

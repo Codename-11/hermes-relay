@@ -162,6 +162,12 @@ export type GatewayEvent =
   | { payload: { env_var: string; prompt: string; request_id: string }; session_id?: string; type: 'secret.request' }
   | { payload: { task_id: string; text: string }; session_id?: string; type: 'background.complete' }
   | { payload: { text: string }; session_id?: string; type: 'btw.complete' }
+  | {
+      payload: { path?: string; title?: string; url?: string }
+      session_id?: string
+      type: 'artifact.created'
+    }
+  | { payload: { detail?: string }; session_id?: string; type: 'memory.updated' | 'skill.loaded' }
   | { payload: SubagentEventPayload; session_id?: string; type: 'subagent.start' }
   | { payload: SubagentEventPayload; session_id?: string; type: 'subagent.thinking' }
   | { payload: SubagentEventPayload; session_id?: string; type: 'subagent.tool' }

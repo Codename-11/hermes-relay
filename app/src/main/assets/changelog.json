@@ -1,6 +1,21 @@
 {
  "versions": [
   {
+   "version": "1.4.3",
+   "title": "Language switching inside the app",
+   "date": "2026-07-11",
+   "sections": [
+    {
+     "header": "Language at your fingertips",
+     "bullets": [
+      "Choose System default, English, or Simplified Chinese from Settings → Appearance without leaving Hermes-Relay.",
+      "The picker stays synchronized with Android's per-app language setting and persists the choice on Android 12 and lower.",
+      "Release builds reject collection APIs that can crash on Android versions before API 35."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.2",
    "title": "Simplified Chinese and scalable localization",
    "date": "2026-07-11",

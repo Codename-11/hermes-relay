@@ -1,6 +1,6 @@
 [versions]
-appVersionName = "1.4.2"
-appVersionCode = "24"
+appVersionName = "1.4.3"
+appVersionCode = "25"
 agp = "9.2.1"
 kotlin = "2.4.0"
 compose-bom = "2026.06.01"
@@ -15,6 +15,7 @@ security-crypto = "1.1.0"
 tink-android = "1.16.0"
 lifecycle = "2.11.0"
 activity-compose = "1.13.0"
+appcompat = "1.7.1"
 core-ktx = "1.19.0"
 datastore = "1.2.1"
 splashscreen = "1.2.0"
@@ -53,6 +54,7 @@ lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-view
 
 # Activity
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
+appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 
 # Core
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }

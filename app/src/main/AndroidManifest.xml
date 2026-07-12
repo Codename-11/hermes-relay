@@ -40,7 +40,7 @@
             android:launchMode="singleTask"
             android:screenOrientation="portrait"
             tools:ignore="LockedOrientationActivity"
-            android:configChanges="uiMode|fontScale|locale|density|orientation|screenSize|screenLayout|keyboardHidden"
+            android:configChanges="uiMode|fontScale|density|orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.HermesRelay.Splash">
             <intent-filter>
@@ -48,6 +48,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- AppCompat persists in-app language choices on Android 12 and lower.
+             Android 13+ stores the same selection in the platform LocaleManager. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

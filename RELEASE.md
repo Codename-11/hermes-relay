@@ -485,11 +485,39 @@ prefixed `hermes-relay-<version>-` via `archivesName` in
 Optional device smoke test: `scripts\dev.bat release` then
 `adb install -r app\build\outputs\apk\sideload\release\hermes-relay-*-sideload-release.apk`.
 
-### 4. Commit on `dev`, merge to `main`, tag from `main`
+### 4. Run the private Play preflight from `dev`
 
-The release-prep commit lands on `dev` first. Then a release PR merges
-`dev` → `main` with `--no-ff`, and the `android-v<version>` tag is cut from the
-resulting merge commit on `main`:
+The release-prep commit lands on `dev` first. Before any public tag or GitHub
+Release exists, open **Actions → Play Preflight — Android**, choose **Run
+workflow**, select the final `dev` branch, and enter the prepared version.
+
+The preflight workflow:
+
+1. requires the workflow to run from `dev` or untagged `main` with matching
+   version metadata;
+2. runs the release metadata, locale, and Android collection-API checks;
+3. builds and release-signs the same APK/AAB variants used by the public release;
+4. scans the final minified APK DEX for unsupported collection calls;
+5. uploads the Google Play AAB as a private **Production draft**; and
+6. records a 30-day preflight proof keyed to the version and Git tree hash.
+
+No sideload APK or GitHub Release is published by preflight. Wait for Play's
+pre-review checks and pre-launch report, then review every error and warning.
+If the release source changes after preflight, rerun it—the approval workflow
+matches the complete Git tree, not just the version number.
+
+GitHub exposes manual workflows only after their workflow file exists on the
+default branch. For the first release that introduces this process, merge the
+release PR without creating a tag, run preflight from untagged `main`, review
+Play, and then use the approval workflow. This publishes no app artifacts before
+the Play review gate.
+
+### 5. Merge to `main` and approve the public release
+
+After Play preflight is acceptable, merge the release PR from `dev` to `main`
+with `--no-ff`. The merge commit may differ from the preflight commit, but its
+tree must be identical. If the merge changes the tree, rerun private preflight
+from untagged `main`:
 
 ```bash
 # From a clean dev checkout:
@@ -501,17 +529,22 @@ git add gradle/libs.versions.toml RELEASE_NOTES.md CHANGELOG.md \
 git commit -m "release(android): android-v0.6.2"
 git push origin dev
 
+# Run Play Preflight — Android from dev and review Play's results.
 # Open the release PR (dev -> main) and merge with --no-ff.
-# After merge, tag from the new main tip:
-git checkout main
-git pull --ff-only origin main
-git tag android-v0.6.2
-git push origin android-v0.6.2
 ```
 
-Pushing a tag matching `android-v*` triggers `.github/workflows/release-android.yml`,
-which builds, signs, checksums, and creates a GitHub Release. Watch the
-run under the **Actions** tab.
+Then open **Actions → Approve Android Release**, choose **Run workflow**, select
+`main`, enter the version, and check the Play-results confirmation box. The
+approval workflow verifies that `main` has the exact preflighted tree and creates
+the `android-v<version>` tag. Manual stable tags are still guarded by the same
+preflight proof in the tag workflow.
+
+The tag-triggered `.github/workflows/release-android.yml` rebuilds and scans the
+artifacts, changes the existing Play Production draft to `completed` (submitting
+it for review), and only after Play accepts that operation creates the public
+GitHub Release with the sideload APK. A missing preflight, changed release tree,
+missing Play credential, or Play submission failure prevents public GitHub
+publication.
 
 Plugin/Python version files are intentionally not part of an Android app
 release unless the plugin package itself is also being released.
@@ -553,20 +586,23 @@ touches more than one release surface. The workflow also runs plugin tests,
 builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates a GitHub
 Release named `Hermes-Relay-Plugin v<version>` for the plugin package.
 
-### 5. Upload to Play Console
+### 6. Play review and publishing behavior
 
-> **If `PLAY_SERVICE_ACCOUNT_JSON` is configured as a repo secret, this step is
-> automated for stable tags.** The release workflow runs
-> `publishGooglePlayReleaseBundle --track=production` and the build appears as a
-> Production **draft** — skip to the Play Console, confirm the draft, and click
-> **Start rollout**. The manual path below is the fallback when the secret is
-> unset (or for staging on a non-production track).
+> **Stable Android releases require `PLAY_SERVICE_ACCOUNT_JSON`.** Preflight
+> uploads the Production draft; approval promotes that same version code to
+> `completed`. Stable releases no longer fall back to publishing GitHub first
+> when Play credentials or submission are unavailable.
 >
-> This automated tag path is intentionally bundle-only. It uploads the
+> This automated path is intentionally bundle-only. It uploads the
 > `googlePlayRelease` AAB and release-scoped "What's new" notes, but it does
 > not republish static listing assets such as screenshots, title, description,
 > icon, or feature graphic. Use the Play Store Listing workflow when those
 > assets change.
+
+If Play Console **Managed publishing** is enabled, an approved submission remains
+under **Changes ready to publish** until a Play Console user publishes it. If it
+is disabled, the production submission may become available after Google review.
+Either behavior begins only after the public-release approval described above.
 
 **Pick the track first.** The AAB is track-agnostic — the same
 `-googlePlay-release.aab` goes to whichever track you publish on. Choose by intent,
@@ -614,7 +650,7 @@ To promote an existing release between tracks without rebuilding:
 gradlew promoteReleaseArtifact --from-track=internal --promote-track=alpha
 ```
 
-### 6. Tracks (a menu, not a mandatory ladder)
+### 7. Tracks (a menu, not a mandatory ladder)
 
 The org account is exempt from the 14-day / 12-tester closed-testing rule, so a
 stable GA publishes **straight to Production** — there is no required promotion
@@ -633,7 +669,7 @@ the Play Console UI or:
 gradlew promoteReleaseArtifact --from-track=internal --promote-track=production
 ```
 
-### 7. After release
+### 8. After release
 
 - Verify the GitHub Release has APK, AAB, and `SHA256SUMS.txt` attached.
 - Confirm the release body includes the **Download** section that tells

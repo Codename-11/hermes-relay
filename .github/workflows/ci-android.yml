@@ -26,7 +26,11 @@ on:
       - "gradlew"
       - "gradlew.bat"
       - "scripts/check-android-locales.py"
+      - "scripts/check-android-collection-apis.py"
       - ".github/workflows/ci-android.yml"
+      - ".github/workflows/play-preflight-android.yml"
+      - ".github/workflows/approve-release-android.yml"
+      - ".github/workflows/release-android.yml"
   pull_request:
     branches: [main, dev]
     paths:
@@ -38,7 +42,11 @@ on:
       - "gradlew"
       - "gradlew.bat"
       - "scripts/check-android-locales.py"
+      - "scripts/check-android-collection-apis.py"
       - ".github/workflows/ci-android.yml"
+      - ".github/workflows/play-preflight-android.yml"
+      - ".github/workflows/approve-release-android.yml"
+      - ".github/workflows/release-android.yml"
 
 # Cancel in-progress runs for the same branch/PR, but let main and dev finish
 concurrency:
@@ -55,7 +63,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -71,6 +79,9 @@ jobs:
       - name: Validate translation catalogs
         run: python3 scripts/check-android-locales.py
 
+      - name: Reject unsafe Android collection APIs
+        run: python3 scripts/check-android-collection-apis.py
+
       - name: Run Android lint
         run: ./gradlew lint --console=plain
 
@@ -84,7 +95,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -128,7 +139,7 @@ jobs:
     continue-on-error: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -153,6 +164,7 @@ jobs:
             --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
             --tests com.hermesandroid.relay.util.ServerAddressTest \
             --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
+            --tests com.hermesandroid.relay.data.AppLanguageTest \
             --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
             --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
             --tests com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest \
@@ -191,7 +203,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -209,3 +221,9 @@ jobs:
       # smoke; the goal is to exercise the build, not to produce a shippable AAB.
       - name: Build release bundles + APKs (both flavors, debug-signed)
         run: ./gradlew bundleRelease assembleRelease --console=plain
+
+      - name: Scan release DEX for unsupported collection APIs
+        run: |
+          python3 scripts/check-android-collection-apis.py \
+            --apk app/build/outputs/apk/googlePlay/release/*.apk \
+            --apk app/build/outputs/apk/sideload/release/*.apk

@@ -343,6 +343,27 @@ The /tmp directory contains …
 
 Ctrl+C during a turn interrupts that turn (via `session.interrupt`). Ctrl+C at the empty prompt exits.
 
+#### Relay WSS typed-stream mode
+
+`chat` keeps the gateway/TUI session path above as its default. Paired clients
+that want chat, tools, and lifecycle events on the single Relay WebSocket can
+opt into the Relay `chat` channel:
+
+```sh
+hermes-relay chat --relay-chat "run the tests and summarize failures"
+hermes-relay chat --relay-chat --conversation <session-id>
+printf 'summarize this input' | hermes-relay chat --relay-chat
+```
+
+This mode sends `chat.send` and consumes versioned `chat:stream.event` v1
+envelopes. Assistant deltas stream normally; progress, pending/started/completed
+tools, artifacts, memory/skill notices, errors, and terminal completion retain
+their distinct CLI affordances. Duplicate sequence numbers are ignored and gaps
+are surfaced as subdued status warnings. A fresh session is created when no
+conversation id is supplied. Since chat-channel v1 has no interrupt envelope,
+Ctrl+C cancels by closing the Relay connection instead of leaving late events to
+bleed into another turn.
+
 ### Chat — one-shot
 
 ```sh
