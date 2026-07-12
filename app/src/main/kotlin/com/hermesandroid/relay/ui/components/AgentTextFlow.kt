@@ -72,12 +72,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
-import com.hermesandroid.relay.ui.theme.RelayRefresh
 import kotlinx.coroutines.delay
+import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.RelayRefresh
 
 // --- Text-flow tuning constants -------------------------------------------
 //
@@ -453,7 +455,7 @@ private fun CleanModeComposer(
                     Box(contentAlignment = Alignment.CenterStart) {
                         if (text.isEmpty()) {
                             Text(
-                                text = "Message",
+                                text = stringResource(R.string.agent_text_placeholder),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = RelayRefresh.Dim,
                             )
@@ -469,7 +471,7 @@ private fun CleanModeComposer(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
+                    contentDescription = stringResource(R.string.agent_text_send_cd),
                     tint = if (canSend) {
                         MaterialTheme.colorScheme.primary
                     } else {
@@ -550,8 +552,9 @@ fun CleanChatMode(
 
     BackHandler(enabled = true) { onExit() }
 
+    val sphereDescLabel = stringResource(R.string.agent_text_sphere_desc)
     val sphereDescription = remember(sphereState) {
-        "Agent ${sphereState.name.lowercase()}"
+        "$sphereDescLabel ${sphereState.name.lowercase()}"
     }
 
     Box(
@@ -589,7 +592,7 @@ fun CleanChatMode(
                 IconButton(onClick = onExit) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Exit clean mode",
+                        contentDescription = stringResource(R.string.agent_text_exit_clean),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

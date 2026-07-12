@@ -23,6 +23,11 @@ export default defineConfig({
   title: 'Hermes-Relay',
   description: 'Hermes-Relay — the Android companion and remote-hands CLI for your Hermes agent. Runs on your machine; lives on your devices.',
 
+  locales: {
+    root: { label: 'English', lang: 'en' },
+    'zh-CN': { label: '简体中文', lang: 'zh-CN', link: '/zh-CN/' },
+  },
+
   head: [
     // Favicon — base path is NOT auto-applied to head entries in VitePress,
     // so hard-prefix with /hermes-relay/ to match the GitHub Pages deploy.
@@ -63,6 +68,50 @@ export default defineConfig({
 
   themeConfig: {
     logo: '/logo.svg',
+
+    locales: {
+      root: {
+        label: 'English',
+        selectText: 'Languages',
+      },
+      'zh-CN': {
+        label: '简体中文',
+        selectText: '语言',
+        nav: [
+          { text: '快速开始', link: '/zh-CN/guide/quick-start' },
+          { text: '功能', link: '/zh-CN/features/' },
+          { text: '英文参考', link: '/reference/api' },
+          { text: 'GitHub', link: 'https://github.com/Codename-11/hermes-relay' },
+        ],
+        sidebar: {
+          '/zh-CN/': [
+            {
+              text: 'Hermes-Relay',
+              items: [
+                { text: '概览', link: '/zh-CN/' },
+                { text: '快速开始', link: '/zh-CN/guide/quick-start' },
+                { text: '功能概览', link: '/zh-CN/features/' },
+              ],
+            },
+            {
+              text: '英文参考',
+              items: [
+                { text: '完整用户指南', link: '/guide/' },
+                { text: '远程访问', link: '/guide/remote-access' },
+                { text: '故障排除', link: '/guide/troubleshooting' },
+                { text: 'API 参考', link: '/reference/api' },
+              ],
+            },
+          ],
+        },
+        outlineTitle: '本页内容',
+        docFooter: { prev: '上一页', next: '下一页' },
+        returnToTopLabel: '返回顶部',
+        sidebarMenuLabel: '菜单',
+        darkModeSwitchLabel: '外观',
+        lastUpdatedText: '最后更新',
+      },
+    },
 
     nav: [
       {

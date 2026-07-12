@@ -55,12 +55,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
@@ -130,29 +132,29 @@ fun ActiveCardStandardStatusSection(
     )
 
     ConnectionStatusRow(
-        label = "API Server",
+        label = stringResource(R.string.active_section_api_server),
         isConnected = apiReachable,
         isProbing = apiHealth == ConnectionViewModel.HealthStatus.Probing,
         statusText = when {
-            apiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking…"
-            apiReachable -> "Reachable"
-            else -> "Unreachable"
+            apiHealth == ConnectionViewModel.HealthStatus.Probing -> stringResource(R.string.active_section_checking)
+            apiReachable -> stringResource(R.string.active_section_reachable)
+            else -> stringResource(R.string.active_section_unreachable)
         },
         onClick = onOpenApiInfo,
         modifier = Modifier.fillMaxWidth(),
     )
 
     ConnectionStatusRow(
-        label = "Dashboard",
+        label = stringResource(R.string.active_section_dashboard),
         isConnected = dashboardStatus?.reachable == true && !dashboardSignInRequired,
         statusText = when {
-            activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> "Not configured"
-            dashboardStatus == null -> "Not checked"
-            !dashboardStatus.reachable -> "Unreachable"
-            dashboardSignInRequired -> "Sign-in required"
-            dashboardStatus.authenticated == true -> "Signed in"
-            dashboardStatus.authRequired == false -> "Available"
-            else -> "Available"
+            activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> stringResource(R.string.active_section_not_configured)
+            dashboardStatus == null -> stringResource(R.string.active_section_not_checked)
+            !dashboardStatus.reachable -> stringResource(R.string.active_section_unreachable)
+            dashboardSignInRequired -> stringResource(R.string.active_section_sign_in_required)
+            dashboardStatus.authenticated == true -> stringResource(R.string.active_section_signed_in)
+            dashboardStatus.authRequired == false -> stringResource(R.string.active_section_available)
+            else -> stringResource(R.string.active_section_available)
         },
         onClick = onOpenDashboard,
         modifier = Modifier.fillMaxWidth(),
@@ -165,13 +167,13 @@ fun ActiveCardStandardStatusSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Dashboard controls need a sign-in for this route.",
+                text = stringResource(R.string.active_section_dashboard_sign_in_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onOpenDashboard) {
-                Text("Sign in")
+                Text(stringResource(R.string.active_section_sign_in))
             }
         }
     }
@@ -194,18 +196,22 @@ fun ActiveCardRelayStatusSection(
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val relayRowState by connectionViewModel.relayRowState.collectAsState()
 
+    // Pre-resolve strings for Toast (non-composable context)
+    val reconnectingRelayToast = stringResource(R.string.active_section_reconnecting_relay)
+    val connectedLabel = stringResource(R.string.conn_info_connected)
+
     // ADR 24: relayRowState carries both the phase and the active endpoint
     // role. statusText appends " · <Role>" when the resolver has picked one.
     ConnectionStatusRow(
-        label = "Relay",
+        label = stringResource(R.string.active_section_relay),
         state = relayRowState.asBadgeState(),
-        statusText = relayRowState.statusText(connectedLabel = "Connected"),
+        statusText = relayRowState.statusText(connectedLabel = connectedLabel),
         onClick = {
             if (relayUiState == RelayUiState.Stale) {
                 connectionViewModel.connectRelay()
                 Toast.makeText(
                     context,
-                    "Reconnecting to relay…",
+                    reconnectingRelayToast,
                     Toast.LENGTH_SHORT,
                 ).show()
             } else {
@@ -215,15 +221,21 @@ fun ActiveCardRelayStatusSection(
         modifier = Modifier.fillMaxWidth(),
     )
 
+    // Pre-resolve strings for Session status
+    val pairedLabel = stringResource(R.string.conn_info_paired)
+    val pairingLabel = stringResource(R.string.conn_info_pairing)
+    val unpairedLabel = stringResource(R.string.conn_info_unpaired)
+    val failedReasonLabel = stringResource(R.string.active_section_failed_reason)
+
     ConnectionStatusRow(
-        label = "Session",
+        label = stringResource(R.string.active_section_session),
         isConnected = authState is AuthState.Paired,
         isConnecting = authState is AuthState.Pairing,
         statusText = when (authState) {
-            is AuthState.Paired -> "Paired"
-            is AuthState.Pairing -> "Pairing..."
-            is AuthState.Unpaired -> "Unpaired"
-            is AuthState.Failed -> "Failed: ${(authState as AuthState.Failed).reason}"
+            is AuthState.Paired -> pairedLabel
+            is AuthState.Pairing -> pairingLabel
+            is AuthState.Unpaired -> unpairedLabel
+            is AuthState.Failed -> failedReasonLabel.format((authState as AuthState.Failed).reason)
         },
         onClick = onOpenSessionInfo,
         modifier = Modifier.fillMaxWidth(),
@@ -261,38 +273,39 @@ fun ActiveCardFeaturesSection(
         activeConnection?.routeCandidates.orEmpty().any { it.hasSecureProxy() }
 
     val apiValue = when {
-        apiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking"
-        apiReachable -> "Ready"
-        activeConnection?.apiServerUrl.isNullOrBlank() -> "Missing"
-        else -> "Offline"
+        apiHealth == ConnectionViewModel.HealthStatus.Probing -> stringResource(R.string.active_section_checking)
+        apiReachable -> stringResource(R.string.active_section_ready)
+        activeConnection?.apiServerUrl.isNullOrBlank() -> stringResource(R.string.active_section_missing)
+        else -> stringResource(R.string.active_section_offline)
     }
-    val apiTone = when (apiValue) {
-        "Ready" -> CapabilityTone.Good
-        "Offline", "Missing" -> CapabilityTone.Warning
-        else -> CapabilityTone.Neutral
+    val apiTone = when {
+        apiReachable -> CapabilityTone.Good
+        apiHealth == ConnectionViewModel.HealthStatus.Probing -> CapabilityTone.Neutral
+        else -> CapabilityTone.Warning
     }
 
     val dashboardValue = when {
-        activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> "Missing"
-        dashboardStatus == null -> "Unchecked"
-        !dashboardStatus.reachable -> "Offline"
-        dashboardSignInRequired -> "Sign in"
-        dashboardStatus.authenticated == true -> "Signed in"
-        else -> "Available"
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> stringResource(R.string.active_section_missing)
+        dashboardStatus == null -> stringResource(R.string.active_section_unchecked)
+        !dashboardStatus.reachable -> stringResource(R.string.active_section_offline)
+        dashboardSignInRequired -> stringResource(R.string.active_section_sign_in)
+        dashboardStatus.authenticated == true -> stringResource(R.string.active_section_signed_in)
+        else -> stringResource(R.string.active_section_available)
     }
-    val dashboardTone = when (dashboardValue) {
-        "Signed in", "Available" -> CapabilityTone.Good
-        "Sign in" -> CapabilityTone.Info
-        "Offline", "Missing" -> CapabilityTone.Warning
+    val dashboardTone = when {
+        dashboardStatus?.authenticated == true -> CapabilityTone.Good
+        dashboardStatus?.reachable == true && !dashboardSignInRequired -> CapabilityTone.Good
+        dashboardSignInRequired -> CapabilityTone.Info
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() || dashboardStatus?.reachable != true -> CapabilityTone.Warning
         else -> CapabilityTone.Neutral
     }
 
     val voiceValue = when (standardVoiceAvailability) {
-        StandardVoiceAvailability.Ready -> "Ready"
-        StandardVoiceAvailability.SignInRequired -> "Sign in"
-        StandardVoiceAvailability.Unsupported -> "Unsupported"
-        StandardVoiceAvailability.Unreachable -> "Offline"
-        StandardVoiceAvailability.Unknown -> "Checking"
+        StandardVoiceAvailability.Ready -> stringResource(R.string.active_section_ready)
+        StandardVoiceAvailability.SignInRequired -> stringResource(R.string.active_section_sign_in)
+        StandardVoiceAvailability.Unsupported -> stringResource(R.string.active_section_unsupported)
+        StandardVoiceAvailability.Unreachable -> stringResource(R.string.active_section_offline)
+        StandardVoiceAvailability.Unknown -> stringResource(R.string.active_section_checking)
     }
     val voiceTone = when (standardVoiceAvailability) {
         StandardVoiceAvailability.Ready -> CapabilityTone.Good
@@ -303,11 +316,11 @@ fun ActiveCardFeaturesSection(
     }
 
     val relayValue = when {
-        !relayEnabled -> "Disabled"
-        !relayConfigured -> "Optional"
-        relayReady -> "Ready"
-        relayUiState == RelayUiState.Stale -> "Reconnect"
-        else -> "Configured"
+        !relayEnabled -> stringResource(R.string.active_section_disabled)
+        !relayConfigured -> stringResource(R.string.active_section_optional)
+        relayReady -> stringResource(R.string.active_section_ready)
+        relayUiState == RelayUiState.Stale -> stringResource(R.string.active_section_reconnect)
+        else -> stringResource(R.string.active_section_configured)
     }
     val relayTone = when {
         !relayEnabled || !relayConfigured -> CapabilityTone.Neutral
@@ -317,19 +330,27 @@ fun ActiveCardFeaturesSection(
     }
 
     val terminalValue = when {
-        !relayEnabled -> "Disabled"
-        authState is AuthState.Paired -> "Ready"
-        relayConfigured -> "Pair Relay"
-        else -> "Optional"
+        !relayEnabled -> stringResource(R.string.active_section_disabled)
+        authState is AuthState.Paired -> stringResource(R.string.active_section_ready)
+        relayConfigured -> stringResource(R.string.active_section_pair_relay)
+        else -> stringResource(R.string.active_section_optional)
     }
-    val terminalTone = when (terminalValue) {
-        "Ready" -> CapabilityTone.Good
-        "Pair Relay" -> CapabilityTone.Info
+    val terminalTone = when {
+        authState is AuthState.Paired -> CapabilityTone.Good
+        relayConfigured && authState !is AuthState.Paired -> CapabilityTone.Info
         else -> CapabilityTone.Neutral
     }
 
-    val proxyValue = if (secureProxyAdvertised) "Available" else "Not advertised"
+    val proxyValue = if (secureProxyAdvertised) stringResource(R.string.active_section_available) else stringResource(R.string.active_section_not_advertised)
     val proxyTone = if (secureProxyAdvertised) CapabilityTone.Good else CapabilityTone.Neutral
+
+    // Pre-resolve labels for CapabilityRow
+    val hermesApiLabel = stringResource(R.string.active_section_hermes_api)
+    val dashboardLabel = stringResource(R.string.active_section_dashboard)
+    val hermesVoiceLabel = stringResource(R.string.active_section_hermes_voice)
+    val relayToolsLabel = stringResource(R.string.active_section_relay_tools)
+    val terminalLabel = stringResource(R.string.active_section_terminal)
+    val secureProxyLabel = stringResource(R.string.active_section_secure_proxy)
 
     // Lighter than the old six-filled-tile grid: one subtle grouped surface
     // with a status dot + value per capability, dividers between rows. The
@@ -342,21 +363,21 @@ fun ActiveCardFeaturesSection(
     ) {
         Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
             CapabilityRow(
-                label = "Hermes API",
+                label = hermesApiLabel,
                 value = apiValue,
                 tone = apiTone,
                 onClick = onOpenApiInfo,
             )
             CapabilityDivider()
             CapabilityRow(
-                label = "Dashboard",
+                label = dashboardLabel,
                 value = dashboardValue,
                 tone = dashboardTone,
                 onClick = onOpenDashboard,
             )
             CapabilityDivider()
             CapabilityRow(
-                label = "Hermes voice",
+                label = hermesVoiceLabel,
                 value = voiceValue,
                 tone = voiceTone,
                 onClick = if (standardVoiceAvailability ==
@@ -369,21 +390,21 @@ fun ActiveCardFeaturesSection(
             )
             CapabilityDivider()
             CapabilityRow(
-                label = "Relay tools",
+                label = relayToolsLabel,
                 value = relayValue,
                 tone = relayTone,
                 onClick = onOpenRelayInfo,
             )
             CapabilityDivider()
             CapabilityRow(
-                label = "Terminal",
+                label = terminalLabel,
                 value = terminalValue,
                 tone = terminalTone,
                 onClick = onOpenSessionInfo,
             )
             CapabilityDivider()
             CapabilityRow(
-                label = "Secure proxy",
+                label = secureProxyLabel,
                 value = proxyValue,
                 tone = proxyTone,
             )
@@ -499,7 +520,7 @@ fun ActiveCardAdvancedSection(
     var expanded by rememberSaveable { mutableStateOf(false) }
 
     SettingsExpandableCard(
-        title = "Advanced",
+        title = stringResource(R.string.active_section_advanced),
         expanded = expanded,
         onToggle = { expanded = !expanded },
         isDarkTheme = isDarkTheme,
@@ -557,6 +578,41 @@ private fun ManualUrlSubsection(
     }
     val autoRelayUrl = RelayUrlDeriver.deriveFromApiUrl(apiUrlInput)
 
+    // Pre-resolve strings for Toast (non-composable context)
+    val apiHermesVoiceReachableToast = stringResource(R.string.active_section_api_hermes_voice_reachable)
+    val apiRelayVoiceReachableToast = stringResource(R.string.active_section_api_relay_voice_reachable)
+    val apiReachableVoiceReviewToast = stringResource(R.string.active_section_api_reachable_voice_review)
+    val cannotReachApiToast = stringResource(R.string.active_section_cannot_reach_api)
+
+    // Pre-resolve other strings
+    val apiServerUrlLabel = stringResource(R.string.active_section_api_server_url_label)
+    val apiServerUrlPlaceholder = stringResource(R.string.active_section_api_server_url_placeholder)
+    val apiKeyOptionalLabel = stringResource(R.string.active_section_api_key_optional)
+    val apiKeyAlreadySetPlaceholder = stringResource(R.string.active_section_api_key_already_set)
+    val apiKeyNotConfiguredPlaceholder = stringResource(R.string.active_section_api_key_not_configured)
+    val apiKeyStoredHint = stringResource(R.string.active_section_api_key_stored_hint)
+    val apiKeyNeededHint = stringResource(R.string.active_section_api_key_needed_hint)
+    val hideDesc = stringResource(R.string.active_section_hide)
+    val showDesc = stringResource(R.string.active_section_show)
+    val saveAndTestText = stringResource(R.string.active_section_save_and_test)
+    val relayUrlText = stringResource(R.string.active_section_relay_url)
+    val autoRelayUrlText = stringResource(R.string.active_section_auto_relay_url)
+    val manualOverrideText = stringResource(R.string.active_section_manual_override)
+    val relayOptionalForVoiceText = stringResource(R.string.active_section_relay_optional_for_voice)
+    val useAutoRelayUrlText = stringResource(R.string.active_section_use_auto_relay_url)
+    val useCustomRelayUrlText = stringResource(R.string.active_section_use_custom_relay_url)
+    val relayUrlOverrideLabel = stringResource(R.string.active_section_relay_url_override)
+    val relayUrlOverridePlaceholder = stringResource(R.string.active_section_relay_url_override_placeholder)
+    val relayUrlOverrideHint = stringResource(R.string.active_section_relay_url_override_hint)
+    val voiceReadyViaHermesApiText = stringResource(R.string.active_section_voice_ready_via_hermes_api)
+    val voiceReadyViaRelayText = stringResource(R.string.active_section_voice_ready_via_relay)
+    val voiceRouteNeedsReviewText = stringResource(R.string.active_section_voice_route_needs_review)
+    val testRelayText = stringResource(R.string.active_section_test_relay)
+    val disconnectText = stringResource(R.string.active_section_disconnect)
+    val probingHealthText = stringResource(R.string.active_section_probing_health)
+    val reachableRelayVersionText = stringResource(R.string.active_section_reachable_relay_version)
+    val unreachableRelayText = stringResource(R.string.active_section_unreachable_relay)
+
     LaunchedEffect(apiUrlInput, relayOverrideVisible, autoRelayUrl) {
         if (!relayOverrideVisible && autoRelayUrl != null && relayUrlInput != autoRelayUrl) {
             relayUrlInput = autoRelayUrl
@@ -567,8 +623,8 @@ private fun ManualUrlSubsection(
     OutlinedTextField(
         value = apiUrlInput,
         onValueChange = { apiUrlInput = it },
-        label = { Text("API Server URL") },
-        placeholder = { Text("http://your-server:8642") },
+        label = { Text(apiServerUrlLabel) },
+        placeholder = { Text(apiServerUrlPlaceholder) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -576,19 +632,19 @@ private fun ManualUrlSubsection(
     OutlinedTextField(
         value = apiKeyInput,
         onValueChange = { apiKeyInput = it },
-        label = { Text("API Key (optional)") },
+        label = { Text(apiKeyOptionalLabel) },
         placeholder = {
             Text(
-                if (apiKeyPresent) "•••• already set (leave blank to keep)"
-                else "Leave empty if not configured",
+                if (apiKeyPresent) apiKeyAlreadySetPlaceholder
+                else apiKeyNotConfiguredPlaceholder,
             )
         },
         supportingText = {
             Text(
                 if (apiKeyPresent && apiKeyInput.isBlank()) {
-                    "A key is already stored — leave blank to keep it, or type to replace"
+                    apiKeyStoredHint
                 } else {
-                    "Only needed if Hermes is configured with API_SERVER_KEY"
+                    apiKeyNeededHint
                 },
             )
         },
@@ -603,7 +659,7 @@ private fun ManualUrlSubsection(
                 Icon(
                     imageVector = if (apiKeyVisible) Icons.Filled.VisibilityOff
                     else Icons.Filled.Visibility,
-                    contentDescription = if (apiKeyVisible) "Hide" else "Show",
+                    contentDescription = if (apiKeyVisible) hideDesc else showDesc,
                 )
             }
         },
@@ -635,13 +691,13 @@ private fun ManualUrlSubsection(
                         when {
                             result.apiReachable && result.voiceConfigReachable ->
                                 if (result.voiceRoute == "standard") {
-                                    "API and Hermes voice reachable"
+                                    apiHermesVoiceReachableToast
                                 } else {
-                                    "API and relay voice reachable"
+                                    apiRelayVoiceReachableToast
                                 }
                             result.apiReachable ->
-                                "API reachable; voice route needs review"
-                            else -> "Cannot reach API server"
+                                apiReachableVoiceReviewToast
+                            else -> cannotReachApiToast
                         },
                         Toast.LENGTH_SHORT,
                     ).show()
@@ -649,7 +705,7 @@ private fun ManualUrlSubsection(
             },
             enabled = apiUrlInput.isNotBlank() && !isTestingApi,
         ) {
-            Text("Save & Test")
+            Text(saveAndTestText)
         }
         if (isTestingApi) {
             CircularProgressIndicator(
@@ -664,20 +720,20 @@ private fun ManualUrlSubsection(
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = "Relay URL",
+                text = relayUrlText,
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
                 text = if (autoRelayUrl != null && !relayOverrideVisible) {
-                    "Auto: $autoRelayUrl"
+                    autoRelayUrlText.format(autoRelayUrl)
                 } else {
-                    "Manual override"
+                    manualOverrideText
                 },
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Relay is optional for voice. Hermes voice uses the Hermes API; Relay voice uses this route when selected or needed.",
+                text = relayOptionalForVoiceText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -691,7 +747,7 @@ private fun ManualUrlSubsection(
                 },
                 contentPadding = PaddingValues(horizontal = 0.dp),
             ) {
-                Text(if (relayOverrideVisible) "Use auto relay URL" else "Use custom relay URL")
+                Text(if (relayOverrideVisible) useAutoRelayUrlText else useCustomRelayUrlText)
             }
         }
 
@@ -703,11 +759,11 @@ private fun ManualUrlSubsection(
                     // Stale reachability results belong to the prior URL.
                     connectionViewModel.clearRelayReachableResult()
                 },
-                label = { Text("Relay URL override") },
-                placeholder = { Text("wss://your-server:8767") },
+                label = { Text(relayUrlOverrideLabel) },
+                placeholder = { Text(relayUrlOverridePlaceholder) },
                 singleLine = true,
                 supportingText = {
-                    Text("Only needed when the optional Relay route cannot be auto-derived")
+                    Text(relayUrlOverrideHint)
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -722,12 +778,12 @@ private fun ManualUrlSubsection(
             Text(
                 text = if (result.voiceConfigReachable) {
                     if (result.voiceRoute == "standard") {
-                        "Voice ready via Hermes API"
+                        voiceReadyViaHermesApiText
                     } else {
-                        "Voice ready via ${result.relayUrl ?: "relay"}"
+                        voiceReadyViaRelayText.format(result.relayUrl ?: "relay")
                     }
                 } else {
-                    "Voice route needs review: ${result.voiceConfigError ?: "voice config probe failed"}"
+                    voiceRouteNeedsReviewText.format(result.voiceConfigError ?: stringResource(R.string.active_section_voice_config_probe_failed))
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = color,
@@ -751,13 +807,13 @@ private fun ManualUrlSubsection(
                 enabled = (if (relayOverrideVisible) relayUrlInput else autoRelayUrl.orEmpty()).isNotBlank() &&
                     relayReachable !is ConnectionViewModel.RelayReachable.Probing,
             ) {
-                Text("Test Relay")
+                Text(testRelayText)
             }
             OutlinedButton(
                 onClick = { connectionViewModel.disconnectRelay() },
                 enabled = relayConnectionState != ConnectionState.Disconnected,
             ) {
-                Text("Disconnect")
+                Text(disconnectText)
             }
         }
 
@@ -772,15 +828,16 @@ private fun ManualUrlSubsection(
                         strokeWidth = 2.dp,
                     )
                     Text(
-                        text = "Probing /health…",
+                        text = probingHealthText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
             is ConnectionViewModel.RelayReachable.Ok -> {
+                val sessionsSuffix = if (r.sessions == 1) "" else stringResource(R.string.active_section_sessions_suffix)
                 Text(
-                    text = "✓ Reachable — hermes-relay v${r.version} (${r.clients} client, ${r.sessions} session${if (r.sessions == 1) "" else "s"})",
+                    text = reachableRelayVersionText.format(r.version, r.clients, r.sessions, sessionsSuffix),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF4CAF50),
                 )
@@ -792,7 +849,7 @@ private fun ManualUrlSubsection(
                 )
                 Column {
                     Text(
-                        text = "✗ ${humanErr.title}",
+                        text = unreachableRelayText.format(humanErr.title),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -824,6 +881,11 @@ private fun InsecureToggleSubsection(
     val isInsecureConnection by connectionViewModel.isInsecureConnection.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
 
+    // Pre-resolve strings
+    val plainConnectionNotEncrypted = stringResource(R.string.active_section_plain_connection_not_encrypted)
+    val allowPlainConnections = stringResource(R.string.active_section_allow_plain_connections)
+    val enableWsHttpForDev = stringResource(R.string.active_section_enable_ws_http_for_dev)
+
     if (isInsecureConnection && relayConnectionState == ConnectionState.Connected) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -839,7 +901,7 @@ private fun InsecureToggleSubsection(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                text = "Plain connection — traffic is not encrypted",
+                text = plainConnectionNotEncrypted,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -853,11 +915,11 @@ private fun InsecureToggleSubsection(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Allow plain (unencrypted) connections",
+                text = allowPlainConnections,
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                text = "Enable ws:// and http:// for local dev/testing only",
+                text = enableWsHttpForDev,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -910,6 +972,23 @@ private fun ManualPairingCodeSubsection(
     var connectAttempt by remember { mutableStateOf(0) }
     var explainerExpanded by rememberSaveable { mutableStateOf(false) }
 
+    // Pre-resolve strings for non-composable contexts (LaunchedEffect, UiMessageBus)
+    val pairedSuccessfullyToast = stringResource(R.string.active_section_paired_successfully)
+    val noResponseFromRelayToast = stringResource(R.string.active_section_no_response_from_relay)
+    val pairingCodeCopiedToast = stringResource(R.string.active_section_pairing_code_copied)
+    val commandCopiedToast = stringResource(R.string.active_section_command_copied)
+    val hermesPairCommandLabel = stringResource(R.string.active_section_hermes_pair_command)
+    val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
+    val generateNewCodeDesc = stringResource(R.string.active_section_generate_new_code)
+    val copyHermesPairCommandDesc = stringResource(R.string.active_section_copy_hermes_pair_command)
+    val connectingText = stringResource(R.string.active_section_connecting)
+    val connectText = stringResource(R.string.active_section_connect)
+    val relayUrlNotSetText = stringResource(R.string.active_section_relay_url_not_set)
+    val hideExplanationText = stringResource(R.string.active_section_hide_explanation)
+    val howDoesThisWorkText = stringResource(R.string.active_section_how_does_this_work)
+    val manualPairingExplanation = stringResource(R.string.active_section_manual_pairing_explanation)
+    val pairingCodeLabel = stringResource(R.string.conn_info_pairing_code)
+
     LaunchedEffect(connectAttempt) {
         if (connectAttempt == 0) return@LaunchedEffect
         try {
@@ -919,7 +998,7 @@ private fun ManualPairingCodeSubsection(
             }
             connectInProgress = false
             when (terminal) {
-                is AuthState.Paired -> UiMessageBus.success("Paired successfully")
+                is AuthState.Paired -> UiMessageBus.success(pairedSuccessfullyToast)
                 is AuthState.Failed -> {
                     val human = classifyError(
                         IllegalStateException(terminal.reason),
@@ -932,7 +1011,7 @@ private fun ManualPairingCodeSubsection(
         } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
             connectInProgress = false
             val human = classifyError(
-                java.io.IOException("No response from relay"),
+                java.io.IOException(noResponseFromRelayToast),
                 context = "pair",
             )
             snackbarHost.showHumanError(human)
@@ -942,20 +1021,25 @@ private fun ManualPairingCodeSubsection(
         }
     }
 
+    // Pre-resolve other UI strings
+    val manualPairingCodeTitle = stringResource(R.string.active_section_manual_pairing_code_title)
+    val manualPairingCodeDesc = stringResource(R.string.active_section_manual_pairing_code_desc)
+    val step1CopyCode = stringResource(R.string.active_section_step_1_copy_code)
+    val step2RunCommand = stringResource(R.string.active_section_step_2_run_command)
+    val step3TapConnect = stringResource(R.string.active_section_step_3_tap_connect)
+
     Text(
-        text = "Manual pairing code (fallback)",
+        text = manualPairingCodeTitle,
         style = MaterialTheme.typography.titleSmall,
     )
     Text(
-        text = "Use this when you can't scan the pairing QR. " +
-            "Follow the three steps — they're meant to be done in order on " +
-            "whatever machine you have shell access to.",
+        text = manualPairingCodeDesc,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 
     // Step 1 — display + copy + regenerate
-    ManualPairStep(number = 1, title = "Copy the code below") {
+    ManualPairStep(number = 1, title = step1CopyCode) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -973,27 +1057,27 @@ private fun ManualPairingCodeSubsection(
             IconButton(onClick = {
                 scope.launch {
                     clipboard.setClipEntry(
-                        ClipEntry(ClipData.newPlainText("Pairing code", pairingCode)),
+                        ClipEntry(ClipData.newPlainText(pairingCodeLabel, pairingCode)),
                     )
-                    UiMessageBus.info("Pairing code copied")
+                    UiMessageBus.info(pairingCodeCopiedToast)
                 }
             }) {
                 Icon(
                     imageVector = Icons.Filled.ContentCopy,
-                    contentDescription = "Copy pairing code",
+                    contentDescription = copyPairingCodeDesc,
                 )
             }
             IconButton(onClick = { connectionViewModel.regeneratePairingCode() }) {
                 Icon(
                     imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Generate new code",
+                    contentDescription = generateNewCodeDesc,
                 )
             }
         }
     }
 
     // Step 2 — host command
-    ManualPairStep(number = 2, title = "On the host running Hermes-Relay, run:") {
+    ManualPairStep(number = 2, title = step2RunCommand) {
         Surface(
             color = MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(6.dp),
@@ -1016,16 +1100,16 @@ private fun ManualPairingCodeSubsection(
                         val cmd = "hermes pair --register-code $pairingCode"
                         scope.launch {
                             clipboard.setClipEntry(
-                                ClipEntry(ClipData.newPlainText("hermes pair command", cmd)),
+                                ClipEntry(ClipData.newPlainText(hermesPairCommandLabel, cmd)),
                             )
-                            UiMessageBus.info("Command copied")
+                            UiMessageBus.info(commandCopiedToast)
                         }
                     },
                     modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = "Copy hermes pair command",
+                        contentDescription = copyHermesPairCommandDesc,
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -1034,7 +1118,7 @@ private fun ManualPairingCodeSubsection(
     }
 
     // Step 3 — Connect button + relay-URL prerequisite check
-    ManualPairStep(number = 3, title = "Come back here and tap Connect") {
+    ManualPairStep(number = 3, title = step3TapConnect) {
         val canConnect = !connectInProgress &&
             relayUrl.isNotBlank() &&
             pairingCode.isNotBlank()
@@ -1061,14 +1145,14 @@ private fun ManualPairingCodeSubsection(
                     color = MaterialTheme.colorScheme.onPrimary,
                 )
                 Spacer(modifier = Modifier.size(8.dp))
-                Text("Connecting…")
+                Text(connectingText)
             } else {
-                Text("Connect")
+                Text(connectText)
             }
         }
         if (relayUrl.isBlank()) {
             Text(
-                text = "Relay URL not set — open the Manual URL section above to set it first.",
+                text = relayUrlNotSetText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -1082,24 +1166,13 @@ private fun ManualPairingCodeSubsection(
         contentPadding = PaddingValues(horizontal = 0.dp),
     ) {
         Text(
-            text = if (explainerExpanded) "Hide explanation" else "How does this work?",
+            text = if (explainerExpanded) hideExplanationText else howDoesThisWorkText,
             style = MaterialTheme.typography.bodySmall,
         )
     }
     if (explainerExpanded) {
         Text(
-            text = "This is a fallback for when you can't scan the pairing QR " +
-                "— for example, no camera, the host can't render a QR, or you " +
-                "only have SSH access from a single device. The canonical flow " +
-                "is the QR scan from `/hermes-relay-pair` or `hermes pair`.\n\n" +
-                "How it works: the phone generates a 6-character code locally. " +
-                "You paste that code into the host's `hermes pair --register-code` " +
-                "command, which pre-registers it with the relay. When you tap " +
-                "Connect here, the phone presents the same code to the relay " +
-                "and gets a long-lived session token in return.\n\n" +
-                "Bridge / device-control is gated by the master toggle on the " +
-                "Bridge tab, NOT by this pairing code. Pairing only authorizes " +
-                "the relay session.",
+            text = manualPairingExplanation,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1136,6 +1209,13 @@ fun ActiveCardSecurityPosture(
         modifier = Modifier.fillMaxWidth(),
     )
 
+    // Pre-resolve strings
+    val tailscaleDetectedText = stringResource(R.string.active_section_tailscale_detected)
+    val sessionTokenHardwareKeystoreText = stringResource(R.string.active_section_session_token_hardware_keystore)
+    val relaySessionsLabel = stringResource(R.string.active_section_relay_sessions)
+    val activeSessionsOnServerText = stringResource(R.string.active_section_active_sessions_on_server)
+    val managePhonesConnectText = stringResource(R.string.active_section_manage_phones_connect)
+
     if (isTailscaleDetected) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1148,7 +1228,7 @@ fun ActiveCardSecurityPosture(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                text = "Tailscale detected",
+                text = tailscaleDetectedText,
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF2E7D32),
             )
@@ -1167,7 +1247,7 @@ fun ActiveCardSecurityPosture(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                text = "Session token stored in hardware keystore",
+                text = sessionTokenHardwareKeystoreText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -1184,14 +1264,14 @@ fun ActiveCardSecurityPosture(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Relay sessions",
+                text = relaySessionsLabel,
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
                 text = if (pairedDevices.isNotEmpty()) {
-                    "${pairedDevices.size} active sessions on this server"
+                    activeSessionsOnServerText.format(pairedDevices.size)
                 } else {
-                    "Manage which phones can connect"
+                    managePhonesConnectText
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1253,22 +1333,42 @@ fun ActiveCardRoutesSection(
     val probeCameUpEmpty = activeEndpoint == null &&
         routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Done &&
         routeProbeStatus.winner == null
+
+    // Pre-resolve strings for route status labels
+    val checkingRoutesText = stringResource(R.string.active_section_checking_routes)
+    val noRouteReachableText = stringResource(R.string.active_section_no_route_reachable)
+    val resolvingText = stringResource(R.string.active_section_resolving)
+    val usingSavedUrlText = stringResource(R.string.active_section_using_saved_url)
+
     val activeRouteLabel = when {
         activeEndpoint != null -> activeEndpoint!!.displayLabel()
-        isRouteProbing -> "Checking routes…"
-        probeCameUpEmpty -> "No route reachable"
-        else -> "Resolving"
+        isRouteProbing -> checkingRoutesText
+        probeCameUpEmpty -> noRouteReachableText
+        else -> resolvingText
     }
     val activeRouteHost = activeEndpoint?.api?.url
-        ?: "Using saved URL: ${connection.apiServerUrl.ifBlank { connection.relayUrl }}"
+        ?: usingSavedUrlText.format(connection.apiServerUrl.ifBlank { connection.relayUrl })
+
+    // Pre-resolve other UI strings
+    val chooseHowPhoneReachesText = stringResource(R.string.active_section_choose_how_phone_reaches)
+    val currentRouteText = stringResource(R.string.active_section_current_route)
+    val noRoutesAnsweredProbeText = stringResource(R.string.active_section_no_routes_answered_probe)
+    val tailscaleRouteNotActiveText = stringResource(R.string.active_section_tailscale_route_not_active)
+    val connectPhoneInTailscaleText = stringResource(R.string.active_section_connect_phone_in_tailscale)
+    val openTailscaleText = stringResource(R.string.active_section_open_tailscale)
+    val checkingText = stringResource(R.string.active_section_checking)
+    val recheckText = stringResource(R.string.active_section_recheck)
+    val phoneOnTailscaleNoRouteText = stringResource(R.string.active_section_phone_on_tailscale_no_route)
+    val addServerTailscaleUrlText = stringResource(R.string.active_section_add_server_tailscale_url)
+    val addTailscaleRouteText = stringResource(R.string.active_section_add_tailscale_route)
+    val autoText = stringResource(R.string.active_section_auto)
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "Choose how this phone reaches Hermes. Features stay separate " +
-                "from the selected route.",
+            text = chooseHowPhoneReachesText,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1287,7 +1387,7 @@ fun ActiveCardRoutesSection(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Current: $activeRouteLabel",
+                        text = currentRouteText.format(activeRouteLabel),
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (probeCameUpEmpty) {
                             MaterialTheme.colorScheme.error
@@ -1311,8 +1411,7 @@ fun ActiveCardRoutesSection(
                 )
                 if (probeCameUpEmpty) {
                     Text(
-                        text = "None of the saved routes answered a health probe. " +
-                            "Expand the routes below for per-route reasons.",
+                        text = noRoutesAnsweredProbeText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -1331,12 +1430,12 @@ fun ActiveCardRoutesSection(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "Tailscale route is not active on this phone",
+                        text = tailscaleRouteNotActiveText,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
                     Text(
-                        text = "Connect this phone in Tailscale, then re-check routes.",
+                        text = connectPhoneInTailscaleText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
@@ -1351,7 +1450,7 @@ fun ActiveCardRoutesSection(
                                 },
                                 contentPadding = PaddingValues(horizontal = 0.dp),
                             ) {
-                                Text("Open Tailscale")
+                                Text(openTailscaleText)
                             }
                         }
                         TextButton(
@@ -1359,7 +1458,7 @@ fun ActiveCardRoutesSection(
                             enabled = !isRouteProbing,
                             contentPadding = PaddingValues(horizontal = 0.dp),
                         ) {
-                            Text(if (isRouteProbing) "Checking…" else "Re-check")
+                            Text(if (isRouteProbing) checkingText else recheckText)
                         }
                     }
                 }
@@ -1380,13 +1479,12 @@ fun ActiveCardRoutesSection(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "Phone is on Tailscale — no Tailscale route yet",
+                        text = phoneOnTailscaleNoRouteText,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
                     Text(
-                        text = "Add your server's Tailscale URL so Hermes keeps " +
-                            "working when this phone leaves the server's network.",
+                        text = addServerTailscaleUrlText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
@@ -1397,7 +1495,7 @@ fun ActiveCardRoutesSection(
                         },
                         contentPadding = PaddingValues(horizontal = 0.dp),
                     ) {
-                        Text("Add Tailscale route")
+                        Text(addTailscaleRouteText)
                     }
                 }
             }
@@ -1411,7 +1509,7 @@ fun ActiveCardRoutesSection(
                 onClick = { connectionViewModel.probeNow() },
                 enabled = !isRouteProbing,
             ) {
-                Text(if (isRouteProbing) "Checking…" else "Re-check")
+                Text(if (isRouteProbing) checkingText else recheckText)
             }
             if (preferredRole != null || manualSwitchActive) {
                 TextButton(
@@ -1420,7 +1518,7 @@ fun ActiveCardRoutesSection(
                         preferredRole = null
                     },
                 ) {
-                    Text("Auto")
+                    Text(autoText)
                 }
             }
         }

@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 
 // ---------------------------------------------------------------------------
 // Session-path summary — the glanceable "which transport/route am I on" view
@@ -68,8 +70,7 @@ import com.hermesandroid.relay.network.upstream.ServerCapabilities
  * raw token NEVER reaches the user.
  */
 internal data class SessionPathTransport(
-    val friendlyName: String,
-    val descriptor: String,
+    val type: String,
     val icon: ImageVector?,
     /** True only for the gateway transport — gates the "Live thinking" chip. */
     val isGateway: Boolean,
@@ -78,36 +79,47 @@ internal data class SessionPathTransport(
 internal fun sessionPathTransport(resolvedTransport: String): SessionPathTransport =
     when (resolvedTransport) {
         "gateway" -> SessionPathTransport(
-            friendlyName = "Gateway",
-            descriptor = "live thinking",
+            type = "gateway",
             icon = Icons.Filled.Bolt,
             isGateway = true,
         )
         "sessions" -> SessionPathTransport(
-            friendlyName = "Sessions API",
-            descriptor = "streaming",
+            type = "sessions",
             icon = null,
             isGateway = false,
         )
         "completions" -> SessionPathTransport(
-            friendlyName = "Chat Completions",
-            descriptor = "streaming",
+            type = "completions",
             icon = null,
             isGateway = false,
         )
         "runs" -> SessionPathTransport(
-            friendlyName = "Runs API",
-            descriptor = "structured streaming",
+            type = "runs",
             icon = null,
             isGateway = false,
         )
         else -> SessionPathTransport(
-            friendlyName = "Direct chat",
-            descriptor = "streaming",
+            type = "other",
             icon = null,
             isGateway = false,
         )
     }
+
+@Composable
+internal fun transportFriendlyName(type: String): String = when (type) {
+    "gateway" -> stringResource(R.string.session_path_gateway)
+    "sessions" -> stringResource(R.string.session_path_sessions_api)
+    "completions" -> stringResource(R.string.session_path_chat_completions)
+    "runs" -> stringResource(R.string.session_path_runs_api)
+    else -> stringResource(R.string.session_path_direct_chat)
+}
+
+@Composable
+internal fun transportDescriptor(type: String): String = when (type) {
+    "gateway" -> stringResource(R.string.session_path_live_thinking)
+    "runs" -> stringResource(R.string.session_path_structured_streaming)
+    else -> stringResource(R.string.session_path_streaming)
+}
 
 /**
  * One capability the session may or may not expose, paired with whether it is
@@ -116,7 +128,7 @@ internal fun sessionPathTransport(resolvedTransport: String): SessionPathTranspo
  * the detail list can show it muted instead of hiding it (never-hide principle).
  */
 internal data class SessionCapability(
-    val label: String,
+    val type: String,
     val available: Boolean,
     val reason: String? = null,
 )
@@ -134,6 +146,7 @@ internal data class SessionCapability(
  *  - Voice → `voiceReady` (standard dashboard voice OR relay voice — whichever
  *    the connection actually has).
  */
+@Composable
 internal fun sessionCapabilities(
     transport: SessionPathTransport,
     gatewayAvailability: GatewayAvailability,
@@ -144,50 +157,60 @@ internal fun sessionCapabilities(
 ): List<SessionCapability> {
     val liveThinkingReason = when {
         transport.isGateway -> null
-        gatewayAvailability == GatewayAvailability.Unknown -> "Checking gateway…"
+        gatewayAvailability == GatewayAvailability.Unknown -> stringResource(R.string.session_path_checking_gateway)
         gatewayAvailability == GatewayAvailability.SignInRequired ->
-            "Sign in under Manage for the live-thinking gateway."
-        else -> "Available on the gateway transport — this session streams over the API server."
+            stringResource(R.string.session_path_signin_for_gateway)
+        else -> stringResource(R.string.session_path_gateway_api_server)
     }
     return listOf(
         SessionCapability(
-            label = "Live thinking",
+            type = "live_thinking",
             available = transport.isGateway,
             reason = liveThinkingReason,
         ),
         SessionCapability(
-            label = "Media",
+            type = "media",
             available = relayConnected,
             reason = when {
                 relayConnected -> null
-                relayConfigured -> "Relay paired but not connected."
-                else -> "Pair the relay to send and receive media."
+                relayConfigured -> stringResource(R.string.session_path_relay_not_connected)
+                else -> stringResource(R.string.session_path_pair_relay_media)
             },
         ),
         SessionCapability(
-            label = "Terminal",
+            type = "terminal",
             available = relayConnected,
             reason = when {
                 relayConnected -> null
-                relayConfigured -> "Relay paired but not connected."
-                else -> "Pair the relay for terminal access."
+                relayConfigured -> stringResource(R.string.session_path_relay_not_connected)
+                else -> stringResource(R.string.session_path_pair_relay_terminal)
             },
         ),
         SessionCapability(
-            label = "Voice",
+            type = "voice",
             available = voiceReady,
-            reason = if (voiceReady) null else "Voice not ready on this connection.",
+            reason = if (voiceReady) null else stringResource(R.string.session_path_voice_not_ready),
         ),
         SessionCapability(
-            label = "Threads",
+            type = "threads",
             available = threadsActive,
             reason = if (threadsActive) {
                 null
             } else {
-                "Pair the relay and turn on “Let Hermes message me” so the agent can open Threads."
+                stringResource(R.string.session_path_threads_pair_relay)
             },
         ),
     )
+}
+
+@Composable
+internal fun capabilityLabel(type: String): String = when (type) {
+    "live_thinking" -> stringResource(R.string.session_path_live_thinking)
+    "media" -> stringResource(R.string.session_path_media)
+    "terminal" -> stringResource(R.string.session_path_terminal)
+    "voice" -> stringResource(R.string.session_path_voice)
+    "threads" -> stringResource(R.string.session_path_threads)
+    else -> type
 }
 
 /**
@@ -226,13 +249,15 @@ internal fun SessionPathSummary(
                 )
             }
             val routeSuffix = routeLabel?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+            val friendlyName = transportFriendlyName(transport.type)
+            val descriptor = transportDescriptor(transport.type)
             Text(
                 text = buildString {
-                    append(transport.friendlyName)
+                    append(friendlyName)
                     append(routeSuffix)
-                    if (transport.descriptor.isNotBlank()) {
+                    if (descriptor.isNotBlank()) {
                         append(" — ")
-                        append(transport.descriptor)
+                        append(descriptor)
                     }
                 },
                 style = MaterialTheme.typography.bodyMedium,
@@ -255,16 +280,17 @@ internal fun SessionPathSummary(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 activeCaps.forEach { cap ->
-                    if (cap.label == "Threads") {
+                    val label = capabilityLabel(cap.type)
+                    if (cap.type == "threads") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            CapabilityChip(label = cap.label)
+                            CapabilityChip(label = label)
                             BetaChip()
                         }
                     } else {
-                        CapabilityChip(label = cap.label)
+                        CapabilityChip(label = label)
                     }
                 }
             }
@@ -307,6 +333,8 @@ internal fun SessionPathDetails(
     serverCapabilities: ServerCapabilities,
     modifier: Modifier = Modifier,
 ) {
+    val friendlyName = transportFriendlyName(transport.type)
+
     var expanded by remember { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -319,7 +347,7 @@ internal fun SessionPathDetails(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = if (expanded) "Hide session details" else "Session details",
+                text = if (expanded) stringResource(R.string.session_path_hide_details) else stringResource(R.string.session_path_details),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -329,16 +357,16 @@ internal fun SessionPathDetails(
                 } else {
                     Icons.Filled.KeyboardArrowDown
                 },
-                contentDescription = if (expanded) "Hide session details" else "Show session details",
+                contentDescription = if (expanded) stringResource(R.string.session_path_hide_details_cd) else stringResource(R.string.session_path_show_details_cd),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
 
         if (expanded) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                DetailRow(label = "Transport", value = transport.friendlyName)
-                DetailRow(label = "Route", value = routeLabel?.takeIf { it.isNotBlank() } ?: "—")
-                DetailChipRow(label = "Relay state") {
+                DetailRow(label = stringResource(R.string.session_path_transport), value = friendlyName)
+                DetailRow(label = stringResource(R.string.session_path_route), value = routeLabel?.takeIf { it.isNotBlank() } ?: "—")
+                DetailChipRow(label = stringResource(R.string.session_path_relay_state)) {
                     SessionPathConnectionChip(relayConnectionState)
                 }
 
@@ -362,8 +390,8 @@ internal fun SessionPathDetails(
 
                 Spacer(modifier = Modifier.size(2.dp))
 
-                DetailRow(label = "API", value = apiServerUrl, monospace = true)
-                DetailRow(label = "Relay", value = relayUrl, monospace = true)
+                DetailRow(label = stringResource(R.string.session_path_api), value = apiServerUrl, monospace = true)
+                DetailRow(label = stringResource(R.string.session_path_relay), value = relayUrl, monospace = true)
             }
         }
     }
@@ -387,20 +415,20 @@ internal fun TransportTierStepper(
     val status = remember(streamingEndpoint, gatewayAvailability, serverCapabilities) {
         resolveChatTransportStatus(streamingEndpoint, gatewayAvailability, serverCapabilities)
     }
-    // basic → best, paired with whether THIS server exposes the tier.
+    // basic -> best, paired with whether THIS server exposes the tier.
     val tiers = listOf(
-        Triple(ChatTransportTier.Completions, "Chat Completions", serverCapabilities.portable),
-        Triple(ChatTransportTier.Runs, "Runs API", serverCapabilities.runs),
-        Triple(ChatTransportTier.Sessions, "Sessions API", serverCapabilities.sessionsChatStream),
+        Triple(ChatTransportTier.Completions, stringResource(R.string.session_path_chat_completions), serverCapabilities.portable),
+        Triple(ChatTransportTier.Runs, stringResource(R.string.session_path_runs_api), serverCapabilities.runs),
+        Triple(ChatTransportTier.Sessions, stringResource(R.string.session_path_sessions_api), serverCapabilities.sessionsChatStream),
         Triple(
             ChatTransportTier.Gateway,
-            "Gateway · live thinking",
+            stringResource(R.string.session_path_gateway_live_thinking),
             gatewayAvailability == GatewayAvailability.Ready,
         ),
     )
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
-            text = "Transport path  ·  basic → best",
+            text = stringResource(R.string.session_path_transport_path_ladder),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -470,9 +498,9 @@ private fun TransportTierRow(
             )
             Text(
                 text = when {
-                    isActive -> "active"
-                    available -> "available"
-                    else -> "not exposed by this server"
+                    isActive -> stringResource(R.string.session_path_active)
+                    available -> stringResource(R.string.session_path_available)
+                    else -> stringResource(R.string.session_path_not_exposed)
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = if (isActive) {
@@ -536,6 +564,7 @@ private fun DetailChipRow(label: String, chip: @Composable () -> Unit) {
 
 @Composable
 private fun CapabilityDetailRow(cap: SessionCapability) {
+    val label = capabilityLabel(cap.type)
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -543,7 +572,7 @@ private fun CapabilityDetailRow(cap: SessionCapability) {
     ) {
         Icon(
             imageVector = if (cap.available) Icons.Filled.Check else Icons.Filled.Remove,
-            contentDescription = if (cap.available) "Available" else "Unavailable",
+            contentDescription = if (cap.available) stringResource(R.string.session_path_available) else stringResource(R.string.session_path_unavailable),
             tint = if (cap.available) {
                 MaterialTheme.colorScheme.primary
             } else {
@@ -553,7 +582,7 @@ private fun CapabilityDetailRow(cap: SessionCapability) {
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = cap.label,
+                text = label,
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (cap.available) {
                     MaterialTheme.colorScheme.onSurface
@@ -578,22 +607,22 @@ private fun CapabilityDetailRow(cap: SessionCapability) {
 private fun SessionPathConnectionChip(state: ConnectionState) {
     val (label, bg, fg) = when (state) {
         ConnectionState.Connected -> Triple(
-            "Connected",
+            stringResource(R.string.session_path_connected),
             MaterialTheme.colorScheme.primaryContainer,
             MaterialTheme.colorScheme.onPrimaryContainer,
         )
         ConnectionState.Connecting -> Triple(
-            "Connecting…",
+            stringResource(R.string.session_path_connecting),
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer,
         )
         ConnectionState.Reconnecting -> Triple(
-            "Reconnecting…",
+            stringResource(R.string.session_path_reconnecting),
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer,
         )
         ConnectionState.Disconnected -> Triple(
-            "Disconnected",
+            stringResource(R.string.session_path_disconnected),
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant,
         )

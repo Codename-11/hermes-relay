@@ -23,7 +23,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.diagnostics.CheckStatus
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
@@ -69,6 +71,8 @@ fun DiagnosticsScreen(
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
     val entries by DiagnosticsLog.entries.collectAsState()
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     val checks = remember(
         network, apiHealth, apiUrl, capabilities, authState, chatReady,
         relayConfigured, relayHealth, relayReady, voiceReady, relayVoiceReady, entries,
@@ -86,6 +90,7 @@ fun DiagnosticsScreen(
             voiceReady = voiceReady,
             relayVoiceReady = relayVoiceReady,
             recentEntries = entries,
+            context = context,
         )
     }
 
@@ -95,12 +100,12 @@ fun DiagnosticsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Diagnostics") },
+                title = { Text(stringResource(R.string.diag_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.diag_back),
                         )
                     }
                 },
@@ -119,7 +124,7 @@ fun DiagnosticsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "Status",
+                text = stringResource(R.string.diag_status),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -136,19 +141,18 @@ fun DiagnosticsScreen(
             )
 
             Text(
-                text = "Recent diagnostics",
+                text = stringResource(R.string.diag_recent_diagnostics),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = "Recent app-level connection and voice events. Secrets and raw " +
-                    "payloads are hidden.",
+                text = stringResource(R.string.diag_recent_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             DiagnosticsLogPanel(
-                title = "Activity log",
+                title = stringResource(R.string.diag_activity_log),
                 limit = 80,
                 showCategory = true,
                 showClear = true,
@@ -188,6 +192,7 @@ internal fun buildStatusChecks(
     voiceReady: Boolean,
     relayVoiceReady: Boolean,
     recentEntries: List<DiagnosticLogEntry>,
+    context: android.content.Context,
 ): List<StatusCheck> {
     // Most recent ERROR for a category (entries are oldest -> newest).
     fun recentError(category: DiagnosticCategory): DiagnosticLogEntry? =
@@ -200,175 +205,207 @@ internal fun buildStatusChecks(
     val checks = mutableListOf<StatusCheck>()
 
     // 1) Network reachability.
+    val networkLabel = context.getString(R.string.diag_check_network)
+    val deviceOnline = context.getString(R.string.diag_check_device_online)
+    val networkLost = context.getString(R.string.diag_check_network_lost)
+    val noNetwork = context.getString(R.string.diag_check_no_network)
     checks += when (network) {
         ConnectivityObserver.Status.Available ->
-            StatusCheck("Network", CheckStatus.Pass, reason = "Device is online")
+            StatusCheck(networkLabel, CheckStatus.Pass, reason = deviceOnline)
         ConnectivityObserver.Status.Lost ->
             StatusCheck(
-                "Network", CheckStatus.Fail,
-                reason = "Network connection lost",
+                networkLabel, CheckStatus.Fail,
+                reason = networkLost,
                 category = DiagnosticCategory.Endpoint,
             )
         ConnectivityObserver.Status.Unavailable ->
             StatusCheck(
-                "Network", CheckStatus.Warn,
-                reason = "No active network detected",
+                networkLabel, CheckStatus.Warn,
+                reason = noNetwork,
                 category = DiagnosticCategory.Endpoint,
             )
     }
 
     // 2) API server reachability.
+    val apiLabel = context.getString(R.string.diag_check_api_server)
+    val reachableAt = context.getString(R.string.diag_check_reachable_at)
+    val reachable = context.getString(R.string.diag_check_reachable)
+    val notReachableAt = context.getString(R.string.diag_check_not_reachable_at)
+    val notReachable = context.getString(R.string.diag_check_not_reachable)
+    val probing = context.getString(R.string.diag_check_probing)
+    val notChecked = context.getString(R.string.diag_check_not_checked)
     val host = DiagnosticsLog.sanitizeUrl(apiUrl)
     val apiErr = recentError(DiagnosticCategory.Api)
     checks += when (apiHealth) {
         ConnectionViewModel.HealthStatus.Reachable ->
             StatusCheck(
-                "API server", CheckStatus.Pass,
-                reason = host?.let { "Reachable at $it" } ?: "Reachable",
+                apiLabel, CheckStatus.Pass,
+                reason = host?.let { context.getString(R.string.diag_check_reachable_at, it) } ?: reachable,
                 category = DiagnosticCategory.Api,
             )
         ConnectionViewModel.HealthStatus.Unreachable ->
             StatusCheck(
-                "API server", CheckStatus.Fail,
-                reason = apiErr?.message() ?: (host?.let { "Not reachable at $it" } ?: "Not reachable"),
+                apiLabel, CheckStatus.Fail,
+                reason = apiErr?.message() ?: (host?.let { context.getString(R.string.diag_check_not_reachable_at, it) } ?: notReachable),
                 category = DiagnosticCategory.Api,
                 timestampMs = apiErr?.timestampMs,
             )
         ConnectionViewModel.HealthStatus.Probing ->
             StatusCheck(
-                "API server", CheckStatus.Unknown,
-                reason = "Probing…",
+                apiLabel, CheckStatus.Unknown,
+                reason = probing,
                 category = DiagnosticCategory.Api,
             )
         ConnectionViewModel.HealthStatus.Unknown ->
             StatusCheck(
-                "API server", CheckStatus.Unknown,
-                reason = "Not checked yet",
+                apiLabel, CheckStatus.Unknown,
+                reason = notChecked,
                 category = DiagnosticCategory.Api,
             )
     }
 
     // 3) Server capabilities (which chat surfaces the server advertises).
+    val capsLabel = context.getString(R.string.diag_check_server_capabilities)
+    val capsNoHealthy = context.getString(R.string.diag_check_no_server_yet)
+    val capsNativeSessions = context.getString(R.string.diag_check_native_sessions)
+    val capsSseFallback = context.getString(R.string.diag_check_sse_fallback)
+    val capsNoEndpoint = context.getString(R.string.diag_check_no_chat_endpoint)
     checks += when {
         !capabilities.healthy ->
             StatusCheck(
-                "Server capabilities", CheckStatus.Unknown,
-                reason = "Not probed — no healthy server yet",
+                capsLabel, CheckStatus.Unknown,
+                reason = capsNoHealthy,
                 category = DiagnosticCategory.Api,
             )
         capabilities.sessionsChatStream ->
             StatusCheck(
-                "Server capabilities", CheckStatus.Pass,
-                reason = "Native session streaming available",
+                capsLabel, CheckStatus.Pass,
+                reason = capsNativeSessions,
                 category = DiagnosticCategory.Api,
             )
         capabilities.sessionsApi || capabilities.runs || capabilities.portable ->
             StatusCheck(
-                "Server capabilities", CheckStatus.Warn,
-                reason = "No session SSE — falling back to ${capabilities.preferredChatEndpoint()}",
+                capsLabel, CheckStatus.Warn,
+                reason = context.getString(R.string.diag_check_sse_fallback, capabilities.preferredChatEndpoint()),
                 category = DiagnosticCategory.Api,
             )
         else ->
             StatusCheck(
-                "Server capabilities", CheckStatus.Fail,
-                reason = "No usable chat endpoint advertised",
+                capsLabel, CheckStatus.Fail,
+                reason = capsNoEndpoint,
                 category = DiagnosticCategory.Api,
             )
     }
 
     // 4) Chat transport readiness.
+    val chatLabel = context.getString(R.string.diag_check_chat_transport)
+    val chatReadyFmt = context.getString(R.string.diag_check_ready_with)
+    val chatNotReady = context.getString(R.string.diag_check_not_ready)
     val chatErr = recentError(DiagnosticCategory.Session) ?: recentError(DiagnosticCategory.Api)
     checks += if (chatReady) {
         StatusCheck(
-            "Chat transport", CheckStatus.Pass,
-            reason = "Ready · ${capabilities.preferredChatEndpoint()}",
+            chatLabel, CheckStatus.Pass,
+            reason = context.getString(R.string.diag_check_ready_with, capabilities.preferredChatEndpoint()),
             category = DiagnosticCategory.Session,
         )
     } else {
         val degraded = apiHealth == ConnectionViewModel.HealthStatus.Reachable
         StatusCheck(
-            "Chat transport",
+            chatLabel,
             if (degraded) CheckStatus.Warn else CheckStatus.Fail,
-            reason = chatErr?.message() ?: "Not ready — no usable streaming endpoint",
+            reason = chatErr?.message() ?: chatNotReady,
             category = DiagnosticCategory.Session,
             timestampMs = chatErr?.timestampMs,
         )
     }
 
     // 5) Relay / pairing auth.
+    val authLabel = context.getString(R.string.diag_check_pairing_auth)
+    val authRelayActive = context.getString(R.string.diag_check_relay_active)
+    val authPairingProg = context.getString(R.string.diag_check_pairing_progress)
+    val authNotPaired = context.getString(R.string.diag_check_not_paired)
     val authErr = recentError(DiagnosticCategory.Auth)
     checks += when (authState) {
         is AuthState.Paired ->
             StatusCheck(
-                "Pairing / auth", CheckStatus.Pass,
-                reason = "Relay session active",
+                authLabel, CheckStatus.Pass,
+                reason = authRelayActive,
                 category = DiagnosticCategory.Auth,
             )
         is AuthState.Pairing ->
             StatusCheck(
-                "Pairing / auth", CheckStatus.Warn,
-                reason = "Pairing in progress…",
+                authLabel, CheckStatus.Warn,
+                reason = authPairingProg,
                 category = DiagnosticCategory.Auth,
             )
         is AuthState.Failed ->
             StatusCheck(
-                "Pairing / auth", CheckStatus.Fail,
+                authLabel, CheckStatus.Fail,
                 reason = authState.reason,
                 category = DiagnosticCategory.Auth,
                 timestampMs = authErr?.timestampMs,
             )
         is AuthState.Unpaired ->
             StatusCheck(
-                "Pairing / auth", CheckStatus.Unknown,
-                reason = "Not paired — vanilla Hermes path doesn't require pairing",
+                authLabel, CheckStatus.Unknown,
+                reason = authNotPaired,
                 category = DiagnosticCategory.Auth,
             )
     }
 
     // 6) Relay server (optional — Unknown when not paired/configured).
+    val relayLabel = context.getString(R.string.diag_check_relay_server)
+    val relayNotConfigured = context.getString(R.string.diag_check_relay_not_configured)
+    val relayConnected = context.getString(R.string.diag_check_connected)
+    val relayReachableNotReady = context.getString(R.string.diag_check_reachable_not_ready)
+    val relayConfiguredNotReachable = context.getString(R.string.diag_check_configured_not_reachable)
     val relayErr = recentError(DiagnosticCategory.Relay)
     checks += when {
         !relayConfigured ->
             StatusCheck(
-                "Relay server", CheckStatus.Unknown,
-                reason = "Not paired — relay features are optional",
+                relayLabel, CheckStatus.Unknown,
+                reason = relayNotConfigured,
                 category = DiagnosticCategory.Relay,
             )
         relayReady ->
             StatusCheck(
-                "Relay server", CheckStatus.Pass,
-                reason = "Connected",
+                relayLabel, CheckStatus.Pass,
+                reason = relayConnected,
                 category = DiagnosticCategory.Relay,
             )
         relayHealth == ConnectionViewModel.HealthStatus.Reachable ->
             StatusCheck(
-                "Relay server", CheckStatus.Warn,
-                reason = relayErr?.message() ?: "Reachable but session not ready",
+                relayLabel, CheckStatus.Warn,
+                reason = relayErr?.message() ?: relayReachableNotReady,
                 category = DiagnosticCategory.Relay,
                 timestampMs = relayErr?.timestampMs,
             )
         else ->
             StatusCheck(
-                "Relay server", CheckStatus.Fail,
-                reason = relayErr?.message() ?: "Configured but not reachable",
+                relayLabel, CheckStatus.Fail,
+                reason = relayErr?.message() ?: relayConfiguredNotReachable,
                 category = DiagnosticCategory.Relay,
                 timestampMs = relayErr?.timestampMs,
             )
     }
 
     // 7) Voice readiness.
+    val voiceLabel = context.getString(R.string.diag_check_voice)
+    val voiceRelayReady = context.getString(R.string.diag_check_voice_relay)
+    val voiceStandardReady = context.getString(R.string.diag_check_voice_standard)
+    val voiceNotConfigured = context.getString(R.string.diag_check_voice_not_configured)
     val voiceErr = recentError(DiagnosticCategory.Voice)
     checks += if (voiceReady) {
         StatusCheck(
-            "Voice", CheckStatus.Pass,
-            reason = if (relayVoiceReady) "Relay voice ready" else "Standard voice ready",
+            voiceLabel, CheckStatus.Pass,
+            reason = if (relayVoiceReady) voiceRelayReady else voiceStandardReady,
             category = DiagnosticCategory.Voice,
         )
     } else {
         StatusCheck(
-            "Voice",
+            voiceLabel,
             if (voiceErr != null) CheckStatus.Fail else CheckStatus.Unknown,
-            reason = voiceErr?.message() ?: "Not configured or unavailable",
+            reason = voiceErr?.message() ?: voiceNotConfigured,
             category = DiagnosticCategory.Voice,
             timestampMs = voiceErr?.timestampMs,
         )

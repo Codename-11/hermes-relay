@@ -1,5 +1,30 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-11 — Android localization foundation and Simplified Chinese
+
+The Android UI now resolves its broad static copy through canonical resources,
+with a complete Simplified Chinese catalog under the script-qualified
+`values-b+zh+Hans` directory and a matching sideload-flavor catalog. Android's
+locale configuration advertises English and Simplified Chinese to system per-app
+language settings. Current notification, voice-overlay, background-process,
+diagnostic, attachment, card, crash, timeline, and session-TTL surfaces were
+reconciled after the original localization branch diverged from `dev`.
+
+`scripts/check-android-locales.py` discovers locale catalogs in every Android
+source set and rejects malformed XML, duplicate resources, missing or extra
+keys, mismatched resource types, incompatible format arguments, and locale
+configuration drift. Android CI runs the checker before lint. Scan summaries and
+queued-message counts were converted from English suffix formatting to Android
+plurals after validation exposed a missing-format-argument path in the current
+connection wizard.
+
+The public contribution workflow now documents stale-PR salvage, preserved
+authorship, scoped translation PRs, locale qualifiers, device review, and the
+English canonical boundary. The root README links a maintained Chinese summary,
+and VitePress exposes a Simplified Chinese locale with localized landing, quick
+start, and feature pages while linking fast-moving reference material back to
+canonical English.
+
 ## 2026-07-10 — In-flight Chat turns recover across app recreation
 
 Current upstream Hermes can keep a running Dashboard/TUI Gateway session alive

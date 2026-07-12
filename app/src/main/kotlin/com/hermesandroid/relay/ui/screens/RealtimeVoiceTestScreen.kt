@@ -53,8 +53,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.audio.RealtimePcmRecorder
 import com.hermesandroid.relay.network.relay.RealtimeAgentSessionControl
@@ -84,11 +86,33 @@ fun RealtimeVoiceTestScreen(
     val waveform = remember { mutableStateListOf<Float>() }
     val events = remember { mutableStateListOf<String>() }
 
+    // Pre-resolved status strings — these are set from coroutine scopes
+    // (scope.launch) and from non-composable private suspend functions
+    // via onStatus/onTranscript callbacks. stringResource can't run there,
+    // so we resolve them up-front in the composable scope.
+    val statusIdle = stringResource(R.string.voice_test_status_idle)
+    val statusRecording = stringResource(R.string.voice_test_status_recording)
+    val statusMicFailedFmt = stringResource(R.string.voice_test_status_mic_failed)
+    val statusRecordingShort = stringResource(R.string.voice_test_status_recording_short)
+    val statusMicPermissionDenied = stringResource(R.string.voice_test_status_mic_permission_denied)
+    val statusReady = stringResource(R.string.voice_test_status_ready)
+    val statusRouteDisabled = stringResource(R.string.voice_test_status_route_disabled)
+    val statusConfigFailed = stringResource(R.string.voice_test_status_config_failed)
+    val statusStreaming = stringResource(R.string.voice_test_status_streaming)
+    val statusComplete = stringResource(R.string.voice_test_status_complete)
+    val statusDemoFailed = stringResource(R.string.voice_test_status_demo_failed)
+    val statusTranscribing = stringResource(R.string.voice_test_status_transcribing)
+    val statusSpeaking = stringResource(R.string.voice_test_status_speaking)
+    val statusAgentFailed = stringResource(R.string.voice_test_status_agent_failed)
+    val transcriptSpokenFmt = stringResource(R.string.voice_test_transcript_spoken)
+    val transcriptYouSaidFmt = stringResource(R.string.voice_test_transcript_you_said)
+    val defaultPromptText = stringResource(R.string.voice_test_default_prompt)
+
     var prompt by remember {
-        mutableStateOf("Let me check that. Confirm the realtime voice provider path is working.")
+        mutableStateOf(defaultPromptText)
     }
     var config by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
-    var status by remember { mutableStateOf("Idle") }
+    var status by remember { mutableStateOf(statusIdle) }
     var summary by remember { mutableStateOf<RealtimeVoiceSummary?>(null) }
     var running by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
@@ -101,18 +125,18 @@ fun RealtimeVoiceTestScreen(
         transcript = ""
         waveform.clear()
         recording = true
-        status = "Recording — tap Stop & send"
+        status = statusRecording
         scope.launch {
             val pcm = try {
                 recorder.captureUntilStopped(onLevel = { micLevel = it })
             } catch (e: Exception) {
-                status = "Mic capture failed: ${e.message}"
+                status = statusMicFailedFmt.format(e.message ?: "")
                 ByteArray(0)
             }
             recording = false
             micLevel = 0f
             if (pcm.size < 3_200) { // < ~100ms @ 16kHz → nothing useful captured
-                status = "Recording too short"
+                status = statusRecordingShort
                 return@launch
             }
             runRealtimeAgentMic(
@@ -126,6 +150,11 @@ fun RealtimeVoiceTestScreen(
                 onTranscript = { transcript = it },
                 onSummary = { summary = it },
                 onRunning = { running = it },
+                statusTranscribing = statusTranscribing,
+                statusSpeaking = statusSpeaking,
+                statusComplete = statusComplete,
+                statusAgentFailed = statusAgentFailed,
+                transcriptYouSaidFmt = transcriptYouSaidFmt,
             )
         }
     }
@@ -133,7 +162,7 @@ fun RealtimeVoiceTestScreen(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startMicDemo() else status = "Microphone permission denied"
+        if (granted) startMicDemo() else status = statusMicPermissionDenied
     }
 
     LaunchedEffect(voiceClient) {
@@ -141,9 +170,9 @@ fun RealtimeVoiceTestScreen(
         val result = client.getRealtimeVoiceConfig()
         if (result.isSuccess) {
             config = result.getOrNull()
-            status = if (config?.enabled == true) "Ready" else "Realtime route disabled"
+            status = if (config?.enabled == true) statusReady else statusRouteDisabled
         } else {
-            status = result.exceptionOrNull()?.message ?: "Realtime config failed"
+            status = result.exceptionOrNull()?.message ?: statusConfigFailed
         }
     }
 
@@ -177,12 +206,12 @@ fun RealtimeVoiceTestScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Realtime Voice Lab") },
+                title = { Text(stringResource(R.string.voice_test_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.voice_test_back),
                         )
                     }
                 },
@@ -200,44 +229,44 @@ fun RealtimeVoiceTestScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            SectionCard(title = "Provider") {
-                ProviderRow("Status", status)
-                ProviderRow("Provider", config?.default_provider ?: "loading")
-                ProviderRow("Model", config?.default_model ?: "loading")
-                ProviderRow("Voice", config?.default_voice ?: "loading")
+            val loadingLabel = stringResource(R.string.voice_test_loading)
+            val noneLabel = stringResource(R.string.voice_test_none)
+            SectionCard(title = stringResource(R.string.voice_test_section_provider)) {
+                ProviderRow(stringResource(R.string.voice_test_label_status), status)
+                ProviderRow(stringResource(R.string.voice_test_label_provider), config?.default_provider ?: loadingLabel)
+                ProviderRow(stringResource(R.string.voice_test_label_model), config?.default_model ?: loadingLabel)
+                ProviderRow(stringResource(R.string.voice_test_label_voice), config?.default_voice ?: loadingLabel)
                 ProviderRow(
-                    "Advertised",
+                    stringResource(R.string.voice_test_label_advertised),
                     config?.providers
                         ?.map { it.id }
                         ?.filter { it.isNotBlank() }
                         ?.joinToString(", ")
-                        ?.ifBlank { "none" }
-                        ?: "loading",
+                        ?.ifBlank { noneLabel }
+                        ?: loadingLabel,
                 )
                 ProviderRow(
-                    "Auth",
+                    stringResource(R.string.voice_test_label_auth),
                     when {
-                        config?.auth?.xai_oauth == true -> "xAI OAuth"
-                        config?.auth?.xai_env == true -> "xAI env"
-                        else -> "not detected"
+                        config?.auth?.xai_oauth == true -> stringResource(R.string.voice_test_auth_xai_oauth)
+                        config?.auth?.xai_env == true -> stringResource(R.string.voice_test_auth_xai_env)
+                        else -> stringResource(R.string.voice_test_auth_not_detected)
                     },
                 )
             }
 
-            SectionCard(title = "Prompt") {
+            SectionCard(title = stringResource(R.string.voice_test_section_prompt)) {
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { prompt = it },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
-                    label = { Text("Text demo prompt (spoken back via provider)") },
+                    label = { Text(stringResource(R.string.voice_test_prompt_label)) },
                     enabled = !running && !recording,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Mic demo speaks to the agent: it transcribes what you say, " +
-                        "Hermes responds, and the reply is spoken back. Text demo just " +
-                        "synthesizes the prompt above (no mic, no agent).",
+                    text = stringResource(R.string.voice_test_prompt_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -246,6 +275,8 @@ fun RealtimeVoiceTestScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    val stopSendLabel = stringResource(R.string.voice_test_stop_send)
+                    val micDemoLabel = stringResource(R.string.voice_test_mic_demo)
                     FilledTonalButton(
                         onClick = {
                             if (recording) {
@@ -267,7 +298,7 @@ fun RealtimeVoiceTestScreen(
                     ) {
                         Icon(Icons.Filled.Mic, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
-                        Text(if (recording) "Stop & send" else "Mic demo")
+                        Text(if (recording) stopSendLabel else micDemoLabel)
                     }
                     FilledTonalButton(
                         onClick = {
@@ -284,6 +315,10 @@ fun RealtimeVoiceTestScreen(
                                     onTranscript = { transcript = it },
                                     onSummary = { summary = it },
                                     onRunning = { running = it },
+                                    statusStreaming = statusStreaming,
+                                    statusComplete = statusComplete,
+                                    statusDemoFailed = statusDemoFailed,
+                                    transcriptSpokenFmt = transcriptSpokenFmt,
                                 )
                             }
                         },
@@ -292,13 +327,13 @@ fun RealtimeVoiceTestScreen(
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
-                        Text("Text demo")
+                        Text(stringResource(R.string.voice_test_text_demo))
                     }
                 }
             }
 
             if (transcript.isNotBlank()) {
-                SectionCard(title = "Transcript") {
+                SectionCard(title = stringResource(R.string.voice_test_section_transcript)) {
                     Text(
                         text = transcript,
                         style = MaterialTheme.typography.bodyMedium,
@@ -306,22 +341,24 @@ fun RealtimeVoiceTestScreen(
                 }
             }
 
-            SectionCard(title = "Waveform") {
+            val msFmt = stringResource(R.string.voice_test_ms)
+            val dashLabel = stringResource(R.string.voice_test_dash)
+            SectionCard(title = stringResource(R.string.voice_test_section_waveform)) {
                 RealtimeWaveform(values = waveform.toList())
                 summary?.let { item ->
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    ProviderRow("First audio", item.firstAudioMs?.let { "${it.toInt()} ms" } ?: "---")
-                    ProviderRow("Done", item.responseDoneMs?.let { "${it.toInt()} ms" } ?: "---")
-                    ProviderRow("Chunks", item.audioChunks.toString())
-                    ProviderRow("Bytes", item.audioBytes.toString())
-                    item.eventLogPath?.let { ProviderRow("Log", it) }
+                    ProviderRow(stringResource(R.string.voice_test_label_first_audio), item.firstAudioMs?.let { msFmt.format(it.toInt()) } ?: dashLabel)
+                    ProviderRow(stringResource(R.string.voice_test_label_done), item.responseDoneMs?.let { msFmt.format(it.toInt()) } ?: dashLabel)
+                    ProviderRow(stringResource(R.string.voice_test_label_chunks), item.audioChunks.toString())
+                    ProviderRow(stringResource(R.string.voice_test_label_bytes), item.audioBytes.toString())
+                    item.eventLogPath?.let { ProviderRow(stringResource(R.string.voice_test_label_log), it) }
                 }
             }
 
-            SectionCard(title = "Events") {
+            SectionCard(title = stringResource(R.string.voice_test_section_events)) {
                 if (events.isEmpty()) {
                     Text(
-                        text = "No events yet",
+                        text = stringResource(R.string.voice_test_no_events),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -384,25 +421,29 @@ private suspend fun runRealtimeDemo(
     onTranscript: (String) -> Unit,
     onSummary: (RealtimeVoiceSummary?) -> Unit,
     onRunning: (Boolean) -> Unit,
+    statusStreaming: String,
+    statusComplete: String,
+    statusDemoFailed: String,
+    transcriptSpokenFmt: String,
 ) {
     val client = voiceClient ?: return
     onRunning(true)
     onSummary(null)
     events.clear()
-    onStatus("Streaming")
+    onStatus(statusStreaming)
     val result = client.runRealtimeDemo(prompt, ByteArray(0)) { event ->
         writeEventAudio(event, player)
         logLabEvent(event, mainHandler, events)
         if (event.type == "voice.transcript.final") {
-            event.text?.let { t -> mainHandler.post { onTranscript("Spoken: $t") } }
+            event.text?.let { t -> mainHandler.post { onTranscript(transcriptSpokenFmt.format(t)) } }
         }
     }
     player.flushBufferedPlayback()
     if (result.isSuccess) {
         onSummary(result.getOrNull())
-        onStatus("Complete")
+        onStatus(statusComplete)
     } else {
-        onStatus(result.exceptionOrNull()?.message ?: "Realtime demo failed")
+        onStatus(result.exceptionOrNull()?.message ?: statusDemoFailed)
     }
     onRunning(false)
 }
@@ -424,12 +465,17 @@ private suspend fun runRealtimeAgentMic(
     onTranscript: (String) -> Unit,
     onSummary: (RealtimeVoiceSummary?) -> Unit,
     onRunning: (Boolean) -> Unit,
+    statusTranscribing: String,
+    statusSpeaking: String,
+    statusComplete: String,
+    statusAgentFailed: String,
+    transcriptYouSaidFmt: String,
 ) {
     val client = voiceClient ?: return
     onRunning(true)
     onSummary(null)
     events.clear()
-    onStatus("Transcribing + thinking")
+    onStatus(statusTranscribing)
     val heard = StringBuilder()
     val result = client.runRealtimeAgent(
         prompt = "",
@@ -442,13 +488,13 @@ private suspend fun runRealtimeAgentMic(
             "voice.input_transcript.delta" -> {
                 event.delta?.let { heard.append(it) }
                 val text = heard.toString()
-                mainHandler.post { onTranscript("You said: $text") }
+                mainHandler.post { onTranscript(transcriptYouSaidFmt.format(text)) }
             }
             "voice.input_transcript.final" -> {
                 val text = event.text ?: heard.toString()
                 mainHandler.post {
-                    onTranscript("You said: $text")
-                    onStatus("Speaking")
+                    onTranscript(transcriptYouSaidFmt.format(text))
+                    onStatus(statusSpeaking)
                 }
             }
             "voice.playback_drain.requested" -> {
@@ -468,9 +514,9 @@ private suspend fun runRealtimeAgentMic(
     player.flushBufferedPlayback()
     if (result.isSuccess) {
         onSummary(result.getOrNull())
-        onStatus("Complete")
+        onStatus(statusComplete)
     } else {
-        onStatus(result.exceptionOrNull()?.message ?: "Realtime agent failed")
+        onStatus(result.exceptionOrNull()?.message ?: statusAgentFailed)
     }
     onRunning(false)
 }

@@ -24,6 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import java.io.File
 
@@ -42,7 +44,7 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = "Agent icon",
+            text = stringResource(R.string.agent_icon_title),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -61,23 +63,23 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
                 if (!path.isNullOrBlank()) {
                     AsyncImage(
                         model = File(path),
-                        contentDescription = "Agent icon",
+                        contentDescription = stringResource(R.string.agent_icon_title),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
             OutlinedButton(onClick = { launcher.launch(arrayOf("image/*")) }) {
-                Text(if (iconPath.isNullOrBlank()) "Set image" else "Change")
+                Text(if (iconPath.isNullOrBlank()) stringResource(R.string.agent_icon_set) else stringResource(R.string.agent_icon_change))
             }
             if (!iconPath.isNullOrBlank()) {
                 TextButton(onClick = { connectionViewModel.clearProfileIcon() }) {
-                    Text("Clear")
+                    Text(stringResource(R.string.agent_icon_clear))
                 }
             }
         }
         Text(
-            text = "Shown beside this profile's name in chat. Stays on this device — never sent to Hermes.",
+            text = stringResource(R.string.agent_icon_description),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

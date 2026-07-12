@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,8 +42,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -97,12 +101,12 @@ fun ConnectionsSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Connections") },
+                title = { Text(stringResource(R.string.conn_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.conn_back),
                         )
                     }
                 },
@@ -115,7 +119,7 @@ fun ConnectionsSettingsScreen(
             ExtendedFloatingActionButton(
                 onClick = onAddConnection,
                 icon = { Icon(imageVector = Icons.Filled.Add, contentDescription = null) },
-                text = { Text("Add connection") },
+                text = { Text(stringResource(R.string.conn_add_connection)) },
             )
         },
     ) { innerPadding ->
@@ -130,9 +134,9 @@ fun ConnectionsSettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(text = "No connections yet", style = MaterialTheme.typography.titleMedium)
+                Text(text = stringResource(R.string.conn_no_connections), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "Tap Add connection to connect to Hermes.",
+                    text = stringResource(R.string.conn_no_connections_desc),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -182,6 +186,7 @@ private fun ConnectionListCard(
     relayConfigured: Boolean,
     onClick: () -> Unit,
 ) {
+    val context = LocalContext.current
     // Active card: muted indigo wash instead of full-strength primaryContainer —
     // a card-sized fill of the brand blue overwhelmed body text (2026-06-10
     // feedback); small accents keep the vivid blue.
@@ -216,7 +221,7 @@ private fun ConnectionListCard(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ) {
-                        Text(text = "Active", modifier = Modifier.padding(horizontal = 6.dp))
+                        Text(text = stringResource(R.string.conn_active), modifier = Modifier.padding(horizontal = 6.dp))
                     }
                 }
                 Icon(
@@ -233,10 +238,10 @@ private fun ConnectionListCard(
             val pairedStatus = when {
                 liveState != null &&
                     (connection.pairedAt != null || liveState != RelayUiState.NotConfigured) ->
-                    liveState.statusText(connectedLabel = "Connected")
-                connection.pairedAt != null -> formatPairedRelative(connection.pairedAt)
-                hasStandardApi -> "Standard · Relay not paired"
-                else -> "Not paired"
+                    liveState.statusText(connectedLabel = stringResource(R.string.conn_connected))
+                connection.pairedAt != null -> formatPairedRelative(context, connection.pairedAt)
+                hasStandardApi -> stringResource(R.string.conn_standard_not_paired)
+                else -> stringResource(R.string.conn_not_paired)
             }
             val statusColor = if (liveState == RelayUiState.Stale) {
                 MaterialTheme.colorScheme.tertiary
@@ -311,39 +316,40 @@ private fun ConnectionSurfaceSummary(
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
 
     val apiText = when {
-        connection.apiServerUrl.isBlank() -> "Missing"
-        activeApiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking"
-        activeApiReachable == true -> "Ready"
-        isActive && activeApiReachable == false -> "Offline"
-        else -> "Configured"
+        connection.apiServerUrl.isBlank() -> stringResource(R.string.conn_api_missing)
+        activeApiHealth == ConnectionViewModel.HealthStatus.Probing -> stringResource(R.string.conn_api_checking)
+        activeApiReachable == true -> stringResource(R.string.conn_api_ready)
+        isActive && activeApiReachable == false -> stringResource(R.string.conn_api_offline)
+        else -> stringResource(R.string.conn_api_configured)
     }
-    val apiTone = when (apiText) {
-        "Ready" -> SummaryTone.Good
-        "Offline", "Missing" -> SummaryTone.Warning
+    val apiTone = when {
+        activeApiReachable == true -> SummaryTone.Good
+        connection.apiServerUrl.isBlank() -> SummaryTone.Warning
+        isActive && activeApiReachable == false -> SummaryTone.Warning
         else -> SummaryTone.Neutral
     }
 
     val dashboardText = when {
-        connection.resolvedDashboardUrl.isBlank() -> "Missing"
-        dashboardStatus == null -> "Unchecked"
-        !dashboardStatus.reachable -> "Offline"
-        dashboardSignInRequired -> "Sign in"
-        dashboardStatus.authenticated == true -> "Signed in"
-        else -> "Available"
+        connection.resolvedDashboardUrl.isBlank() -> stringResource(R.string.conn_dashboard_missing)
+        dashboardStatus == null -> stringResource(R.string.conn_dashboard_unchecked)
+        !dashboardStatus.reachable -> stringResource(R.string.conn_dashboard_offline)
+        dashboardSignInRequired -> stringResource(R.string.conn_dashboard_sign_in)
+        dashboardStatus.authenticated == true -> stringResource(R.string.conn_dashboard_signed_in)
+        else -> stringResource(R.string.conn_dashboard_available)
     }
-    val dashboardTone = when (dashboardText) {
-        "Signed in", "Available" -> SummaryTone.Good
-        "Sign in" -> SummaryTone.Info
-        "Offline", "Missing" -> SummaryTone.Warning
+    val dashboardTone = when {
+        dashboardStatus?.authenticated == true && dashboardStatus.reachable -> SummaryTone.Good
+        dashboardSignInRequired -> SummaryTone.Info
+        connection.resolvedDashboardUrl.isBlank() || (dashboardStatus != null && !dashboardStatus.reachable) -> SummaryTone.Warning
         else -> SummaryTone.Neutral
     }
 
     val relayText = when {
-        !relayConfigured -> "Optional"
-        liveState != null -> liveState.statusText(connectedLabel = "Ready")
-        connection.pairedAt != null -> "Paired"
-        connection.relayUrl.isNotBlank() -> "Configured"
-        else -> "Configure"
+        !relayConfigured -> stringResource(R.string.conn_relay_optional)
+        liveState != null -> liveState.statusText(connectedLabel = stringResource(R.string.conn_relay_ready))
+        connection.pairedAt != null -> stringResource(R.string.conn_relay_paired)
+        connection.relayUrl.isNotBlank() -> stringResource(R.string.conn_relay_configured)
+        else -> stringResource(R.string.conn_relay_configure)
     }
     val relayTone = when {
         !relayConfigured -> SummaryTone.Neutral
@@ -353,18 +359,18 @@ private fun ConnectionSurfaceSummary(
     }
 
     val voiceText = when {
-        activeVoiceReady == true -> "Ready"
-        standardVoiceAvailability == StandardVoiceAvailability.SignInRequired -> "Sign in"
-        standardVoiceAvailability == StandardVoiceAvailability.Unsupported -> "Unsupported"
-        standardVoiceAvailability == StandardVoiceAvailability.Unreachable -> "Offline"
-        standardVoiceAvailability == StandardVoiceAvailability.Unknown && isActive -> "Checking"
-        relayConfigured -> "Relay"
-        else -> "Optional"
+        activeVoiceReady == true -> stringResource(R.string.conn_voice_ready)
+        standardVoiceAvailability == StandardVoiceAvailability.SignInRequired -> stringResource(R.string.conn_voice_sign_in)
+        standardVoiceAvailability == StandardVoiceAvailability.Unsupported -> stringResource(R.string.conn_voice_unsupported)
+        standardVoiceAvailability == StandardVoiceAvailability.Unreachable -> stringResource(R.string.conn_voice_offline)
+        standardVoiceAvailability == StandardVoiceAvailability.Unknown && isActive -> stringResource(R.string.conn_voice_checking)
+        relayConfigured -> stringResource(R.string.conn_voice_relay)
+        else -> stringResource(R.string.conn_voice_optional)
     }
-    val voiceTone = when (voiceText) {
-        "Ready" -> SummaryTone.Good
-        "Sign in", "Relay" -> SummaryTone.Info
-        "Unsupported", "Offline" -> SummaryTone.Warning
+    val voiceTone = when {
+        activeVoiceReady == true -> SummaryTone.Good
+        standardVoiceAvailability == StandardVoiceAvailability.SignInRequired || relayConfigured -> SummaryTone.Info
+        standardVoiceAvailability == StandardVoiceAvailability.Unsupported || standardVoiceAvailability == StandardVoiceAvailability.Unreachable -> SummaryTone.Warning
         else -> SummaryTone.Neutral
     }
 
@@ -376,23 +382,23 @@ private fun ConnectionSurfaceSummary(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
-            ConnectionSurfaceRow(label = "API", value = apiText, tone = apiTone)
+            ConnectionSurfaceRow(label = stringResource(R.string.conn_api_label), value = apiText, tone = apiTone)
             SurfaceRowDivider()
             ConnectionSurfaceRow(
-                label = "Dashboard",
+                label = stringResource(R.string.conn_dashboard_label),
                 value = dashboardText,
                 tone = dashboardTone,
                 onClick = if (dashboardSignInRequired) onOpenDashboard else null,
             )
             SurfaceRowDivider()
             ConnectionSurfaceRow(
-                label = "Voice",
+                label = stringResource(R.string.conn_voice_label),
                 value = voiceText,
                 tone = voiceTone,
-                onClick = if (voiceText == "Sign in") onOpenDashboard else null,
+                onClick = if (standardVoiceAvailability == StandardVoiceAvailability.SignInRequired) onOpenDashboard else null,
             )
             SurfaceRowDivider()
-            ConnectionSurfaceRow(label = "Relay", value = relayText, tone = relayTone)
+            ConnectionSurfaceRow(label = stringResource(R.string.conn_relay_label), value = relayText, tone = relayTone)
         }
     }
 }
@@ -475,17 +481,17 @@ private fun Connection.hasConfiguredRelay(): Boolean {
  * Hand-rolled "N minutes ago" formatter for the card subtitle. `DateUtils`
  * returns awkward copy ("in 0 minutes") for small deltas.
  */
-private fun formatPairedRelative(pairedAtMillis: Long): String {
+private fun formatPairedRelative(context: Context, pairedAtMillis: Long): String {
     val deltaMs = System.currentTimeMillis() - pairedAtMillis
-    if (deltaMs < 0) return "Just paired"
+    if (deltaMs < 0) return context.getString(R.string.conn_just_paired)
     val minutes = TimeUnit.MILLISECONDS.toMinutes(deltaMs)
     val hours = TimeUnit.MILLISECONDS.toHours(deltaMs)
     val days = TimeUnit.MILLISECONDS.toDays(deltaMs)
     return when {
-        minutes < 1L -> "Just paired"
-        minutes < 60L -> "Paired $minutes minute${if (minutes == 1L) "" else "s"} ago"
-        hours < 24L -> "Paired $hours hour${if (hours == 1L) "" else "s"} ago"
-        days < 30L -> "Paired $days day${if (days == 1L) "" else "s"} ago"
-        else -> "Paired"
+        minutes < 1L -> context.getString(R.string.conn_just_paired)
+        minutes < 60L -> context.resources.getQuantityString(R.plurals.conn_paired_minutes_ago, minutes.toInt(), minutes)
+        hours < 24L -> context.resources.getQuantityString(R.plurals.conn_paired_hours_ago, hours.toInt(), hours)
+        days < 30L -> context.resources.getQuantityString(R.plurals.conn_paired_days_ago, days.toInt(), days)
+        else -> context.getString(R.string.conn_paired)
     }
 }

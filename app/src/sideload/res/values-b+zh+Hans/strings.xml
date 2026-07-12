@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hermes 开发版</string>
+    <string name="a11y_service_label">Hermes-Bridge 开发版</string>
+    <string name="notification_companion_label">Hermes 开发版通知助手</string>
+    <string name="a11y_description_sideload">Hermes Bridge 允许代理通过语音和视觉对手机进行完整读写，实现免手动控制。所有操作都会记录在活动日志中，破坏性操作需要您的确认。</string>
+</resources>

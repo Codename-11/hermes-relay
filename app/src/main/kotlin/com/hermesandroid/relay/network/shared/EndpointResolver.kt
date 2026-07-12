@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.network.shared
 
+import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
@@ -85,6 +87,12 @@ class EndpointResolver(
      * tests feed a mutable clock to exercise the 30-second TTL.
      */
     private val clock: () -> Long = { System.currentTimeMillis() },
+    /**
+     * Application context for localized string resources. When null the
+     * resolver falls back to hardcoded English strings — this is the
+     * expected path for plain JVM tests.
+     */
+    private val context: Context? = null,
 ) {
 
     /**
@@ -190,7 +198,7 @@ class EndpointResolver(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Info,
-                    title = "Endpoint selected",
+                    title = context?.getString(R.string.endpoint_diag_selected) ?: "Endpoint selected",
                     detail = "priority=$priority",
                     endpointRole = winner.role,
                     url = winner.relay.url,
@@ -203,7 +211,7 @@ class EndpointResolver(
         DiagnosticsLog.record(
             category = DiagnosticCategory.Endpoint,
             severity = DiagnosticSeverity.Warning,
-            title = "No reachable endpoint",
+            title = context?.getString(R.string.endpoint_diag_no_reachable) ?: "No reachable endpoint",
             detail = "${candidates.size} configured route(s) failed health probes",
         )
         return null
@@ -288,7 +296,7 @@ class EndpointResolver(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Error,
-                    title = "Endpoint probe invalid",
+                    title = context?.getString(R.string.endpoint_diag_probe_invalid) ?: "Endpoint probe invalid",
                     detail = "Invalid API URL",
                     endpointRole = candidate.role,
                     url = candidate.api.url,
@@ -312,10 +320,15 @@ class EndpointResolver(
                 withTimeoutOrNull(PROBE_TIMEOUT_MS + 200L) {
                     fastClient.newCall(request).execute().use { resp ->
                         val ok = resp.isSuccessful
+                        val probeTitle = if (ok) {
+                            context?.getString(R.string.endpoint_diag_probe_ok) ?: "Endpoint probe ok"
+                        } else {
+                            context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed"
+                        }
                         DiagnosticsLog.record(
                             category = DiagnosticCategory.Endpoint,
                             severity = if (ok) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
-                            title = if (ok) "Endpoint probe ok" else "Endpoint probe failed",
+                            title = probeTitle,
                             detail = if (ok) null else "HTTP ${resp.code}",
                             endpointRole = candidate.role,
                             url = candidate.api.url,
@@ -332,7 +345,7 @@ class EndpointResolver(
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Endpoint,
                         severity = DiagnosticSeverity.Warning,
-                        title = "Endpoint probe timeout",
+                        title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
                         detail = "No /health response in ${PROBE_TIMEOUT_MS}ms",
                         endpointRole = candidate.role,
                         url = candidate.api.url,
@@ -345,7 +358,7 @@ class EndpointResolver(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Endpoint probe timeout",
+                    title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
                     detail = "No /health response in ${PROBE_TIMEOUT_MS}ms",
                     endpointRole = candidate.role,
                     url = candidate.api.url,
@@ -359,7 +372,7 @@ class EndpointResolver(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Endpoint probe failed",
+                    title = context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed",
                     detail = e.javaClass.simpleName,
                     endpointRole = candidate.role,
                     url = candidate.api.url,

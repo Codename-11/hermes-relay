@@ -38,12 +38,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.util.CrashReport
 import com.hermesandroid.relay.util.CrashReporter
 import com.hermesandroid.relay.util.IssueReport
@@ -111,7 +113,7 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                     )
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        text = "Hermes-Relay closed unexpectedly",
+                        text = stringResource(R.string.crash_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -119,8 +121,7 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
 
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "The last session crashed. Sending this report helps get it fixed — " +
-                        "nothing is sent automatically.",
+                    text = stringResource(R.string.crash_body),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -155,13 +156,13 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Dismiss") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_dismiss)) }
                     OutlinedButton(
                         onClick = {
                             IssueReport.copyToClipboard(context, reportText)
                             toast(context, "Crash report copied")
                         },
-                    ) { Text("Copy") }
+                    ) { Text(stringResource(R.string.common_copy)) }
                     // Universal, GitHub-free path: hand the full report to the
                     // system share sheet (email, chat apps, notes, Drive…). The
                     // user picks the destination, so nothing leaves the device
@@ -180,7 +181,7 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                             }
                             onDismiss()
                         },
-                    ) { Text("Share") }
+                    ) { Text(stringResource(R.string.common_share)) }
                     Button(
                         onClick = {
                             // Copy the FULL report first; the URL only carries the
@@ -194,7 +195,7 @@ private fun CrashReportDialog(report: CrashReport, onDismiss: () -> Unit) {
                             )
                             onDismiss()
                         },
-                    ) { Text("Report") }
+                    ) { Text(stringResource(R.string.common_report)) }
                 }
             }
         }

@@ -1,3 +1,5 @@
+@file:Suppress("LocalContextGetResourceValueCall")
+
 package com.hermesandroid.relay.ui.components
 
 import android.Manifest
@@ -83,6 +85,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
@@ -252,8 +256,7 @@ fun ConnectionWizard(
             step = WizardStep.Method
             Toast.makeText(
                 context,
-                "Camera permission denied. Pair manually instead — choose " +
-                    "\"Pair Relay by code\" or enter your server URL.",
+                context.getString(R.string.cw_camera_denied),
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -327,7 +330,7 @@ fun ConnectionWizard(
                     )
                     verifyError = terminal.reason
                 }
-                else -> verifyError = "Pairing did not complete"
+                else -> verifyError = context.getString(R.string.cw_pairing_did_not_complete)
             }
         } catch (_: TimeoutCancellationException) {
             android.util.Log.w(
@@ -339,16 +342,11 @@ fun ConnectionWizard(
             // most likely cause instead of one generic "relay timed out."
             verifyError = when (chosenMethod) {
                 PairMethod.EnterCode, PairMethod.ShowCode ->
-                    "The host hasn't accepted this pairing code yet. Run the pairing " +
-                        "command on your Hermes host (or re-check the code), then tap Retry."
+                    context.getString(R.string.cw_timeout_entercode_showcode)
                 PairMethod.Scan ->
-                    "Timed out before the relay confirmed pairing. Check the relay is " +
-                        "running and reachable on this network, then Retry. If pairing " +
-                        "seems to succeed but Hermes still can't be reached, the API " +
-                        "server may be behind a login gateway."
+                    context.getString(R.string.cw_timeout_scan)
                 else ->
-                    "Timed out waiting for the relay. Check that the relay is running " +
-                        "and the URL is correct."
+                    context.getString(R.string.cw_timeout_other)
             }
         }
     }
@@ -819,11 +817,11 @@ private fun DuplicateConnectionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Update existing connection?") },
+        title = { Text(stringResource(R.string.cw_update_existing_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "You already have a connection to this server:",
+                    text = stringResource(R.string.cw_update_existing_body),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -839,18 +837,17 @@ private fun DuplicateConnectionDialog(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Update this connection instead of creating another card. " +
-                        "Your existing label and saved preferences will be kept.",
+                    text = stringResource(R.string.cw_update_existing_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
         confirmButton = {
-            Button(onClick = onUpdate) { Text("Update") }
+            Button(onClick = onUpdate) { Text(stringResource(R.string.cw_update_button)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cw_cancel)) }
         },
     )
 }
@@ -952,14 +949,14 @@ private fun WizardStepIndicator(currentStep: Int, method: PairMethod) {
     Spacer(Modifier.height(4.dp))
     Text(
         text = when (currentStep) {
-            0 -> "Step 1 of 3 — Choose setup"
+            0 -> stringResource(R.string.cw_step_1_3)
             1 -> when (method) {
-                PairMethod.Standard -> "Step 2 of 3 — Connect API/dashboard"
-                PairMethod.Scan -> "Step 2 of 3 — Confirm QR details"
-                PairMethod.EnterCode -> "Step 2 of 3 — Enter Relay pairing code"
-                PairMethod.ShowCode -> "Step 2 of 3 — Show Relay code on host"
+                PairMethod.Standard -> stringResource(R.string.cw_step_2_3_standard)
+                PairMethod.Scan -> stringResource(R.string.cw_step_2_3_scan)
+                PairMethod.EnterCode -> stringResource(R.string.cw_step_2_3_enter_code)
+                PairMethod.ShowCode -> stringResource(R.string.cw_step_2_3_show_code)
             }
-            else -> "Step 3 of 3 — Verify Relay"
+            else -> stringResource(R.string.cw_step_3_3)
         },
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -982,13 +979,11 @@ private fun MethodStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Connect to Hermes",
+            text = stringResource(R.string.cw_connect_to_hermes),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Start the Hermes API/dashboard on your host, then connect this app. " +
-                "Relay pairing is optional and only needed for Terminal, Bridge, relay " +
-                "sessions, and channel grants.",
+            text = stringResource(R.string.cw_connect_description),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1008,12 +1003,12 @@ private fun MethodStep(
                         .padding(vertical = 4.dp),
                 ) {
                     Text(
-                        text = "Try the demo",
+                        text = stringResource(R.string.cw_try_demo),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Explore offline — no server needed.",
+                        text = stringResource(R.string.cw_try_demo_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1040,7 +1035,7 @@ private fun MethodStep(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.size(6.dp))
-                Text("Setup Guide")
+                Text(stringResource(R.string.cw_setup_guide))
             }
             OutlinedButton(
                 onClick = { openExternalUrl(context, HermesApiDocsUrl) },
@@ -1052,22 +1047,22 @@ private fun MethodStep(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.size(6.dp))
-                Text("Hermes API")
+                Text(stringResource(R.string.cw_hermes_api))
             }
         }
 
         MethodTile(
             icon = Icons.Filled.Check,
-            title = "Hermes",
-            subtitle = "API/dashboard setup for Chat, Manage, Skills, Cron, MCP, Profiles, Models, and Settings",
+            title = stringResource(R.string.cw_method_hermes_title),
+            subtitle = stringResource(R.string.cw_method_hermes_subtitle),
             onClick = onPickStandard,
             isPrimary = true,
         )
 
         MethodTile(
             icon = Icons.Filled.QrCodeScanner,
-            title = "Scan setup QR",
-            subtitle = "Scan a QR with API URL/key for Hermes; Relay QR details require the Relay plugin",
+            title = stringResource(R.string.cw_method_scan_title),
+            subtitle = stringResource(R.string.cw_method_scan_subtitle),
             onClick = onPickScan,
         )
 
@@ -1079,12 +1074,12 @@ private fun MethodStep(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Advanced: Relay pairing",
+                    text = stringResource(R.string.cw_advanced_relay_pairing),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Terminal, Bridge, Relay sessions, and grants require the Relay plugin.",
+                    text = stringResource(R.string.cw_advanced_relay_pairing_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1096,22 +1091,22 @@ private fun MethodStep(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.size(6.dp))
-                Text("Relay docs")
+                Text(stringResource(R.string.cw_relay_docs))
             }
         }
 
         MethodTile(
             icon = Icons.Filled.Keyboard,
-            title = "Pair Relay by code",
-            subtitle = "Power-user path for Terminal, Bridge, Relay sessions, and grants",
+            title = stringResource(R.string.cw_method_pair_code_title),
+            subtitle = stringResource(R.string.cw_method_pair_code_subtitle),
             onClick = onPickEnterCode,
         )
 
         if (relayEnabled) {
             MethodTile(
                 icon = Icons.Filled.PhonelinkLock,
-                title = "Show Relay code",
-                subtitle = "No camera or QR? Register this phone's code on the host",
+                title = stringResource(R.string.cw_method_show_code_title),
+                subtitle = stringResource(R.string.cw_method_show_code_subtitle),
                 onClick = onPickShowCode,
             )
         }
@@ -1121,7 +1116,7 @@ private fun MethodStep(
                 onClick = onSkip,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Skip for now — set up later in Settings")
+                Text(stringResource(R.string.cw_skip_for_now))
             }
         }
     }
@@ -1204,23 +1199,26 @@ private fun MethodTile(
  * The API server is HTTP/SSE; the relay is WSS — mixing them silently used
  * to land in the Confirm preview as a mislabeled line.
  */
-private fun apiUrlSchemeError(url: String): String? {
+private fun apiUrlSchemeError(url: String, context: android.content.Context): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     // Wrong-scheme paste gets a precise message first…
     if (trimmed.startsWith("ws://", ignoreCase = true) ||
         trimmed.startsWith("wss://", ignoreCase = true)
     ) {
-        return "Looks like a relay URL — API server expects http:// or https://"
+        return context.getString(R.string.cw_api_url_scheme_error)
     }
     // …then reject anything that won't actually parse as a host/URL. Without
     // this, a non-address such as "Manage sign-in and admin screens" passed
     // validation, was normalized to http://<spaces> at save, and crashed the
     // app when okhttp's url(String) threw on the malformed host (issue #131).
-    return ServerAddress.fieldError(trimmed, "API server URL")
+    return ServerAddress.fieldError(trimmed, context.getString(R.string.cw_field_api_url))
 }
 
-private fun optionalHttpUrlError(url: String, fieldLabel: String): String? {
+private fun optionalHttpUrlError(
+    url: String,
+    context: android.content.Context,
+): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     // Bare hosts/IPs are fine — save paths run them through
@@ -1230,21 +1228,24 @@ private fun optionalHttpUrlError(url: String, fieldLabel: String): String? {
     val scheme = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://").find(trimmed)
         ?.groupValues?.get(1)?.lowercase()
     if (scheme != null && scheme != "http" && scheme != "https") {
-        return "$fieldLabel expects http:// or https:// (bare hosts get http://)"
+        return context.getString(
+            R.string.cw_http_url_scheme_error,
+            context.getString(R.string.cw_http_url_field_label),
+        )
     }
     // …and a value that won't parse as a real http(s) host (spaces, junk) is
     // rejected here rather than reaching a request builder that throws (#131).
-    return ServerAddress.fieldError(trimmed, fieldLabel)
+    return ServerAddress.fieldError(trimmed, context.getString(R.string.cw_http_url_field_label))
 }
 
 /** Mirror of [apiUrlSchemeError] for the relay field. */
-private fun relayUrlSchemeError(url: String): String? {
+private fun relayUrlSchemeError(url: String, context: android.content.Context): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
     return when {
         trimmed.startsWith("http://", ignoreCase = true) ||
             trimmed.startsWith("https://", ignoreCase = true) ->
-            "Looks like an API URL — relay expects wss:// (or ws:// for local)"
+            context.getString(R.string.cw_relay_url_scheme_error)
         else -> null
     }
 }
@@ -1272,9 +1273,9 @@ private fun StandardEntryStep(
 ) {
     val context = LocalContext.current
     val scanScope = rememberCoroutineScope()
-    val apiError = apiUrlSchemeError(apiUrl)
-    val tailscaleError = optionalHttpUrlError(tailscaleApiUrl, "Tailscale API URL")
-    val dashboardError = optionalHttpUrlError(dashboardUrl, "Dashboard URL")
+    val apiError = apiUrlSchemeError(apiUrl, context)
+    val tailscaleError = optionalHttpUrlError(tailscaleApiUrl, context)
+    val dashboardError = optionalHttpUrlError(dashboardUrl, context)
     var advancedExpanded by remember { mutableStateOf(false) }
     var scanBusy by remember { mutableStateOf(false) }
     var scanResults by remember { mutableStateOf<List<HermesLanDiscoveryResult>>(emptyList()) }
@@ -1302,13 +1303,11 @@ private fun StandardEntryStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Hermes",
+            text = stringResource(R.string.cw_hermes_label),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Use this for Chat and Manage. Pair Relay later only when you enable " +
-                "Terminal, Bridge, Relay sessions, or grants. Dashboard sign-in is the " +
-                "preferred upstream auth path; the API key remains the Android Chat fallback.",
+            text = stringResource(R.string.cw_hermes_label_desc),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1316,15 +1315,13 @@ private fun StandardEntryStep(
         OutlinedTextField(
             value = apiUrl,
             onValueChange = onApiUrlChange,
-            label = { Text("API server URL or host") },
-            placeholder = { Text("192.168.1.10 or http://your-server:8642") },
+            label = { Text(stringResource(R.string.cw_api_url_label)) },
+            placeholder = { Text(stringResource(R.string.cw_api_url_placeholder)) },
             singleLine = true,
             isError = apiError != null,
             supportingText = {
                 Text(
-                    apiError ?: "Hermes API used by Chat and sessions — " +
-                        "API port 8642 and http:// assumed for bare hosts " +
-                        "(the dashboard's 9119 is derived separately)",
+                    apiError ?: stringResource(R.string.cw_api_url_supporting),
                 )
             },
             keyboardOptions = KeyboardOptions(
@@ -1340,7 +1337,7 @@ private fun StandardEntryStep(
                 val dashboardPort = parsedScanDashboardPort ?: Connection.DEFAULT_DASHBOARD_PORT
                 scanBusy = true
                 scanResults = emptyList()
-                scanMessage = "Scanning this LAN for Hermes dashboard/API..."
+                scanMessage = context.getString(R.string.cw_scan_message)
                 scanScope.launch {
                     val results = runCatching {
                         HermesLanDiscovery.scan(
@@ -1351,10 +1348,10 @@ private fun StandardEntryStep(
                     }
                     results.onSuccess { found ->
                         scanResults = found
-                        scanMessage = scanSummary(found)
+                        scanMessage = scanSummary(found, context)
                     }.onFailure { failure ->
                         scanResults = emptyList()
-                        scanMessage = "LAN scan failed: ${failure.message ?: failure.javaClass.simpleName}"
+                        scanMessage = context.getString(R.string.cw_scan_failed) + ": ${failure.message ?: failure.javaClass.simpleName}"
                     }
                     scanBusy = false
                 }
@@ -1378,7 +1375,7 @@ private fun StandardEntryStep(
                 )
             }
             Spacer(Modifier.size(8.dp))
-            Text(if (scanBusy) "Scanning LAN" else "Scan for Hermes on LAN")
+            Text(if (scanBusy) stringResource(R.string.cw_scanning_lan) else stringResource(R.string.cw_scan_lan))
         }
 
         scanMessage?.let { message ->
@@ -1406,12 +1403,26 @@ private fun StandardEntryStep(
                     )
                     scanMessage = when {
                         candidate.apiReachable && candidate.dashboardReachable ->
-                            "Selected ${candidate.host}. API and dashboard were reachable on LAN."
+                            context.getString(
+                                R.string.cw_scan_result_api_dashboard,
+                                candidate.host,
+                            )
                         candidate.apiReachable ->
-                            "Selected ${candidate.host}. API was reachable; dashboard was not found on :${parsedScanDashboardPort ?: Connection.DEFAULT_DASHBOARD_PORT}."
+                            context.getString(
+                                R.string.cw_scan_result_api_only,
+                                candidate.host,
+                                parsedScanDashboardPort ?: Connection.DEFAULT_DASHBOARD_PORT,
+                            )
                         candidate.dashboardReachable ->
-                            "Selected ${candidate.host}. Dashboard was found, but API was not reachable on :${parsedScanApiPort ?: 8642}."
-                        else -> "Selected ${candidate.host}. Enter your API key, then connect."
+                            context.getString(
+                                R.string.cw_scan_result_dashboard_only,
+                                candidate.host,
+                                parsedScanApiPort ?: 8642,
+                            )
+                        else -> context.getString(
+                            R.string.cw_scan_result_unknown,
+                            candidate.host,
+                        )
                     }
                 },
             )
@@ -1420,11 +1431,11 @@ private fun StandardEntryStep(
         OutlinedTextField(
             value = apiKey,
             onValueChange = onApiKeyChange,
-            label = { Text("API key") },
-            placeholder = { Text("Value from API_SERVER_KEY") },
+            label = { Text(stringResource(R.string.cw_api_key_label)) },
+            placeholder = { Text(stringResource(R.string.cw_api_key_placeholder)) },
             singleLine = true,
             supportingText = {
-                Text("Needed for Android Chat until the dashboard gateway transport is enabled.")
+                Text(stringResource(R.string.cw_api_key_hint))
             },
             visualTransformation = if (apiKeyVisible) {
                 VisualTransformation.None
@@ -1439,7 +1450,11 @@ private fun StandardEntryStep(
                         } else {
                             Icons.Filled.Visibility
                         },
-                        contentDescription = if (apiKeyVisible) "Hide API key" else "Show API key",
+                        contentDescription = if (apiKeyVisible) {
+                            stringResource(R.string.cw_hide_api_key)
+                        } else {
+                            stringResource(R.string.cw_show_api_key)
+                        },
                     )
                 }
             },
@@ -1459,22 +1474,16 @@ private fun StandardEntryStep(
         OutlinedTextField(
             value = tailscaleApiUrl,
             onValueChange = onTailscaleApiUrlChange,
-            label = { Text("Remote access — Tailscale URL (optional)") },
-            placeholder = { Text("100.x.y.z or http://your-host.ts.net:8642") },
+            label = { Text(stringResource(R.string.cw_tailscale_label)) },
+            placeholder = { Text(stringResource(R.string.cw_tailscale_placeholder)) },
             singleLine = true,
             isError = tailscaleError != null,
             supportingText = {
                 Text(
                     tailscaleError ?: if (isTailscaleDetected) {
-                        "Tailscale detected on this phone — add your server's " +
-                            "Tailscale IP or hostname so Hermes keeps working " +
-                            "away from home. API port 8642 and http:// are " +
-                            "assumed; use https:// only if your server has TLS."
+                        stringResource(R.string.cw_tailscale_supporting_detected)
                     } else {
-                        "Lets the phone switch to this URL automatically when it " +
-                            "leaves your server's network (API port 8642 and " +
-                            "http:// assumed). Editable later in Settings → " +
-                            "Connections → Routes."
+                        stringResource(R.string.cw_tailscale_supporting_other)
                     },
                 )
             },
@@ -1496,26 +1505,26 @@ private fun StandardEntryStep(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    text = "Dashboard",
+                    text = stringResource(R.string.cw_dashboard),
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    text = effectiveDashboardUrl ?: "Derived after a valid API URL is saved",
+                    text = effectiveDashboardUrl ?: stringResource(R.string.cw_dashboard_derived),
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     text = if (dashboardUrl.isBlank()) {
-                        "Manage uses dashboard cookies. Blank means same host on :${Connection.DEFAULT_DASHBOARD_PORT}."
+                        stringResource(R.string.cw_dashboard_blank_hint, Connection.DEFAULT_DASHBOARD_PORT)
                     } else {
-                        "Manage will use this custom dashboard URL for login and dashboard actions."
+                        stringResource(R.string.cw_dashboard_custom_hint)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (tailscaleApiUrl.isNotBlank()) {
                     Text(
-                        text = "Routes: default first, Tailscale fallback when reachable.",
+                        text = stringResource(R.string.cw_dashboard_routes_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1527,7 +1536,7 @@ private fun StandardEntryStep(
             onClick = { advancedExpanded = !advancedExpanded },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (advancedExpanded) "Hide advanced URLs and ports" else "Advanced URLs and ports")
+            Text(if (advancedExpanded) stringResource(R.string.cw_advanced_urls_hide) else stringResource(R.string.cw_advanced_urls_show))
             Spacer(Modifier.size(4.dp))
             Icon(
                 imageVector = Icons.Filled.ArrowDropDown,
@@ -1540,13 +1549,13 @@ private fun StandardEntryStep(
             OutlinedTextField(
                 value = dashboardUrl,
                 onValueChange = onDashboardUrlChange,
-                label = { Text("Dashboard URL override (optional)") },
-                placeholder = { Text("http://your-server:${Connection.DEFAULT_DASHBOARD_PORT}") },
+                label = { Text(stringResource(R.string.cw_dashboard_url_override)) },
+                placeholder = { Text(stringResource(R.string.cw_dashboard_url_placeholder, Connection.DEFAULT_DASHBOARD_PORT)) },
                 singleLine = true,
                 isError = dashboardError != null,
                 supportingText = {
                     Text(
-                        dashboardError ?: "Leave blank for the standard dashboard port on the API host"
+                        text = dashboardError ?: stringResource(R.string.cw_dashboard_url_supporting)
                     )
                 },
                 keyboardOptions = KeyboardOptions(
@@ -1564,7 +1573,7 @@ private fun StandardEntryStep(
                 OutlinedTextField(
                     value = scanApiPort,
                     onValueChange = { scanApiPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text("API port") },
+                    label = { Text(stringResource(R.string.cw_api_port)) },
                     singleLine = true,
                     isError = parsedScanApiPort == null,
                     keyboardOptions = KeyboardOptions(
@@ -1576,7 +1585,7 @@ private fun StandardEntryStep(
                 OutlinedTextField(
                     value = scanDashboardPort,
                     onValueChange = { scanDashboardPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text("Dashboard port") },
+                    label = { Text(stringResource(R.string.cw_dashboard_port)) },
                     singleLine = true,
                     isError = parsedScanDashboardPort == null,
                     keyboardOptions = KeyboardOptions(
@@ -1587,7 +1596,7 @@ private fun StandardEntryStep(
                 )
             }
             Text(
-                text = "The scan uses these ports. The API server URL above can also use any custom port.",
+                text = stringResource(R.string.cw_port_scan_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1616,7 +1625,7 @@ private fun StandardEntryStep(
                 enabled = !isConnecting,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Back")
+                Text(stringResource(R.string.cw_back))
             }
             Button(
                 onClick = onSubmit,
@@ -1629,25 +1638,34 @@ private fun StandardEntryStep(
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    Text("Connect")
+                    Text(stringResource(R.string.cw_connect_button))
                 }
             }
         }
     }
 }
 
-private fun scanSummary(found: List<HermesLanDiscoveryResult>): String {
+private fun scanSummary(
+    found: List<HermesLanDiscoveryResult>,
+    context: android.content.Context,
+): String {
     if (found.isEmpty()) {
-        return "No Hermes dashboard/API found on this LAN. Check host firewall and ports; Tailscale URLs can be added under Advanced."
+        return context.getString(R.string.cw_scan_summary_empty)
     }
     val both = found.count { it.apiReachable && it.dashboardReachable }
     val apiOnly = found.count { it.apiReachable && !it.dashboardReachable }
     val dashboardOnly = found.count { !it.apiReachable && it.dashboardReachable }
     return buildList {
-        add("Found ${found.size} possible Hermes host${if (found.size == 1) "" else "s"}")
-        if (both > 0) add("$both with API + dashboard")
-        if (apiOnly > 0) add("$apiOnly API only")
-        if (dashboardOnly > 0) add("$dashboardOnly dashboard only")
+        add(
+            context.resources.getQuantityString(
+                R.plurals.cw_scan_summary_hosts,
+                found.size,
+                found.size,
+            )
+        )
+        if (both > 0) add(context.resources.getQuantityString(R.plurals.cw_scan_summary_both, both, both))
+        if (apiOnly > 0) add(context.resources.getQuantityString(R.plurals.cw_scan_summary_api_only, apiOnly, apiOnly))
+        if (dashboardOnly > 0) add(context.resources.getQuantityString(R.plurals.cw_scan_summary_dashboard_only, dashboardOnly, dashboardOnly))
     }.joinToString(". ") + "."
 }
 
@@ -1668,60 +1686,59 @@ private fun StandardSetupResultCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "Hermes connected",
+                text = stringResource(R.string.cw_hermes_connected),
                 style = MaterialTheme.typography.titleMedium,
             )
             ReadinessLine(
-                label = "Chat",
+                label = stringResource(R.string.cw_chat),
                 detail = if (result.apiReachable) {
-                    "API server ready"
+                    stringResource(R.string.cw_api_server_ready)
                 } else {
-                    "API server not reachable"
+                    stringResource(R.string.cw_api_server_not_reachable)
                 },
                 ok = result.apiReachable,
             )
             ReadinessLine(
-                label = "Manage",
+                label = stringResource(R.string.cw_manage),
                 detail = when {
-                    result.dashboardAuthenticated == true -> "Dashboard signed in"
-                    result.dashboardSignInRequired -> "Dashboard sign-in required"
-                    result.dashboardReachable == true -> "Dashboard available"
-                    result.dashboardReachable == false -> "Dashboard not reachable yet"
-                    else -> "Dashboard will be checked in Manage"
+                    result.dashboardAuthenticated == true -> stringResource(R.string.cw_dashboard_signed_in)
+                    result.dashboardSignInRequired -> stringResource(R.string.cw_dashboard_sign_in_required)
+                    result.dashboardReachable == true -> stringResource(R.string.cw_dashboard_available)
+                    result.dashboardReachable == false -> stringResource(R.string.cw_dashboard_not_reachable)
+                    else -> stringResource(R.string.cw_dashboard_will_check)
                 },
                 ok = result.dashboardAuthenticated == true ||
                     result.dashboardReachable == true && !result.dashboardSignInRequired,
             )
             ReadinessLine(
-                label = "Voice",
+                label = stringResource(R.string.cw_voice),
                 detail = when (result.voiceAvailability) {
-                    StandardVoiceAvailability.Ready -> "Speech ready via your Hermes server"
-                    StandardVoiceAvailability.SignInRequired -> "Unlocks with dashboard sign-in"
+                    StandardVoiceAvailability.Ready -> stringResource(R.string.cw_voice_ready)
+                    StandardVoiceAvailability.SignInRequired -> stringResource(R.string.cw_voice_sign_in_to_unlock)
                     StandardVoiceAvailability.Unsupported ->
-                        "Hermes build has no voice routes — update or pair Relay"
-                    StandardVoiceAvailability.Unreachable -> "Checked once the dashboard is reachable"
-                    StandardVoiceAvailability.Unknown -> "Checked after connecting"
+                        stringResource(R.string.cw_voice_no_routes)
+                    StandardVoiceAvailability.Unreachable -> stringResource(R.string.cw_voice_after_dashboard)
+                    StandardVoiceAvailability.Unknown -> stringResource(R.string.cw_voice_after_connect)
                 },
                 ok = result.voiceAvailability == StandardVoiceAvailability.Ready,
                 neutralWhenFalse = true,
             )
             ReadinessLine(
-                label = "Remote",
+                label = stringResource(R.string.cw_remote),
                 detail = if (result.remoteRouteConfigured) {
-                    "Fallback route ready for use away from home"
+                    stringResource(R.string.cw_remote_fallback_ready)
                 } else {
-                    "LAN only — add a Tailscale or public route in " +
-                        "Settings → Connections → Routes"
+                    stringResource(R.string.cw_remote_lan_only)
                 },
                 ok = result.remoteRouteConfigured,
                 neutralWhenFalse = true,
             )
             ReadinessLine(
-                label = "Relay",
+                label = stringResource(R.string.cw_relay),
                 detail = if (result.relayPaired) {
-                    "Power tools paired"
+                    stringResource(R.string.cw_relay_paired)
                 } else {
-                    "Optional for Terminal and Bridge"
+                    stringResource(R.string.cw_relay_optional)
                 },
                 ok = result.relayPaired,
                 neutralWhenFalse = true,
@@ -1735,14 +1752,14 @@ private fun StandardSetupResultCard(
                 onClick = onContinue,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Start Chat")
+                Text(stringResource(R.string.cw_start_chat))
             }
             if (result.dashboardSignInRequired && onManageSignIn != null) {
                 OutlinedButton(
                     onClick = onManageSignIn,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Sign in to Manage")
+                    Text(stringResource(R.string.cw_sign_in_to_manage))
                 }
             }
         }
@@ -1825,12 +1842,12 @@ private fun LanDiscoveryResultRow(
                 Text(
                     text = when {
                         candidate.apiReachable && candidate.dashboardReachable ->
-                            "API + Dashboard reachable"
+                            stringResource(R.string.cw_lan_api_dashboard)
                         candidate.apiReachable ->
-                            "API reachable · Dashboard not found"
+                            stringResource(R.string.cw_lan_api_only)
                         candidate.dashboardReachable ->
-                            "Dashboard reachable · API not found"
-                        else -> "Reachability unknown"
+                            stringResource(R.string.cw_lan_dashboard_only)
+                        else -> stringResource(R.string.cw_lan_unknown)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (candidate.apiReachable) {
@@ -1847,7 +1864,7 @@ private fun LanDiscoveryResultRow(
             }
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
-                contentDescription = "Use ${candidate.host}",
+                contentDescription = stringResource(R.string.endpoints_use_now),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -1867,8 +1884,9 @@ private fun ManualEntryStep(
 ) {
     val trimmedCode = code.trim().uppercase()
     val codeValid = trimmedCode.length in 4..12 && trimmedCode.all { it.isLetterOrDigit() }
-    val apiError = apiUrlSchemeError(apiUrl)
-    val relayError = relayUrlSchemeError(relayUrl)
+    val context = LocalContext.current
+    val apiError = apiUrlSchemeError(apiUrl, context)
+    val relayError = relayUrlSchemeError(relayUrl, context)
     val canSubmit = codeValid &&
         relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
         apiError == null && relayError == null
@@ -1878,12 +1896,11 @@ private fun ManualEntryStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Pair Relay by code",
+            text = stringResource(R.string.cw_method_pair_code_title),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Use this only after the host has registered a Relay pairing code. " +
-                "Standard Chat and Manage do not require this.",
+            text = stringResource(R.string.cw_pair_code_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1891,12 +1908,12 @@ private fun ManualEntryStep(
         OutlinedTextField(
             value = apiUrl,
             onValueChange = onApiUrlChange,
-            label = { Text("API server URL") },
-            placeholder = { Text("http://your-server:8642") },
+            label = { Text(stringResource(R.string.cw_api_url_label_field)) },
+            placeholder = { Text(stringResource(R.string.cw_api_url_field_placeholder)) },
             singleLine = true,
             isError = apiError != null,
             supportingText = {
-                Text(apiError ?: "Hermes API — chat and sessions (default port 8642)")
+                Text(apiError ?: stringResource(R.string.cw_api_url_field_supporting))
             },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1904,12 +1921,12 @@ private fun ManualEntryStep(
         OutlinedTextField(
             value = relayUrl,
             onValueChange = onRelayUrlChange,
-            label = { Text("Relay URL") },
-            placeholder = { Text("wss://your-server:8767") },
+            label = { Text(stringResource(R.string.cw_relay_url_label)) },
+            placeholder = { Text(stringResource(R.string.cw_relay_url_placeholder)) },
             singleLine = true,
             isError = relayError != null,
             supportingText = {
-                Text(relayError ?: "Hermes-Relay — Terminal, Bridge, relay sessions, and grants")
+                Text(relayError ?: stringResource(R.string.cw_relay_url_supporting))
             },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1917,8 +1934,8 @@ private fun ManualEntryStep(
         OutlinedTextField(
             value = code,
             onValueChange = onCodeChange,
-            label = { Text("Pairing code") },
-            placeholder = { Text("e.g. ABC123") },
+            label = { Text(stringResource(R.string.cw_pairing_code_label)) },
+            placeholder = { Text(stringResource(R.string.cw_pairing_code_placeholder)) },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyLarge.copy(
                 fontFamily = FontFamily.Monospace,
@@ -1941,14 +1958,14 @@ private fun ManualEntryStep(
                 onClick = onBack,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Back")
+                Text(stringResource(R.string.cw_back))
             }
             Button(
                 onClick = onSubmit,
                 enabled = canSubmit,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Pair")
+                Text(stringResource(R.string.cw_pair_button))
             }
         }
     }
@@ -1967,8 +1984,9 @@ private fun ShowCodeStep(
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    val apiError = apiUrlSchemeError(apiUrl)
-    val relayError = relayUrlSchemeError(relayUrl)
+    val context = LocalContext.current
+    val apiError = apiUrlSchemeError(apiUrl, context)
+    val relayError = relayUrlSchemeError(relayUrl, context)
     val canConnect = pairingCode.isNotBlank() &&
         relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
         apiError == null && relayError == null
@@ -1978,12 +1996,11 @@ private fun ShowCodeStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = "Show Relay code",
+            text = stringResource(R.string.cw_method_show_code_title),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Use this when you can't scan a Relay pairing QR. Set your URLs, then " +
-                "register the code below on the host running Hermes-Relay.",
+            text = stringResource(R.string.cw_show_code_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1991,12 +2008,12 @@ private fun ShowCodeStep(
         OutlinedTextField(
             value = apiUrl,
             onValueChange = onApiUrlChange,
-            label = { Text("API server URL") },
-            placeholder = { Text("http://your-server:8642") },
+            label = { Text(stringResource(R.string.cw_api_url_label_field)) },
+            placeholder = { Text(stringResource(R.string.cw_api_url_field_placeholder)) },
             singleLine = true,
             isError = apiError != null,
             supportingText = {
-                Text(apiError ?: "Hermes API — chat and sessions (default port 8642)")
+                Text(apiError ?: stringResource(R.string.cw_api_url_field_supporting))
             },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -2004,12 +2021,12 @@ private fun ShowCodeStep(
         OutlinedTextField(
             value = relayUrl,
             onValueChange = onRelayUrlChange,
-            label = { Text("Relay URL") },
-            placeholder = { Text("wss://your-server:8767") },
+            label = { Text(stringResource(R.string.cw_relay_url_label)) },
+            placeholder = { Text(stringResource(R.string.cw_relay_url_placeholder)) },
             singleLine = true,
             isError = relayError != null,
             supportingText = {
-                Text(relayError ?: "Hermes-Relay — Terminal, Bridge, relay sessions, and grants")
+                Text(relayError ?: stringResource(R.string.cw_relay_url_supporting))
             },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -2018,7 +2035,7 @@ private fun ShowCodeStep(
 
         // Step 1 — show the code
         Text(
-            text = "1. Copy this code",
+            text = stringResource(R.string.cw_step_copy_code),
             style = MaterialTheme.typography.titleSmall,
         )
         Card(
@@ -2056,13 +2073,13 @@ private fun ShowCodeStep(
                 }) {
                     Icon(
                         imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = "Copy pairing code",
+                        contentDescription = stringResource(R.string.cw_copy_pairing_code),
                     )
                 }
                 IconButton(onClick = onRegenerate) {
                     Icon(
                         imageVector = Icons.Filled.Refresh,
-                        contentDescription = "Generate new code",
+                        contentDescription = stringResource(R.string.cw_generate_new_code),
                     )
                 }
             }
@@ -2070,7 +2087,7 @@ private fun ShowCodeStep(
 
         // Step 2 — register on host
         Text(
-            text = "2. On the host running Hermes-Relay, run:",
+            text = stringResource(R.string.cw_step_register_code),
             style = MaterialTheme.typography.titleSmall,
         )
         Surface(
@@ -2107,7 +2124,7 @@ private fun ShowCodeStep(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = "Copy command",
+                        contentDescription = stringResource(R.string.cw_copy_command),
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -2116,7 +2133,7 @@ private fun ShowCodeStep(
 
         // Step 3 — connect
         Text(
-            text = "3. Then come back and tap Connect",
+            text = stringResource(R.string.cw_step_connect),
             style = MaterialTheme.typography.titleSmall,
         )
 
@@ -2128,14 +2145,14 @@ private fun ShowCodeStep(
                 onClick = onBack,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Back")
+                Text(stringResource(R.string.cw_back))
             }
             Button(
                 onClick = onConnect,
                 enabled = canConnect,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Connect")
+                Text(stringResource(R.string.cw_connect_button))
             }
         }
     }
@@ -2219,14 +2236,18 @@ private fun ConfirmStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = if (relayUrl == null) "Confirm Hermes connection" else "Confirm Relay pairing",
+            text = if (relayUrl == null) {
+                stringResource(R.string.cw_confirm_title_hermes)
+            } else {
+                stringResource(R.string.cw_confirm_title_relay)
+            },
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
             text = if (relayUrl == null) {
-                "This QR configures the standard API/dashboard connection. Pair Relay later for Terminal and Bridge."
+                stringResource(R.string.cw_confirm_desc_hermes)
             } else {
-                "Review the scanned details and choose how long this Relay pairing should last."
+                stringResource(R.string.cw_confirm_desc_relay)
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2244,35 +2265,39 @@ private fun ConfirmStep(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 LabeledLine(
-                    label = "API server",
+                    label = stringResource(R.string.cw_label_api_server),
                     value = payload.serverUrl,
-                    hint = "chat & sessions",
+                    hint = stringResource(R.string.cw_hint_chat),
                 )
                 if (relayUrl == null) {
                     LabeledLine(
-                        label = "Dashboard",
+                        label = stringResource(R.string.cw_label_dashboard),
                         value = payload.dashboardUrl
                             ?.trim()
                             ?.takeIf { it.isNotBlank() }
                             ?: Connection.deriveDefaultDashboardUrl(payload.serverUrl)
-                            ?: "Derived from API URL",
-                        hint = "Manage",
+                            ?: stringResource(R.string.cw_value_derived),
+                        hint = stringResource(R.string.cw_hint_manage),
                     )
                     LabeledLine(
-                        label = "API key",
-                        value = if (payload.key.isBlank()) "Not included" else "Included",
+                        label = stringResource(R.string.cw_label_api_key),
+                        value = if (payload.key.isBlank()) {
+                            stringResource(R.string.cw_value_not_included)
+                        } else {
+                            stringResource(R.string.cw_value_included)
+                        },
                     )
                 }
                 if (relayUrl != null) {
                     LabeledLine(
-                        label = "Relay",
+                        label = stringResource(R.string.cw_label_relay),
                         value = relayUrl,
-                        hint = "bridge, voice, terminal",
+                        hint = stringResource(R.string.cw_hint_bridge),
                     )
                 }
                 if (payload.relay?.grants?.isNotEmpty() == true) {
                     LabeledLine(
-                        label = "Grants",
+                        label = stringResource(R.string.cw_label_grants),
                         value = payload.relay.grants.keys.sorted().joinToString(", "),
                     )
                 }
@@ -2303,13 +2328,11 @@ private fun ConfirmStep(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Routes (${endpoints.size})",
+                        text = stringResource(R.string.cw_routes_count, endpoints.size),
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = "Your phone tries these routes in order and uses " +
-                            "the first one it can reach. It switches automatically " +
-                            "as you change networks.",
+                        text = stringResource(R.string.cw_routes_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2334,7 +2357,7 @@ private fun ConfirmStep(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
-                                text = "Prefer:",
+                                text = stringResource(R.string.cw_prefer_label),
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(end = 8.dp),
                             )
@@ -2342,7 +2365,7 @@ private fun ConfirmStep(
                                 TextButton(onClick = { preferMenuOpen = true }) {
                                     Text(
                                         text = preferRole?.let { roleLabel(it) }
-                                            ?: "Natural order",
+                                            ?: stringResource(R.string.cw_natural_order),
                                     )
                                     Icon(
                                         imageVector = Icons.Filled.ArrowDropDown,
@@ -2354,7 +2377,7 @@ private fun ConfirmStep(
                                     onDismissRequest = { preferMenuOpen = false },
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Natural order") },
+                                        text = { Text(stringResource(R.string.cw_natural_order)) },
                                         onClick = {
                                             preferRole = null
                                             preferMenuOpen = false
@@ -2380,18 +2403,18 @@ private fun ConfirmStep(
         if (relayUrl != null) {
             // TTL picker — flat radio list, no nested dialog
             Text(
-                text = "Keep this pairing for…",
+                text = stringResource(R.string.cw_keep_pairing_for),
                 style = MaterialTheme.typography.titleSmall,
             )
-            val transportLabel = when {
-                isTailscaleDetected -> "Transport: Tailscale detected"
-                transportHint.equals("wss", ignoreCase = true) -> "Transport: TLS (wss://)"
-                transportHint.equals("ws", ignoreCase = true) -> "Transport: plain ws://"
+            val transportLabelRes = when {
+                isTailscaleDetected -> R.string.cw_transport_tailscale
+                transportHint.equals("wss", ignoreCase = true) -> R.string.cw_transport_tls
+                transportHint.equals("ws", ignoreCase = true) -> R.string.cw_transport_plain
                 else -> null
             }
-            if (transportLabel != null) {
+            if (transportLabelRes != null) {
                 Text(
-                    text = transportLabel,
+                    text = stringResource(transportLabelRes),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -2416,7 +2439,7 @@ private fun ConfirmStep(
                             onClick = { onTtlChange(option.seconds) },
                         )
                         Text(
-                            text = option.label,
+                            text = stringResource(option.labelRes),
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(start = 8.dp),
                         )
@@ -2435,14 +2458,12 @@ private fun ConfirmStep(
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
-                                text = "This relay uses plain ws:// \u2014 traffic is " +
-                                    "not encrypted.",
+                                text = stringResource(R.string.cw_insecure_relay_warning),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                             Text(
-                                text = "Only continue if you trust the network on any " +
-                                    "connection (LAN, Tailscale, VPN).",
+                                text = stringResource(R.string.cw_insecure_relay_trust),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
@@ -2462,8 +2483,7 @@ private fun ConfirmStep(
                                 onCheckedChange = { ackThisPair = it },
                             )
                             Text(
-                                text = "I understand this pairing sends traffic in " +
-                                    "plain text — visible to anyone on the network.",
+                                text = stringResource(R.string.cw_insecure_ack),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.padding(start = 4.dp),
@@ -2475,8 +2495,8 @@ private fun ConfirmStep(
                     // Amber-tinted informational card. The secure route is the
                     // safety net — spell that out explicitly so users stop
                     // reading "some plain" as "all plain".
-                    val plainLabel = firstInsecureLabel ?: "LAN"
-                    val secureLabel = firstSecureLabel ?: "Tailscale"
+                    val plainLabel = firstInsecureLabel ?: stringResource(R.string.cw_role_lan)
+                    val secureLabel = firstSecureLabel ?: stringResource(R.string.cw_role_tailscale)
                     Card(
                         colors = CardDefaults.cardColors(
                             containerColor = Color(0xFFF9A825).copy(alpha = 0.12f),
@@ -2488,19 +2508,17 @@ private fun ConfirmStep(
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             Text(
-                                text = "$plainLabel is plain ws:// \u2014 fine at home or " +
-                                    "the office, not on public Wi-Fi.",
+                                text = stringResource(R.string.cw_mixed_route_plain, plainLabel),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = "$secureLabel is encrypted (wss://) and the app " +
-                                    "uses it automatically when $plainLabel is unreachable.",
+                                text = stringResource(R.string.cw_mixed_route_secure, secureLabel, plainLabel),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = "You're safe on any network.",
+                                text = stringResource(R.string.cw_mixed_safe),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -2532,11 +2550,11 @@ private fun ConfirmStep(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Connecting to Hermes",
+                            text = stringResource(R.string.cw_connecting_to_hermes),
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Text(
-                            text = "Checking the API server, saved key, and dashboard.",
+                            text = stringResource(R.string.cw_connecting_detail),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -2572,7 +2590,7 @@ private fun ConfirmStep(
                     enabled = !standardBusy,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Back")
+                    Text(stringResource(R.string.cw_back))
                 }
                 Button(
                     onClick = {
@@ -2602,7 +2620,7 @@ private fun ConfirmStep(
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        Text(if (relayUrl == null) "Connect" else "Pair")
+                        Text(if (relayUrl == null) stringResource(R.string.cw_connect_button) else stringResource(R.string.cw_pair_button))
                     }
                 }
             }
@@ -2624,7 +2642,7 @@ private fun VerifyStep(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = if (error == null) "Pairing…" else "Pairing failed",
+            text = if (error == null) stringResource(R.string.cw_pairing_title) else stringResource(R.string.cw_pairing_failed),
             style = MaterialTheme.typography.headlineSmall,
         )
 
@@ -2632,9 +2650,9 @@ private fun VerifyStep(
             CircularProgressIndicator()
             Text(
                 text = when (authState) {
-                    is AuthState.Pairing -> "Negotiating with the relay…"
-                    is AuthState.Paired -> "Paired — opening chat…"
-                    else -> "Connecting to the relay…"
+                    is AuthState.Pairing -> stringResource(R.string.cw_negotiating_relay)
+                    is AuthState.Paired -> stringResource(R.string.cw_paired_opening_chat)
+                    else -> stringResource(R.string.cw_connecting_to_relay)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2659,20 +2677,20 @@ private fun VerifyStep(
                     onClick = onBack,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Back")
+                    Text(stringResource(R.string.cw_back))
                 }
                 Button(
                     onClick = onRetry,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Retry")
+                    Text(stringResource(R.string.cw_retry))
                 }
             }
             TextButton(
                 onClick = onCancel,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Cancel")
+                Text(stringResource(R.string.cw_cancel_button))
             }
         }
     }
@@ -2724,9 +2742,9 @@ private fun EndpointPreviewRow(
         candidate.api.tls ||
         candidate.relay.transportHint.equals("wss", ignoreCase = true)
     val ordinalLabel = when (index) {
-        0 -> "1st choice"
-        1 -> "Fallback"
-        else -> "Fallback $index"
+        0 -> stringResource(R.string.cw_ordinal_first)
+        1 -> stringResource(R.string.cw_ordinal_fallback)
+        else -> stringResource(R.string.cw_ordinal_fallback_n, index)
     }
 
     Row(
@@ -2744,12 +2762,12 @@ private fun EndpointPreviewRow(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 SoftPill(
-                    text = if (isSecure) "Secure" else "Plain",
+                    text = if (isSecure) stringResource(R.string.cw_secure_label) else stringResource(R.string.cw_plain_label),
                     fg = if (isSecure) Color(0xFF2E7D32) else Color(0xFFF9A825),
                 )
                 if (isPreferred) {
                     SoftPill(
-                        text = "Preferred",
+                        text = stringResource(R.string.cw_preferred_label),
                         fg = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -2819,9 +2837,10 @@ private fun reorderByPreferredRole(
 }
 
 /** Role → user-facing label used inside the Prefer dropdown menu. */
+@Composable
 private fun roleLabel(role: String): String = when (role.lowercase()) {
-    "lan" -> "LAN"
-    "tailscale" -> "Tailscale"
-    "public" -> "Public"
+    "lan" -> stringResource(R.string.cw_role_lan)
+    "tailscale" -> stringResource(R.string.cw_role_tailscale)
+    "public" -> stringResource(R.string.cw_role_public)
     else -> role
 }

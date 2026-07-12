@@ -71,6 +71,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
@@ -192,32 +194,32 @@ fun SettingsScreen(
     // healthy the pill is null so the card + agent summary stay clean.
     val apiPill: SettingsStatusPillModel? = when {
         activeConnection?.apiServerUrl.isNullOrBlank() -> SettingsStatusPillModel(
-            label = "API missing",
+            label = stringResource(R.string.settings_api_missing),
             tone = SettingsStatusTone.Warning,
         )
         apiServerHealth == ConnectionViewModel.HealthStatus.Probing -> SettingsStatusPillModel(
-            label = "API checking",
+            label = stringResource(R.string.settings_api_checking),
             tone = SettingsStatusTone.Info,
         )
         apiServerReachable -> null
         apiServerHealth == ConnectionViewModel.HealthStatus.Unreachable -> SettingsStatusPillModel(
-            label = "API offline",
+            label = stringResource(R.string.settings_api_offline),
             tone = SettingsStatusTone.Warning,
         )
         else -> null
     }
     val dashboardPill: SettingsStatusPillModel? = when {
         activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> SettingsStatusPillModel(
-            label = "Dashboard missing",
+            label = stringResource(R.string.settings_dashboard_missing),
             tone = SettingsStatusTone.Warning,
         )
         dashboardStatus == null -> null
         !dashboardStatus.reachable -> SettingsStatusPillModel(
-            label = "Dashboard offline",
+            label = stringResource(R.string.settings_dashboard_offline),
             tone = SettingsStatusTone.Warning,
         )
         dashboardSignInRequired -> SettingsStatusPillModel(
-            label = "Dashboard sign in",
+            label = stringResource(R.string.settings_dashboard_sign_in),
             tone = SettingsStatusTone.Info,
         )
         dashboardStatus.authenticated == true -> null
@@ -226,19 +228,19 @@ fun SettingsScreen(
     val relayPill: SettingsStatusPillModel? = when (relayUiState) {
         RelayUiState.Connected -> null
         RelayUiState.Connecting -> SettingsStatusPillModel(
-            label = "Relay reconnecting",
+            label = stringResource(R.string.settings_relay_reconnecting),
             tone = SettingsStatusTone.Info,
         )
         RelayUiState.Stale -> SettingsStatusPillModel(
-            label = "Relay stale",
+            label = stringResource(R.string.settings_relay_stale),
             tone = SettingsStatusTone.Warning,
         )
         RelayUiState.Expired -> SettingsStatusPillModel(
-            label = "Pairing expired",
+            label = stringResource(R.string.settings_pairing_expired),
             tone = SettingsStatusTone.Warning,
         )
         RelayUiState.Disconnected -> SettingsStatusPillModel(
-            label = if (relayPaired) "Relay offline" else "Requires pairing",
+            label = if (relayPaired) stringResource(R.string.settings_relay_offline) else stringResource(R.string.settings_requires_pairing),
             tone = SettingsStatusTone.Warning,
         )
         RelayUiState.NotConfigured -> null
@@ -248,15 +250,15 @@ fun SettingsScreen(
     // surfaced ONCE on the section header as a single plugin-state badge.
     val pluginBadge = when {
         !relayPaired ->
-            SettingsStatusPillModel(label = "Plugin required", tone = SettingsStatusTone.Info)
+            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_required), tone = SettingsStatusTone.Info)
         relayUiState == RelayUiState.Disconnected ->
-            SettingsStatusPillModel(label = "Plugin offline", tone = SettingsStatusTone.Warning)
+            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_offline), tone = SettingsStatusTone.Warning)
         relayUiState == RelayUiState.Stale ->
-            SettingsStatusPillModel(label = "Plugin stale", tone = SettingsStatusTone.Warning)
+            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_stale), tone = SettingsStatusTone.Warning)
         relayUiState == RelayUiState.Connecting ->
-            SettingsStatusPillModel(label = "Plugin connecting", tone = SettingsStatusTone.Info)
+            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_connecting), tone = SettingsStatusTone.Info)
         else ->
-            SettingsStatusPillModel(label = "Plugin active", tone = SettingsStatusTone.Good)
+            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_active), tone = SettingsStatusTone.Good)
     }
 
     // Kick a WSS reconnect when Settings first composes so the Connections
@@ -296,12 +298,12 @@ fun SettingsScreen(
                         IconButton(onClick = onBack) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
+                                contentDescription = stringResource(R.string.settings_back),
                             )
                         }
                     }
                 },
-                title = { Text("Settings") },
+                title = { Text(stringResource(R.string.settings_title)) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
@@ -333,7 +335,7 @@ fun SettingsScreen(
                     connectionLabel = activeConnection?.label,
                     localDisplayAlias = profileDisplayAlias,
                 ),
-                connectionLabel = activeConnection?.label ?: "No connection",
+                connectionLabel = activeConnection?.label ?: stringResource(R.string.settings_no_connection),
                 model = effectiveProfile?.model ?: "default",
                 personalityLabel = AgentDisplay.personalityLabel(
                     selectedPersonality = selectedPersonality,
@@ -365,12 +367,13 @@ fun SettingsScreen(
             // Pin the app to ONE profile. When locked, the profile pickers
             // elsewhere collapse to a single locked row; this card's dialog
             // is the only surface that still lists every profile.
+            val serverDefaultLabel = stringResource(R.string.settings_server_default)
             val lockedDisplayName: String? = when {
                 !isProfileLocked -> null
                 lockedProfileName == null ||
                     AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
                     lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
-                    "Server default"
+                    serverDefaultLabel
                 else ->
                     agentProfiles
                         .firstOrNull { it.name == lockedProfileName }
@@ -414,18 +417,18 @@ fun SettingsScreen(
             // feature — and the home for multi-connection.
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
-                title = "Connections",
-                subtitle = "API, dashboard, relay pairing, and routes",
+                title = stringResource(R.string.settings_connections),
+                subtitle = stringResource(R.string.settings_connections_desc),
                 onClick = onNavigateToConnections,
                 isDarkTheme = isDarkTheme,
             )
 
-            SettingsSectionHeader("Hermes")
+            SettingsSectionHeader(stringResource(R.string.settings_hermes))
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,
-                title = "Hermes management",
-                subtitle = "Dashboard features: skills, cron, MCP, profiles, models",
+                title = stringResource(R.string.settings_hermes_management),
+                subtitle = stringResource(R.string.settings_hermes_management_desc),
                 badge = dashboardPill,
                 onClick = onNavigateToManage,
                 isDarkTheme = isDarkTheme,
@@ -433,8 +436,8 @@ fun SettingsScreen(
 
             SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Chat,
-                title = "Chat",
-                subtitle = "API chat behavior, endpoints, tool display, message length",
+                title = stringResource(R.string.settings_chat),
+                subtitle = stringResource(R.string.settings_chat_desc),
                 badge = apiPill,
                 onClick = onNavigateToChatSettings,
                 isDarkTheme = isDarkTheme,
@@ -442,60 +445,60 @@ fun SettingsScreen(
 
             SettingsCategoryRow(
                 icon = Icons.Filled.GraphicEq,
-                title = "Voice mode",
-                subtitle = "Dashboard voice, realtime relay options, providers",
+                title = stringResource(R.string.settings_voice_mode),
+                subtitle = stringResource(R.string.settings_voice_mode_desc),
                 onClick = onNavigateToVoiceSettings,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Message,
-                title = "Threads",
-                subtitle = "Let the agent start conversations with you (off by default)",
+                title = stringResource(R.string.settings_threads),
+                subtitle = stringResource(R.string.settings_threads_desc),
                 onClick = onNavigateToProactiveSettings,
                 isDarkTheme = isDarkTheme,
             )
 
-            SettingsSectionHeader("Power tools", trailing = pluginBadge)
+            SettingsSectionHeader(stringResource(R.string.settings_power_tools), trailing = pluginBadge)
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Code,
-                title = "Terminal",
-                subtitle = "Server shell access through a paired relay session",                onClick = onNavigateToTerminal,
+                title = stringResource(R.string.settings_terminal),
+                subtitle = stringResource(R.string.settings_terminal_desc),                onClick = onNavigateToTerminal,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.PhoneAndroid,
-                title = if (BuildFlavor.isSideload) "Bridge" else "Bridge Core",
+                title = if (BuildFlavor.isSideload) stringResource(R.string.settings_bridge) else stringResource(R.string.settings_bridge_core),
                 subtitle = if (BuildFlavor.isSideload) {
-                    "Relay-granted phone bridge controls"
+                    stringResource(R.string.settings_bridge_desc)
                 } else {
-                    "Relay features without sideload device control"
+                    stringResource(R.string.settings_bridge_core_desc)
                 },                onClick = onNavigateToBridge,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
-                title = "Relay sessions",
-                subtitle = "Phones paired with this server, revoke, extend",                onClick = onNavigateToPairedDevices,
+                title = stringResource(R.string.settings_relay_sessions),
+                subtitle = stringResource(R.string.settings_relay_sessions_desc),                onClick = onNavigateToPairedDevices,
                 isDarkTheme = isDarkTheme,
             )
 
             // === PHASE3-notif-listener-followup: notification companion entry-point ===
             SettingsCategoryRow(
                 icon = Icons.Filled.Notifications,
-                title = "Notification companion",
-                subtitle = "Shared phone notifications for paired relay tools",                onClick = onNavigateToNotificationCompanion,
+                title = stringResource(R.string.settings_notification_companion),
+                subtitle = stringResource(R.string.settings_notification_companion_desc),                onClick = onNavigateToNotificationCompanion,
                 isDarkTheme = isDarkTheme,
             )
             // === END PHASE3-notif-listener-followup ===
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,
-                title = "Media",
-                subtitle = "Relay inbound attachments, auto-fetch, cache cap",                onClick = onNavigateToMediaSettings,
+                title = stringResource(R.string.settings_media),
+                subtitle = stringResource(R.string.settings_media_desc),                onClick = onNavigateToMediaSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -503,10 +506,10 @@ fun SettingsScreen(
                 // === PHASE3-safety-rails: bridge safety entry-point ===
                 SettingsCategoryRow(
                     icon = Icons.Filled.Security,
-                    title = "Bridge safety",
-                    subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                    title = stringResource(R.string.settings_bridge_safety),
+                    subtitle = stringResource(R.string.settings_bridge_safety_desc),
                     badge = SettingsStatusPillModel(
-                        label = "Sideload",
+                        label = stringResource(R.string.settings_sideload),
                         tone = SettingsStatusTone.Info,
                     ),
                     onClick = onNavigateToBridgeSafety,
@@ -519,32 +522,32 @@ fun SettingsScreen(
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Security,
-                title = "Permissions",
-                subtitle = "Android grants, optional features, and sideload capability status",
+                title = stringResource(R.string.settings_permissions),
+                subtitle = stringResource(R.string.settings_permissions_desc),
                 onClick = onNavigateToPermissions,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Palette,
-                title = "Appearance",
-                subtitle = "Theme, font size, animations",
+                title = stringResource(R.string.settings_appearance),
+                subtitle = stringResource(R.string.settings_appearance_desc),
                 onClick = onNavigateToAppearanceSettings,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Analytics,
-                title = "Analytics",
-                subtitle = "Usage stats, TTFT, tokens, health",
+                title = stringResource(R.string.settings_analytics),
+                subtitle = stringResource(R.string.settings_analytics_desc),
                 onClick = onNavigateToAnalytics,
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Info,
-                title = "Diagnostics",
-                subtitle = "Status checks, plus recent API, relay, session, and voice activity",
+                title = stringResource(R.string.settings_diagnostics),
+                subtitle = stringResource(R.string.settings_diagnostics_desc),
                 onClick = onNavigateToDiagnostics,
                 isDarkTheme = isDarkTheme,
             )
@@ -552,8 +555,8 @@ fun SettingsScreen(
             if (devOptionsUnlocked) {
                 SettingsCategoryRow(
                     icon = Icons.Filled.Code,
-                    title = "Developer options",
-                    subtitle = "Feature flags, data management, experimental",
+                    title = stringResource(R.string.settings_developer_options),
+                    subtitle = stringResource(R.string.settings_developer_options_desc),
                     onClick = onNavigateToDeveloperSettings,
                     isDarkTheme = isDarkTheme,
                 )
@@ -561,16 +564,16 @@ fun SettingsScreen(
 
             SettingsCategoryRow(
                 icon = Icons.Filled.NewReleases,
-                title = "What's New",
-                subtitle = "Release notes and full changelog",
+                title = stringResource(R.string.settings_whats_new),
+                subtitle = stringResource(R.string.settings_whats_new_desc),
                 onClick = { showChangelog = true },
                 isDarkTheme = isDarkTheme,
             )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Info,
-                title = "About",
-                subtitle = "Version, credits, docs",
+                title = stringResource(R.string.settings_about),
+                subtitle = stringResource(R.string.settings_about_desc),
                 onClick = onNavigateToAbout,
                 isDarkTheme = isDarkTheme,
             )
@@ -701,8 +704,9 @@ private fun ActiveAgentCard(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                val hermesFallback = stringResource(R.string.settings_hermes)
                 Text(
-                    text = agentName.ifBlank { "Hermes" },
+                    text = agentName.ifBlank { hermesFallback },
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -774,14 +778,14 @@ private fun ProfileLockCard(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Profile lock",
+                    text = stringResource(R.string.settings_profile_lock),
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = lockedDisplayName?.let { "Locked to $it" }
-                        ?: "Pin the app to one agent profile",
+                    text = lockedDisplayName?.let { stringResource(R.string.settings_locked_to, it) }
+                        ?: stringResource(R.string.settings_profile_lock_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -826,7 +830,7 @@ private fun QuickControlsCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Quick Controls",
+                text = stringResource(R.string.settings_quick_controls),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -835,11 +839,11 @@ private fun QuickControlsCard(
             // relay-paired setups, device control + notification mirroring) stays
             // reachable in the background. Off by default; uses more battery.
             QuickControlToggle(
-                title = "Persistent connection",
+                title = stringResource(R.string.settings_persistent_connection),
                 subtitle = if (gatewayKeepAlive) {
-                    "Keeping your connection to Hermes open in the background"
+                    stringResource(R.string.settings_persistent_connection_desc)
                 } else {
-                    "Connect on demand only · saves battery"
+                    stringResource(R.string.settings_connect_on_demand)
                 },
                 checked = gatewayKeepAlive,
                 onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) },
@@ -854,11 +858,11 @@ private fun QuickControlsCard(
             }
             HorizontalDivider()
             QuickControlToggle(
-                title = "Turn-complete alerts",
+                title = stringResource(R.string.settings_turn_complete_alerts),
                 subtitle = if (notifyTurnComplete) {
-                    "Notify when a reply finishes while the app is in the background"
+                    stringResource(R.string.settings_turn_complete_alerts_desc)
                 } else {
-                    "No alert when a backgrounded reply finishes"
+                    stringResource(R.string.settings_turn_complete_alerts_off)
                 },
                 checked = notifyTurnComplete,
                 onCheckedChange = { connectionViewModel.setNotifyTurnComplete(it) },
@@ -930,14 +934,12 @@ private fun BatteryOptimizationNudge() {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = "Keep it connected in deep sleep",
+                text = stringResource(R.string.settings_keep_connected_deep_sleep),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
             Text(
-                text = "Android can still pause the connection once the screen's " +
-                    "been off a while (Doze). Allow unrestricted battery so " +
-                    "Persistent connection keeps working in the background.",
+                text = stringResource(R.string.settings_keep_connected_battery_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
@@ -945,7 +947,7 @@ private fun BatteryOptimizationNudge() {
                 onClick = { BatteryOptimizations.launchRequest(context) },
                 contentPadding = PaddingValues(horizontal = 0.dp),
             ) {
-                Text("Allow unrestricted battery")
+                Text(stringResource(R.string.settings_allow_unrestricted_battery))
             }
         }
     }
@@ -985,7 +987,7 @@ private fun ProfileLockDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Profile lock") },
+        title = { Text(stringResource(R.string.settings_profile_lock)) },
         text = {
             Column(
                 modifier = Modifier
@@ -994,8 +996,7 @@ private fun ProfileLockDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "Pin the app to one agent profile. While locked, the " +
-                        "profile pickers elsewhere collapse to a single locked row.",
+                    text = stringResource(R.string.settings_profile_lock_full_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1014,16 +1015,16 @@ private fun ProfileLockDialog(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                text = "Locked profile '" +
+                                text = stringResource(R.string.settings_locked_profile_not_found_prefix) +
                                     (lockedProfileName ?: "") +
-                                    "' not found on this server.",
+                                    stringResource(R.string.settings_locked_profile_not_found_suffix),
                                 style = MaterialTheme.typography.labelLarge,
                             )
                             TextButton(
                                 onClick = onUnlock,
                                 modifier = Modifier.align(Alignment.End),
                             ) {
-                                Text("Unlock")
+                                Text(stringResource(R.string.settings_unlock))
                             }
                         }
                     }
@@ -1037,7 +1038,7 @@ private fun ProfileLockDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Lock to a profile",
+                        text = stringResource(R.string.settings_lock_to_profile),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
@@ -1059,8 +1060,8 @@ private fun ProfileLockDialog(
                     HorizontalDivider()
                     // Server default option.
                     ProfileLockOptionRow(
-                        label = "Server default",
-                        secondary = "Use this connection's default profile",
+                        label = stringResource(R.string.settings_server_default),
+                        secondary = stringResource(R.string.settings_use_default_profile),
                         selected = lockedIsServerDefault,
                         onSelect = { onLock(null) },
                     )
@@ -1078,7 +1079,7 @@ private fun ProfileLockDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_done)) }
         },
     )
 }

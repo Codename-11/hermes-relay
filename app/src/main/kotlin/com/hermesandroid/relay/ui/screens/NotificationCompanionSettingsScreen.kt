@@ -52,10 +52,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.notifications.HermesNotificationCompanion
 import com.hermesandroid.relay.notifications.NotificationTriggerAction
 import com.hermesandroid.relay.notifications.NotificationTriggerRule
@@ -107,12 +109,12 @@ fun NotificationCompanionSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Notification companion") },
+                title = { Text(stringResource(R.string.ncs_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.ncs_back),
                         )
                     }
                 },
@@ -171,7 +173,7 @@ private fun NotificationAccessCard(
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    NotifSectionCard(title = "Status") {
+    NotifSectionCard(title = stringResource(R.string.ncs_status)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -187,14 +189,14 @@ private fun NotificationAccessCard(
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (granted) "Access granted" else "Access not granted",
+                    text = if (granted) stringResource(R.string.ncs_access_granted) else stringResource(R.string.ncs_access_not_granted),
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 Text(
                     text = if (granted) {
-                        "Hermes-Relay can read posted notifications"
+                        stringResource(R.string.ncs_can_read_notifications)
                     } else {
-                        "Tap below to enable in Android Settings"
+                        stringResource(R.string.ncs_tap_to_enable)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -203,7 +205,7 @@ private fun NotificationAccessCard(
             IconButton(onClick = onRefresh) {
                 Icon(
                     imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Refresh status",
+                    contentDescription = stringResource(R.string.ncs_refresh_status),
                 )
             }
         }
@@ -219,7 +221,7 @@ private fun NotificationAccessCard(
                 contentDescription = null,
             )
             Spacer(Modifier.size(8.dp))
-            Text(if (granted) "Manage in Android Settings" else "Open Android Settings")
+            Text(if (granted) stringResource(R.string.ncs_manage_in_settings) else stringResource(R.string.ncs_open_android_settings))
         }
     }
 }
@@ -256,39 +258,39 @@ private fun NotificationTriggerCard(
 
     val hasAnyFilter = appPackage.isNotBlank() || titleContains.isNotBlank() || textContains.isNotBlank()
 
-    NotifSectionCard(title = "Event triggers (MVP)") {
+    NotifSectionCard(title = stringResource(R.string.ncs_triggers_title)) {
         Text(
-            text = "Rules are off by default. When enabled, the first MVP action is safe: post a local “Ask Hermes?” prompt when a matching notification arrives.",
+            text = stringResource(R.string.ncs_triggers_intro),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
 
         LabeledSwitchRow(
-            title = "Enable proactive triggers",
-            subtitle = "Explicit opt-in. Existing notification forwarding still works when this is off.",
+            title = stringResource(R.string.ncs_triggers_enable),
+            subtitle = stringResource(R.string.ncs_triggers_enable_desc),
             checked = settings.masterEnabled,
             onCheckedChange = onMasterChanged,
         )
         LabeledSwitchRow(
-            title = "Kill switch",
-            subtitle = "Immediately pauses all trigger actions without deleting rules or the log.",
+            title = stringResource(R.string.ncs_kill_switch),
+            subtitle = stringResource(R.string.ncs_kill_switch_desc),
             checked = settings.killSwitch,
             onCheckedChange = onKillSwitchChanged,
         )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-        Text("Rule", style = MaterialTheme.typography.titleSmall)
+        Text(stringResource(R.string.ncs_rule), style = MaterialTheme.typography.titleSmall)
         Text(
-            text = "Match by app package and optional title/text contains filters. Example package: com.slack.",
+            text = stringResource(R.string.ncs_rule_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
 
         LabeledSwitchRow(
-            title = "Rule enabled",
+            title = stringResource(R.string.ncs_rule_enabled),
             subtitle = savedRule.summary(),
             checked = ruleEnabled,
             onCheckedChange = { ruleEnabled = it },
@@ -298,14 +300,14 @@ private fun NotificationTriggerCard(
             onValueChange = { label = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Rule label") },
+            label = { Text(stringResource(R.string.ncs_rule_label)) },
         )
         OutlinedTextField(
             value = appPackage,
             onValueChange = { appPackage = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("App package") },
+            label = { Text(stringResource(R.string.ncs_app_package)) },
             placeholder = { Text("com.example.app") },
         )
         OutlinedTextField(
@@ -313,14 +315,14 @@ private fun NotificationTriggerCard(
             onValueChange = { titleContains = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Title contains (optional)") },
+            label = { Text(stringResource(R.string.ncs_title_contains)) },
         )
         OutlinedTextField(
             value = textContains,
             onValueChange = { textContains = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Text contains (optional)") },
+            label = { Text(stringResource(R.string.ncs_text_contains)) },
         )
         Button(
             onClick = {
@@ -340,11 +342,11 @@ private fun NotificationTriggerCard(
             enabled = hasAnyFilter,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Save rule")
+            Text(stringResource(R.string.ncs_save_rule))
         }
         if (!hasAnyFilter) {
             Text(
-                text = "Set at least one filter before saving so triggers do not match every notification on the phone.",
+                text = stringResource(R.string.ncs_rule_filter_required),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -357,25 +359,25 @@ private fun NotificationActivityLogCard(
     settings: NotificationTriggerSettings,
     onClear: () -> Unit,
 ) {
-    NotifSectionCard(title = "Activity log") {
+    NotifSectionCard(title = stringResource(R.string.ncs_activity_log)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                text = "Latest trigger matches",
+                text = stringResource(R.string.ncs_latest_matches),
                 style = MaterialTheme.typography.bodyMedium,
             )
             TextButton(
                 onClick = onClear,
                 enabled = settings.activityLog.isNotEmpty(),
-            ) { Text("Clear") }
+            ) { Text(stringResource(R.string.ncs_clear)) }
         }
 
         if (settings.activityLog.isEmpty()) {
             Text(
-                text = "No trigger activity yet.",
+                text = stringResource(R.string.ncs_no_activity),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -417,20 +419,20 @@ private fun NotificationActivityLogCard(
 
 @Composable
 private fun NotificationAboutCard() {
-    NotifSectionCard(title = "About") {
+    NotifSectionCard(title = stringResource(R.string.ncs_about)) {
         Text(
-            text = "Lets your Hermes assistant help you triage notifications. When enabled, your phone forwards each notification's app, title, and text to your paired Hermes server through the Relay pairing used by phone tools.",
+            text = stringResource(R.string.ncs_about_body1),
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Requires Android's notification access permission. You can grant or revoke it at any time in Android Settings. This is the same permission Wear OS, Android Auto, and Tasker use.",
+            text = stringResource(R.string.ncs_about_body2),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Confirmation policy: local prompts and local log writes can run automatically after opt-in. Anything that sends a message, replies in another app, routes content to a person/channel, uses bridge gestures, or spends/changes data still requires an explicit user confirmation first.",
+            text = stringResource(R.string.ncs_confirmation_policy),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -439,9 +441,11 @@ private fun NotificationAboutCard() {
 
 @Composable
 private fun NotificationTestCard(granted: Boolean) {
-    NotifSectionCard(title = "Test") {
+    val listenerNotBound = stringResource(R.string.ncs_listener_not_bound)
+    val accessNotGranted = stringResource(R.string.ncs_access_not_granted_err)
+    NotifSectionCard(title = stringResource(R.string.ncs_test)) {
         Text(
-            text = "Tap below to fetch the last few notifications the listener has captured this session. Helpful for verifying the connection is working end-to-end.",
+            text = stringResource(R.string.ncs_test_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -458,9 +462,9 @@ private fun NotificationTestCard(granted: Boolean) {
                 if (service == null) {
                     lastSnapshot = emptyList()
                     lastError = if (granted) {
-                        "Listener has not bound yet. Try posting a test notification and re-tap."
+                        listenerNotBound
                     } else {
-                        "Notification access is not granted."
+                        accessNotGranted
                     }
                 } else {
                     val active = service.activeNotifications
@@ -489,7 +493,7 @@ private fun NotificationTestCard(granted: Boolean) {
                 contentDescription = null,
             )
             Spacer(Modifier.size(8.dp))
-            Text("Fetch recent")
+            Text(stringResource(R.string.ncs_fetch_recent))
         }
 
         lastError?.let { err ->

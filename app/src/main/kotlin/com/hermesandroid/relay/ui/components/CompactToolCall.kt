@@ -24,9 +24,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ToolCall
 
 @Composable
@@ -36,16 +38,18 @@ fun CompactToolCall(
 ) {
     val isPreparing = toolCall.isGenerating && !toolCall.isComplete
     val statusText = when {
-        toolCall.isComplete && toolCall.success == true -> "completed"
-        toolCall.isComplete && toolCall.success == false -> "failed"
-        isPreparing -> "preparing"
-        else -> "running"
+        toolCall.isComplete && toolCall.success == true -> stringResource(R.string.tool_progress_status_completed)
+        toolCall.isComplete && toolCall.success == false -> stringResource(R.string.tool_progress_status_failed)
+        isPreparing -> stringResource(R.string.tool_preparing_a11y)
+        else -> stringResource(R.string.tool_progress_status_running)
     }
 
     val duration = if (toolCall.completedAt != null && toolCall.completedAt >= toolCall.startedAt) {
         val seconds = (toolCall.completedAt - toolCall.startedAt) / 1000.0
         String.format("%.1fs", seconds)
     } else null
+    val durationDescription = duration?.let { stringResource(R.string.tool_duration_a11y, it) }.orEmpty()
+    val toolDescription = stringResource(R.string.tool_a11y, toolCall.name, statusText, durationDescription)
 
     Row(
         modifier = modifier
@@ -53,7 +57,7 @@ fun CompactToolCall(
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .semantics {
-                contentDescription = "Tool ${toolCall.name} $statusText${duration?.let { " in $it" } ?: ""}"
+                contentDescription = toolDescription
             },
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -91,7 +95,7 @@ fun CompactToolCall(
                 ).value
                 Icon(
                     imageVector = Icons.Filled.MoreHoriz,
-                    contentDescription = "Preparing",
+                    contentDescription = stringResource(R.string.tool_preparing_a11y),
                     modifier = Modifier.size(12.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
                 )
@@ -106,7 +110,7 @@ fun CompactToolCall(
             toolCall.success == true -> {
                 Icon(
                     imageVector = Icons.Filled.Check,
-                    contentDescription = "Completed",
+                    contentDescription = stringResource(R.string.tool_completed_a11y),
                     modifier = Modifier.size(12.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
@@ -114,7 +118,7 @@ fun CompactToolCall(
             else -> {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "Failed",
+                    contentDescription = stringResource(R.string.tool_failed_a11y),
                     modifier = Modifier.size(12.dp),
                     tint = MaterialTheme.colorScheme.error
                 )

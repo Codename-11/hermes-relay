@@ -23,8 +23,10 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
 
 /**
@@ -61,7 +63,7 @@ fun ConnectionSwitcherSheet(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = "Switch connection",
+                text = stringResource(R.string.conn_switcher_title),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
@@ -70,7 +72,7 @@ fun ConnectionSwitcherSheet(
                 // Defensive: the legacy migration should always seed connection 0,
                 // but fall back to a Manage-only state if the list is empty.
                 Text(
-                    text = "No connections yet",
+                    text = stringResource(R.string.conn_switcher_empty),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 12.dp),
@@ -79,7 +81,7 @@ fun ConnectionSwitcherSheet(
                     onClick = onManageConnections,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Manage connections…")
+                    Text(stringResource(R.string.conn_switcher_manage))
                 }
             } else {
                 LazyColumn(
@@ -105,7 +107,7 @@ fun ConnectionSwitcherSheet(
                     onClick = onManageConnections,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Manage connections…")
+                    Text(stringResource(R.string.conn_switcher_manage))
                 }
             }
         }
@@ -119,11 +121,9 @@ private fun ConnectionRow(
     onClick: () -> Unit,
 ) {
     val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
-    val statusLine = if (connection.pairedAt == null) {
-        "$hostname • Hermes"
-    } else {
-        "$hostname • Paired"
-    }
+    val hermesStatus = stringResource(R.string.conn_info_hostname_hermes, hostname)
+    val pairedStatus = stringResource(R.string.conn_info_hostname_paired, hostname)
+    val statusLine = if (connection.pairedAt == null) hermesStatus else pairedStatus
 
     Row(
         modifier = Modifier

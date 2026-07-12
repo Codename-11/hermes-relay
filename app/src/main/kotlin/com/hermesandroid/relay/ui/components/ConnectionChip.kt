@@ -12,8 +12,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 
 /**
  * Compact top-bar chip showing the currently-active Hermes connection.
@@ -40,7 +42,7 @@ fun ConnectionChip(
                 Spacer(modifier = Modifier.width(2.dp))
                 Icon(
                     imageVector = Icons.Filled.ArrowDropDown,
-                    contentDescription = "Switch connection",
+                    contentDescription = stringResource(R.string.cd_switch_connection),
                     modifier = Modifier,
                 )
             }

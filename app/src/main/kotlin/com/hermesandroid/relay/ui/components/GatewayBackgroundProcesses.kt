@@ -47,12 +47,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.upstream.GatewayProcess
 
 /**
@@ -119,7 +121,7 @@ fun GatewayBackgroundProcessStrip(
             }
             Spacer(Modifier.width(9.dp))
             Text(
-                text = "Background · $displayedCount",
+                text = stringResource(R.string.background_process_count, displayedCount),
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f),
             )
@@ -176,9 +178,9 @@ fun GatewayBackgroundProcessSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Background processes", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.background_processes_title), style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "Current chat · live output and recent results",
+                        stringResource(R.string.background_processes_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -187,7 +189,7 @@ fun GatewayBackgroundProcessSheet(
                     if (loading) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh processes")
+                        Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.background_processes_refresh_a11y))
                     }
                 }
             }
@@ -322,10 +324,10 @@ private fun GatewayProcessRow(
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text(if (stopping) "Stopping" else "Stop")
+                    Text(if (stopping) stringResource(R.string.background_processes_stopping) else stringResource(R.string.background_processes_stop))
                 }
             } else if (onDismiss != null) {
-                TextButton(onClick = onDismiss) { Text("Dismiss") }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_dismiss)) }
             }
             if (output.isNotBlank()) {
                 Icon(
@@ -379,13 +381,13 @@ private fun ProcessStateIcon(process: GatewayProcess, failed: Boolean, stopping:
                 )
                 failed -> Icon(
                     Icons.Filled.ErrorOutline,
-                    contentDescription = "Failed",
+                    contentDescription = stringResource(R.string.tool_failed_a11y),
                     modifier = Modifier.size(18.dp),
                     tint = tint,
                 )
                 else -> Icon(
                     Icons.Filled.CheckCircle,
-                    contentDescription = "Completed",
+                    contentDescription = stringResource(R.string.tool_completed_a11y),
                     modifier = Modifier.size(18.dp),
                     tint = tint,
                 )

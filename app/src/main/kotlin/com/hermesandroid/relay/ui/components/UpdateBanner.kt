@@ -28,6 +28,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.update.AvailableUpdate
 
 /**
@@ -80,12 +82,12 @@ fun UpdateBanner(
             modifier = Modifier.weight(1f),
         ) {
             Text(
-                text = "Update available — v${update.latestVersion}",
+                text = stringResource(R.string.update_banner_available),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             Text(
-                text = "You're on ${update.currentVersion}. Tap Update to download.",
+                text = stringResource(R.string.update_banner_body_fmt, update.currentVersion),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
@@ -104,12 +106,12 @@ fun UpdateBanner(
             ),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 4.dp),
         ) {
-            Text("Update")
+            Text(stringResource(R.string.update_banner_update))
         }
         IconButton(onClick = onDismiss) {
             Icon(
                 imageVector = Icons.Outlined.Close,
-                contentDescription = "Dismiss",
+                contentDescription = stringResource(R.string.update_banner_cd_dismiss),
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }

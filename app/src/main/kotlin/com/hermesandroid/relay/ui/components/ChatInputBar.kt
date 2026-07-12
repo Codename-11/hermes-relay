@@ -57,8 +57,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
@@ -213,7 +215,7 @@ fun ChatInputBar(
             exit = fadeOut(),
         ) {
             Text(
-                text = "Live voice conversation",
+                text = stringResource(R.string.chat_input_live_voice_hint),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -291,15 +293,15 @@ fun ChatInputBar(
                                 .clip(CircleShape)
                                 .combinedClickable(
                                     onClick = { attachMenuExpanded = true },
-                                    onClickLabel = "Add attachment",
+                                    onClickLabel = stringResource(R.string.chat_input_add_attachment),
                                     onLongClick = onLongPressAttach,
-                                    onLongClickLabel = "Browse commands",
+                                    onLongClickLabel = stringResource(R.string.chat_input_browse_commands),
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Add,
-                                contentDescription = "Add attachment; hold for commands",
+                                contentDescription = stringResource(R.string.chat_input_add_attachment_hold),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -308,7 +310,7 @@ fun ChatInputBar(
                             onDismissRequest = { attachMenuExpanded = false },
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Photos") },
+                                text = { Text(stringResource(R.string.chat_input_photos)) },
                                 leadingIcon = {
                                     Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
                                 },
@@ -318,7 +320,7 @@ fun ChatInputBar(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("Files") },
+                                text = { Text(stringResource(R.string.chat_input_files)) },
                                 leadingIcon = {
                                     Icon(Icons.Filled.InsertDriveFile, contentDescription = null)
                                 },
@@ -328,7 +330,7 @@ fun ChatInputBar(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("Camera") },
+                                text = { Text(stringResource(R.string.chat_input_camera)) },
                                 leadingIcon = {
                                     Icon(Icons.Filled.PhotoCamera, contentDescription = null)
                                 },
@@ -338,7 +340,7 @@ fun ChatInputBar(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("Paste image") },
+                                text = { Text(stringResource(R.string.chat_input_paste_image)) },
                                 leadingIcon = {
                                     Icon(Icons.Filled.ContentPaste, contentDescription = null)
                                 },
@@ -393,7 +395,7 @@ fun ChatInputBar(
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = "Send message",
+                                        contentDescription = stringResource(R.string.chat_input_send_message),
                                         tint = if (enabled) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -403,8 +405,8 @@ fun ChatInputBar(
                                     IconButton(onClick = onVoice) {
                                         Icon(
                                             imageVector = Icons.Filled.GraphicEq,
-                                            contentDescription = if (voiceReady) "Start voice conversation"
-                                                else "Voice conversation — setup needed",
+                                            contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
+                                                else stringResource(R.string.chat_input_voice_setup_needed),
                                             tint = MaterialTheme.colorScheme.primary,
                                         )
                                     }
@@ -431,7 +433,7 @@ fun ChatInputBar(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.Stop,
-                                            contentDescription = "Stop streaming",
+                                            contentDescription = stringResource(R.string.chat_input_stop_streaming),
                                             tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(18.dp),
                                         )
@@ -444,7 +446,7 @@ fun ChatInputBar(
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = "Steer the response",
+                                        contentDescription = stringResource(R.string.chat_input_steer_response),
                                         tint = MaterialTheme.colorScheme.tertiary,
                                     )
                                 }
@@ -456,7 +458,7 @@ fun ChatInputBar(
                                     Box {
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.Send,
-                                            contentDescription = "Queue message",
+                                            contentDescription = stringResource(R.string.chat_input_queue_message),
                                             tint = MaterialTheme.colorScheme.tertiary,
                                         )
                                         Icon(

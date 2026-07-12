@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.network.relay
 
+import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
@@ -48,6 +50,9 @@ class RelayHttpClient(
      *  paired). Lets [mediaUrlConfigured] check fetch-readiness without
      *  suspending; mirrors what [sessionTokenProvider] resolves. */
     private val pairedTokenSnapshot: () -> String? = { null },
+    /** Application context for localized string resources. Nullable for
+     *  backwards-compat with call sites that don't need localization. */
+    private val context: Context? = null,
 ) {
 
     companion object {
@@ -904,7 +909,7 @@ class RelayHttpClient(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
-                title = "Relay URL invalid",
+                title = context?.getString(R.string.http_diag_url_invalid) ?: "Relay URL invalid",
                 detail = e.message,
                 url = relayUrl,
             )
@@ -934,7 +939,7 @@ class RelayHttpClient(
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Relay,
                         severity = DiagnosticSeverity.Warning,
-                        title = "Relay health failed",
+                        title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "HTTP ${response.code}",
                         url = httpBase,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -948,7 +953,7 @@ class RelayHttpClient(
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Relay,
                         severity = DiagnosticSeverity.Warning,
-                        title = "Relay health failed",
+                        title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Empty response",
                         url = httpBase,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -965,7 +970,7 @@ class RelayHttpClient(
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Relay,
                         severity = DiagnosticSeverity.Warning,
-                        title = "Relay health failed",
+                        title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Non-JSON response",
                         url = httpBase,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -979,7 +984,7 @@ class RelayHttpClient(
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Relay,
                         severity = DiagnosticSeverity.Warning,
-                        title = "Relay health failed",
+                        title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "status=${status ?: "missing"}",
                         url = httpBase,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -993,7 +998,7 @@ class RelayHttpClient(
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Relay,
                         severity = DiagnosticSeverity.Warning,
-                        title = "Relay health failed",
+                        title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Missing version field",
                         url = httpBase,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -1010,7 +1015,7 @@ class RelayHttpClient(
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Relay,
                         severity = DiagnosticSeverity.Info,
-                        title = "Relay health ok",
+                        title = context?.getString(R.string.http_diag_health_ok) ?: "Relay health ok",
                         detail = "version=$version clients=$clients sessions=$sessions",
                         url = httpBase,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -1023,7 +1028,7 @@ class RelayHttpClient(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Warning,
-                title = "Relay health timeout",
+                title = context?.getString(R.string.http_diag_health_timeout) ?: "Relay health timeout",
                 detail = "No HTTP response in 3s",
                 url = httpBase,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -1034,7 +1039,7 @@ class RelayHttpClient(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
-                title = "Relay connection refused",
+                title = context?.getString(R.string.http_diag_conn_refused) ?: "Relay connection refused",
                 detail = e.message,
                 url = httpBase,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -1045,7 +1050,7 @@ class RelayHttpClient(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Warning,
-                title = "Relay health failed",
+                title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                 detail = e.message ?: "Network error",
                 url = httpBase,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
@@ -1056,7 +1061,7 @@ class RelayHttpClient(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
-                title = "Relay health failed",
+                title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                 detail = e.message ?: e.javaClass.simpleName,
                 url = httpBase,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,

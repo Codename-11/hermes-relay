@@ -36,8 +36,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import com.hermesandroid.relay.R
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.BridgeActivityEntry
@@ -89,14 +91,14 @@ fun BridgeActivityLog(
                 )
                 Spacer(modifier = Modifier.size(6.dp))
                 Text(
-                    text = "Activity Log",
+                    text = stringResource(R.string.bal_activity_log),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
                 if (entries.isNotEmpty()) {
-                    TextButton(onClick = onClear) { Text("Clear") }
+                    TextButton(onClick = onClear) { Text(stringResource(R.string.bal_clear)) }
                 }
             }
 
@@ -104,8 +106,7 @@ fun BridgeActivityLog(
 
             if (entries.isEmpty()) {
                 Text(
-                    text = "No bridge commands yet. Every tap, type, and " +
-                        "screenshot the agent performs will show up here.",
+                    text = stringResource(R.string.bal_no_activity),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -162,7 +163,7 @@ private fun ActivityRow(entry: BridgeActivityEntry) {
             if (entry.thumbnailToken != null) {
                 Icon(
                     imageVector = Icons.Filled.InsertPhoto,
-                    contentDescription = "Has screenshot",
+                    contentDescription = stringResource(R.string.bal_has_screenshot),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(14.dp)
                 )
@@ -175,13 +176,13 @@ private fun ActivityRow(entry: BridgeActivityEntry) {
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "Full timestamp: ${formatFullTime(entry.timestampMs)}",
+                    text = stringResource(R.string.bal_full_timestamp, formatFullTime(entry.timestampMs)),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
-                    text = "Status: ${entry.status.name}",
+                    text = stringResource(R.string.bal_status_label, entry.status.name),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -199,7 +200,7 @@ private fun ActivityRow(entry: BridgeActivityEntry) {
                     // label so the expand affordance still communicates the
                     // shape of the future feature.
                     Text(
-                        text = "Screenshot token: ${entry.thumbnailToken}",
+                        text = stringResource(R.string.bal_screenshot_token, entry.thumbnailToken),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace

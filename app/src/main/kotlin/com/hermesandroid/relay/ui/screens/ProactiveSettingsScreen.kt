@@ -38,8 +38,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -88,12 +90,12 @@ fun ProactiveSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Threads") },
+                title = { Text(stringResource(R.string.proactive_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.proactive_back),
                         )
                     }
                 },
@@ -111,20 +113,18 @@ fun ProactiveSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            ProactiveSectionCard(title = "Let Hermes message me") {
+            ProactiveSectionCard(title = stringResource(R.string.proactive_let_hermes_message_me)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Allow proactive messages",
+                            text = stringResource(R.string.proactive_allow_proactive_messages),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                         Text(
-                            text = "Your agent can reach out on its own — reminders, " +
-                                "finished jobs, alerts. Its messages appear as Threads " +
-                                "in Chat, where you can reply.",
+                            text = stringResource(R.string.proactive_allow_proactive_messages_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -141,19 +141,16 @@ fun ProactiveSettingsScreen(
                 if (enabled && !paired) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "Not paired yet — pair with your Hermes server under " +
-                            "Settings → Connections to start receiving messages.",
+                        text = stringResource(R.string.proactive_not_paired_warning),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
 
-            ProactiveSectionCard(title = "Your Threads") {
+            ProactiveSectionCard(title = stringResource(R.string.proactive_your_threads)) {
                 Text(
-                    text = "Each conversation your agent starts shows as a Thread in " +
-                        "Chat — open the session list, filter to Threads, and reply " +
-                        "right there.",
+                    text = stringResource(R.string.proactive_your_threads_desc),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(12.dp))
@@ -166,23 +163,18 @@ fun ProactiveSettingsScreen(
                         contentDescription = null,
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Open Chat")
+                    Text(stringResource(R.string.proactive_open_chat))
                 }
             }
 
-            ProactiveSectionCard(title = "About") {
+            ProactiveSectionCard(title = stringResource(R.string.proactive_about)) {
                 Text(
-                    text = "When on, your phone tells the relay it's open to " +
-                        "agent-initiated messages. The agent delivers them over " +
-                        "the same paired connection the relay already uses — no " +
-                        "new permissions beyond notifications.",
+                    text = stringResource(R.string.proactive_about_desc),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Your server must also enable the phone platform " +
-                        "(set PHONE_ENABLED on the server). Until both sides are " +
-                        "on and the phone is paired, nothing is pushed.",
+                    text = stringResource(R.string.proactive_about_server_note),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
