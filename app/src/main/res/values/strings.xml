@@ -231,6 +231,7 @@
     <string name="chat_approval_secret_title">Secret requested</string>
     <string name="chat_approval_skip">Skip</string>
     <string name="chat_approval_reconnecting">Reconnecting to your answer…</string>
+    <string name="chat_profile_history_unavailable">The active profile’s conversation history could not be reached. Reconnect and try again.</string>
     <string name="chat_approval_stream_dropped">Chat stream dropped — recovering the answer in the background</string>
 
     <!-- RelayErrorClassifier error titles -->

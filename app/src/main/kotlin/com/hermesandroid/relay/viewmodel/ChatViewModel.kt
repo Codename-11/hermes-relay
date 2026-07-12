@@ -1698,12 +1698,15 @@ class ChatViewModel : ViewModel() {
     /**
      * Transcript for [sessionId], preferring the profile-scoped dashboard path on
      * gateway connections (so non-default-profile sessions resolve against their
-     * own DB) and falling back to the shared api_server transcript otherwise or on
-     * failure.
+     * own DB). The shared api_server transcript is used only when no scoped
+     * dashboard surface exists; a failed scoped read is never cross-profile truth.
      */
-    private suspend fun loadSessionHistory(sessionId: String): List<MessageItem> {
+    private suspend fun loadSessionHistory(
+        sessionId: String,
+        requireProfileScope: Boolean = false,
+    ): List<MessageItem> {
         if (streamingEndpoint == "gateway") {
-            return loadGatewaySessionHistory(sessionId)
+            return loadGatewaySessionHistory(sessionId, requireProfileScope)
         }
         return apiClient?.getMessages(sessionId) ?: emptyList()
     }
@@ -1714,10 +1717,16 @@ class ChatViewModel : ViewModel() {
      * profile/session that created it; consulting the mutable endpoint here can
      * otherwise fall through to the shared API database.
      */
-    private suspend fun loadGatewaySessionHistory(sessionId: String): List<MessageItem> {
+    private suspend fun loadGatewaySessionHistory(
+        sessionId: String,
+        requireProfileScope: Boolean = false,
+    ): List<MessageItem> {
         val scoped = profileMessageLoader?.invoke(sessionId)
         if (scoped != null) {
-            scoped.getOrNull()?.let { return it }
+            // A gateway profile owns a distinct state.db. Never fall through to
+            // the launch/default API database when its scoped read fails: an
+            // empty/default transcript is not authoritative for this session.
+            return if (requireProfileScope) scoped.getOrThrow() else scoped.getOrElse { emptyList() }
         }
         return apiClient?.getMessages(sessionId) ?: emptyList()
     }
@@ -2460,8 +2469,11 @@ class ChatViewModel : ViewModel() {
                     onSuccess = { sessions -> handler.updateSessions(sessions) },
                     onFailure = { error ->
                         if (scoped != null) {
-                            // Profile-scoped list failed — fall back to the shared list.
-                            apiClient?.listSessionsResult()?.onSuccess { handler.updateSessions(it) }
+                            // The shared API list belongs to the launch/default
+                            // database. Preserve the current profile's rows and
+                            // surface the scoped failure instead of leaking a
+                            // different profile into the drawer.
+                            emitError(error, context = "load_profile_sessions")
                         } else {
                             emitError(error, context = "load_sessions")
                         }
@@ -2737,10 +2749,10 @@ class ChatViewModel : ViewModel() {
             // refreshSessions() uses for the listing. The unscoped api_server
             // delete leaves a non-default profile's row intact and the next
             // profile-scoped list resurrects it. Off the gateway (one shared
-            // api_server DB, no profiles) the plain delete is correct; the
-            // deleter is also null until RelayApp wires it, so fall back then.
+            // api_server DB, no profiles) the plain delete is correct. A missing
+            // gateway deleter is a wiring failure, not permission to cross DBs.
             val success = if (streamingEndpoint == "gateway") {
-                profileSessionDeleter?.invoke(sessionId) ?: client.deleteSession(sessionId)
+                profileSessionDeleter?.invoke(sessionId) ?: false
             } else {
                 client.deleteSession(sessionId)
             }
@@ -2751,6 +2763,10 @@ class ChatViewModel : ViewModel() {
             } else if (removedSession != null) {
                 // Restore on failure
                 handler.addSession(removedSession)
+                emitError(
+                    IllegalStateException("Profile-scoped session delete failed"),
+                    context = "delete_profile_session",
+                )
             }
         }
     }
@@ -2759,6 +2775,7 @@ class ChatViewModel : ViewModel() {
         val client = apiClient ?: return
         val handler = chatHandler ?: return
 
+        val previousTitle = handler.sessions.value.find { it.sessionId == sessionId }?.title
         // Optimistic rename
         handler.renameSessionLocal(sessionId, newTitle)
 
@@ -2769,11 +2786,17 @@ class ChatViewModel : ViewModel() {
             // scoped list/delete. The unscoped api_server rename patches the
             // shared DB, so a non-default profile's title would silently never
             // persist. Off the gateway (one shared api_server DB, no profiles)
-            // the plain rename is correct; the renamer is also null until
-            // RelayApp wires it, so fall back then.
+            // the plain rename is correct. A missing gateway renamer is a wiring
+            // failure, not permission to cross databases.
             if (streamingEndpoint == "gateway") {
                 val scoped = profileSessionRenamer?.invoke(sessionId, newTitle)
-                if (scoped != true) client.renameSession(sessionId, newTitle)
+                if (scoped != true) {
+                    previousTitle?.let { handler.renameSessionLocal(sessionId, it) }
+                    emitError(
+                        IllegalStateException("Profile-scoped session rename failed"),
+                        context = "rename_profile_session",
+                    )
+                }
             } else {
                 client.renameSession(sessionId, newTitle)
             }
@@ -3907,7 +3930,7 @@ class ChatViewModel : ViewModel() {
 
         val recovery = ChatStreamRecovery(
             scope = viewModelScope,
-            fetchHistory = { loadSessionHistory(checkpoint.sessionId) },
+            fetchHistory = { loadSessionHistory(checkpoint.sessionId, requireProfileScope = true) },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
         )
         streamRecovery = recovery
@@ -3943,6 +3966,9 @@ class ChatViewModel : ViewModel() {
                             "The unfinished message was not found on the server — please resend."
                         ChatStreamRecovery.GiveUpReason.TIMED_OUT ->
                             "The unfinished reply did not complete in the recovery window."
+                        ChatStreamRecovery.GiveUpReason.HISTORY_UNAVAILABLE ->
+                            appContext?.getString(R.string.chat_profile_history_unavailable)
+                                ?: "The active profile's conversation history could not be reached. Reconnect and try again."
                     }
                     clearTurnCheckpoint()
                     AppAnalytics.onStreamError()
@@ -4070,7 +4096,7 @@ class ChatViewModel : ViewModel() {
         ).coerceAtLeast(0)
         val recovery = ChatStreamRecovery(
             scope = viewModelScope,
-            fetchHistory = { loadSessionHistory(sessionId) },
+            fetchHistory = { loadSessionHistory(sessionId, requireProfileScope = true) },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
         )
         streamRecovery = recovery
@@ -4122,6 +4148,9 @@ class ChatViewModel : ViewModel() {
                             "Connection dropped before the server received this message — please resend."
                         ChatStreamRecovery.GiveUpReason.TIMED_OUT ->
                             "Lost the connection mid-reply and the answer never arrived — check the server and try again."
+                        ChatStreamRecovery.GiveUpReason.HISTORY_UNAVAILABLE ->
+                            appContext?.getString(R.string.chat_profile_history_unavailable)
+                                ?: "The active profile's conversation history could not be reached. Reconnect and try again."
                     }
                     AppAnalytics.onStreamError()
                     handler.onStreamError(message)

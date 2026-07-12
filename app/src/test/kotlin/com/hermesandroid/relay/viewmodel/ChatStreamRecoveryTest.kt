@@ -222,6 +222,20 @@ class ChatStreamRecoveryTest {
     }
 
     @Test
+    fun repeatedProfileHistoryFailuresStopWithAnActionableError() = runTest {
+        val script = ScriptedHistory(listOf({ throw IOException("profile database unavailable") }))
+        var gaveUp: ChatStreamRecovery.GiveUpReason? = null
+        val recovery = ChatStreamRecovery(this, script.fetcher { testScheduler.currentTime })
+        recovery.start(pending, 0, {}, {}, { gaveUp = it })
+
+        advanceTimeBy(5_000 + 10_000 + 20_000 + 1)
+
+        assertEquals(ChatStreamRecovery.GiveUpReason.HISTORY_UNAVAILABLE, gaveUp)
+        assertEquals(3, script.fetchCount)
+        assertFalse(recovery.isActive)
+    }
+
+    @Test
     fun growingTranscriptDefersTheFinishUntilStable() = runTest {
         val script = ScriptedHistory(
             listOf(

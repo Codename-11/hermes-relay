@@ -231,6 +231,7 @@
     <string name="chat_approval_secret_title">请求密钥</string>
     <string name="chat_approval_skip">跳过</string>
     <string name="chat_approval_reconnecting">正在重新连接你的回答……</string>
+    <string name="chat_profile_history_unavailable">无法访问当前配置文件的对话历史记录。请重新连接后重试。</string>
     <string name="chat_approval_stream_dropped">聊天流已断开——后台正在恢复回答</string>
 
     <!-- RelayErrorClassifier 错误标题 -->
