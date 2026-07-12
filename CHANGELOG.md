@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Desktop chat can use Relay typed streaming over WSS.** The opt-in `--relay-chat` mode sends `chat.send`, renders typed `stream.event` v1 assistant/tool/artifact/memory/skill/error lifecycles, de-duplicates reconnect events, and preserves the existing gateway chat path as the default.
+- **Android adds AI-assisted Spanish.** A repository Codex skill and deterministic draft/install harness make locale generation repeatable, while CI tracks linguistic verification separately from structural completeness and accepts canonical community correction PRs.
 
 ### Fixed
 

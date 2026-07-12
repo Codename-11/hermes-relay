@@ -25,10 +25,16 @@ class AppLanguageTest {
     }
 
     @Test
+    fun addedLocaleTagsResolveToTheirPickerOptions() {
+        assertEquals(AppLanguage.SPANISH, AppLanguage.fromLanguageTags("es-MX"))
+    }
+
+    @Test
     fun languageOptionsProduceExpectedLocaleLists() {
         assertTrue(AppLanguage.SYSTEM_DEFAULT.toLocaleList().isEmpty)
         assertEquals("en", AppLanguage.ENGLISH.toLocaleList().toLanguageTags())
         assertEquals("zh-Hans", AppLanguage.SIMPLIFIED_CHINESE.languageTag)
+        assertEquals("es", AppLanguage.SPANISH.toLocaleList().toLanguageTags())
         assertEquals(
             "zh",
             AppLanguage.SIMPLIFIED_CHINESE.toLocaleList()[0]?.language,

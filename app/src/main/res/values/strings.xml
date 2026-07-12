@@ -1053,6 +1053,7 @@
     <string name="appearance_language_system">System default</string>
     <string name="appearance_language_english">English</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
+    <string name="appearance_language_spanish">Español</string>
     <string name="appearance_appearance">Appearance</string>
     <string name="appearance_light_dark">Light / Dark</string>
     <string name="appearance_fixed_light">%1$s is a fixed light theme.</string>

@@ -1050,6 +1050,7 @@
     <string name="appearance_language_system">跟随系统</string>
     <string name="appearance_language_english">English</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
+    <string name="appearance_language_spanish">Español</string>
     <string name="appearance_appearance">外观</string>
     <string name="appearance_light_dark">浅色 / 深色</string>
     <string name="appearance_fixed_light">%1$s 是固定的浅色主题。</string>
