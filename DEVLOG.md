@@ -1,5 +1,27 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-12 — Multi-profile presence and concurrent Gateway turns
+
+The Android profile picker now distinguishes **Online** profiles whose dedicated
+gateway and messaging channels are running, **Available** profiles that can start
+or resume a conversation on demand, and **Offline** profiles that are not reachable
+through the current host connection. Presence is independent of the selected chat
+profile and the server's sticky default.
+
+Switching profiles during a Dashboard/TUI Gateway turn now detaches the visible
+Android callbacks without interrupting the upstream session. The original turn
+continues server-side, its live-to-durable session binding remains registered, and
+the terminal event schedules authoritative history reconciliation for that original
+conversation. SSE transports retain the existing mid-stream switch lock because
+they cannot safely detach and multiplex turns this way.
+
+Multi-profile Phone/Threads routing remains deferred in `TODO.md`; the current
+single proactive subscriber and shared reply queue must become profile-partitioned
+before several profile gateways can consume it safely.
+
+Verification: sideload debug production and unit-test Kotlin compilation succeeded;
+focused `ProfilePresenceTest` and `GatewayChatClientTest` passed.
+
 ## 2026-07-11 — Android localization foundation and Simplified Chinese
 
 The Android UI now resolves its broad static copy through canonical resources,

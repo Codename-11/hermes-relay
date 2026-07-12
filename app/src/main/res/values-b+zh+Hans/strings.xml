@@ -2155,6 +2155,12 @@
     <string name="conn_info_fast_mode_title">快速模式</string>
     <string name="conn_info_gateway_idle">网关空闲</string>
     <string name="conn_info_gateway_running">网关运行中</string>
+    <string name="conn_info_profile_online">在线</string>
+    <string name="conn_info_profile_online_desc">在线 — 网关和消息渠道正在运行</string>
+    <string name="conn_info_profile_available">可用</string>
+    <string name="conn_info_profile_available_desc">可按需使用 — 可以开始或恢复对话</string>
+    <string name="conn_info_profile_offline">离线</string>
+    <string name="conn_info_profile_offline_desc">离线 — 当前无法连接此配置文件</string>
     <string name="conn_info_gateway_unavailable_api_server">网关不可用——API 服务器不可达。</string>
     <string name="conn_info_gateway_unavailable_sign_in">网关不可用——需要登录。</string>
     <string name="conn_info_grant_never">%1$s：永不过期</string>

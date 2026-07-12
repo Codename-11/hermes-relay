@@ -2158,6 +2158,12 @@
     <string name="conn_info_fast_mode_title">Fast mode</string>
     <string name="conn_info_gateway_idle">Gateway idle</string>
     <string name="conn_info_gateway_running">Gateway running</string>
+    <string name="conn_info_profile_online">Online</string>
+    <string name="conn_info_profile_online_desc">Online — gateway and messaging channels are running</string>
+    <string name="conn_info_profile_available">Available</string>
+    <string name="conn_info_profile_available_desc">Available on demand — conversations can start or resume</string>
+    <string name="conn_info_profile_offline">Offline</string>
+    <string name="conn_info_profile_offline_desc">Offline — this profile cannot currently be reached</string>
     <string name="conn_info_gateway_unavailable_api_server">Gateway unavailable — API server is not reachable.</string>
     <string name="conn_info_gateway_unavailable_sign_in">Gateway unavailable — sign-in required.</string>
     <string name="conn_info_grant_never">%1$s: never</string>
