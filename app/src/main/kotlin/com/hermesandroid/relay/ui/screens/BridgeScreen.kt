@@ -49,9 +49,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -119,7 +121,7 @@ fun BridgeScreen(
     onNavigateToSettings: () -> Unit = {},
     returnTitle: String? = null,
     returnSubtitle: String = "",
-    returnLabel: String = "Back",
+    returnLabel: String = "",
     onReturn: (() -> Unit)? = null,
 ) {
     val masterToggle by viewModel.masterToggle.collectAsState()
@@ -212,18 +214,18 @@ fun BridgeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bridge") },
+                title = { Text(stringResource(R.string.bridge_title)) },
                 navigationIcon = {
                     RelayChromeIconButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to chat",
+                        contentDescription = stringResource(R.string.bridge_back_to_chat),
                         onClick = onNavigateToChat,
                     )
                 },
                 actions = {
                     RelayChromeIconButton(
                         icon = Icons.Filled.Tune,
-                        contentDescription = "Settings",
+                        contentDescription = stringResource(R.string.bridge_settings),
                         onClick = onNavigateToSettings,
                         modifier = Modifier.padding(end = 4.dp),
                     )
@@ -249,21 +251,21 @@ fun BridgeScreen(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     title = returnTitle,
                     subtitle = returnSubtitle,
-                    label = returnLabel,
+                    label = returnLabel.ifBlank { stringResource(R.string.bridge_back) },
                     onClick = onReturn,
                 )
             }
             RelayHeroPanel(
-                title = if (relayReady) "Phone bridge is paired" else "Bridge controls are staged",
+                title = if (relayReady) stringResource(R.string.bridge_paired_title) else stringResource(R.string.bridge_staged_title),
                 subtitle = if (relayReady) {
-                    "Terminal, voice, notification, media, and advanced phone controls share this grant."
+                    stringResource(R.string.bridge_paired_subtitle)
                 } else {
-                    "Pair Relay to receive bridge commands. You can still configure permissions and safety before pairing."
+                    stringResource(R.string.bridge_staged_subtitle)
                 },
                 action = {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RelayStatusPill("relay", relayReady)
-                        RelayStatusPill("safety", true)
+                        RelayStatusPill(stringResource(R.string.bridge_relay_label), relayReady)
+                        RelayStatusPill(stringResource(R.string.bridge_safety_label), true)
                     }
                 },
             )
@@ -301,14 +303,12 @@ fun BridgeScreen(
                         )
                         Column {
                             Text(
-                                text = "Relay not connected",
+                                text = stringResource(R.string.bridge_not_connected_title),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                             Text(
-                                text = "Bridge commands travel over the relay. " +
-                                    "Pair a relay in Settings → Connections for " +
-                                    "the bridge to actually do anything.",
+                                text = stringResource(R.string.bridge_not_connected_body),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
@@ -347,6 +347,9 @@ fun BridgeScreen(
             // 1. Master toggle (with inline status rows — device, battery,
             //    screen, current app). This is the parent gate for the page.
             val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+            // Pre-resolve snackbar strings for accessibility-needed callback (non-Composable lambda)
+            val snackbarAccessibilityNeeded = stringResource(R.string.bridge_accessibility_needed)
+            val snackbarAccessibilityAction = stringResource(R.string.bridge_open_settings)
             BridgeMasterToggle(
                 enabled = masterToggle,
                 status = bridgeStatus,
@@ -371,8 +374,8 @@ fun BridgeScreen(
                 onAccessibilityNeeded = {
                     coroutineScope.launch {
                         val result = snackbarHost.showSnackbar(
-                            message = "Accessibility Service must be enabled first.",
-                            actionLabel = "Open Settings",
+                            message = snackbarAccessibilityNeeded,
+                            actionLabel = snackbarAccessibilityAction,
                             duration = androidx.compose.material3.SnackbarDuration.Long,
                         )
                         if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
@@ -389,9 +392,9 @@ fun BridgeScreen(
                 // reading). Sideload: "Agent Control" (full phone control).
                 // The label shapes user expectation + is what reviewers read.
                 label = if (BuildFlavor.isSideload)
-                    "Allow Agent Control"
+                    stringResource(R.string.bridge_allow_agent_control)
                 else
-                    "Enable Bridge Mode",
+                    stringResource(R.string.bridge_enable_bridge_mode),
             )
 
             // 2. Permissions — prerequisites come before advanced features.
@@ -507,7 +510,7 @@ private fun AdvancedSectionHeader() {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = "Advanced",
+            text = stringResource(R.string.bridge_advanced),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.primary,
@@ -553,15 +556,13 @@ private fun OverlayPermissionNagCard(onTap: () -> Unit) {
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Grant 'Display over other apps'",
+                    text = stringResource(R.string.bridge_overlay_perm_title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
                 Text(
-                    text = "Without this, confirmation prompts can't show when " +
-                        "the agent acts. Destructive actions will be silently denied. " +
-                        "Tap to grant.",
+                    text = stringResource(R.string.bridge_overlay_perm_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
@@ -612,17 +613,16 @@ private fun TrustedActionsRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Trusted actions",
+                    text = stringResource(R.string.bridge_trusted_actions),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     text = if (trustedCount == 0) {
-                        "Every action still prompts"
+                        stringResource(R.string.bridge_trusted_empty)
                     } else {
-                        "$trustedCount action${if (trustedCount == 1) "" else "s"} " +
-                            "bypass confirmation"
+                        "$trustedCount" + stringResource(R.string.bridge_trusted_count_suffix)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -632,19 +632,17 @@ private fun TrustedActionsRow(
                 onClick = { showConfirm = true },
                 enabled = trustedCount > 0,
             ) {
-                Text("Reset")
+                Text(stringResource(R.string.bridge_reset))
             }
         }
     }
     if (showConfirm) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showConfirm = false },
-            title = { Text("Reset trusted actions?") },
+            title = { Text(stringResource(R.string.bridge_reset_trusted_title)) },
             text = {
                 Text(
-                    "After reset, every destructive action will prompt " +
-                        "for confirmation again. You can re-enable " +
-                        "\"Don't ask again\" from any future confirmation dialog."
+                    stringResource(R.string.bridge_reset_trusted_body)
                 )
             },
             confirmButton = {
@@ -654,14 +652,14 @@ private fun TrustedActionsRow(
                         showConfirm = false
                     },
                 ) {
-                    Text("Reset")
+                    Text(stringResource(R.string.bridge_reset))
                 }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(
                     onClick = { showConfirm = false },
                 ) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.bridge_cancel))
                 }
             },
         )

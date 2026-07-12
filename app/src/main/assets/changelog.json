@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.4.2",
+   "title": "Simplified Chinese and scalable localization",
+   "date": "2026-07-11",
+   "sections": [
+    {
+     "header": "Simplified Chinese throughout the app",
+     "bullets": [
+      "Use onboarding, connection setup, Chat, Manage, Voice, settings, diagnostics, notifications, and accessibility labels in Simplified Chinese across both product flavors.",
+      "Switch between English and Simplified Chinese through Android's per-app language settings on supported versions, or follow the device language elsewhere."
+     ]
+    },
+    {
+     "header": "Localization built to grow",
+     "bullets": [
+      "Automated catalog checks protect resource, plural, and format-argument parity, while contributor docs and translated entry points make another language easier to add safely.",
+      "Connection scan and queued-message counts now use locale-aware Android plurals."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.1",
    "title": "Chat that keeps up",
    "date": "2026-07-11",

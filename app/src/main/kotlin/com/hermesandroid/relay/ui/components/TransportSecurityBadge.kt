@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ConnectionSecurity
 import com.hermesandroid.relay.data.ConnectionSecurityLevel
 import com.hermesandroid.relay.data.SurfaceSecurityKind
@@ -195,20 +197,21 @@ private fun RenderBadge(
  * Label copy uses "Plain" rather than "Insecure" — amber, not red, and
  * matches the UX pass where plaintext LAN is treated as informational.
  */
+@Composable
 fun insecureReasonLabel(reason: String?, activeRole: String? = null): String {
     val roleLabel = when (activeRole?.lowercase()) {
-        "lan" -> "Plain (on LAN)"
-        "tailscale" -> "Plain (on Tailscale)"
-        "public" -> "Plain (on public URL)"
+        "lan" -> stringResource(R.string.transport_badge_insecure_lan)
+        "tailscale" -> stringResource(R.string.transport_badge_insecure_tailscale)
+        "public" -> stringResource(R.string.transport_badge_insecure_public)
         null, "" -> null
-        else -> "Plain (on $activeRole)"
+        else -> stringResource(R.string.transport_badge_insecure_role_format, activeRole)
     }
     if (roleLabel != null) return roleLabel
     return when (reason) {
-        "lan_only" -> "Plain (LAN only)"
-        "tailscale_vpn" -> "Plain (Tailscale)"
-        "local_dev" -> "Plain (dev only)"
-        else -> "Plain (no TLS)"
+        "lan_only" -> stringResource(R.string.transport_badge_insecure_lan_only)
+        "tailscale_vpn" -> stringResource(R.string.transport_badge_insecure_tailscale_vpn)
+        "local_dev" -> stringResource(R.string.transport_badge_insecure_dev)
+        else -> stringResource(R.string.transport_badge_insecure_no_tls)
     }
 }
 
@@ -220,7 +223,7 @@ private fun resolveStateAppearance(state: TransportSecurityState): BadgeAppearan
         TransportSecurityState.AllSecure -> {
             val green = Color(0xFF2E7D32)
             BadgeAppearance(
-                label = "Secure \u2014 TLS",
+                label = stringResource(R.string.transport_badge_secure_tls),
                 bg = green.copy(alpha = 0.14f),
                 fg = green,
             )
@@ -229,7 +232,7 @@ private fun resolveStateAppearance(state: TransportSecurityState): BadgeAppearan
             // Amber (not red): secure fallback exists, so this is informational.
             val amber = Color(0xFFF9A825)
             BadgeAppearance(
-                label = "Mixed \u2014 secure fallback available",
+                label = stringResource(R.string.transport_badge_mixed),
                 bg = amber.copy(alpha = 0.16f),
                 fg = amber,
             )
@@ -237,7 +240,7 @@ private fun resolveStateAppearance(state: TransportSecurityState): BadgeAppearan
         TransportSecurityState.AllInsecure -> {
             val red = MaterialTheme.colorScheme.error
             BadgeAppearance(
-                label = "All routes plain \u2014 dev only",
+                label = stringResource(R.string.transport_badge_plain),
                 bg = red.copy(alpha = 0.16f),
                 fg = red,
             )
@@ -255,7 +258,7 @@ private fun resolveAppearance(
     if (isSecure) {
         val green = Color(0xFF2E7D32)
         return BadgeAppearance(
-            label = "Secure (TLS)",
+            label = stringResource(R.string.transport_badge_secure_tls_short),
             bg = green.copy(alpha = 0.14f),
             fg = green,
         )
@@ -320,35 +323,35 @@ private fun connSecAppearance(security: ConnectionSecurity): ConnSecAppearance {
     val red = MaterialTheme.colorScheme.error
     return when (security.level) {
         ConnectionSecurityLevel.Tls -> ConnSecAppearance(
-            label = "Encrypted · TLS",
+            label = stringResource(R.string.transport_badge_encrypted_tls),
             icon = Icons.Filled.Lock,
             bg = green.copy(alpha = 0.14f),
             fg = green,
         )
         ConnectionSecurityLevel.Overlay -> ConnSecAppearance(
-            label = "Encrypted · ${security.mechanism}",
+            label = stringResource(R.string.transport_badge_encrypted_mech_format, security.mechanism),
             icon = Icons.Filled.Shield,
             bg = green.copy(alpha = 0.14f),
             fg = green,
         )
         ConnectionSecurityLevel.Mixed -> ConnSecAppearance(
-            label = "Mixed routes",
+            label = stringResource(R.string.transport_badge_mixed_routes),
             icon = Icons.Filled.Shield,
             bg = amber.copy(alpha = 0.16f),
             fg = amber,
         )
         ConnectionSecurityLevel.Plain -> ConnSecAppearance(
             label = if (security.mechanism.isNotBlank() && security.mechanism != "Plain") {
-                "Not encrypted · ${security.mechanism}"
+                stringResource(R.string.transport_badge_not_encrypted_mech_format, security.mechanism)
             } else {
-                "Not encrypted"
+                stringResource(R.string.transport_badge_not_encrypted)
             },
             icon = Icons.Filled.LockOpen,
             bg = red.copy(alpha = 0.16f),
             fg = red,
         )
         ConnectionSecurityLevel.Unknown -> ConnSecAppearance(
-            label = "Checking…",
+            label = stringResource(R.string.transport_badge_checking),
             icon = Icons.Filled.Shield,
             bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             fg = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -405,11 +408,11 @@ fun SurfaceSecurityGlyph(
     val green = Color(0xFF2E7D32)
     val amber = Color(0xFFF9A825)
     val (icon, tint, desc) = when (kind) {
-        SurfaceSecurityKind.Tls -> Triple(Icons.Filled.Lock, green, "Encrypted (TLS)")
-        SurfaceSecurityKind.Overlay -> Triple(Icons.Filled.Shield, green, "Encrypted")
+        SurfaceSecurityKind.Tls -> Triple(Icons.Filled.Lock, green, stringResource(R.string.transport_badge_glyph_tls))
+        SurfaceSecurityKind.Overlay -> Triple(Icons.Filled.Shield, green, stringResource(R.string.transport_badge_glyph_encrypted))
         // Per-route plaintext is amber (informational), not red — a secure
         // route may exist alongside it.
-        SurfaceSecurityKind.Plain -> Triple(Icons.Filled.LockOpen, amber, "Not encrypted")
+        SurfaceSecurityKind.Plain -> Triple(Icons.Filled.LockOpen, amber, stringResource(R.string.transport_badge_glyph_not_encrypted))
     }
     Icon(
         imageVector = icon,

@@ -70,10 +70,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.HermesCardDispatch
@@ -134,6 +136,7 @@ fun HermesCardBubble(
     val accentColor = accentToColor(card.accent)
     val typeIcon = iconForType(card.type)
     val alreadyChosen = dispatches.firstOrNull { it.cardKey == cardKey }
+    val cardDescription = stringResource(R.string.card_a11y, card.title ?: card.type)
 
     // Expiry clock for timed asks. Ticks once a second while the deadline
     // is ahead; freezes after. Keyed on the deadline so a re-used card id
@@ -155,7 +158,7 @@ fun HermesCardBubble(
             .widthIn(max = maxWidth)
             .fillMaxWidth()
             .semantics {
-                contentDescription = "Card: ${card.title ?: card.type}"
+                contentDescription = cardDescription
             },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -260,7 +263,7 @@ fun HermesCardBubble(
                     expired -> {
                         Spacer(Modifier.height(10.dp))
                         ChoseRow(
-                            text = "Expired — not granted",
+                            text = stringResource(R.string.card_expired),
                             icon = Icons.Filled.HourglassBottom,
                             iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -293,7 +296,7 @@ fun HermesCardBubble(
                             val remainingSec = ((expiresAt - nowMillis) / 1000).coerceAtLeast(0)
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                text = "expires in %d:%02d".format(remainingSec / 60, remainingSec % 60),
+                                text = stringResource(R.string.card_expires_in, remainingSec / 60, remainingSec % 60),
                                 style = relayMetadataStyle(),
                                 color = if (remainingSec < 30) RelayRefresh.Amber
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -459,7 +462,7 @@ private fun CardInputSlot(
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Not stored in chat history",
+                text = stringResource(R.string.card_not_stored),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
@@ -480,7 +483,7 @@ private fun CardInputSlot(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send answer",
+                        contentDescription = stringResource(R.string.card_send_answer_a11y),
                         tint = if (answerText.isNotBlank()) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
@@ -512,7 +515,7 @@ private fun CardInputSlot(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                     ),
-                ) { Text("Submit", style = MaterialTheme.typography.labelMedium) }
+                ) { Text(stringResource(R.string.card_submit), style = MaterialTheme.typography.labelMedium) }
             }
         }
     }
@@ -538,7 +541,7 @@ private fun InlineAnswerField(
     ) {
         if (value.isEmpty()) {
             Text(
-                text = "Type an answer…",
+                text = stringResource(R.string.card_answer_placeholder),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             )

@@ -89,8 +89,8 @@ class AutoDisableWorker(private val context: Context) {
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Bridge auto-disabled")
-            .setContentText("Paused after idle — tap to re-enable in the Bridge tab.")
+            .setContentTitle(context.getString(R.string.bridge_notification_auto_disabled_title))
+            .setContentText(context.getString(R.string.bridge_notification_auto_disabled_body))
             .setStyle(NotificationCompat.BigTextStyle().bigText(
                 "Hermes bridge was idle for too long, so device control has been turned off " +
                     "automatically. Open the Bridge tab to turn it back on if you still need it."

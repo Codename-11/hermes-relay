@@ -43,6 +43,8 @@ import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import java.text.DateFormat
 import java.util.Date
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 
 /**
  * Bottom-sheet dialog showing full metadata for a single terminal tab plus
@@ -110,9 +112,9 @@ fun TerminalSessionInfoSheet(
             Column {
                 Text(
                     text = if (tab.displayName.isNullOrBlank()) {
-                        "Tab ${tab.tabId}"
+                        stringResource(R.string.term_info_tab_format, tab.tabId)
                     } else {
-                        "Tab ${tab.tabId} · ${tab.displayName}"
+                        stringResource(R.string.term_info_tab_name_format, tab.tabId, tab.displayName)
                     },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
@@ -141,27 +143,27 @@ fun TerminalSessionInfoSheet(
             ) {
                 StatusChip(
                     label = when {
-                        tab.attached -> "Attached"
-                        tab.attaching -> "Attaching…"
-                        tab.error != null -> "Error"
-                        !tab.userStarted -> "Not started"
-                        else -> "Detached"
+                        tab.attached -> stringResource(R.string.term_info_attached)
+                        tab.attaching -> stringResource(R.string.term_info_attaching)
+                        tab.error != null -> stringResource(R.string.term_info_error)
+                        !tab.userStarted -> stringResource(R.string.term_info_not_started)
+                        else -> stringResource(R.string.term_info_detached)
                     },
                     isPositive = tab.attached,
                 )
                 if (tab.tmuxAvailable) {
-                    StatusChip(label = "tmux", isPositive = true)
+                    StatusChip(label = stringResource(R.string.term_info_tmux), isPositive = true)
                 }
             }
 
             HorizontalDivider()
 
             // Per-tab metadata.
-            InfoRow("PID", tab.pid?.toString() ?: "—")
-            InfoRow("Shell", tab.shell ?: "—", monospace = true)
-            InfoRow("Grid", "${tab.cols} × ${tab.rows}")
+            InfoRow(stringResource(R.string.term_info_pid), tab.pid?.toString() ?: "—")
+            InfoRow(stringResource(R.string.term_info_shell), tab.shell ?: "—", monospace = true)
+            InfoRow(stringResource(R.string.term_info_grid), stringResource(R.string.term_info_grid_format, tab.cols, tab.rows))
             if (tab.error != null) {
-                InfoRow("Last error", tab.error, valueColor = MaterialTheme.colorScheme.error)
+                InfoRow(stringResource(R.string.term_info_last_error), tab.error, valueColor = MaterialTheme.colorScheme.error)
             }
 
             HorizontalDivider()
@@ -172,7 +174,7 @@ fun TerminalSessionInfoSheet(
             // PairedDevicesScreen + ConnectionInfoSheet for visual parity.
             if (pairedSession != null) {
                 Text(
-                    text = "Relay session",
+                    text = stringResource(R.string.term_info_relay_session),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -182,12 +184,12 @@ fun TerminalSessionInfoSheet(
                     size = TransportSecuritySize.Row,
                 )
                 InfoRow(
-                    label = "Expires",
+                    label = stringResource(R.string.term_info_expires),
                     value = formatExpiry(pairedSession.expiresAt),
                 )
                 if (pairedSession.grants.isNotEmpty()) {
                     Text(
-                        text = "Channel grants",
+                        text = stringResource(R.string.term_info_channel_grants),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -203,7 +205,7 @@ fun TerminalSessionInfoSheet(
                 }
             } else {
                 Text(
-                    text = "No paired session",
+                    text = stringResource(R.string.term_info_no_paired_session),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -227,7 +229,7 @@ fun TerminalSessionInfoSheet(
                         },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Start session")
+                        Text(stringResource(R.string.term_info_start_session))
                     }
                 } else {
                     OutlinedButton(
@@ -237,7 +239,7 @@ fun TerminalSessionInfoSheet(
                         },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Reattach")
+                        Text(stringResource(R.string.term_info_reattach))
                     }
                 }
                 OutlinedButton(
@@ -248,7 +250,7 @@ fun TerminalSessionInfoSheet(
                     enabled = canCloseTab,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Close tab")
+                    Text(stringResource(R.string.term_info_close_tab))
                 }
             }
 
@@ -269,7 +271,7 @@ fun TerminalSessionInfoSheet(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Kill session")
+                    Text(stringResource(R.string.term_info_kill_session))
                 }
             }
 
@@ -278,7 +280,7 @@ fun TerminalSessionInfoSheet(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("Done")
+                    Text(stringResource(R.string.term_info_done))
                 }
             }
 
@@ -303,8 +305,8 @@ private fun RenameRow(
             value = draft,
             onValueChange = { draft = it.take(40) },
             singleLine = true,
-            label = { Text("Name") },
-            placeholder = { Text("e.g. build, logs, claude") },
+            label = { Text(stringResource(R.string.term_info_name)) },
+            placeholder = { Text(stringResource(R.string.term_info_name_placeholder)) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { onCommit(draft) }),
             modifier = Modifier.weight(1f),
@@ -313,7 +315,7 @@ private fun RenameRow(
             onClick = { onCommit(draft) },
             enabled = isDirty,
         ) {
-            Text(if (draft.isBlank() && currentName.isNotEmpty()) "Clear" else "Save")
+            Text(if (draft.isBlank() && currentName.isNotEmpty()) stringResource(R.string.term_info_clear) else stringResource(R.string.term_info_save))
         }
     }
 }
@@ -368,6 +370,7 @@ private fun InfoRow(
 
 @Composable
 private fun GrantChipLocal(channel: String, expiresAt: Long?) {
+    val neverText = stringResource(R.string.term_info_never)
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -378,7 +381,7 @@ private fun GrantChipLocal(channel: String, expiresAt: Long?) {
             text = buildString {
                 append(channel)
                 append(" · ")
-                append(if (expiresAt == null) "never" else formatExpiryShort(expiresAt))
+                append(if (expiresAt == null) neverText else formatExpiryShort(expiresAt))
             },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -386,8 +389,9 @@ private fun GrantChipLocal(channel: String, expiresAt: Long?) {
     }
 }
 
+@Composable
 private fun formatExpiry(epochSeconds: Long?): String {
-    if (epochSeconds == null) return "Never"
+    if (epochSeconds == null) return stringResource(R.string.term_info_never)
     return try {
         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
             .format(Date(epochSeconds * 1000L))

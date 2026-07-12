@@ -17,6 +17,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -56,7 +58,7 @@ fun WhatsNewDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
-                Text("What's New")
+                Text(stringResource(R.string.whats_new_title))
                 notes.version?.let { version ->
                     Text(
                         text = version,
@@ -76,7 +78,7 @@ fun WhatsNewDialog(
             ) {
                 if (notes.groups.isEmpty()) {
                     Text(
-                        text = notes.fallback ?: "No release notes available.",
+                        text = notes.fallback ?: stringResource(R.string.whats_new_no_notes),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -85,7 +87,7 @@ fun WhatsNewDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Got it")
+                Text(stringResource(R.string.whats_new_got_it))
             }
         }
     )
@@ -314,6 +316,6 @@ private fun loadWhatsNew(context: Context): String {
     return try {
         context.assets.open("whats_new.txt").bufferedReader().readText()
     } catch (_: Exception) {
-        "No release notes available."
+        context.getString(R.string.whats_new_no_notes)
     }
 }

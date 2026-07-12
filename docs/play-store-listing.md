@@ -85,18 +85,14 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.1 - Chat that keeps up
+v1.4.2 - Simplified Chinese
 
-Chat
-* Follow background work from a live process strip; its result appears automatically in the same conversation.
-* Reopen while an answer runs: partial text, thinking, tool progress, and approvals return.
+Language
+* Use onboarding, Chat, Manage, Voice, settings, diagnostics, and notifications in Simplified Chinese.
+* Switch between English and Simplified Chinese through Android's app-language settings.
 
-Voice
-* Speak commands to pause, resume, cancel, repeat a result, or start Standard voice chat.
-* Pick Hands-free, Low latency, Careful tools, or Quiet presets.
-
-Polish
-* Multi-image galleries plus smoother streaming Markdown and long tables.
+Contributing
+* Locale validation and new contributor docs make future translations safer to add.
 ```
 
 ## Category

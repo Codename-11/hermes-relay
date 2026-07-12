@@ -14,9 +14,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.viewmodel.BridgeStatus
 
 /**
@@ -53,7 +55,7 @@ fun BridgeStatusCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Status",
+                    text = stringResource(R.string.bsc_status),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
@@ -64,7 +66,7 @@ fun BridgeStatusCard(
                     isConnecting = false,
                 )
                 Text(
-                    text = if (isConnected) "Connected" else "Disconnected",
+                    text = if (isConnected) stringResource(R.string.bsc_connected) else stringResource(R.string.bsc_disconnected),
                     style = MaterialTheme.typography.labelMedium,
                     color = if (isConnected) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -75,22 +77,21 @@ fun BridgeStatusCard(
 
             if (status == null) {
                 Text(
-                    text = "Bridge runtime not yet reporting status. Enable " +
-                        "Agent Control above to begin receiving device telemetry.",
+                    text = stringResource(R.string.bsc_no_status),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                StatusKeyValue("Device", status.deviceName)
+                StatusKeyValue(stringResource(R.string.bmt_device), status.deviceName)
                 StatusKeyValue(
-                    "Battery",
-                    status.batteryPercent?.let { "$it%" } ?: "Unknown"
+                    stringResource(R.string.bmt_battery),
+                    status.batteryPercent?.let { "$it%" } ?: stringResource(R.string.bsc_unknown)
                 )
-                StatusKeyValue("Screen", if (status.screenOn) "ON" else "OFF")
-                StatusKeyValue("Current app", status.currentApp ?: "—")
+                StatusKeyValue(stringResource(R.string.bmt_screen), if (status.screenOn) stringResource(R.string.bmt_on) else stringResource(R.string.bmt_off))
+                StatusKeyValue(stringResource(R.string.bmt_current_app), status.currentApp ?: "—")
                 StatusKeyValue(
-                    "Accessibility service",
-                    if (status.accessibilityEnabled) "Enabled" else "Disabled"
+                    stringResource(R.string.bsc_accessibility_service),
+                    if (status.accessibilityEnabled) stringResource(R.string.bsc_enabled) else stringResource(R.string.bsc_disabled)
                 )
             }
         }

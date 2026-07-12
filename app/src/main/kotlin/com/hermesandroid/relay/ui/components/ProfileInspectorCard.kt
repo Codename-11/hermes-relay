@@ -22,7 +22,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.ui.theme.gradientBorder
 
@@ -87,14 +89,14 @@ fun ProfileInspectorCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "Inspect Agent",
+                    text = stringResource(R.string.profile_inspector_card_title),
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 Text(
                     text = if (enabled) {
-                        "View config, SOUL, memory, skills"
+                        stringResource(R.string.profile_inspector_card_subtitle)
                     } else {
-                        "No active agent"
+                        stringResource(R.string.profile_inspector_card_no_agent)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

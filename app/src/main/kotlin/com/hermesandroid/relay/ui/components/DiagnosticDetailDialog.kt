@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.BuildConfig
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.diagnostics.DiagnosticLogEntry
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.util.DiagnosticIssuePrefill
@@ -133,7 +135,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                     }
                 } else {
                     Text(
-                        text = "No further detail captured for this entry.",
+                        text = stringResource(R.string.diagnostic_no_detail),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -146,7 +148,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                         onValueChange = { expectation = it },
                         label = { Text("What were you expecting to happen?") },
                         supportingText = {
-                            Text("This is a routine log entry — telling us what looked wrong turns it into an answerable report.")
+                            Text(stringResource(R.string.diagnostic_routine_hint))
                         },
                         minLines = 2,
                         modifier = Modifier.fillMaxWidth(),
@@ -159,13 +161,13 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Close") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
                     OutlinedButton(
                         onClick = {
                             IssueReport.copyToClipboard(context, plainText)
                             toast(context, "Diagnostic copied")
                         },
-                    ) { Text("Copy") }
+                    ) { Text(stringResource(R.string.common_copy)) }
                     OutlinedButton(
                         onClick = {
                             val shared = IssueReport.share(
@@ -179,7 +181,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                                 toast(context, "Copied — no app found to share to")
                             }
                         },
-                    ) { Text("Export") }
+                    ) { Text(stringResource(R.string.common_export)) }
                     Button(
                         enabled = !expectationVisible || expectation.isNotBlank(),
                         onClick = {
@@ -207,7 +209,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                                 else "Copied — no browser found to open GitHub",
                             )
                         },
-                    ) { Text("Report") }
+                    ) { Text(stringResource(R.string.common_report)) }
                 }
             }
         }

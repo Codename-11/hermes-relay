@@ -21,6 +21,7 @@
 </p>
 
 <p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a><br>
   <a href="https://codename-11.github.io/hermes-relay/">Documentation</a> ·
   <a href="https://github.com/Codename-11/hermes-relay/releases">Releases</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
@@ -148,6 +149,16 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
     <td align="center" width="25%"><img src="assets/screenshots/06_manage.png" alt="Manage your agent" width="100%"><br><sub><b>Manage your agent</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/07_connections.png" alt="Connections and routes" width="100%"><br><sub><b>Connections &amp; routes</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/08_appearance.png" alt="Agent avatar &amp; skins" width="100%"><br><sub><b>Avatars &amp; skins</b></sub></td>
+  </tr>
+</table>
+
+### Simplified Chinese
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="assets/screenshots/Zh01.jpg" alt="中文设置界面" width="100%"><br><sub><b>设置 — 全面汉化</b></sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/Zh02.jpg" alt="中文管理界面" width="100%"><br><sub><b>管理 — 仪表盘汉化</b></sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/Zh03.jpg" alt="中文导航界面" width="100%"><br><sub><b>导航菜单 — 简体中文</b></sub></td>
   </tr>
 </table>
 

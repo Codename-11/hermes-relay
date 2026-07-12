@@ -1,11 +1,13 @@
 package com.hermesandroid.relay.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.audio.BargeInListener
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.audio.VadEngine
@@ -1142,7 +1144,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         if (previous.state == VoiceState.Listening && mode != InteractionMode.Continuous) {
             cancelListeningWithoutProcessing(
-                title = "Voice mode switched",
+                title = getApplication<Application>().getString(R.string.voice_status_mode_switched),
                 detail = "Cancelled active listening before changing interaction mode",
             )
         }
@@ -1305,7 +1307,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Info,
-            title = "Vanilla Hermes voice uses the host's global TTS",
+            title = getApplication<Application>().getString(R.string.voice_status_standard_tts),
             detail = "Profile \"$profile\" changes the chat agent, but standard " +
                 "(no-plugin) voice speaks with the host's global TTS config, not " +
                 "the profile's voice. Pair the Relay plugin for profile-aware voice.",
@@ -1796,7 +1798,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val captureDurationMs = listeningDurationMs()
         if (shouldDiscardVoiceCaptureBeforeStop(captureDurationMs)) {
             cancelListeningWithoutProcessing(
-                title = "Voice capture ignored",
+                title = getApplication<Application>().getString(R.string.voice_status_capture_ignored),
                 detail = "Released before speech capture settled",
             )
             return
@@ -1820,7 +1822,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Info,
-                title = "Voice capture ignored",
+                title = getApplication<Application>().getString(R.string.voice_status_capture_ignored),
                 detail = "duration=${captureDurationMs}ms pcm=${inputPcm.size} bytes",
             )
             _uiState.update {
@@ -1996,7 +1998,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     !hasSpoken && (now - turnStartedMs) >= IDLE_NO_SPEECH_MS -> {
                         Log.d(TAG, "silence watchdog: ${IDLE_NO_SPEECH_MS}ms with no speech — closing idle turn")
                         cancelListeningWithoutProcessing(
-                            title = "No speech detected",
+                            title = getApplication<Application>().getString(R.string.voice_status_no_speech),
                             detail = "No speech within ${IDLE_NO_SPEECH_MS / 1000}s",
                         )
                         return@launch
@@ -2271,7 +2273,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Info,
-                title = "Realtime Agent test started",
+                title = getApplication<Application>().getString(R.string.voice_status_test_started),
                 detail = "Opening provider-native settings test session",
             )
             val audioBytes = AtomicInteger(0)
@@ -2305,7 +2307,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Voice,
                     severity = DiagnosticSeverity.Error,
-                    title = "Realtime Agent test failed",
+                    title = getApplication<Application>().getString(R.string.voice_status_test_failed),
                     detail = msg,
                 )
                 surfaceError(result.exceptionOrNull(), context = "voice_config")
@@ -2318,7 +2320,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Voice,
                     severity = DiagnosticSeverity.Error,
-                    title = "Realtime Agent test failed",
+                    title = getApplication<Application>().getString(R.string.voice_status_test_failed),
                     detail = "Provider returned no audio",
                 )
                 return@launch
@@ -2332,7 +2334,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Info,
-                title = "Realtime Agent test complete",
+                title = getApplication<Application>().getString(R.string.voice_status_test_complete),
                 detail = "${audioBytes.get()} bytes streamed",
             )
         }
@@ -2543,7 +2545,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Info,
-                title = "Realtime voice turn started",
+                title = getApplication<Application>().getString(R.string.voice_status_turn_started_realtime),
                 detail = "Checking relay before opening provider session",
             )
             if (!runVoiceRelayPreflight("Realtime Agent")) return
@@ -2594,7 +2596,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Info,
-            title = "Voice turn started",
+            title = getApplication<Application>().getString(R.string.voice_status_turn_started),
             detail = "Hermes voice output (${audioClient.route.storageValue})",
         )
 
@@ -2611,7 +2613,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Error,
-                title = "Voice transcription failed",
+                title = getApplication<Application>().getString(R.string.voice_status_transcription_failed),
                 detail = err?.message ?: "Unknown error",
             )
             surfaceError(err, context = "transcribe")
@@ -2623,7 +2625,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Warning,
-                title = "No speech detected",
+                title = getApplication<Application>().getString(R.string.voice_status_no_speech),
             )
             setError("No speech detected")
             return
@@ -2844,7 +2846,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Error,
-            title = "Voice relay check failed",
+            title = getApplication<Application>().getString(R.string.voice_status_relay_check_failed),
             detail = "$engineLabel: $message",
         )
         setError(message)
@@ -3506,7 +3508,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Voice,
                         severity = DiagnosticSeverity.Error,
-                        title = "Realtime voice error",
+                        title = getApplication<Application>().getString(R.string.voice_status_realtime_error),
                         detail = rawDetail,
                     )
                     _uiState.update { it.copy(hermesConfirmation = null) }
@@ -3597,7 +3599,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Info,
-            title = "Realtime voice turn complete",
+            title = getApplication<Application>().getString(R.string.voice_status_turn_complete_realtime),
         )
         Log.i(
             TAG,
@@ -4144,7 +4146,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Voice,
                     severity = DiagnosticSeverity.Info,
-                    title = "Voice render path: basic synthesize",
+                    title = getApplication<Application>().getString(R.string.voice_status_render_basic),
                     detail = "Streaming /voice/output is disabled or unavailable — rendering via " +
                         "the /voice/synthesize fallback. Per-request enhanced voice applies here; " +
                         "the streaming renderer's speech-tags setting does not.",
@@ -4156,7 +4158,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Info,
-                title = "Voice render path: streaming output",
+                title = getApplication<Application>().getString(R.string.voice_status_render_streaming),
                 detail = "Streaming /voice/output renderer active" +
                     (cfg?.default_provider?.takeIf { it.isNotBlank() }?.let { " (provider $it)" }.orEmpty()) +
                     (if (cfg?.auto_speech_tags == true) "; expressive speech tags on" else "") + ".",
@@ -4256,7 +4258,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Voice,
                         severity = DiagnosticSeverity.Warning,
-                        title = "Realtime audio not starting",
+                        title = getApplication<Application>().getString(R.string.voice_status_realtime_audio_stuck),
                         detail = "Playback has been running ${elapsed}ms with no audio output. " +
                             "If this persists, the audio output route may need a nudge (volume key).",
                     )
@@ -5433,7 +5435,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * title — see RelayErrorClassifier for the supported contexts.
      */
     private fun surfaceError(t: Throwable?, context: String?) {
-        val err = classifyError(t, context = context)
+        val err = classifyError(t, context = context, ctx = getApplication())
         _errorEvents.tryEmit(err)
         _uiState.update {
             it.copy(state = VoiceState.Error, error = err.body, amplitude = 0f, outputAudioActive = false)

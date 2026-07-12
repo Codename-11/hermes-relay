@@ -31,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 
 /**
  * v0.4.1 — sideload-only "unattended access" toggle row + one-time
@@ -94,19 +96,16 @@ fun UnattendedAccessRow(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Unattended Access",
+                        text = stringResource(R.string.unattended_title),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = when {
-                            !masterEnabled -> "Requires Agent Control — " +
-                                "enable the master switch above first."
-                            enabled -> "On — agent may wake the screen " +
-                                "and act while you're away."
-                            else -> "Off — bridge actions only land when " +
-                                "the screen is already on."
+                            !masterEnabled -> stringResource(R.string.unattended_requires_master)
+                            enabled -> stringResource(R.string.unattended_on)
+                            else -> stringResource(R.string.unattended_off)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -130,10 +129,7 @@ fun UnattendedAccessRow(
             }
 
             Text(
-                text = "Acquires a screen-bright wake lock on each " +
-                    "incoming bridge command and asks the system to " +
-                    "dismiss the keyguard. Hard-bounded by the bridge " +
-                    "auto-disable timer.",
+                text = stringResource(R.string.unattended_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -204,16 +200,12 @@ private fun KeyguardDetectedAlert() {
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Keyguard detected",
+                    text = stringResource(R.string.unattended_keyguard_detected),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "The screen will wake but stop at the lock " +
-                        "screen. Android won't let third-party apps " +
-                        "dismiss PIN / pattern / biometric locks. Set " +
-                        "your lock to None or Swipe in Settings > " +
-                        "Security to let the agent reach apps.",
+                    text = stringResource(R.string.unattended_keyguard_body),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -246,81 +238,54 @@ private fun UnattendedScaryDialog(
                 tint = MaterialTheme.colorScheme.error,
             )
         },
-        title = { Text("Enable Unattended Access?") },
+        title = { Text(stringResource(R.string.unattended_dialog_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Unattended access lets your Hermes agent wake " +
-                        "the screen and drive your phone while you're not " +
-                        "watching it. This is a powerful capability with " +
-                        "real risk — make sure you understand it before " +
-                        "enabling.",
+                    text = stringResource(R.string.unattended_dialog_intro),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    text = "What it does:",
+                    text = stringResource(R.string.unattended_dialog_what_it_does),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "• Each incoming bridge command holds a screen-" +
-                        "bright wake lock so taps and gestures land on a " +
-                        "lit display.\n" +
-                        "• On lock screens with no credential set (None " +
-                        "or Swipe), the system is asked to dismiss the " +
-                        "keyguard so the agent can reach app UIs.\n" +
-                        "• The 'Hermes has device control' notification — " +
-                        "posted by the master Agent Control switch, not " +
-                        "this toggle — stays visible so you can see the " +
-                        "bridge is running.",
+                    text = stringResource(R.string.unattended_dialog_what_it_does_body),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    text = "Limitation: credential locks cannot be dismissed.",
+                    text = stringResource(R.string.unattended_dialog_limitation),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.error,
                 )
                 Text(
                     text = if (credentialLockDetected) {
-                        "Your device currently has a PIN, pattern, or " +
-                            "biometric lock set. Android does not let " +
-                            "third-party apps dismiss these — the screen " +
-                            "will wake, but stop at the lock screen. To " +
-                            "let the agent reach apps, change your lock " +
-                            "to None or Swipe in Settings > Security."
+                        stringResource(R.string.unattended_dialog_limitation_lock_detected)
                     } else {
-                        "If you later set a PIN, pattern, or biometric " +
-                            "lock, Android will not let Hermes dismiss it. " +
-                            "The screen will wake, but stop at the lock " +
-                            "screen, and the bridge will report a " +
-                            "'keyguard_blocked' error to the agent."
+                        stringResource(R.string.unattended_dialog_limitation_no_lock)
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    text = "How to disable:",
+                    text = stringResource(R.string.unattended_dialog_how_to_disable),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "• Flip this same toggle off at any time.\n" +
-                        "• The bridge auto-disable timer (default 30 minutes " +
-                        "of idle) will turn unattended access off along " +
-                        "with the master bridge toggle.\n" +
-                        "• Disconnecting from the relay also drops the " +
-                        "wake lock immediately.",
+                    text = stringResource(R.string.unattended_dialog_how_to_disable_body),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("I understand — enable")
+                Text(stringResource(R.string.unattended_dialog_confirm))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.unattended_dialog_cancel)) }
         },
     )
 }

@@ -25,6 +25,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
+import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.data.ConnectionSecurity
 import com.hermesandroid.relay.data.ConnectionSecurityLevel
 import com.hermesandroid.relay.data.SurfaceSecurity
@@ -79,7 +81,7 @@ fun ConnectionSecuritySheet(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                text = "Connection security",
+                text = stringResource(R.string.security_sheet_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
@@ -93,8 +95,7 @@ fun ConnectionSecuritySheet(
 
             if (security.surfaces.isEmpty()) {
                 Text(
-                    text = "No active route yet. Connect to a server to see how each " +
-                        "part of the connection is protected.",
+                    text = stringResource(R.string.security_sheet_no_route),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -104,14 +105,17 @@ fun ConnectionSecuritySheet(
 
             HorizontalDivider()
 
-            Text(
-                text = explainer(security.level),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            val explainerTextRes = explainerResOrNull(security.level)
+            if (explainerTextRes != null) {
+                Text(
+                    text = stringResource(explainerTextRes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             TextButton(onClick = { uriHandler.openUri(LEARN_MORE_URL) }) {
-                Text("Learn about connection security →")
+                Text(stringResource(R.string.security_sheet_learn_more))
             }
         }
     }
@@ -145,17 +149,10 @@ private fun SurfaceSecurityRow(surface: SurfaceSecurity) {
     }
 }
 
-private fun explainer(level: ConnectionSecurityLevel): String = when (level) {
-    ConnectionSecurityLevel.Tls ->
-        "Encrypted with TLS. The server's certificate is pinned on first connect."
-    ConnectionSecurityLevel.Overlay ->
-        "Encrypted by your overlay network (e.g. Tailscale/WireGuard), not TLS. " +
-            "Cert pinning applies only to TLS routes."
-    ConnectionSecurityLevel.Mixed ->
-        "Some parts of this connection are encrypted and some are plain. The app " +
-            "prefers a secure route when one is reachable."
-    ConnectionSecurityLevel.Plain ->
-        "Not encrypted. Only safe on a network you fully trust — anyone in between " +
-            "could read this traffic."
-    ConnectionSecurityLevel.Unknown -> ""
+private fun explainerResOrNull(level: ConnectionSecurityLevel): Int? = when (level) {
+    ConnectionSecurityLevel.Tls -> R.string.security_sheet_explain_tls
+    ConnectionSecurityLevel.Overlay -> R.string.security_sheet_explain_overlay
+    ConnectionSecurityLevel.Mixed -> R.string.security_sheet_explain_mixed
+    ConnectionSecurityLevel.Plain -> R.string.security_sheet_explain_plain
+    ConnectionSecurityLevel.Unknown -> null
 }

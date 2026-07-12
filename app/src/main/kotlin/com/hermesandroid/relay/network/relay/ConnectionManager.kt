@@ -6,6 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.util.Log
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.PairingPreferences
@@ -306,7 +307,7 @@ class ConnectionManager(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Warning,
-                title = "Insecure relay mode enabled",
+                title = context?.getString(R.string.conn_diag_insecure_mode) ?: "Insecure relay mode enabled",
                 detail = "ws:// connections are allowed",
             )
         }
@@ -332,7 +333,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Info,
-                    title = "Relay route selected",
+                    title = context?.getString(R.string.conn_diag_route_selected) ?: "Relay route selected",
                     endpointRole = resolved.role,
                     url = resolved.relay.url,
                 )
@@ -342,7 +343,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Using configured relay URL",
+                    title = context?.getString(R.string.conn_diag_using_configured_url) ?: "Using configured relay URL",
                     detail = "No resolver winner",
                     url = url,
                 )
@@ -368,7 +369,7 @@ class ConnectionManager(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
-                title = "Relay socket blocked",
+                title = context?.getString(R.string.conn_diag_socket_blocked) ?: "Relay socket blocked",
                 detail = "ws:// is disabled",
                 url = url,
             )
@@ -379,7 +380,7 @@ class ConnectionManager(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
-                title = "Relay socket URL invalid",
+                title = context?.getString(R.string.conn_diag_url_invalid) ?: "Relay socket URL invalid",
                 detail = "URL must start with ws:// or wss://",
                 url = url,
             )
@@ -408,14 +409,14 @@ class ConnectionManager(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Warning,
-                title = "Opening insecure relay socket",
+                title = context?.getString(R.string.conn_diag_opening_insecure) ?: "Opening insecure relay socket",
                 url = normalized,
             )
         } else {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Info,
-                title = "Opening relay socket",
+                title = context?.getString(R.string.conn_diag_opening_socket) ?: "Opening relay socket",
                 url = normalized,
             )
         }
@@ -757,7 +758,7 @@ class ConnectionManager(
         DiagnosticsLog.record(
             category = DiagnosticCategory.Relay,
             severity = DiagnosticSeverity.Info,
-            title = "Relay socket disconnect requested",
+            title = context?.getString(R.string.conn_diag_disconnect_requested) ?: "Relay socket disconnect requested",
             url = serverUrl,
         )
         webSocket?.close(1000, "Client disconnect")
@@ -884,7 +885,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Info,
-                    title = "Relay socket connected",
+                    title = context?.getString(R.string.conn_diag_connected) ?: "Relay socket connected",
                     url = url,
                 )
 
@@ -944,7 +945,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Relay socket closed",
+                    title = context?.getString(R.string.conn_diag_closed) ?: "Relay socket closed",
                     detail = "code=$code reason=$reason",
                     url = url,
                 )
@@ -963,7 +964,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Error,
-                    title = "Relay socket failed",
+                    title = context?.getString(R.string.conn_diag_failed) ?: "Relay socket failed",
                     detail = listOfNotNull(
                         t.javaClass.simpleName,
                         t.message,
@@ -1012,7 +1013,7 @@ class ConnectionManager(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Session,
                 severity = DiagnosticSeverity.Warning,
-                title = "Relay reconnect skipped",
+                title = context?.getString(R.string.conn_diag_reconnect_skipped) ?: "Relay reconnect skipped",
                 detail = "No paired session or pending pair code",
                 url = serverUrl,
             )
@@ -1036,7 +1037,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Relay reconnect delayed",
+                    title = context?.getString(R.string.conn_diag_reconnect_delayed) ?: "Relay reconnect delayed",
                     detail = "Rate limited; retrying in ${RATE_LIMIT_BACKOFF_MS / 1000}s",
                     url = url,
                 )
@@ -1049,7 +1050,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Warning,
-                    title = "Relay reconnect slow-polling",
+                    title = context?.getString(R.string.conn_diag_reconnect_slow_poll) ?: "Relay reconnect slow-polling",
                     detail = "Server unreachable for a while; retrying every ${SLOW_POLL_BACKOFF_MS / 1000}s until it recovers (a network change reconnects immediately)",
                     url = url,
                 )
@@ -1061,7 +1062,7 @@ class ConnectionManager(
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Info,
-                    title = "Relay reconnect scheduled",
+                    title = context?.getString(R.string.conn_diag_reconnect_scheduled) ?: "Relay reconnect scheduled",
                     detail = "Retrying in ${ms / 1000}s",
                     url = url,
                 )

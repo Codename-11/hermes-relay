@@ -1,3 +1,5 @@
+@file:Suppress("LocalContextGetResourceValueCall")
+
 package com.hermesandroid.relay.ui.screens
 
 import android.widget.Toast
@@ -47,7 +49,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
@@ -91,7 +95,7 @@ fun DeveloperSettingsScreen(
             connectionViewModel.writeBackupToUri(uri, backupJson!!) { success ->
                 Toast.makeText(
                     context,
-                    if (success) "Settings exported" else "Export failed",
+                    if (success) context.getString(R.string.dev_settings_exported) else context.getString(R.string.dev_settings_export_failed),
                     Toast.LENGTH_SHORT
                 ).show()
                 backupJson = null
@@ -107,7 +111,7 @@ fun DeveloperSettingsScreen(
             connectionViewModel.importFromUri(uri) { success ->
                 Toast.makeText(
                     context,
-                    if (success) "Settings imported" else "Import failed — invalid file",
+                    if (success) context.getString(R.string.dev_settings_imported) else context.getString(R.string.dev_settings_import_failed),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -117,12 +121,12 @@ fun DeveloperSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Developer options") },
+                title = { Text(stringResource(R.string.dev_settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.dev_settings_back),
                         )
                     }
                 },
@@ -142,7 +146,7 @@ fun DeveloperSettingsScreen(
         ) {
             // Data Management section
             Text(
-                text = "Data",
+                text = stringResource(R.string.dev_settings_data_section),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -170,22 +174,22 @@ fun DeveloperSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Reset Onboarding",
+                                text = stringResource(R.string.dev_settings_reset_onboarding),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Show the setup guide again on next launch",
+                                text = stringResource(R.string.dev_settings_reset_onboarding_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         IconButton(onClick = {
                             connectionViewModel.resetOnboarding()
-                            Toast.makeText(context, "Onboarding will show on next launch", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.dev_settings_onboarding_reset_toast), Toast.LENGTH_SHORT).show()
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.RestartAlt,
-                                contentDescription = "Reset onboarding"
+                                contentDescription = stringResource(R.string.dev_settings_reset_onboarding_cd)
                             )
                         }
                     }
@@ -200,11 +204,11 @@ fun DeveloperSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Export Settings",
+                                text = stringResource(R.string.dev_settings_export_settings),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Full backup with API keys, tokens, and dashboard cookies",
+                                text = stringResource(R.string.dev_settings_export_settings_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -212,7 +216,7 @@ fun DeveloperSettingsScreen(
                         IconButton(onClick = { showExportDialog = true }) {
                             Icon(
                                 imageVector = Icons.Filled.FileDownload,
-                                contentDescription = "Export settings"
+                                contentDescription = stringResource(R.string.dev_settings_export_settings_cd)
                             )
                         }
                     }
@@ -225,11 +229,11 @@ fun DeveloperSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Import Settings",
+                                text = stringResource(R.string.dev_settings_import_settings),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Restore full backup and replace saved connections",
+                                text = stringResource(R.string.dev_settings_import_settings_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -237,7 +241,7 @@ fun DeveloperSettingsScreen(
                         IconButton(onClick = { showImportDialog = true }) {
                             Icon(
                                 imageVector = Icons.Filled.FileUpload,
-                                contentDescription = "Import settings"
+                                contentDescription = stringResource(R.string.dev_settings_import_settings_cd)
                             )
                         }
                     }
@@ -252,12 +256,12 @@ fun DeveloperSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Reset All Data",
+                                text = stringResource(R.string.dev_settings_reset_all_data),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.error
                             )
                             Text(
-                                text = "Clear all settings, tokens, API keys, and cached data",
+                                text = stringResource(R.string.dev_settings_reset_all_data_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -265,7 +269,7 @@ fun DeveloperSettingsScreen(
                         IconButton(onClick = { showResetDialog = true }) {
                             Icon(
                                 imageVector = Icons.Filled.Delete,
-                                contentDescription = "Reset all data",
+                                contentDescription = stringResource(R.string.dev_settings_reset_all_data_cd),
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }
@@ -275,7 +279,7 @@ fun DeveloperSettingsScreen(
 
             // Developer Options section
             Text(
-                text = "Developer Options",
+                text = stringResource(R.string.dev_options_section),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.tertiary
             )
@@ -313,12 +317,12 @@ fun DeveloperSettingsScreen(
                                     tint = MaterialTheme.colorScheme.tertiary
                                 )
                                 Text(
-                                    text = "Relay features",
+                                    text = stringResource(R.string.dev_settings_relay_features),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                             }
                             Text(
-                                text = "Show Relay Server and Pairing settings for Bridge/Terminal development",
+                                text = stringResource(R.string.dev_settings_relay_features_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -348,12 +352,12 @@ fun DeveloperSettingsScreen(
                                     tint = MaterialTheme.colorScheme.tertiary
                                 )
                                 Text(
-                                    text = "Realtime voice lab",
+                                    text = stringResource(R.string.dev_settings_realtime_voice_lab),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                             }
                             Text(
-                                text = "Open the provider websocket testbench for dev builds",
+                                text = stringResource(R.string.dev_settings_realtime_voice_lab_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -361,7 +365,7 @@ fun DeveloperSettingsScreen(
                         IconButton(onClick = onNavigateToRealtimeVoice) {
                             Icon(
                                 imageVector = Icons.Filled.Science,
-                                contentDescription = "Open realtime voice lab"
+                                contentDescription = stringResource(R.string.dev_settings_open_realtime_voice_lab_cd)
                             )
                         }
                     }
@@ -376,23 +380,23 @@ fun DeveloperSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Lock developer options",
+                                text = stringResource(R.string.dev_settings_lock_dev_options),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Hide this section and disable experimental features",
+                                text = stringResource(R.string.dev_settings_lock_dev_options_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         IconButton(onClick = {
                             scope.launch { FeatureFlags.lockDevOptions(context) }
-                            Toast.makeText(context, "Developer options locked", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.dev_settings_locked_toast), Toast.LENGTH_SHORT).show()
                             onBack()
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.Lock,
-                                contentDescription = "Lock developer options"
+                                contentDescription = stringResource(R.string.dev_settings_lock_dev_options_cd)
                             )
                         }
                     }
@@ -405,7 +409,7 @@ fun DeveloperSettingsScreen(
             // ships in a release APK.
             if (FeatureFlags.isDevBuild) {
                 Text(
-                    text = "Test harness",
+                    text = stringResource(R.string.dev_settings_test_harness),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.tertiary,
                 )
@@ -426,56 +430,56 @@ fun DeveloperSettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         TestHarnessRow(
-                            title = "Emit sample diagnostics",
-                            subtitle = "Push Info / Warning / Error entries into the diagnostics log",
+                            title = stringResource(R.string.dev_settings_test_emit_diagnostics),
+                            subtitle = stringResource(R.string.dev_settings_test_emit_diagnostics_desc),
                             icon = Icons.Filled.Science,
                             onClick = {
                                 DiagnosticsLog.record(
                                     category = DiagnosticCategory.Api,
                                     severity = DiagnosticSeverity.Info,
-                                    title = "Sample info diagnostic",
-                                    detail = "Emitted from the Developer options test harness.",
+                                    title = context.getString(R.string.dev_settings_sample_info_title),
+                                    detail = context.getString(R.string.dev_settings_sample_info_detail),
                                 )
                                 DiagnosticsLog.record(
                                     category = DiagnosticCategory.Relay,
                                     severity = DiagnosticSeverity.Warning,
-                                    title = "Sample warning diagnostic",
-                                    detail = "Relay reachability degraded (synthetic).",
+                                    title = context.getString(R.string.dev_settings_sample_warning_title),
+                                    detail = context.getString(R.string.dev_settings_sample_warning_detail),
                                 )
                                 DiagnosticsLog.recordError(
                                     category = DiagnosticCategory.Voice,
-                                    title = "Sample error diagnostic",
-                                    detail = "Synthetic failure for the detail view.",
+                                    title = context.getString(R.string.dev_settings_sample_error_title),
+                                    detail = context.getString(R.string.dev_settings_sample_error_detail),
                                     throwable = RuntimeException(
-                                        "Sample stacktrace — Developer options test harness",
+                                        context.getString(R.string.dev_settings_sample_stacktrace),
                                     ),
                                 )
-                                Toast.makeText(context, "3 sample diagnostics emitted", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.dev_settings_diagnostics_emitted_toast), Toast.LENGTH_SHORT).show()
                             },
                         )
 
                         HorizontalDivider()
 
                         TestHarnessRow(
-                            title = "Preview update banner",
-                            subtitle = "Cycle the in-app update banner: Available → Downloaded → off",
+                            title = stringResource(R.string.dev_settings_test_preview_update_banner),
+                            subtitle = stringResource(R.string.dev_settings_test_preview_update_banner_desc),
                             icon = Icons.Filled.Science,
                             onClick = {
                                 UpdateDebugOverride.cycle()
                                 val state = when (UpdateDebugOverride.flow.value) {
-                                    is UpdateStatus.Available -> "Available"
-                                    is UpdateStatus.Downloaded -> "Downloaded"
-                                    else -> "off"
+                                    is UpdateStatus.Available -> context.getString(R.string.dev_settings_update_state_available)
+                                    is UpdateStatus.Downloaded -> context.getString(R.string.dev_settings_update_state_downloaded)
+                                    else -> context.getString(R.string.dev_settings_update_state_off)
                                 }
-                                Toast.makeText(context, "Update banner preview: $state", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.dev_settings_update_banner_preview_toast, state), Toast.LENGTH_SHORT).show()
                             },
                         )
 
                         HorizontalDivider()
 
                         TestHarnessRow(
-                            title = "Show What's New",
-                            subtitle = "Open the What's New dialog now",
+                            title = stringResource(R.string.dev_settings_test_show_whats_new),
+                            subtitle = stringResource(R.string.dev_settings_test_show_whats_new_desc),
                             icon = Icons.Filled.Science,
                             onClick = {
                                 connectionViewModel.showWhatsNewNow()
@@ -486,8 +490,8 @@ fun DeveloperSettingsScreen(
                         HorizontalDivider()
 
                         TestHarnessRow(
-                            title = "Force a test crash",
-                            subtitle = "Throws an uncaught exception — the crash report shows on next launch",
+                            title = stringResource(R.string.dev_settings_test_force_crash),
+                            subtitle = stringResource(R.string.dev_settings_test_force_crash_desc),
                             icon = Icons.Filled.Warning,
                             tint = MaterialTheme.colorScheme.error,
                             onClick = {
@@ -505,10 +509,10 @@ fun DeveloperSettingsScreen(
     if (showExportDialog) {
         AlertDialog(
             onDismissRequest = { showExportDialog = false },
-            title = { Text("Export sensitive backup?") },
+            title = { Text(stringResource(R.string.dev_settings_export_sensitive_backup_title)) },
             text = {
                 Text(
-                    "This backup includes saved connections, API keys, relay session tokens, device IDs, and dashboard cookies. Anyone with the file may be able to access your Hermes server."
+                    stringResource(R.string.dev_settings_export_sensitive_backup_body)
                 )
             },
             confirmButton = {
@@ -521,12 +525,12 @@ fun DeveloperSettingsScreen(
                         }
                     }
                 ) {
-                    Text("Export")
+                    Text(stringResource(R.string.dev_settings_export_action))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showExportDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.dev_settings_cancel))
                 }
             }
         )
@@ -535,10 +539,10 @@ fun DeveloperSettingsScreen(
     if (showImportDialog) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false },
-            title = { Text("Import backup?") },
+            title = { Text(stringResource(R.string.dev_settings_import_backup_title)) },
             text = {
                 Text(
-                    "Importing a backup can restore API keys, relay tokens, device IDs, and dashboard cookies. It replaces the saved connection list on this device."
+                    stringResource(R.string.dev_settings_import_backup_body)
                 )
             },
             confirmButton = {
@@ -548,12 +552,12 @@ fun DeveloperSettingsScreen(
                         importLauncher.launch(arrayOf("application/json"))
                     }
                 ) {
-                    Text("Choose file")
+                    Text(stringResource(R.string.dev_settings_choose_file))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showImportDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.dev_settings_cancel))
                 }
             }
         )
@@ -563,10 +567,10 @@ fun DeveloperSettingsScreen(
     if (showResetDialog) {
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            title = { Text("Reset all app data?") },
+            title = { Text(stringResource(R.string.dev_settings_reset_all_app_data_title)) },
             text = {
                 Text(
-                    "This clears saved connections, API keys, Relay tokens, dashboard cookies, device IDs, settings, and cached data. Use dashboard sign out or Relay pairing controls when you only need to clear one connection path. This cannot be undone."
+                    stringResource(R.string.dev_settings_reset_all_app_data_body)
                 )
             },
             confirmButton = {
@@ -574,15 +578,15 @@ fun DeveloperSettingsScreen(
                     onClick = {
                         showResetDialog = false
                         connectionViewModel.resetAppData()
-                        Toast.makeText(context, "App data reset", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.dev_settings_app_data_reset_toast), Toast.LENGTH_SHORT).show()
                     }
                 ) {
-                    Text("Reset", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.dev_settings_reset_action), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.dev_settings_cancel))
                 }
             }
         )

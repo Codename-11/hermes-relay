@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
@@ -134,25 +135,21 @@ fun OnboardingScreen(
         if (showSkipConfirm) {
             AlertDialog(
                 onDismissRequest = { showSkipConfirm = false },
-                title = { Text("Skip setup?") },
+                title = { Text(stringResource(R.string.onboarding_skip_setup_title)) },
                 text = {
-                    Text(
-                        "No problem — you can explore the demo to see how Hermes-Relay works, " +
-                            "and connect your own Hermes server anytime from Settings → Connections. " +
-                            "Relay pairing for power tools can be added later too."
-                    )
+                    Text(stringResource(R.string.onboarding_skip_setup_text))
                 },
                 confirmButton = {
                     TextButton(onClick = {
                         showSkipConfirm = false
                         onComplete()
                     }) {
-                        Text("Skip for now")
+                        Text(stringResource(R.string.onboarding_skip_for_now))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showSkipConfirm = false }) {
-                        Text("Go back")
+                        Text(stringResource(R.string.onboarding_go_back))
                     }
                 }
             )
@@ -171,7 +168,7 @@ fun OnboardingScreen(
                 if (pages[pagerState.currentPage] != OnboardingPage.Connect) {
                     TextButton(onClick = { showSkipConfirm = true }) {
                         Text(
-                            text = "Skip",
+                            text = stringResource(R.string.onboarding_skip),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -244,7 +241,7 @@ fun OnboardingScreen(
                                     }
                                 }
                             ) {
-                                Text(text = "Back")
+                                Text(text = stringResource(R.string.onboarding_back))
                             }
                         }
                         if (pagerState.currentPage == 0) {
@@ -260,7 +257,13 @@ fun OnboardingScreen(
                                 }
                             }
                         ) {
-                            Text(text = if (pagerState.currentPage == lastPage - 1) "Connect" else "Next")
+                            Text(
+                                text = if (pagerState.currentPage == lastPage - 1) {
+                                    stringResource(R.string.onboarding_connect)
+                                } else {
+                                    stringResource(R.string.onboarding_next)
+                                }
+                            )
                         }
                     }
                 }
@@ -274,8 +277,8 @@ private fun WelcomePage() {
     val context = LocalContext.current
     OnboardingPage(
         icon = Icons.Outlined.RocketLaunch,
-        title = "Hermes-Relay for Android",
-        description = "Chat with Hermes and manage your dashboard from your phone.",
+        title = stringResource(R.string.onboarding_welcome_title),
+        description = stringResource(R.string.onboarding_welcome_description),
         transparentHero = true,
         heroContent = {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -298,7 +301,7 @@ private fun WelcomePage() {
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = "Welcome",
+                        text = stringResource(R.string.onboarding_welcome_badge),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -316,7 +319,7 @@ private fun WelcomePage() {
                 ) {
                     Image(
                         painter = painterResource(R.drawable.ic_launcher_foreground),
-                        contentDescription = "Hermes logo",
+                        contentDescription = stringResource(R.string.onboarding_hermes_logo),
                         modifier = Modifier.size(30.dp)
                     )
                     Text(
@@ -334,17 +337,17 @@ private fun WelcomePage() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SetupPathSummary(
-                label = "Chat & Manage",
-                description = "Connect to your running Hermes dashboard and API. No Relay install or pairing required.",
+                label = stringResource(R.string.onboarding_chat_manage_label),
+                description = stringResource(R.string.onboarding_chat_manage_description),
             )
             SetupPathSummary(
-                label = "Power tools",
-                description = "Add Hermes-Relay for Terminal, Bridge, relay sessions, and channel grants.",
+                label = stringResource(R.string.onboarding_power_tools_label),
+                description = stringResource(R.string.onboarding_power_tools_description),
             )
         }
 
         Text(
-            text = "The setup guide has copy/paste commands when you need to start Hermes on a computer or server.",
+            text = stringResource(R.string.onboarding_setup_guide_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -367,7 +370,7 @@ private fun WelcomePage() {
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Setup Guide")
+                Text(stringResource(R.string.onboarding_setup_guide))
             }
 
             OutlinedButton(
@@ -384,12 +387,12 @@ private fun WelcomePage() {
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Hermes Docs")
+                Text(stringResource(R.string.onboarding_hermes_docs))
             }
         }
 
         Text(
-            text = "Hermes API server docs",
+            text = stringResource(R.string.onboarding_api_server_docs),
             style = MaterialTheme.typography.bodySmall.copy(
                 textDecoration = TextDecoration.Underline
             ),
@@ -437,24 +440,24 @@ private fun SetupPathSummary(
 private fun ChatPage() {
     OnboardingPage(
         icon = Icons.Outlined.Forum,
-        title = "Chat",
-        description = "Your Hermes agent, streaming in real time.",
+        title = stringResource(R.string.onboarding_chat_title),
+        description = stringResource(R.string.onboarding_chat_description),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SetupPathSummary(
-                label = "Streaming",
-                description = "Live responses with tool progress, markdown, and rich cards as the agent works.",
+                label = stringResource(R.string.onboarding_streaming_label),
+                description = stringResource(R.string.onboarding_streaming_description),
             )
             SetupPathSummary(
-                label = "Profiles",
-                description = "Switch agent profiles mid-flow — each keeps its own sessions, model, and persona.",
+                label = stringResource(R.string.onboarding_profiles_label),
+                description = stringResource(R.string.onboarding_profiles_description),
             )
             SetupPathSummary(
-                label = "Voice",
-                description = "Tap the mic to talk. Speech runs through your Hermes server — no extra install.",
+                label = stringResource(R.string.onboarding_voice_label),
+                description = stringResource(R.string.onboarding_voice_description),
             )
         }
     }
@@ -464,24 +467,24 @@ private fun ChatPage() {
 private fun ManagePage() {
     OnboardingPage(
         icon = Icons.Filled.Settings,
-        title = "Manage",
-        description = "Your Hermes dashboard, pocket-sized.",
+        title = stringResource(R.string.onboarding_manage_title),
+        description = stringResource(R.string.onboarding_manage_description),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SetupPathSummary(
-                label = "Control",
-                description = "Profiles, skills, automations, MCP servers, models, and provider keys.",
+                label = stringResource(R.string.onboarding_control_label),
+                description = stringResource(R.string.onboarding_control_description),
             )
             SetupPathSummary(
-                label = "Skills hub",
-                description = "Search the hub, read a skill before installing, and install from your phone.",
+                label = stringResource(R.string.onboarding_skills_hub_label),
+                description = stringResource(R.string.onboarding_skills_hub_description),
             )
             SetupPathSummary(
-                label = "One sign-in",
-                description = "Signing into the dashboard once also unlocks voice for this connection.",
+                label = stringResource(R.string.onboarding_one_sign_in_label),
+                description = stringResource(R.string.onboarding_one_sign_in_description),
             )
         }
     }
@@ -493,24 +496,24 @@ private fun PowerToolsPage(
 ) {
     OnboardingPage(
         icon = Icons.Outlined.Terminal,
-        title = "Power tools",
-        description = "Pair the optional Relay when you want more than standard.",
+        title = stringResource(R.string.onboarding_power_title),
+        description = stringResource(R.string.onboarding_power_description),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SetupPathSummary(
-                label = "Terminal",
-                description = "A real tmux session on your server, in your pocket.",
+                label = stringResource(R.string.onboarding_terminal_label),
+                description = stringResource(R.string.onboarding_terminal_description),
             )
             SetupPathSummary(
-                label = "Bridge",
-                description = "Let the agent operate this phone — with safety rails (sideload builds).",
+                label = stringResource(R.string.onboarding_bridge_label),
+                description = stringResource(R.string.onboarding_bridge_description),
             )
             SetupPathSummary(
-                label = "Realtime",
-                description = "Provider-native realtime voice agent and profile-aware voice providers.",
+                label = stringResource(R.string.onboarding_realtime_label),
+                description = stringResource(R.string.onboarding_realtime_description),
             )
             OutlinedButton(
                 onClick = onOpenPermissions,
@@ -522,7 +525,7 @@ private fun PowerToolsPage(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Review permissions")
+                Text(stringResource(R.string.onboarding_review_permissions))
             }
         }
     }

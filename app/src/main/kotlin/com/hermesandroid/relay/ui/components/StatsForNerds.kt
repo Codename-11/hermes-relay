@@ -42,6 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.data.AppAnalytics
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AppStats
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.viewmodel.VoiceStats
@@ -79,22 +81,22 @@ fun StatsForNerds(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Overview",
+                    text = stringResource(R.string.stats_overview),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Row {
                     if (expanded) {
                         TextButton(onClick = { showResetDialog = true }) {
-                            Text("Reset", color = MaterialTheme.colorScheme.error,
+                            Text(stringResource(R.string.stats_reset), color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     TextButton(onClick = { expanded = !expanded }) {
-                        Text(if (expanded) "Collapse" else "Expand")
+                        Text(if (expanded) stringResource(R.string.stats_collapse) else stringResource(R.string.stats_expand))
                         Icon(
                             imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            contentDescription = if (expanded) "Collapse" else "Expand",
+                            contentDescription = if (expanded) stringResource(R.string.stats_collapse_cd) else stringResource(R.string.stats_expand_cd),
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -106,10 +108,13 @@ fun StatsForNerds(
             val tokensPerMsg = if (appStats.totalMessagesSent > 0)
                 totalTokens / appStats.totalMessagesSent else 0L
             Text(
-                text = "${appStats.totalMessagesSent} messages · " +
-                    "${formatTokenCount(totalTokens)} tokens" +
-                    (if (tokensPerMsg > 0) " (~${formatTokenCount(tokensPerMsg)}/msg)" else "") +
-                    " · ${appStats.sessionCount} sessions",
+                text = stringResource(
+                    R.string.stats_summary_format,
+                    appStats.totalMessagesSent,
+                    formatTokenCount(totalTokens),
+                    if (tokensPerMsg > 0) stringResource(R.string.stats_tokens_per_msg, formatTokenCount(tokensPerMsg)) else "",
+                    appStats.sessionCount
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -126,7 +131,7 @@ fun StatsForNerds(
                     // -- Response Time Chart (TTFT) --
                     if (appStats.recentResponseTimesMs.isNotEmpty()) {
                         ChartSection(
-                            title = "Time to First Token",
+                            title = stringResource(R.string.stats_time_to_first_token),
                             data = appStats.recentResponseTimesMs,
                             unit = "ms"
                         )
@@ -135,7 +140,7 @@ fun StatsForNerds(
                     // -- Completion Time Chart --
                     if (appStats.recentCompletionTimesMs.isNotEmpty()) {
                         ChartSection(
-                            title = "Completion Time",
+                            title = stringResource(R.string.stats_completion_time),
                             data = appStats.recentCompletionTimesMs,
                             unit = "ms"
                         )
@@ -174,19 +179,19 @@ fun StatsForNerds(
     if (showResetDialog) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            title = { Text("Reset Analytics?") },
-            text = { Text("This will clear all recorded stats including token counts, response times, and stream history. This cannot be undone.") },
+            title = { Text(stringResource(R.string.stats_reset_analytics_title)) },
+            text = { Text(stringResource(R.string.stats_reset_analytics_body)) },
             confirmButton = {
                 TextButton(onClick = {
                     AppAnalytics.resetAll()
                     showResetDialog = false
                 }) {
-                    Text("Reset", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.stats_reset_confirm), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.stats_cancel))
                 }
             }
         )
@@ -221,9 +226,9 @@ private fun ChartSection(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            StatLabel("Min", formatMsWithSeconds(minVal))
-            StatLabel("Avg", formatMsWithSeconds(avgVal))
-            StatLabel("Max", formatMsWithSeconds(maxVal))
+            StatLabel(stringResource(R.string.stats_min), formatMsWithSeconds(minVal))
+            StatLabel(stringResource(R.string.stats_avg), formatMsWithSeconds(avgVal))
+            StatLabel(stringResource(R.string.stats_max), formatMsWithSeconds(maxVal))
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -326,7 +331,7 @@ private fun StatLabel(label: String, value: String) {
 private fun TokenUsageSection(stats: AppStats) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Token Usage",
+            text = stringResource(R.string.stats_token_usage),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold
@@ -334,7 +339,7 @@ private fun TokenUsageSection(stats: AppStats) {
 
         // Current session
         Text(
-            text = "Current Session",
+            text = stringResource(R.string.stats_current_session),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -342,14 +347,14 @@ private fun TokenUsageSection(stats: AppStats) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            TokenStat("In", formatTokenCount(stats.currentSessionTokensIn))
-            TokenStat("Out", formatTokenCount(stats.currentSessionTokensOut))
-            TokenStat("Total", formatTokenCount(stats.currentSessionTokensIn + stats.currentSessionTokensOut))
+            TokenStat(stringResource(R.string.stats_in), formatTokenCount(stats.currentSessionTokensIn))
+            TokenStat(stringResource(R.string.stats_out), formatTokenCount(stats.currentSessionTokensOut))
+            TokenStat(stringResource(R.string.stats_total), formatTokenCount(stats.currentSessionTokensIn + stats.currentSessionTokensOut))
         }
 
         // Lifetime
         Text(
-            text = "Lifetime",
+            text = stringResource(R.string.stats_lifetime),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -357,9 +362,9 @@ private fun TokenUsageSection(stats: AppStats) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            TokenStat("In", formatTokenCount(stats.totalTokensIn))
-            TokenStat("Out", formatTokenCount(stats.totalTokensOut))
-            TokenStat("Total", formatTokenCount(stats.totalTokensIn + stats.totalTokensOut))
+            TokenStat(stringResource(R.string.stats_in), formatTokenCount(stats.totalTokensIn))
+            TokenStat(stringResource(R.string.stats_out), formatTokenCount(stats.totalTokensOut))
+            TokenStat(stringResource(R.string.stats_total), formatTokenCount(stats.totalTokensIn + stats.totalTokensOut))
         }
     }
 }
@@ -388,7 +393,7 @@ private fun TokenStat(label: String, value: String) {
 private fun ConnectionHealthSection(stats: AppStats) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Connection Health",
+            text = stringResource(R.string.stats_connection_health),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold
@@ -396,7 +401,7 @@ private fun ConnectionHealthSection(stats: AppStats) {
 
         if (stats.healthChecksTotal == 0) {
             Text(
-                text = "No health checks recorded yet",
+                text = stringResource(R.string.stats_no_health_checks),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -408,7 +413,7 @@ private fun ConnectionHealthSection(stats: AppStats) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Success rate",
+                    text = stringResource(R.string.stats_success_rate),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -437,7 +442,7 @@ private fun ConnectionHealthSection(stats: AppStats) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Avg latency",
+                    text = stringResource(R.string.stats_avg_latency),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -455,7 +460,7 @@ private fun ConnectionHealthSection(stats: AppStats) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Total checks",
+                    text = stringResource(R.string.stats_total_checks),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -478,7 +483,7 @@ private fun StreamStatsSection(stats: AppStats) {
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Stream Stats",
+            text = stringResource(R.string.stats_stream_stats),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold
@@ -486,7 +491,7 @@ private fun StreamStatsSection(stats: AppStats) {
 
         if (totalStreams == 0) {
             Text(
-                text = "No streams recorded yet",
+                text = stringResource(R.string.stats_no_streams),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -498,7 +503,7 @@ private fun StreamStatsSection(stats: AppStats) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Success rate",
+                    text = stringResource(R.string.stats_success_rate),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -528,9 +533,9 @@ private fun StreamStatsSection(stats: AppStats) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                StreamCounter("Completed", stats.streamsCompleted, MaterialTheme.colorScheme.primary)
-                StreamCounter("Errored", stats.streamsErrored, MaterialTheme.colorScheme.error)
-                StreamCounter("Cancelled", stats.streamsCancelled, MaterialTheme.colorScheme.onSurfaceVariant)
+                StreamCounter(stringResource(R.string.stats_completed), stats.streamsCompleted, MaterialTheme.colorScheme.primary)
+                StreamCounter(stringResource(R.string.stats_errored), stats.streamsErrored, MaterialTheme.colorScheme.error)
+                StreamCounter(stringResource(R.string.stats_cancelled), stats.streamsCancelled, MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             // Avg times
@@ -541,7 +546,7 @@ private fun StreamStatsSection(stats: AppStats) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Avg TTFT",
+                        text = stringResource(R.string.stats_avg_ttft),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -558,7 +563,7 @@ private fun StreamStatsSection(stats: AppStats) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Peak TTFT",
+                            text = stringResource(R.string.stats_peak_ttft),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -578,7 +583,7 @@ private fun StreamStatsSection(stats: AppStats) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Avg completion",
+                        text = stringResource(R.string.stats_avg_completion),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -595,7 +600,7 @@ private fun StreamStatsSection(stats: AppStats) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Slowest",
+                            text = stringResource(R.string.stats_slowest),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -636,7 +641,7 @@ private fun StreamCounter(label: String, count: Int, color: Color) {
 private fun VoiceSection(stats: VoiceStats) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Voice",
+            text = stringResource(R.string.stats_voice),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
@@ -644,85 +649,85 @@ private fun VoiceSection(stats: VoiceStats) {
 
         // STT subsection
         Text(
-            text = "STT",
+            text = stringResource(R.string.stats_stt),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         KeyValueRow(
-            label = "Last transcript",
+            label = stringResource(R.string.stats_last_transcript),
             value = truncate(stats.lastTranscript.ifBlank { "—" }, 80),
         )
         KeyValueRow(
-            label = "Latency",
+            label = stringResource(R.string.stats_latency),
             value = if (stats.sttCallCount == 0) "—" else formatMsWithSeconds(stats.lastSttLatencyMs),
         )
         KeyValueRow(
-            label = "Uploaded",
+            label = stringResource(R.string.stats_uploaded),
             value = formatByteCount(stats.sttBytesUploaded),
         )
         KeyValueRow(
-            label = "Calls",
+            label = stringResource(R.string.stats_calls),
             value = "${stats.sttCallCount}",
         )
 
         // TTS subsection
         Text(
-            text = "TTS",
+            text = stringResource(R.string.stats_tts),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         KeyValueRow(
-            label = "Last sentence",
+            label = stringResource(R.string.stats_last_sentence),
             value = truncate(stats.lastSynthesizedSentence.ifBlank { "—" }, 80),
         )
         val avgTtsLatency = if (stats.recentTtsLatenciesMs.isNotEmpty()) {
             stats.recentTtsLatenciesMs.sum() / stats.recentTtsLatenciesMs.size
         } else 0L
         KeyValueRow(
-            label = "Avg latency (last ${stats.recentTtsLatenciesMs.size.coerceAtLeast(0)})",
+            label = stringResource(R.string.stats_avg_latency_last_format, stats.recentTtsLatenciesMs.size.coerceAtLeast(0)),
             value = if (stats.recentTtsLatenciesMs.isEmpty()) "—" else formatMsWithSeconds(avgTtsLatency),
         )
         KeyValueRow(
-            label = "Response chunks",
+            label = stringResource(R.string.stats_response_chunks),
             value = "${stats.currentResponseTtsChunks}",
         )
         KeyValueRow(
-            label = "Last chunk gap",
+            label = stringResource(R.string.stats_last_chunk_gap),
             value = if (stats.currentResponseTtsChunks <= 1) "—" else formatMsWithSeconds(stats.lastTtsChunkGapMs),
         )
         KeyValueRow(
-            label = "Received",
+            label = stringResource(R.string.stats_received),
             value = formatByteCount(stats.ttsBytesReceived),
         )
         KeyValueRow(
-            label = "Calls",
+            label = stringResource(R.string.stats_calls),
             value = "${stats.ttsCallCount}",
         )
 
         // Barge-in + playback subsection
         Text(
-            text = "Barge-in / Playback",
+            text = stringResource(R.string.stats_barge_in_playback),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         KeyValueRow(
-            label = "Barge-in events",
+            label = stringResource(R.string.stats_barge_in_events),
             value = "${stats.bargeInCount}",
         )
         KeyValueRow(
-            label = "VAD threshold",
+            label = stringResource(R.string.stats_vad_threshold),
             value = if (stats.vadThresholdMs <= 0) "—" else "${stats.vadThresholdMs} ms",
         )
         KeyValueRow(
-            label = "Mode",
+            label = stringResource(R.string.stats_mode),
             value = stats.interactionMode,
         )
         KeyValueRow(
-            label = "Queue depth",
+            label = stringResource(R.string.stats_queue_depth),
             value = "${stats.ttsQueueDepth}",
         )
         KeyValueRow(
-            label = "Player",
+            label = stringResource(R.string.stats_player),
             value = stats.playerState,
         )
     }
@@ -734,7 +739,7 @@ private fun VoiceSection(stats: VoiceStats) {
 private fun ToolCallsSection(events: List<ToolCallEvent>) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = "Tool Calls",
+            text = stringResource(R.string.stats_tool_calls),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,
@@ -754,9 +759,9 @@ private fun ToolCallRow(event: ToolCallEvent, nowMs: Long) {
         else -> MaterialTheme.colorScheme.error
     }
     val statusLabel = when {
-        !event.isComplete -> "running"
-        event.success == true -> "ok"
-        else -> "failed"
+        !event.isComplete -> stringResource(R.string.stats_running)
+        event.success == true -> stringResource(R.string.stats_ok)
+        else -> stringResource(R.string.stats_failed)
     }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(
@@ -861,14 +866,15 @@ private fun truncate(text: String, limit: Int): String =
     if (text.length <= limit) text else "${text.take(limit - 1)}…"
 
 /** Relative timestamp like "just now" / "3s ago" / "2m ago" / "1h ago". */
+@Composable
 private fun relativeTime(eventMs: Long, nowMs: Long): String {
     val deltaMs = (nowMs - eventMs).coerceAtLeast(0L)
     val seconds = deltaMs / 1000
     return when {
-        seconds < 2 -> "just now"
-        seconds < 60 -> "${seconds}s ago"
-        seconds < 3600 -> "${seconds / 60}m ago"
-        seconds < 86400 -> "${seconds / 3600}h ago"
-        else -> "${seconds / 86400}d ago"
+        seconds < 2 -> stringResource(R.string.stats_just_now)
+        seconds < 60 -> stringResource(R.string.stats_seconds_ago, seconds)
+        seconds < 3600 -> stringResource(R.string.stats_minutes_ago, seconds / 60)
+        seconds < 86400 -> stringResource(R.string.stats_hours_ago, seconds / 3600)
+        else -> stringResource(R.string.stats_days_ago, seconds / 86400)
     }
 }

@@ -373,8 +373,8 @@ class BridgeForegroundService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Hermes agent has device control")
-            .setContentText("Bridge is active — tap Disable to stop at any time.")
+            .setContentTitle(getString(R.string.bridge_notification_control_title))
+            .setContentText(getString(R.string.bridge_notification_control_body))
             .setStyle(NotificationCompat.BigTextStyle().bigText(
                 "The Hermes agent can currently read the screen and perform " +
                     "actions on your behalf through the accessibility service. " +
