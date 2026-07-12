@@ -43,8 +43,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
@@ -157,7 +159,7 @@ fun ConnectionDetailScreen(
                                 contentColor = MaterialTheme.colorScheme.onPrimary,
                             ) {
                                 Text(
-                                    text = "Active",
+                                    text = stringResource(R.string.detail_active),
                                     modifier = Modifier.padding(horizontal = 6.dp),
                                 )
                             }
@@ -168,7 +170,7 @@ fun ConnectionDetailScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.detail_back),
                         )
                     }
                 },
@@ -176,7 +178,7 @@ fun ConnectionDetailScreen(
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(
                             imageVector = Icons.Filled.MoreVert,
-                            contentDescription = "More actions",
+                            contentDescription = stringResource(R.string.detail_more_actions),
                         )
                     }
                     DropdownMenu(
@@ -184,7 +186,7 @@ fun ConnectionDetailScreen(
                         onDismissRequest = { menuExpanded = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Rename") },
+                            text = { Text(stringResource(R.string.detail_rename)) },
                             onClick = {
                                 menuExpanded = false
                                 showRenameDialog = true
@@ -192,7 +194,7 @@ fun ConnectionDetailScreen(
                         )
                         DropdownMenuItem(
                             text = {
-                                Text(if (connection.pairedAt == null) "Pair Relay" else "Re-pair")
+                                Text(if (connection.pairedAt == null) stringResource(R.string.detail_pair_relay) else stringResource(R.string.detail_repair))
                             },
                             onClick = {
                                 menuExpanded = false
@@ -201,7 +203,7 @@ fun ConnectionDetailScreen(
                         )
                         if (connection.pairedAt != null) {
                             DropdownMenuItem(
-                                text = { Text("Revoke") },
+                                text = { Text(stringResource(R.string.detail_revoke)) },
                                 onClick = {
                                     menuExpanded = false
                                     showRevokeConfirm = true
@@ -210,7 +212,7 @@ fun ConnectionDetailScreen(
                         }
                         DropdownMenuItem(
                             text = {
-                                Text("Remove", color = MaterialTheme.colorScheme.error)
+                                Text(stringResource(R.string.detail_remove), color = MaterialTheme.colorScheme.error)
                             },
                             onClick = {
                                 menuExpanded = false
@@ -236,7 +238,14 @@ fun ConnectionDetailScreen(
                         Tab(
                             selected = safeIndex == index,
                             onClick = { selectedTab = index },
-                            text = { Text(tab.label) },
+                            text = {
+                                Text(when (tab) {
+                                    DetailTab.Overview -> stringResource(R.string.detail_tab_overview)
+                                    DetailTab.Routes -> stringResource(R.string.detail_tab_routes)
+                                    DetailTab.Advanced -> stringResource(R.string.detail_tab_advanced)
+                                    DetailTab.Security -> stringResource(R.string.detail_tab_security)
+                                })
+                            },
                         )
                     }
                 }
@@ -257,7 +266,7 @@ fun ConnectionDetailScreen(
                                 connectionViewModel = connectionViewModel,
                                 connection = connection,
                                 relayConfigured = relayConfigured,
-                                relayStatusText = relayRow.statusText(connectedLabel = "Connected"),
+                                relayStatusText = relayRow.statusText(connectedLabel = stringResource(R.string.detail_connected)),
                                 relayUiState = relayUiState,
                                 relayEnabled = relayEnabled,
                                 onReconnect = onReconnect,
@@ -342,12 +351,9 @@ fun ConnectionDetailScreen(
     if (showRevokeConfirm) {
         AlertDialog(
             onDismissRequest = { showRevokeConfirm = false },
-            title = { Text("Revoke this connection?") },
+            title = { Text(stringResource(R.string.detail_revoke_title)) },
             text = {
-                Text(
-                    "The server session will be invalidated. The connection stays " +
-                        "on this device but will need to be re-paired to use again.",
-                )
+                Text(stringResource(R.string.detail_revoke_body))
             },
             confirmButton = {
                 TextButton(
@@ -355,22 +361,19 @@ fun ConnectionDetailScreen(
                         onRevoke(connectionId)
                         showRevokeConfirm = false
                     },
-                ) { Text("Revoke") }
+                ) { Text(stringResource(R.string.detail_revoke)) }
             },
             dismissButton = {
-                TextButton(onClick = { showRevokeConfirm = false }) { Text("Cancel") }
+                TextButton(onClick = { showRevokeConfirm = false }) { Text(stringResource(R.string.detail_cancel)) }
             },
         )
     }
     if (showRemoveConfirm) {
         AlertDialog(
             onDismissRequest = { showRemoveConfirm = false },
-            title = { Text("Remove this connection?") },
+            title = { Text(stringResource(R.string.detail_remove_title)) },
             text = {
-                Text(
-                    "The connection will be deleted from this device along with its " +
-                        "saved session token. This cannot be undone.",
-                )
+                Text(stringResource(R.string.detail_remove_body))
             },
             confirmButton = {
                 TextButton(
@@ -381,21 +384,21 @@ fun ConnectionDetailScreen(
                         showRemoveConfirm = false
                     },
                 ) {
-                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.detail_remove), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showRemoveConfirm = false }) { Text("Cancel") }
+                TextButton(onClick = { showRemoveConfirm = false }) { Text(stringResource(R.string.detail_cancel)) }
             },
         )
     }
 }
 
-private enum class DetailTab(val label: String) {
-    Overview("Overview"),
-    Routes("Routes"),
-    Advanced("Advanced"),
-    Security("Security"),
+private enum class DetailTab {
+    Overview,
+    Routes,
+    Advanced,
+    Security,
 }
 
 /**
@@ -419,7 +422,7 @@ private fun ActiveOverview(
     onOpenSessionInfo: () -> Unit,
 ) {
     val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
-    val headerLine = if (relayConfigured) relayStatusText else "Standard · $hostname"
+    val headerLine = if (relayConfigured) relayStatusText else stringResource(R.string.detail_standard_prefix) + hostname
 
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
@@ -448,8 +451,7 @@ private fun ActiveOverview(
     }
 
     Text(
-        text = "What this connection can do. Routes only choose how the phone " +
-            "reaches Hermes.",
+        text = stringResource(R.string.detail_routes_help),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -468,10 +470,10 @@ private fun ActiveOverview(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (relayUiState == RelayUiState.Stale) {
-            Button(onClick = onReconnect) { Text("Reconnect") }
+            Button(onClick = onReconnect) { Text(stringResource(R.string.detail_reconnect)) }
         }
         TextButton(onClick = onRepair) {
-            Text(if (connection.pairedAt == null) "Pair Relay" else "Re-pair")
+            Text(if (connection.pairedAt == null) stringResource(R.string.detail_pair_relay) else stringResource(R.string.detail_repair))
         }
     }
 }
@@ -489,9 +491,9 @@ private fun InactiveOverview(
 ) {
     val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
     val statusLine = when {
-        connection.pairedAt != null -> "Paired · relay configured"
-        connection.apiServerUrl.isNotBlank() -> "Standard · relay not paired"
-        else -> "Not configured"
+        connection.pairedAt != null -> stringResource(R.string.detail_paired_relay_configured)
+        connection.apiServerUrl.isNotBlank() -> stringResource(R.string.detail_standard_not_paired)
+        else -> stringResource(R.string.detail_not_configured)
     }
 
     Surface(
@@ -514,8 +516,7 @@ private fun InactiveOverview(
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             Text(
-                text = "This connection isn't active. Switch to it to see its live " +
-                    "status and manage routes, advanced settings, and relay sessions.",
+                text = stringResource(R.string.detail_inactive_body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -523,9 +524,9 @@ private fun InactiveOverview(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(onClick = onSwitch) { Text("Switch to this connection") }
+                Button(onClick = onSwitch) { Text(stringResource(R.string.detail_switch_to)) }
                 TextButton(onClick = onRepair) {
-                    Text(if (connection.pairedAt == null) "Pair Relay" else "Re-pair")
+                    Text(if (connection.pairedAt == null) stringResource(R.string.detail_pair_relay) else stringResource(R.string.detail_repair))
                 }
             }
         }
@@ -542,7 +543,7 @@ private fun RenameConnectionDialog(
     val validation = com.hermesandroid.relay.data.ConnectionValidation.validateLabel(input)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename connection") },
+        title = { Text(stringResource(R.string.detail_rename_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -562,11 +563,11 @@ private fun RenameConnectionDialog(
                 onClick = { onConfirm(input.trim()) },
                 enabled = validation == null && input.trim() != initialLabel,
             ) {
-                Text("Rename")
+                Text(stringResource(R.string.detail_rename))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.detail_cancel)) }
         },
     )
 }

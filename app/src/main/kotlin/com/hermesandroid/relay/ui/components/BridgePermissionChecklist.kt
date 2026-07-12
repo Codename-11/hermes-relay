@@ -44,9 +44,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.viewmodel.BridgePermissionStatus
 
 /**
@@ -117,13 +119,13 @@ fun BridgePermissionChecklist(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = "Permissions",
+                text = stringResource(R.string.bpc_permissions),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = "Tap a row to grant or open Android Settings · Tap Test to verify.",
+                text = stringResource(R.string.bpc_permissions_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -132,16 +134,16 @@ fun BridgePermissionChecklist(
 
             // ── Core bridge (required, both flavors) ──────────────────────
             TierHeader(
-                label = "Core bridge",
-                subtitle = "Required for the agent to read and act on screen content.",
+                label = stringResource(R.string.bpc_core_bridge),
+                subtitle = stringResource(R.string.bpc_core_bridge_desc),
             )
             PermissionRow(
                 icon = Icons.Filled.Accessibility,
-                title = "Accessibility Service",
+                title = stringResource(R.string.bpc_accessibility),
                 subtitle = if (BuildFlavor.isSideload)
-                    "Read screen content, dispatch taps/types"
+                    stringResource(R.string.bpc_accessibility_desc_sideload)
                 else
-                    "Read screen content for chat context",
+                    stringResource(R.string.bpc_accessibility_desc_googleplay),
                 granted = status.accessibilityServiceEnabled,
                 onClick = { openAccessibilitySettings(context) },
                 onTest = onTestAccessibility,
@@ -153,11 +155,11 @@ fun BridgePermissionChecklist(
             if (BuildFlavor.isSideload) {
                 PermissionRow(
                     icon = Icons.Filled.ScreenShare,
-                    title = "Screen Capture",
+                    title = stringResource(R.string.bpc_screen_capture),
                     subtitle = if (status.screenCapturePermitted)
-                        "Granted for this session — agent can take screenshots"
+                        stringResource(R.string.bpc_screen_capture_granted)
                     else
-                        "Tap to grant — agent needs this for /screenshot",
+                        stringResource(R.string.bpc_screen_capture_not_granted),
                     granted = status.screenCapturePermitted,
                     onClick = onRequestScreenCapture,
                     onTest = onTestScreenCapture,
@@ -170,8 +172,8 @@ fun BridgePermissionChecklist(
             if (BuildFlavor.isSideload) {
                 PermissionRow(
                     icon = Icons.Filled.PictureInPicture,
-                    title = "Display over other apps",
-                    subtitle = "Status overlay while bridge is active",
+                    title = stringResource(R.string.bpc_overlay),
+                    subtitle = stringResource(R.string.bpc_overlay_desc),
                     granted = status.overlayPermitted,
                     onClick = { openOverlaySettings(context) },
                     onTest = onTestOverlay,
@@ -180,11 +182,11 @@ fun BridgePermissionChecklist(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 PermissionRow(
                     icon = Icons.Filled.Notifications,
-                    title = "Notifications",
+                    title = stringResource(R.string.bpc_notifications),
                     subtitle = if (status.notificationsPermitted)
-                        "Bridge service notification can display"
+                        stringResource(R.string.bpc_notifications_granted)
                     else
-                        "Required for the bridge foreground service indicator",
+                        stringResource(R.string.bpc_notifications_not_granted),
                     granted = status.notificationsPermitted,
                     onClick = onRequestNotifications,
                 )
@@ -193,13 +195,13 @@ fun BridgePermissionChecklist(
             // ── Notification companion (optional, both flavors) ─────────────
             TierSpacer()
             TierHeader(
-                label = "Notification companion",
-                subtitle = "Optional. Lets the agent see incoming notifications for summaries and replies.",
+                label = stringResource(R.string.bpc_notification_companion),
+                subtitle = stringResource(R.string.bpc_notification_companion_desc),
             )
             PermissionRow(
                 icon = Icons.Filled.Notifications,
-                title = "Notification Listener",
-                subtitle = "Read notifications for agent summaries",
+                title = stringResource(R.string.bpc_notification_listener),
+                subtitle = stringResource(R.string.bpc_notification_listener_desc),
                 granted = status.notificationListenerPermitted,
                 onClick = { openNotificationListenerSettings(context) },
                 onTest = onTestNotificationListener,
@@ -209,21 +211,21 @@ fun BridgePermissionChecklist(
             // ── Voice & camera (optional, both flavors) ────────────────────
             TierSpacer()
             TierHeader(
-                label = "Voice & camera",
-                subtitle = "Required when you use voice mode or attach camera media.",
+                label = stringResource(R.string.bpc_voice_camera),
+                subtitle = stringResource(R.string.bpc_voice_camera_desc),
             )
             PermissionRow(
                 icon = Icons.Filled.Mic,
-                title = "Microphone",
-                subtitle = "Required for voice mode (record + transcribe).",
+                title = stringResource(R.string.bpc_microphone),
+                subtitle = stringResource(R.string.bpc_microphone_desc),
                 granted = status.microphonePermitted,
                 onClick = onRequestMicrophone,
                 optional = true,
             )
             PermissionRow(
                 icon = Icons.Filled.CameraAlt,
-                title = "Camera",
-                subtitle = "Required to attach photos taken in-app.",
+                title = stringResource(R.string.bpc_camera),
+                subtitle = stringResource(R.string.bpc_camera_desc),
                 granted = status.cameraPermitted,
                 onClick = onRequestCamera,
                 optional = true,
@@ -233,37 +235,37 @@ fun BridgePermissionChecklist(
             if (BuildFlavor.isSideload) {
                 TierSpacer()
                 TierHeader(
-                    label = "Sideload features",
-                    subtitle = "Optional. Powers contact lookup, SMS, dialer, and location tools.",
+                    label = stringResource(R.string.bpc_sideload_features),
+                    subtitle = stringResource(R.string.bpc_sideload_features_desc),
                 )
                 PermissionRow(
                     icon = Icons.Filled.Contacts,
-                    title = "Contacts",
-                    subtitle = "Resolve names to phone numbers (android_search_contacts).",
+                    title = stringResource(R.string.bpc_contacts),
+                    subtitle = stringResource(R.string.bpc_contacts_desc),
                     granted = status.contactsPermitted,
                     onClick = onRequestContacts,
                     optional = true,
                 )
                 PermissionRow(
                     icon = Icons.Filled.Sms,
-                    title = "SMS",
-                    subtitle = "Send text messages directly (android_send_sms).",
+                    title = stringResource(R.string.bpc_sms),
+                    subtitle = stringResource(R.string.bpc_sms_desc),
                     granted = status.smsPermitted,
                     onClick = onRequestSms,
                     optional = true,
                 )
                 PermissionRow(
                     icon = Icons.Filled.Call,
-                    title = "Phone",
-                    subtitle = "Place calls directly without opening the dialer (android_call).",
+                    title = stringResource(R.string.bpc_phone),
+                    subtitle = stringResource(R.string.bpc_phone_desc),
                     granted = status.phonePermitted,
                     onClick = onRequestPhone,
                     optional = true,
                 )
                 PermissionRow(
                     icon = Icons.Filled.LocationOn,
-                    title = "Location",
-                    subtitle = "Last-known GPS fix for context-aware queries (android_location).",
+                    title = stringResource(R.string.bpc_location),
+                    subtitle = stringResource(R.string.bpc_location_desc),
                     granted = status.locationPermitted,
                     onClick = onRequestLocation,
                     optional = true,
@@ -329,7 +331,7 @@ private fun OptionalBadge() {
         // badge drops to the next line cleanly when space is tight, instead
         // of compressing awkwardly in-line.
         Text(
-            text = "Optional",
+            text = stringResource(R.string.bpc_optional),
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             softWrap = false,
@@ -403,7 +405,7 @@ private fun PermissionRow(
                 ),
             ) {
                 Text(
-                    text = "Test",
+                    text = stringResource(R.string.bpc_test),
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
@@ -412,9 +414,9 @@ private fun PermissionRow(
         // Optional rows that are *not* granted use a neutral tint instead of
         // error red so users don't perceive them as urgent action items.
         val (statusTint, statusDescription) = when {
-            granted -> Color(0xFF4CAF50) to "Granted"
-            optional -> MaterialTheme.colorScheme.onSurfaceVariant to "Not granted (optional)"
-            else -> MaterialTheme.colorScheme.error to "Not granted"
+            granted -> Color(0xFF4CAF50) to stringResource(R.string.bpc_granted)
+            optional -> MaterialTheme.colorScheme.onSurfaceVariant to stringResource(R.string.bpc_not_granted_optional)
+            else -> MaterialTheme.colorScheme.error to stringResource(R.string.bpc_not_granted)
         }
         Icon(
             imageVector = if (granted) Icons.Filled.CheckCircle

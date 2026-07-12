@@ -1,3 +1,5 @@
+@file:Suppress("LocalContextGetResourceValueCall")
+
 package com.hermesandroid.relay.ui.screens
 
 import android.content.Intent
@@ -52,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -82,6 +85,11 @@ fun AboutScreen(
     val scope = rememberCoroutineScope()
     val isDarkTheme = LocalBrand.current.isDark
 
+    // Pre-resolved Toast messages (Toast is not a composable scope)
+    val devUnlockedMsg = stringResource(R.string.about_dev_options_unlocked)
+    val updateCopiedMsg = stringResource(R.string.about_update_copied)
+    val emDash = stringResource(R.string.about_em_dash)
+
     // Tap-7x unlock state (mirrors the old SettingsScreen locals)
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context).collectAsState(initial = FeatureFlags.isDevBuild)
     var versionTapCount by remember { mutableStateOf(0) }
@@ -92,12 +100,12 @@ fun AboutScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("About") },
+                title = { Text(stringResource(R.string.about_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.about_back),
                         )
                     }
                 },
@@ -117,7 +125,7 @@ fun AboutScreen(
         ) {
             // About section
             Text(
-                text = "About",
+                text = stringResource(R.string.about_section_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -148,18 +156,18 @@ fun AboutScreen(
                     ) {
                         Image(
                             painter = painterResource(R.drawable.ic_launcher_foreground),
-                            contentDescription = "Hermes-Relay",
+                            contentDescription = stringResource(R.string.about_app_name),
                             modifier = Modifier.size(80.dp)
                         )
                     }
 
                     Text(
-                        text = "Hermes-Relay",
+                        text = stringResource(R.string.about_app_name),
                         style = MaterialTheme.typography.titleLarge,
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = "Native Android client for Hermes Agent",
+                        text = stringResource(R.string.about_app_tagline),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -170,14 +178,14 @@ fun AboutScreen(
                     // Version info (dynamic)
                     val versionName = remember {
                         try {
-                            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
-                        } catch (_: Exception) { "—" }
+                            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: emDash
+                        } catch (_: Exception) { emDash }
                     }
                     val versionCode = remember {
                         try {
                             @Suppress("DEPRECATION")
                             context.packageManager.getPackageInfo(context.packageName, 0).versionCode.toString()
-                        } catch (_: Exception) { "—" }
+                        } catch (_: Exception) { emDash }
                     }
 
                     Row(
@@ -196,19 +204,20 @@ fun AboutScreen(
                                 when {
                                     remaining <= 0 -> {
                                         scope.launch { FeatureFlags.unlockDevOptions(context) }
-                                        Toast.makeText(context, "Developer options unlocked", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, devUnlockedMsg, Toast.LENGTH_SHORT).show()
                                         versionTapCount = 0
                                         onUnlockDeveloperOptions()
                                     }
                                     remaining <= 3 -> {
-                                        Toast.makeText(context, "$remaining taps to unlock developer options", Toast.LENGTH_SHORT).show()
+                                        val tapsMsg = context.getString(R.string.about_taps_to_unlock, remaining)
+                                        Toast.makeText(context, tapsMsg, Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             },
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Version",
+                            text = stringResource(R.string.about_version),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -229,7 +238,7 @@ fun AboutScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Track",
+                            text = stringResource(R.string.about_track),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -259,15 +268,15 @@ fun AboutScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Relay",
+                                    text = stringResource(R.string.about_relay),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 val subtitle = when {
                                     ru.updateAvailable && !ru.latest.isNullOrBlank() ->
-                                        "Update available — v${ru.current} → v${ru.latest}"
-                                    ru.current.isNotBlank() -> "On v${ru.current} — up to date"
-                                    else -> "Connected"
+                                        stringResource(R.string.about_update_available, ru.current, ru.latest)
+                                    ru.current.isNotBlank() -> stringResource(R.string.about_up_to_date, ru.current)
+                                    else -> stringResource(R.string.about_connected)
                                 }
                                 Text(
                                     text = subtitle,
@@ -284,17 +293,17 @@ fun AboutScreen(
                                     clipboard.setText(AnnotatedString(ru.updateCommand))
                                     Toast.makeText(
                                         context,
-                                        "Update command copied",
+                                        updateCopiedMsg,
                                         Toast.LENGTH_SHORT,
                                     ).show()
                                 }) {
-                                    Text("Copy fix")
+                                    Text(stringResource(R.string.about_copy_fix))
                                 }
                             }
                         }
                         if (ru.updateAvailable && !ru.updateCommand.isNullOrBlank()) {
                             Text(
-                                text = "Run on your Hermes host, then restart the gateway:\n${ru.updateCommand}",
+                                text = stringResource(R.string.about_update_command_body, ru.updateCommand),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.fillMaxWidth(),
@@ -317,16 +326,16 @@ fun AboutScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Updates",
+                                    text = stringResource(R.string.about_updates),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 val subtitle = when (val s = state) {
-                                    UpdateCheckResult.Idle -> "Tap to check GitHub for a new release"
-                                    UpdateCheckResult.Checking -> "Checking…"
-                                    UpdateCheckResult.UpToDate -> "You're on the latest release"
-                                    is UpdateCheckResult.Available -> "Update available — v${s.update.latestVersion}"
-                                    is UpdateCheckResult.Error -> "Check failed: ${s.message}"
+                                    UpdateCheckResult.Idle -> stringResource(R.string.about_updates_tap)
+                                    UpdateCheckResult.Checking -> stringResource(R.string.about_updates_checking)
+                                    UpdateCheckResult.UpToDate -> stringResource(R.string.about_updates_latest)
+                                    is UpdateCheckResult.Available -> stringResource(R.string.about_updates_available, s.update.latestVersion)
+                                    is UpdateCheckResult.Error -> stringResource(R.string.about_updates_failed, s.message)
                                 }
                                 Text(
                                     text = subtitle,
@@ -349,9 +358,9 @@ fun AboutScreen(
                             ) {
                                 Text(
                                     text = when (state) {
-                                        is UpdateCheckResult.Available -> "Download"
+                                        is UpdateCheckResult.Available -> stringResource(R.string.about_download)
                                         UpdateCheckResult.Checking -> "…"
-                                        else -> "Check"
+                                        else -> stringResource(R.string.about_check)
                                     }
                                 )
                             }
@@ -378,7 +387,7 @@ fun AboutScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("GitHub")
+                            Text(stringResource(R.string.about_github))
                         }
                         OutlinedButton(
                             onClick = {
@@ -393,7 +402,7 @@ fun AboutScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("App Docs")
+                            Text(stringResource(R.string.about_app_docs))
                         }
                     }
                     Row(
@@ -413,7 +422,7 @@ fun AboutScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("Hermes Docs")
+                            Text(stringResource(R.string.about_hermes_docs))
                         }
                     }
 
@@ -431,17 +440,17 @@ fun AboutScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Privacy Policy")
+                        Text(stringResource(R.string.about_privacy_policy))
                     }
 
                     // What's New
                     TextButton(onClick = { showWhatsNew = true }) {
-                        Text("What's New in This Version")
+                        Text(stringResource(R.string.about_whats_new))
                     }
 
                     // Credits
                     Text(
-                        text = "Axiom Labs \u2764\uFE0F Hermes Agent · Nous Research",
+                        text = stringResource(R.string.about_credits),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         textAlign = TextAlign.Center,

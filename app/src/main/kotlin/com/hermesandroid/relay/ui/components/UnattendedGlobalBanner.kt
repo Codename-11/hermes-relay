@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -32,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 
 /**
  * Global single-line banner rendered at the top of [RelayApp]'s scaffold
@@ -107,7 +109,7 @@ fun UnattendedGlobalBanner(
         ) {
         PulsingStatusDot(color = amberFill)
         Text(
-            text = "Unattended access ON — agent can wake and drive this device",
+            text = stringResource(R.string.unattended_banner_text),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Medium,
             color = amberOn,

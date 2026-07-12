@@ -23,7 +23,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.hermesandroid.relay.R
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.BridgeSafetySettings
@@ -90,7 +92,7 @@ fun BridgeSafetySummaryCard(
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    text = "Safety",
+                    text = stringResource(R.string.bssc_safety),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
@@ -98,21 +100,21 @@ fun BridgeSafetySummaryCard(
                 )
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Manage",
+                    contentDescription = stringResource(R.string.bssc_manage),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             SafetySummaryRow(
-                label = "Apps the agent can't touch",
+                label = stringResource(R.string.bssc_blocked_apps),
                 value = "${settings.blocklist.size}",
             )
             SafetySummaryRow(
-                label = "Words that always ask first",
+                label = stringResource(R.string.bssc_destructive_verbs),
                 value = "${settings.destructiveVerbs.size}",
             )
             SafetySummaryRow(
-                label = "Turns itself off when idle",
+                label = stringResource(R.string.bssc_auto_disable),
                 value = if (autoDisableAtMs != null) {
                     val remainMs = (autoDisableAtMs - nowMs).coerceAtLeast(0L)
                     val remainMin = (remainMs / 60_000L).toInt()
@@ -124,7 +126,7 @@ fun BridgeSafetySummaryCard(
             )
 
             Text(
-                text = "These guardrails keep Hermes in bounds. Tap to adjust.",
+                text = stringResource(R.string.bssc_guardrails_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

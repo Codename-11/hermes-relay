@@ -31,10 +31,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticLogEntry
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
@@ -43,7 +45,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 @Composable
 fun DiagnosticsLogPanel(
     modifier: Modifier = Modifier,
-    title: String = "Recent activity",
+    title: String? = null,
     categories: Set<DiagnosticCategory>? = null,
     limit: Int = 8,
     showCategory: Boolean = false,
@@ -51,6 +53,7 @@ fun DiagnosticsLogPanel(
     showSeverityFilter: Boolean = false,
 ) {
     val entries by DiagnosticsLog.entries.collectAsState()
+    val resolvedTitle = title ?: stringResource(R.string.diagnostics_title)
 
     // Self-contained detail-view state — tapping a row opens DiagnosticDetailDialog.
     // No nav route; nothing to wire in RelayApp.
@@ -74,13 +77,13 @@ fun DiagnosticsLogPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = title,
+                text = resolvedTitle,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
             if (showClear && entries.isNotEmpty()) {
                 TextButton(onClick = { DiagnosticsLog.clear() }) {
-                    Text("Clear")
+                    Text(stringResource(R.string.diagnostics_clear))
                 }
             }
         }
@@ -90,7 +93,7 @@ fun DiagnosticsLogPanel(
                 FilterChip(
                     selected = severityFilter == null,
                     onClick = { severityFilter = null },
-                    label = { Text("All") },
+                    label = { Text(stringResource(R.string.diagnostics_all)) },
                 )
                 DiagnosticSeverity.entries.forEach { sev ->
                     FilterChip(
@@ -104,7 +107,7 @@ fun DiagnosticsLogPanel(
 
         if (visible.isEmpty()) {
             Text(
-                text = "No recent activity",
+                text = stringResource(R.string.diagnostics_empty),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -35,9 +35,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import kotlin.math.roundToInt
 
@@ -120,13 +122,15 @@ private fun ContextMeterBarContent(
     }
     val label = "$percent%$tokenSuffix"
 
+    val contextUsedDesc = stringResource(R.string.cd_context_used, percent)
+
     Row(
         modifier = modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .semantics {
-                contentDescription = "Context $percent% used" +
+                contentDescription = contextUsedDesc +
                     if (tokenSuffix.isNotEmpty()) ", ${fmtTokens(usedTokens!!)} of ${fmtTokens(maxTokens!!)} tokens" else ""
             },
         verticalAlignment = Alignment.CenterVertically,
@@ -158,7 +162,7 @@ private fun ContextMeterBarContent(
             Spacer(Modifier.width(6.dp))
             Icon(
                 imageVector = Icons.Outlined.Info,
-                contentDescription = "View injected context",
+                contentDescription = stringResource(R.string.cd_view_injected),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(13.dp),
             )

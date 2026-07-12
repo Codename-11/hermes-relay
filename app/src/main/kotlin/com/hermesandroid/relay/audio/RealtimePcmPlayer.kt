@@ -9,6 +9,7 @@ import android.media.AudioTrack
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -25,7 +26,7 @@ import kotlin.math.sqrt
  * writes them directly to an AudioTrack so the Android Studio dev build can
  * hear provider output without waiting for an encoded file.
  */
-class RealtimePcmPlayer(context: Context? = null) {
+class RealtimePcmPlayer(private val context: Context? = null) {
     private val trackLock = Any()
     private val writeLock = Any()
     private val audioManager =
@@ -449,7 +450,7 @@ class RealtimePcmPlayer(context: Context? = null) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Info,
-                title = "Realtime audio started",
+                title = context?.getString(R.string.audio_diag_started) ?: "Realtime audio started",
                 detail = "First sample reached the speaker after ${ttfaMs}ms.",
             )
         }
@@ -489,7 +490,7 @@ class RealtimePcmPlayer(context: Context? = null) {
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Warning,
-            title = "Realtime audio not starting",
+            title = context?.getString(R.string.audio_diag_not_starting) ?: "Realtime audio not starting",
             detail = "Playback running ${stuckMs}ms but no audio reached the speaker " +
                 "(${mediaVolumeSummaryLocked()}).",
         )
@@ -587,7 +588,7 @@ class RealtimePcmPlayer(context: Context? = null) {
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Warning,
-            title = "Realtime audio stream gap",
+            title = context?.getString(R.string.audio_diag_stream_gap) ?: "Realtime audio stream gap",
             detail = reason,
         )
     }
@@ -603,7 +604,7 @@ class RealtimePcmPlayer(context: Context? = null) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Warning,
-                title = "Realtime voice volume muted",
+                title = context?.getString(R.string.audio_diag_volume_muted) ?: "Realtime voice volume muted",
                 detail = "Media volume is 0/${maxVolume ?: "?"}.",
             )
         }

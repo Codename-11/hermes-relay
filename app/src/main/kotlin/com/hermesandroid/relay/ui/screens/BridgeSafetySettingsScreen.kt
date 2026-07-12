@@ -51,9 +51,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -114,12 +116,12 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bridge safety") },
+                title = { Text(stringResource(R.string.bss_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.bss_back)
                         )
                     }
                 },
@@ -139,9 +141,9 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
         ) {
 
             // ── Blocklist ───────────────────────────────────────────────
-            SectionCard(title = "Blocked apps") {
+            SectionCard(title = stringResource(R.string.bss_blocked_apps)) {
                 Text(
-                    text = "The agent cannot act on any app in this list. Defaults ship with banking apps and password managers.",
+                    text = stringResource(R.string.bss_blocked_apps_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -151,7 +153,7 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
                     onValueChange = { appSearch = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Search apps") },
+                    label = { Text(stringResource(R.string.bss_search_apps)) },
                 )
                 Spacer(Modifier.size(8.dp))
                 val filtered = remember(installedApps, appSearch, settings.blocklist) {
@@ -204,9 +206,9 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
             }
 
             // ── Destructive verbs ───────────────────────────────────────
-            SectionCard(title = "Destructive verbs") {
+            SectionCard(title = stringResource(R.string.bss_destructive_verbs)) {
                 Text(
-                    text = "Tap_text / type commands whose text contains these words (word-boundary match) trigger a confirmation modal.",
+                    text = stringResource(R.string.bss_destructive_verbs_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -221,7 +223,7 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
                         onValueChange = { newVerb = it },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        label = { Text("Add a verb") },
+                        label = { Text(stringResource(R.string.bss_add_verb)) },
                     )
                     IconButton(onClick = {
                         val v = newVerb.trim()
@@ -230,7 +232,7 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
                             newVerb = ""
                         }
                     }) {
-                        Icon(Icons.Filled.Add, contentDescription = "Add verb")
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.bss_add_verb_cd))
                     }
                 }
                 Spacer(Modifier.size(6.dp))
@@ -253,7 +255,7 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
                                         ) {
                                             Icon(
                                                 Icons.Filled.Close,
-                                                contentDescription = "Remove",
+                                                contentDescription = stringResource(R.string.bss_remove_cd),
                                                 modifier = Modifier.size(14.dp),
                                             )
                                         }
@@ -266,15 +268,15 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
             }
 
             // ── Auto-disable timer ──────────────────────────────────────
-            SectionCard(title = "Auto-disable after idle") {
+            SectionCard(title = stringResource(R.string.bss_auto_disable)) {
                 Text(
-                    text = "Master toggle flips off after this many minutes with no bridge commands. Rescheduled on every command.",
+                    text = stringResource(R.string.bss_auto_disable_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.size(4.dp))
                 Text(
-                    text = "${settings.autoDisableMinutes} min",
+                    text = stringResource(R.string.bss_auto_disable_value, settings.autoDisableMinutes),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -289,21 +291,21 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
             }
 
             // ── Status overlay ──────────────────────────────────────────
-            SectionCard(title = "Status overlay") {
+            SectionCard(title = stringResource(R.string.bss_status_overlay)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Show floating indicator",
+                            text = stringResource(R.string.bss_show_floating),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                         Text(
                             text = if (canDrawOverlays) {
-                                "Permission granted."
+                                stringResource(R.string.bss_overlay_granted)
                             } else {
-                                "Tap to grant overlay permission."
+                                stringResource(R.string.bss_overlay_not_granted)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -330,15 +332,15 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
             }
 
             // ── Confirmation timeout ────────────────────────────────────
-            SectionCard(title = "Confirmation timeout") {
+            SectionCard(title = stringResource(R.string.bss_confirmation_timeout)) {
                 Text(
-                    text = "Destructive-verb modal waits this long for your response before defaulting to Deny.",
+                    text = stringResource(R.string.bss_confirmation_timeout_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.size(4.dp))
                 Text(
-                    text = "${settings.confirmationTimeoutSeconds} s",
+                    text = stringResource(R.string.bss_confirmation_timeout_value, settings.confirmationTimeoutSeconds),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -424,9 +426,9 @@ private fun BridgeSafetySettingsScreenPreview() {
         // The real screen needs a Context for PackageManager lookups, so
         // this preview just shows one section to verify styling.
         Column(Modifier.padding(16.dp)) {
-            SectionCard(title = "Destructive verbs") {
+            SectionCard(title = stringResource(R.string.bss_destructive_verbs)) {
                 Text(
-                    text = "Tap_text / type commands whose text contains these words trigger a confirmation modal.",
+                    text = stringResource(R.string.bss_destructive_verbs_desc),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

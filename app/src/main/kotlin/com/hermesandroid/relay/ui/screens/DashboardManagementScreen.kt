@@ -1,3 +1,5 @@
+@file:Suppress("LocalContextGetResourceValueCall")
+
 package com.hermesandroid.relay.ui.screens
 
 import android.webkit.CookieManager
@@ -86,6 +88,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -93,6 +96,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
@@ -122,21 +126,48 @@ import kotlinx.serialization.json.contentOrNull
 import java.text.DateFormat
 import java.util.Date
 
-private data class DashboardManagementSection(
-    val label: String,
-    val path: String,
-)
+/**
+ * Section of the Hermes dashboard Manage tab. The enum identity is used for
+ * `when` branching and equality; [displayLabel] / [lowercaseLabel] resolve to
+ * localized strings at call sites. [path] is the upstream API path.
+ */
+private enum class DashboardManagementSection(val path: String) {
+    Skills("/api/skills"),
+    Cron("/api/cron/jobs"),
+    Mcp("/api/mcp/servers"),
+    Catalog("/api/mcp/catalog"),
+    Profiles("/api/profiles"),
+    Models("/api/model/info"),
+    Keys("/api/env"),
+    Config("/api/config/schema");
 
-private val managementSections = listOf(
-    DashboardManagementSection("Skills", "/api/skills"),
-    DashboardManagementSection("Cron", "/api/cron/jobs"),
-    DashboardManagementSection("MCP", "/api/mcp/servers"),
-    DashboardManagementSection("Catalog", "/api/mcp/catalog"),
-    DashboardManagementSection("Profiles", "/api/profiles"),
-    DashboardManagementSection("Models", "/api/model/info"),
-    DashboardManagementSection("Keys", "/api/env"),
-    DashboardManagementSection("Config", "/api/config/schema"),
-)
+    @Composable
+    fun displayLabel(): String = when (this) {
+        Skills -> stringResource(R.string.dashboard_tab_skills)
+        Cron -> stringResource(R.string.dashboard_tab_cron)
+        Mcp -> stringResource(R.string.dashboard_tab_mcp)
+        Catalog -> stringResource(R.string.dashboard_tab_catalog)
+        Profiles -> stringResource(R.string.dashboard_tab_profiles)
+        Models -> stringResource(R.string.dashboard_tab_models)
+        Keys -> stringResource(R.string.dashboard_tab_keys)
+        Config -> stringResource(R.string.dashboard_tab_config)
+    }
+
+    /** Lowercased display label for compact UI surfaces (KPI strip). */
+    @Composable
+    fun lowercaseLabel(): String = when (this) {
+        Skills -> stringResource(R.string.dashboard_tab_skills_lower)
+        Cron -> stringResource(R.string.dashboard_tab_cron_lower)
+        Mcp -> stringResource(R.string.dashboard_tab_mcp_lower)
+        Catalog -> stringResource(R.string.dashboard_tab_catalog_lower)
+        Profiles -> stringResource(R.string.dashboard_tab_profiles_lower)
+        Models -> stringResource(R.string.dashboard_tab_models_lower)
+        Keys -> stringResource(R.string.dashboard_tab_keys_lower)
+        Config -> stringResource(R.string.dashboard_tab_config_lower)
+    }
+}
+
+private val managementSections: List<DashboardManagementSection> = DashboardManagementSection.entries
 
 private sealed interface DashboardPayloadState {
     data object Idle : DashboardPayloadState
@@ -378,7 +409,7 @@ fun DashboardManagementScreen(
         if (dashboardUrl.isBlank()) {
             if (foreground) {
                 payloadStates[targetKey] = DashboardPayloadState.Error(
-                    "No dashboard URL is configured for this connection.",
+                    context.getString(R.string.dashboard_no_url_configured),
                 )
             }
             return
@@ -406,7 +437,8 @@ fun DashboardManagementScreen(
                 clientFactory = clientFactory,
                 targetSection = targetSection,
                 preamble = preamble,
-            ) { status, session, gatewayTicketAvailable ->
+                context = context,
+                recordStatus = { status: DashboardStatus?, session: DashboardAuthSession?, gatewayTicketAvailable: Boolean? ->
                 if (preamble == null) {
                     connectionViewModel.recordDashboardStatus(
                         status = status,
@@ -415,7 +447,8 @@ fun DashboardManagementScreen(
                         gatewayTicketAvailable = gatewayTicketAvailable,
                     )
                 }
-            }
+                }
+            )
             val latestState = payloadStates[targetKey]
             if (
                 foreground &&
@@ -433,7 +466,7 @@ fun DashboardManagementScreen(
         } catch (e: Exception) {
             if (foreground || previousState !is DashboardPayloadState.Loaded) {
                 payloadStates[targetKey] = DashboardPayloadState.Error(
-                    message = e.message ?: "Dashboard request failed",
+                    message = e.message ?: context.getString(R.string.dashboard_request_failed),
                 )
             }
         } finally {
@@ -458,10 +491,11 @@ fun DashboardManagementScreen(
             }
             actionMessage = result.fold(
                 onSuccess = { root ->
+                    val actionLabel = dashboardActionLabel(context, action.kind)
                     if (action.kind.isDetailAction) {
                         detailResult = DashboardDetailResult(
-                            title = "${item.title} · ${action.label}",
-                            body = detailBodyFor(action.kind, root),
+                            title = context.getString(R.string.dashboard_detail_title, item.title, actionLabel),
+                            body = detailBodyFor(context, action.kind, root),
                         )
                         null
                     } else {
@@ -472,10 +506,15 @@ fun DashboardManagementScreen(
                         refreshingPayloads[actionPayloadKey] = true
                         forceReloadKey = actionPayloadKey
                         reloadNonce += 1
-                        "${action.label} completed"
+                        context.getString(R.string.dashboard_action_completed, actionLabel)
                     }
                 },
-                onFailure = { err -> err.message ?: "${action.label} failed" },
+                onFailure = { err ->
+                    err.message ?: context.getString(
+                        R.string.dashboard_action_failed,
+                        dashboardActionLabel(context, action.kind),
+                    )
+                },
             )
             actionInFlight = false
         }
@@ -505,9 +544,17 @@ fun DashboardManagementScreen(
                     refreshingPayloads[actionPayloadKey] = true
                     forceReloadKey = actionPayloadKey
                     reloadNonce += 1
-                    "${action.label} completed"
+                    context.getString(
+                        R.string.dashboard_action_completed,
+                        dashboardActionLabel(context, action.kind),
+                    )
                 },
-                onFailure = { err -> err.message ?: "${action.label} failed" },
+                onFailure = { err ->
+                    err.message ?: context.getString(
+                        R.string.dashboard_action_failed,
+                        dashboardActionLabel(context, action.kind),
+                    )
+                },
             )
             actionInFlight = false
         }
@@ -547,17 +594,17 @@ fun DashboardManagementScreen(
                             provider = provider,
                             model = model,
                             warning = root.stringField("warning")
-                                ?: "This model can be expensive to run.",
+                                ?: context.getString(R.string.dashboard_expensive_model_default_warning),
                         )
                     } else {
                         modelPickerTarget = null
                         refreshingPayloads[actionPayloadKey] = true
                         forceReloadKey = actionPayloadKey
                         reloadNonce += 1
-                        actionMessage = "Model set to $model"
+                        actionMessage = context.getString(R.string.dashboard_model_set, model)
                     }
                 },
-                onFailure = { err -> actionMessage = err.message ?: "Model change failed" },
+                onFailure = { err -> actionMessage = err.message ?: context.getString(R.string.dashboard_model_change_failed) },
             )
             actionInFlight = false
         }
@@ -583,7 +630,7 @@ fun DashboardManagementScreen(
                     )
                 },
                 onFailure = { err ->
-                    actionMessage = err.message ?: "Could not load SOUL.md"
+                    actionMessage = err.message ?: context.getString(R.string.dashboard_soul_load_failed)
                 },
             )
             actionInFlight = false
@@ -605,9 +652,9 @@ fun DashboardManagementScreen(
             actionMessage = result.fold(
                 onSuccess = {
                     soulEditor = null
-                    "SOUL.md saved for $profileName"
+                    context.getString(R.string.dashboard_soul_saved, profileName)
                 },
-                onFailure = { err -> err.message ?: "SOUL.md save failed" },
+                onFailure = { err -> err.message ?: context.getString(R.string.dashboard_soul_save_failed) },
             )
             actionInFlight = false
         }
@@ -626,8 +673,8 @@ fun DashboardManagementScreen(
             actionMessage = result.fold(
                 // The server spawns `hermes skills update` and returns
                 // immediately — completion lands in the skills list later.
-                onSuccess = { "Skill update started on the server — refresh Skills in a minute" },
-                onFailure = { err -> err.message ?: "Skill update failed to start" },
+                onSuccess = { context.getString(R.string.dashboard_skills_update_started) },
+                onFailure = { err -> err.message ?: context.getString(R.string.dashboard_skills_update_failed) },
             )
             actionInFlight = false
         }
@@ -656,9 +703,9 @@ fun DashboardManagementScreen(
                     refreshingPayloads[actionPayloadKey] = true
                     forceReloadKey = actionPayloadKey
                     reloadNonce += 1
-                    "Profile $name created"
+                    context.getString(R.string.dashboard_profile_created, name)
                 },
-                onFailure = { err -> err.message ?: "Profile create failed" },
+                onFailure = { err -> err.message ?: context.getString(R.string.dashboard_profile_create_failed) },
             )
             actionInFlight = false
         }
@@ -739,7 +786,7 @@ fun DashboardManagementScreen(
                         )
                         if (session?.authenticated != true) {
                             throw IllegalStateException(
-                                "Sign-in completed, but the dashboard did not return an authenticated session.",
+                                context.getString(R.string.dashboard_signin_no_session),
                             )
                         }
                         it
@@ -758,9 +805,9 @@ fun DashboardManagementScreen(
                     // Standard voice rides this same cookie session — unlock the
                     // mic immediately rather than waiting for the next health tick.
                     connectionViewModel.refreshStandardVoice()
-                    "Dashboard signed in"
+                    context.getString(R.string.dashboard_signed_in)
                 },
-                onFailure = { err -> err.message ?: "Dashboard sign-in failed" },
+                onFailure = { err -> err.message ?: context.getString(R.string.dashboard_signin_failed) },
             )
             actionInFlight = false
         }
@@ -768,22 +815,21 @@ fun DashboardManagementScreen(
 
     pendingAction?.let { pending ->
         val isActivateProfile = pending.action.kind == DashboardActionKind.ActivateProfile
+        val actionLabel = dashboardActionLabel(pending.action)
         AlertDialog(
             onDismissRequest = { pendingAction = null },
             title = {
                 Text(
-                    if (isActivateProfile) "Make ${pending.item.title} the server default?"
-                    else "${pending.action.label} ${pending.item.title}?",
+                    if (isActivateProfile) stringResource(R.string.dashboard_make_default_title, pending.item.title)
+                    else stringResource(R.string.dashboard_action_confirm_title, actionLabel, pending.item.title),
                 )
             },
             text = {
                 Text(
                     text = if (isActivateProfile) {
-                        "Sets ${pending.item.title} as the server's active agent for every " +
-                            "client — the persistent “hermes use” default. Switching agents in " +
-                            "chat is per-conversation and doesn't change this."
+                        stringResource(R.string.dashboard_activate_profile_body, pending.item.title)
                     } else {
-                        "This changes server-side dashboard state for ${pending.item.title}."
+                        stringResource(R.string.dashboard_generic_action_body, pending.item.title)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -794,11 +840,11 @@ fun DashboardManagementScreen(
                         pendingAction = null
                         runAction(pending.item, pending.action)
                     },
-                ) { Text(if (isActivateProfile) "Set default" else pending.action.label) }
+                ) { Text(if (isActivateProfile) stringResource(R.string.dashboard_set_default) else actionLabel) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingAction = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.dashboard_cancel))
                 }
             },
         )
@@ -818,16 +864,14 @@ fun DashboardManagementScreen(
         }
         AlertDialog(
             onDismissRequest = { inputAction = null },
-            title = { Text("${pending.action.label} ${pending.item.title}") },
+            title = { Text(stringResource(R.string.dashboard_input_action_title, dashboardActionLabel(pending.action), pending.item.title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = if (isEnvKey) {
-                            "Stored in the server's ~/.hermes/.env. The field is write-only " +
-                                "here — use Reveal to read the current value back."
+                            stringResource(R.string.dashboard_env_key_help)
                         } else {
-                            "Short role description shown in the profile picker and used " +
-                                "for routing. Leave empty to clear it."
+                            stringResource(R.string.dashboard_profile_desc_help)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -842,7 +886,7 @@ fun DashboardManagementScreen(
                         } else {
                             VisualTransformation.None
                         },
-                        label = { Text(if (isEnvKey) "Value" else "Description") },
+                        label = { Text(if (isEnvKey) stringResource(R.string.dashboard_value_label) else stringResource(R.string.dashboard_description_label)) },
                     )
                 }
             },
@@ -854,10 +898,10 @@ fun DashboardManagementScreen(
                         runInputAction(pending.item, pending.action, value)
                     },
                     enabled = !isEnvKey || inputValue.isNotBlank(),
-                ) { Text("Save") }
+                ) { Text(stringResource(R.string.dashboard_save)) }
             },
             dismissButton = {
-                TextButton(onClick = { inputAction = null }) { Text("Cancel") }
+                TextButton(onClick = { inputAction = null }) { Text(stringResource(R.string.dashboard_cancel)) }
             },
         )
     }
@@ -868,7 +912,7 @@ fun DashboardManagementScreen(
         var cloneFromDefault by remember { mutableStateOf(true) }
         AlertDialog(
             onDismissRequest = { showCreateProfile = false },
-            title = { Text("New profile") },
+            title = { Text(stringResource(R.string.dashboard_new_profile_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -876,13 +920,13 @@ fun DashboardManagementScreen(
                         onValueChange = { newProfileName = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("Name") },
+                        label = { Text(stringResource(R.string.dashboard_name_label)) },
                     )
                     OutlinedTextField(
                         value = newProfileDescription,
                         onValueChange = { newProfileDescription = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Description (optional)") },
+                        label = { Text(stringResource(R.string.dashboard_description_optional)) },
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -893,7 +937,7 @@ fun DashboardManagementScreen(
                             onCheckedChange = { cloneFromDefault = it },
                         )
                         Text(
-                            text = "Start from the default profile's config and skills",
+                            text = stringResource(R.string.dashboard_clone_from_default),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -909,10 +953,10 @@ fun DashboardManagementScreen(
                         )
                     },
                     enabled = newProfileName.isNotBlank() && !actionInFlight,
-                ) { Text("Create") }
+                ) { Text(stringResource(R.string.dashboard_create)) }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateProfile = false }) { Text("Cancel") }
+                TextButton(onClick = { showCreateProfile = false }) { Text(stringResource(R.string.dashboard_cancel)) }
             },
         )
     }
@@ -920,7 +964,7 @@ fun DashboardManagementScreen(
     expensiveModelConfirm?.let { confirm ->
         AlertDialog(
             onDismissRequest = { expensiveModelConfirm = null },
-            title = { Text("Expensive model") },
+            title = { Text(stringResource(R.string.dashboard_expensive_model_title)) },
             text = { Text(confirm.warning, style = MaterialTheme.typography.bodyMedium) },
             confirmButton = {
                 TextButton(
@@ -933,10 +977,10 @@ fun DashboardManagementScreen(
                             confirmExpensive = true,
                         )
                     },
-                ) { Text("Use anyway") }
+                ) { Text(stringResource(R.string.dashboard_use_anyway)) }
             },
             dismissButton = {
-                TextButton(onClick = { expensiveModelConfirm = null }) { Text("Cancel") }
+                TextButton(onClick = { expensiveModelConfirm = null }) { Text(stringResource(R.string.dashboard_cancel)) }
             },
         )
     }
@@ -970,12 +1014,13 @@ fun DashboardManagementScreen(
     }
 
     if (confirmClearDashboardSession) {
+        val clearedMsg = stringResource(R.string.dashboard_session_cleared)
         AlertDialog(
             onDismissRequest = { confirmClearDashboardSession = false },
-            title = { Text("Clear dashboard session?") },
+            title = { Text(stringResource(R.string.dashboard_clear_session_title)) },
             text = {
                 Text(
-                    text = "This signs this connection out of the Hermes dashboard on this device. Your API key, saved connection, and Relay pairing stay unchanged.",
+                    text = stringResource(R.string.dashboard_clear_session_body),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },
@@ -990,23 +1035,25 @@ fun DashboardManagementScreen(
                                 clearDashboardManageDiskCache(context.cacheDir)
                             }
                             forceReloadKey = null
-                            actionMessage = "Dashboard session cleared"
+                            actionMessage = clearedMsg
                             reloadNonce += 1
                         }
                     },
                 ) {
-                    Text("Clear session")
+                    Text(stringResource(R.string.dashboard_clear_session_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmClearDashboardSession = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.dashboard_cancel))
                 }
             },
         )
     }
 
     oauthProvider?.let { provider ->
+        val signedInMsg = stringResource(R.string.dashboard_signed_in)
+        val signedInWithMsg = stringResource(R.string.dashboard_signed_in_with)
         DashboardOAuthSignInDialog(
             dashboardUrl = dashboardUrl,
             provider = provider,
@@ -1020,7 +1067,7 @@ fun DashboardManagementScreen(
                     clearDashboardManageDiskCache(context.cacheDir)
                 }
                 forceReloadKey = null
-                actionMessage = "Signed in${session.provider?.let { " with $it" }.orEmpty()}"
+                actionMessage = session.provider?.let { signedInWithMsg.format(it) } ?: signedInMsg
                 reloadNonce += 1
                 connectionViewModel.refreshStandardVoice()
             },
@@ -1033,24 +1080,24 @@ fun DashboardManagementScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Manage") },
+                title = { Text(stringResource(R.string.dashboard_title)) },
                 navigationIcon = {
                     RelayChromeIconButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.dashboard_back),
                         onClick = onBack,
                     )
                 },
                 actions = {
                     RelayChromeIconButton(
                         icon = Icons.Filled.Code,
-                        contentDescription = "Terminal",
+                        contentDescription = stringResource(R.string.dashboard_terminal),
                         onClick = onNavigateToTerminal,
                         modifier = Modifier.padding(end = 4.dp),
                     )
                     RelayChromeIconButton(
                         icon = Icons.Filled.Tune,
-                        contentDescription = "Settings",
+                        contentDescription = stringResource(R.string.dashboard_settings),
                         onClick = onNavigateToSettings,
                         modifier = Modifier.padding(end = 4.dp),
                     )
@@ -1063,7 +1110,7 @@ fun DashboardManagementScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Refresh",
+                            contentDescription = stringResource(R.string.dashboard_refresh),
                         )
                     }
                 },
@@ -1122,7 +1169,7 @@ fun DashboardManagementScreen(
                                 Tab(
                                     selected = selectedTab == index,
                                     onClick = { selectedTab = index },
-                                    text = { Text(tab.label) },
+                                    text = { Text(tab.displayLabel()) },
                                 )
                             }
                         }
@@ -1142,7 +1189,7 @@ fun DashboardManagementScreen(
                             ) { state ->
                             when (state) {
                                 DashboardPayloadState.Idle,
-                                DashboardPayloadState.Loading -> LoadingBody(section.label)
+                                DashboardPayloadState.Loading -> LoadingBody(section.displayLabel())
                                 is DashboardPayloadState.Error -> ErrorBody(
                                     message = state.message,
                                     status = state.status,
@@ -1220,8 +1267,8 @@ fun DashboardManagementScreen(
                         onSignIn = ::submitDashboardSignIn,
                         onOAuthSignIn = { provider -> oauthProvider = provider },
                         onNavigateToConnections = onNavigateToConnections,
-                        onSelectSection = { label ->
-                            managementSections.indexOfFirst { it.label == label }
+                        onSelectSection = { sectionPick ->
+                            managementSections.indexOf(sectionPick)
                                 .takeIf { it >= 0 }
                                 ?.let {
                                     selectedTab = it
@@ -1241,51 +1288,47 @@ private data class ManageTileSpec(
     val subtitle: String,
 )
 
-private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec = when (section.label) {
-    "Profiles" -> ManageTileSpec(
+@Composable
+private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec = when (section) {
+    DashboardManagementSection.Profiles -> ManageTileSpec(
         icon = Icons.Filled.Person,
-        title = "Profiles",
-        subtitle = "SOUL, memory, skills, sessions",
+        title = stringResource(R.string.dashboard_tile_profiles_title),
+        subtitle = stringResource(R.string.dashboard_tile_profiles_sub),
     )
-    "Skills" -> ManageTileSpec(
+    DashboardManagementSection.Skills -> ManageTileSpec(
         icon = Icons.Filled.AutoAwesome,
-        title = "Skills + Tools",
-        subtitle = "Browse, enable, configure",
+        title = stringResource(R.string.dashboard_tile_skills_title),
+        subtitle = stringResource(R.string.dashboard_tile_skills_sub),
     )
-    "Cron" -> ManageTileSpec(
+    DashboardManagementSection.Cron -> ManageTileSpec(
         icon = Icons.Filled.Schedule,
-        title = "Automations",
-        subtitle = "Cron, background runs, delivery",
+        title = stringResource(R.string.dashboard_tile_cron_title),
+        subtitle = stringResource(R.string.dashboard_tile_cron_sub),
     )
-    "MCP" -> ManageTileSpec(
+    DashboardManagementSection.Mcp -> ManageTileSpec(
         icon = Icons.Filled.Code,
-        title = "MCP Servers",
-        subtitle = "Servers, status, tools",
+        title = stringResource(R.string.dashboard_tile_mcp_title),
+        subtitle = stringResource(R.string.dashboard_tile_mcp_sub),
     )
-    "Catalog" -> ManageTileSpec(
+    DashboardManagementSection.Catalog -> ManageTileSpec(
         icon = Icons.Filled.AutoAwesome,
-        title = "Catalog",
-        subtitle = "Discover upstream servers",
+        title = stringResource(R.string.dashboard_tile_catalog_title),
+        subtitle = stringResource(R.string.dashboard_tile_catalog_sub),
     )
-    "Models" -> ManageTileSpec(
+    DashboardManagementSection.Models -> ManageTileSpec(
         icon = Icons.Filled.Tune,
-        title = "Models",
-        subtitle = "Pick provider + default model",
+        title = stringResource(R.string.dashboard_tile_models_title),
+        subtitle = stringResource(R.string.dashboard_tile_models_sub),
     )
-    "Keys" -> ManageTileSpec(
+    DashboardManagementSection.Keys -> ManageTileSpec(
         icon = Icons.Filled.Key,
-        title = "Keys",
-        subtitle = "Provider keys + env secrets",
+        title = stringResource(R.string.dashboard_tile_keys_title),
+        subtitle = stringResource(R.string.dashboard_tile_keys_sub),
     )
-    "Config" -> ManageTileSpec(
+    DashboardManagementSection.Config -> ManageTileSpec(
         icon = Icons.Filled.Tune,
-        title = "Config",
-        subtitle = "Schema and runtime options",
-    )
-    else -> ManageTileSpec(
-        icon = Icons.Filled.Link,
-        title = section.label,
-        subtitle = section.path,
+        title = stringResource(R.string.dashboard_tile_config_title),
+        subtitle = stringResource(R.string.dashboard_tile_config_sub),
     )
 }
 
@@ -1306,7 +1349,7 @@ private fun ManageOverviewBody(
     onSignIn: (String, String, String) -> Unit,
     onOAuthSignIn: (DashboardAuthProvider) -> Unit,
     onNavigateToConnections: () -> Unit,
-    onSelectSection: (String) -> Unit,
+    onSelectSection: (DashboardManagementSection) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1315,8 +1358,8 @@ private fun ManageOverviewBody(
     ) {
         item {
             RelaySectionCaption(
-                title = "Relay Hub",
-                meta = "overview",
+                title = stringResource(R.string.dashboard_hub_title),
+                meta = stringResource(R.string.dashboard_hub_meta),
             )
         }
         item {
@@ -1328,17 +1371,24 @@ private fun ManageOverviewBody(
             val signInNeeded = status?.authRequired == true && authenticated != true
             val dashboardWord = when {
                 payloadState is DashboardPayloadState.Loading ||
-                    payloadState is DashboardPayloadState.Idle -> "…"
-                signInNeeded -> "sign-in"
-                payloadState is DashboardPayloadState.Error && status == null -> "offline"
-                payloadState is DashboardPayloadState.Error -> "error"
-                else -> "ready"
+                    payloadState is DashboardPayloadState.Idle -> DashboardHealthWord.Loading
+                signInNeeded -> DashboardHealthWord.SignIn
+                payloadState is DashboardPayloadState.Error && status == null -> DashboardHealthWord.Offline
+                payloadState is DashboardPayloadState.Error -> DashboardHealthWord.Error
+                else -> DashboardHealthWord.Ready
             }
             val dashboardTone = when (dashboardWord) {
-                "ready" -> RelayRefresh.Green
-                "sign-in" -> RelayRefresh.Amber
-                "offline", "error" -> RelayRefresh.Danger
-                else -> RelayRefresh.Muted
+                DashboardHealthWord.Ready -> RelayRefresh.Green
+                DashboardHealthWord.SignIn -> RelayRefresh.Amber
+                DashboardHealthWord.Offline, DashboardHealthWord.Error -> RelayRefresh.Danger
+                DashboardHealthWord.Loading -> RelayRefresh.Muted
+            }
+            val dashboardWordText = when (dashboardWord) {
+                DashboardHealthWord.Loading -> stringResource(R.string.dashboard_health_loading)
+                DashboardHealthWord.SignIn -> stringResource(R.string.dashboard_health_signin)
+                DashboardHealthWord.Offline -> stringResource(R.string.dashboard_health_offline)
+                DashboardHealthWord.Error -> stringResource(R.string.dashboard_health_error)
+                DashboardHealthWord.Ready -> stringResource(R.string.dashboard_health_ready)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1346,18 +1396,18 @@ private fun ManageOverviewBody(
             ) {
                 RelayMetricCard(
                     value = if (loadedCount > 0) loadedCount.toString() else "—",
-                    label = section.label.lowercase(),
+                    label = section.lowercaseLabel(),
                     modifier = Modifier.weight(1f),
                 )
                 RelayMetricCard(
-                    value = dashboardWord,
-                    label = "dashboard",
+                    value = dashboardWordText,
+                    label = stringResource(R.string.dashboard_metric_dashboard),
                     modifier = Modifier.weight(1f),
                     valueColor = dashboardTone,
                 )
                 RelayMetricCard(
                     value = status?.version ?: "—",
-                    label = "server",
+                    label = stringResource(R.string.dashboard_metric_server),
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -1390,69 +1440,72 @@ private fun ManageOverviewBody(
         item {
             RelayNavTile(
                 icon = Icons.Filled.Link,
-                title = "Connections",
-                subtitle = "Pair, switch, verify routes",
+                title = stringResource(R.string.dashboard_nav_connections_title),
+                subtitle = stringResource(R.string.dashboard_nav_connections_sub),
                 onClick = onNavigateToConnections,
             )
         }
         item {
             RelayNavTile(
                 icon = Icons.Filled.Person,
-                title = "Profiles",
-                subtitle = "SOUL, memory, skills, sessions",
-                onClick = { onSelectSection("Profiles") },
+                title = stringResource(R.string.dashboard_tile_profiles_title),
+                subtitle = stringResource(R.string.dashboard_tile_profiles_sub),
+                onClick = { onSelectSection(DashboardManagementSection.Profiles) },
             )
         }
         item {
             RelayNavTile(
                 icon = Icons.Filled.AutoAwesome,
-                title = "Skills + Tools",
-                subtitle = "Browse, enable, configure",
-                onClick = { onSelectSection("Skills") },
+                title = stringResource(R.string.dashboard_tile_skills_title),
+                subtitle = stringResource(R.string.dashboard_tile_skills_sub),
+                onClick = { onSelectSection(DashboardManagementSection.Skills) },
             )
         }
         item {
             RelayNavTile(
                 icon = Icons.Filled.Schedule,
-                title = "Automations",
-                subtitle = "Cron, background runs, delivery",
-                onClick = { onSelectSection("Cron") },
+                title = stringResource(R.string.dashboard_tile_cron_title),
+                subtitle = stringResource(R.string.dashboard_tile_cron_sub),
+                onClick = { onSelectSection(DashboardManagementSection.Cron) },
             )
         }
         item {
             RelayNavTile(
                 icon = Icons.Filled.Code,
-                title = "MCP Servers",
-                subtitle = "Servers, status, tools",
-                onClick = { onSelectSection("MCP") },
+                title = stringResource(R.string.dashboard_tile_mcp_title),
+                subtitle = stringResource(R.string.dashboard_tile_mcp_sub),
+                onClick = { onSelectSection(DashboardManagementSection.Mcp) },
             )
         }
         item {
             RelayNavTile(
                 icon = Icons.Filled.AutoAwesome,
-                title = "Catalog",
-                subtitle = "Discover upstream servers",
-                onClick = { onSelectSection("Catalog") },
+                title = stringResource(R.string.dashboard_tile_catalog_title),
+                subtitle = stringResource(R.string.dashboard_tile_catalog_sub),
+                onClick = { onSelectSection(DashboardManagementSection.Catalog) },
             )
         }
         item {
             RelayNavTile(
                 icon = Icons.Filled.Tune,
-                title = "Models",
-                subtitle = "Pick provider + default model",
-                onClick = { onSelectSection("Models") },
+                title = stringResource(R.string.dashboard_tile_models_title),
+                subtitle = stringResource(R.string.dashboard_tile_models_sub),
+                onClick = { onSelectSection(DashboardManagementSection.Models) },
             )
         }
         item {
             RelayNavTile(
                 icon = Icons.Filled.Key,
-                title = "Keys",
-                subtitle = "Provider keys + env secrets",
-                onClick = { onSelectSection("Keys") },
+                title = stringResource(R.string.dashboard_tile_keys_title),
+                subtitle = stringResource(R.string.dashboard_tile_keys_sub),
+                onClick = { onSelectSection(DashboardManagementSection.Keys) },
             )
         }
     }
 }
+
+/** Health-word enum backing the KPI strip; drives both the label and the tone. */
+private enum class DashboardHealthWord { Loading, SignIn, Offline, Error, Ready }
 
 @Composable
 private fun ManageSelectedSectionHeader(
@@ -1469,7 +1522,7 @@ private fun ManageSelectedSectionHeader(
             title = spec.title,
             subtitle = spec.subtitle,
             onClick = onBackToOverview,
-            label = "Overview",
+            label = stringResource(R.string.dashboard_overview_label),
         )
     }
 }
@@ -1494,22 +1547,28 @@ private fun DashboardConnectionHeader(
     lastCheckedAtMillis: Long?,
     onClearSession: () -> Unit,
 ) {
+    val context = LocalContext.current
     val authLabel = when {
-        status == null -> "Checking dashboard"
-        status.authRequired && authenticated == true -> "Dashboard signed in"
-        status.authRequired -> "Dashboard sign-in required"
-        else -> "Dashboard available"
+        status == null -> stringResource(R.string.dashboard_status_checking)
+        status.authRequired && authenticated == true -> stringResource(R.string.dashboard_status_signed_in)
+        status.authRequired -> stringResource(R.string.dashboard_status_signin_required)
+        else -> stringResource(R.string.dashboard_status_available)
     }
     val identity = if (authenticated == true) {
-        session?.username ?: session?.provider?.let { "Provider: $it" }
+        session?.username ?: session?.provider?.let {
+            stringResource(R.string.dashboard_provider_prefix, it)
+        }
     } else {
         null
     }
     val primaryLine = listOfNotNull(authLabel, identity).joinToString(" · ")
+    val noUrlLabel = stringResource(R.string.dashboard_no_url)
+    val routeLabel = stringResource(R.string.dashboard_route_suffix)
+    val checkedLabel = stringResource(R.string.dashboard_checked_at)
     val secondaryLine = listOfNotNull(
-        dashboardUrl.ifBlank { "No dashboard URL" },
-        routeHint?.let { "$it route" },
-        lastCheckedAtMillis?.let { "Checked ${formatDashboardCheckedAt(it)}" },
+        dashboardUrl.ifBlank { noUrlLabel },
+        routeHint?.let { routeLabel.format(it) },
+        lastCheckedAtMillis?.let { checkedLabel.format(formatDashboardCheckedAt(context, it)) },
     ).joinToString(" · ")
     val signInNeeded = status?.authRequired == true && authenticated != true
     val statusColor = when {
@@ -1560,18 +1619,20 @@ private fun DashboardConnectionHeader(
                     contentColor = RelayRefresh.Relay,
                 ),
             ) {
-                Text("Sign out")
+                Text(stringResource(R.string.dashboard_sign_out))
             }
         }
     }
 }
 
-private fun formatDashboardCheckedAt(checkedAtMillis: Long): String {
+private fun formatDashboardCheckedAt(context: android.content.Context, checkedAtMillis: Long): String {
     val deltaMs = System.currentTimeMillis() - checkedAtMillis
     return when {
-        deltaMs in 0 until 60_000L -> "just now"
-        deltaMs in 60_000L until 3_600_000L -> "${deltaMs / 60_000L}m ago"
-        deltaMs in 3_600_000L until 86_400_000L -> "${deltaMs / 3_600_000L}h ago"
+        deltaMs in 0 until 60_000L -> context.getString(R.string.dashboard_just_now)
+        deltaMs in 60_000L until 3_600_000L ->
+            context.getString(R.string.dashboard_minutes_ago, (deltaMs / 60_000L).toInt())
+        deltaMs in 3_600_000L until 86_400_000L ->
+            context.getString(R.string.dashboard_hours_ago, (deltaMs / 3_600_000L).toInt())
         else -> DateFormat.getDateTimeInstance(
             DateFormat.MEDIUM,
             DateFormat.SHORT,
@@ -1650,12 +1711,14 @@ private suspend fun fetchDashboardSectionState(
     targetSection: DashboardManagementSection,
     preamble: DashboardPreamble? = null,
     recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+    context: android.content.Context,
 ): DashboardPayloadState = withDashboardClient(clientFactory) { client ->
     fetchDashboardSectionStateWith(
         client = client,
         targetSection = targetSection,
         preamble = preamble,
         recordStatus = recordStatus,
+        context = context,
     )
 }
 
@@ -1665,11 +1728,15 @@ private suspend fun fetchDashboardSectionStateWith(
     targetSection: DashboardManagementSection,
     preamble: DashboardPreamble? = null,
     recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+    context: android.content.Context,
 ): DashboardPayloadState {
     val resolved = preamble ?: fetchDashboardPreamble(client)
     recordStatus(resolved.status, resolved.session, resolved.gatewayTicketAvailable)
     return if (resolved.signInRequired) {
-        DashboardPayloadState.Error("Dashboard sign-in required", status = resolved.status)
+        DashboardPayloadState.Error(
+            message = context.getString(R.string.dashboard_signin_required_title),
+            status = resolved.status,
+        )
     } else {
         val result = client.getJsonElement(targetSection.path)
         result.fold(
@@ -1684,7 +1751,7 @@ private suspend fun fetchDashboardSectionStateWith(
             },
             onFailure = { err ->
                 DashboardPayloadState.Error(
-                    message = err.message ?: "Dashboard request failed",
+                    message = err.message ?: context.getString(R.string.dashboard_request_failed),
                     status = resolved.status,
                 )
             },
@@ -1716,6 +1783,7 @@ internal suspend fun prewarmDashboardManage(
     dashboardUrl: String,
     /** When non-null, the sweep's results are mirrored to the disk cache. */
     cacheDir: java.io.File? = null,
+    context: android.content.Context,
 ) {
     if (dashboardUrl.isBlank()) return
     fun needsWarm(targetSection: DashboardManagementSection): Boolean {
@@ -1763,6 +1831,7 @@ internal suspend fun prewarmDashboardManage(
                             client = client,
                             targetSection = targetSection,
                             preamble = preamble,
+                            context = context,
                         )
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
@@ -1812,7 +1881,7 @@ private fun LoadingBody(sectionLabel: String) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = "Loading ${sectionLabel.lowercase()}…",
+            text = stringResource(R.string.dashboard_loading_section, sectionLabel.lowercase()),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1869,9 +1938,11 @@ private fun GhostSummaryCard(blockAlpha: Float) {
  */
 @Composable
 private fun ManageDashboardTargetLine(dashboardUrl: String, routeHint: String?) {
+    val routeSuffix = routeHint?.let {
+        stringResource(R.string.dashboard_target_line_route_suffix, it)
+    } ?: ""
     Text(
-        text = "Dashboard: $dashboardUrl" +
-            (routeHint?.let { " · $it route" } ?: ""),
+        text = stringResource(R.string.dashboard_target_line, dashboardUrl) + routeSuffix,
         style = MaterialTheme.typography.labelSmall,
         fontFamily = FontFamily.Monospace,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1924,7 +1995,7 @@ private fun ErrorBody(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Dashboard unavailable",
+                        text = stringResource(R.string.dashboard_error_title),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
@@ -1932,9 +2003,11 @@ private fun ErrorBody(
                     // separate server from the API (:8642), so "chat works"
                     // proves nothing about this URL — and on a moved route
                     // the host may differ from what the user configured.
+                    val routeSuffix = routeHint?.let {
+                        stringResource(R.string.dashboard_error_route_suffix, it)
+                    } ?: ""
                     Text(
-                        text = "Couldn't load from $dashboardUrl" +
-                            (routeHint?.let { " ($it route)" } ?: ""),
+                        text = stringResource(R.string.dashboard_error_target, dashboardUrl) + routeSuffix,
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onErrorContainer,
@@ -1945,7 +2018,7 @@ private fun ErrorBody(
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
                     Button(onClick = onRetry) {
-                        Text("Retry")
+                        Text(stringResource(R.string.dashboard_retry))
                     }
                 }
             }
@@ -1962,6 +2035,11 @@ private fun LoadedBody(
     onAction: (DashboardSummaryItem, DashboardItemAction) -> Unit,
     onSectionAction: (DashboardSectionAction) -> Unit = {},
 ) {
+    // Pre-resolve action labels outside LazyColumn's non-Composable lambda
+    val actionLabelChangeMainModel = stringResource(R.string.dashboard_section_action_change_main_model)
+    val actionLabelNewProfile = stringResource(R.string.dashboard_section_action_new_profile)
+    val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
+    val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -1975,12 +2053,16 @@ private fun LoadedBody(
                 ActionMessageCard(message)
             }
         }
-        val sectionActions = when (section.label) {
-            "Models" -> listOf(DashboardSectionAction.ChangeMainModel to "Change main model")
-            "Profiles" -> listOf(DashboardSectionAction.CreateProfile to "New profile")
-            "Skills" -> listOf(
-                DashboardSectionAction.BrowseSkillsHub to "Browse hub",
-                DashboardSectionAction.UpdateSkillsHub to "Update installed",
+        val sectionActions: List<Pair<DashboardSectionAction, String>> = when (section) {
+            DashboardManagementSection.Models -> listOf(
+                DashboardSectionAction.ChangeMainModel to actionLabelChangeMainModel,
+            )
+            DashboardManagementSection.Profiles -> listOf(
+                DashboardSectionAction.CreateProfile to actionLabelNewProfile,
+            )
+            DashboardManagementSection.Skills -> listOf(
+                DashboardSectionAction.BrowseSkillsHub to actionLabelBrowseHub,
+                DashboardSectionAction.UpdateSkillsHub to actionLabelUpdateInstalled,
             )
             else -> emptyList()
         }
@@ -2011,7 +2093,7 @@ private fun LoadedBody(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "No ${section.label.lowercase()} returned",
+                            text = stringResource(R.string.dashboard_empty_section, section.lowercaseLabel()),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
@@ -2034,6 +2116,70 @@ private fun LoadedBody(
         }
     }
 }
+
+/**
+ * Resolve the user-facing label for a [DashboardItemAction] from its [kind].
+ * The persisted `action.label` field is a stable English identifier and is
+ * NOT displayed directly — every display site routes through this helper so
+ * the rendered text is always localized.
+ */
+@Composable
+private fun dashboardActionLabel(action: DashboardItemAction): String =
+    dashboardActionLabel(action.kind)
+
+@Composable
+private fun dashboardActionLabel(kind: DashboardActionKind): String = when (kind) {
+    DashboardActionKind.SetEnvKey -> stringResource(R.string.dashboard_action_set)
+    DashboardActionKind.RevealEnvKey -> stringResource(R.string.dashboard_action_reveal)
+    DashboardActionKind.ClearEnvKey -> stringResource(R.string.dashboard_action_clear)
+    DashboardActionKind.InstallMcpCatalog -> stringResource(R.string.dashboard_action_install)
+    DashboardActionKind.ViewCronRuns -> stringResource(R.string.dashboard_action_runs)
+    DashboardActionKind.ResumeCron -> stringResource(R.string.dashboard_action_resume)
+    DashboardActionKind.PauseCron -> stringResource(R.string.dashboard_action_pause)
+    DashboardActionKind.TriggerCron -> stringResource(R.string.dashboard_action_run_now)
+    DashboardActionKind.DeleteCron -> stringResource(R.string.dashboard_action_delete)
+    DashboardActionKind.EnableMcp -> stringResource(R.string.dashboard_action_enable)
+    DashboardActionKind.DisableMcp -> stringResource(R.string.dashboard_action_disable)
+    DashboardActionKind.TestMcp -> stringResource(R.string.dashboard_action_test)
+    DashboardActionKind.RemoveMcp -> stringResource(R.string.dashboard_action_remove)
+    DashboardActionKind.ViewProfileSoul -> stringResource(R.string.dashboard_action_soul)
+    DashboardActionKind.EditProfileSoul -> stringResource(R.string.dashboard_action_edit_soul)
+    DashboardActionKind.ActivateProfile -> stringResource(R.string.dashboard_action_use)
+    DashboardActionKind.EditProfileDescription -> stringResource(R.string.dashboard_action_describe)
+    DashboardActionKind.SetProfileModel -> stringResource(R.string.dashboard_action_model)
+    DashboardActionKind.EnableSkill -> stringResource(R.string.dashboard_action_enable)
+    DashboardActionKind.DisableSkill -> stringResource(R.string.dashboard_action_disable)
+    DashboardActionKind.DeleteProfile -> stringResource(R.string.dashboard_action_delete)
+}
+
+/**
+ * Context-only variant of [dashboardActionLabel] for use inside non-composable
+ * scopes (coroutine bodies, suspend funs) — resolves via [context.getString].
+ */
+private fun dashboardActionLabel(context: android.content.Context, kind: DashboardActionKind): String =
+    when (kind) {
+        DashboardActionKind.SetEnvKey -> context.getString(R.string.dashboard_action_set)
+        DashboardActionKind.RevealEnvKey -> context.getString(R.string.dashboard_action_reveal)
+        DashboardActionKind.ClearEnvKey -> context.getString(R.string.dashboard_action_clear)
+        DashboardActionKind.InstallMcpCatalog -> context.getString(R.string.dashboard_action_install)
+        DashboardActionKind.ViewCronRuns -> context.getString(R.string.dashboard_action_runs)
+        DashboardActionKind.ResumeCron -> context.getString(R.string.dashboard_action_resume)
+        DashboardActionKind.PauseCron -> context.getString(R.string.dashboard_action_pause)
+        DashboardActionKind.TriggerCron -> context.getString(R.string.dashboard_action_run_now)
+        DashboardActionKind.DeleteCron -> context.getString(R.string.dashboard_action_delete)
+        DashboardActionKind.EnableMcp -> context.getString(R.string.dashboard_action_enable)
+        DashboardActionKind.DisableMcp -> context.getString(R.string.dashboard_action_disable)
+        DashboardActionKind.TestMcp -> context.getString(R.string.dashboard_action_test)
+        DashboardActionKind.RemoveMcp -> context.getString(R.string.dashboard_action_remove)
+        DashboardActionKind.ViewProfileSoul -> context.getString(R.string.dashboard_action_soul)
+        DashboardActionKind.EditProfileSoul -> context.getString(R.string.dashboard_action_edit_soul)
+        DashboardActionKind.ActivateProfile -> context.getString(R.string.dashboard_action_use)
+        DashboardActionKind.EditProfileDescription -> context.getString(R.string.dashboard_action_describe)
+        DashboardActionKind.SetProfileModel -> context.getString(R.string.dashboard_action_model)
+        DashboardActionKind.EnableSkill -> context.getString(R.string.dashboard_action_enable)
+        DashboardActionKind.DisableSkill -> context.getString(R.string.dashboard_action_disable)
+        DashboardActionKind.DeleteProfile -> context.getString(R.string.dashboard_action_delete)
+    }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -2092,7 +2238,7 @@ private fun DashboardSummaryCard(
                             onClick = { onAction(action) },
                             enabled = !actionInFlight,
                         ) {
-                            Text(action.label)
+                            Text(dashboardActionLabel(action))
                         }
                     }
                     if (overflowActions.isNotEmpty()) {
@@ -2102,7 +2248,7 @@ private fun DashboardSummaryCard(
                                 onClick = { menuOpen = true },
                                 enabled = !actionInFlight,
                             ) {
-                                Text("More")
+                                Text(stringResource(R.string.dashboard_more))
                             }
                             DropdownMenu(
                                 expanded = menuOpen,
@@ -2110,7 +2256,7 @@ private fun DashboardSummaryCard(
                             ) {
                                 overflowActions.forEach { action ->
                                     DropdownMenuItem(
-                                        text = { Text(action.label) },
+                                        text = { Text(dashboardActionLabel(action)) },
                                         onClick = {
                                             menuOpen = false
                                             onAction(action)
@@ -2152,11 +2298,11 @@ private fun DashboardSignInCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Dashboard sign-in required",
+                text = stringResource(R.string.dashboard_signin_required_title),
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                text = "Manage uses the Hermes dashboard session at $dashboardUrl.",
+                text = stringResource(R.string.dashboard_signin_required_body, dashboardUrl),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2166,10 +2312,7 @@ private fun DashboardSignInCard(
                 // one. Without this strip, a user who signed in at home
                 // reads the prompt above as a broken session.
                 Text(
-                    text = "You're on the $routeHint route. Dashboard " +
-                        "sign-ins are per host, so your sign-in from the " +
-                        "other route doesn't carry over — sign in once " +
-                        "here and the app keeps both sessions.",
+                    text = stringResource(R.string.dashboard_signin_route_hint, routeHint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                     modifier = Modifier
@@ -2188,7 +2331,7 @@ private fun DashboardSignInCard(
                     enabled = !actionInFlight,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Sign in with ${provider.displayName ?: provider.name}")
+                    Text(stringResource(R.string.dashboard_signin_with_provider, provider.displayName ?: provider.name))
                 }
             }
 
@@ -2197,20 +2340,20 @@ private fun DashboardSignInCard(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
                 }
                 Text(
-                    text = passwordProvider?.displayName ?: "Username & Password",
+                    text = passwordProvider?.displayName ?: stringResource(R.string.dashboard_username_password),
                     style = MaterialTheme.typography.labelLarge,
                 )
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("Username") },
+                    label = { Text(stringResource(R.string.dashboard_username)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Password") },
+                    label = { Text(stringResource(R.string.dashboard_password)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
@@ -2220,11 +2363,11 @@ private fun DashboardSignInCard(
                     enabled = !actionInFlight && username.isNotBlank() && password.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(if (actionInFlight) "Signing in..." else "Sign in")
+                    Text(if (actionInFlight) stringResource(R.string.dashboard_signing_in) else stringResource(R.string.dashboard_sign_in))
                 }
             } else if (redirectProviders.isEmpty()) {
                 Text(
-                    text = "This dashboard did not advertise a supported Android sign-in provider.",
+                    text = stringResource(R.string.dashboard_no_supported_provider),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -2256,8 +2399,11 @@ private fun DashboardOAuthSignInDialog(
     onAuthenticated: (DashboardAuthSession) -> Unit,
     onError: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var statusText by remember { mutableStateOf("Complete sign-in in the secure dashboard page.") }
+    var statusText by remember {
+        mutableStateOf(context.getString(R.string.dashboard_oauth_initial_status))
+    }
     var checking by remember { mutableStateOf(false) }
     val loginUrl = remember(dashboardUrl, provider.name) {
         DashboardApiClient.authLoginUrl(
@@ -2282,7 +2428,7 @@ private fun DashboardOAuthSignInDialog(
         if (checking || imported == 0) return
 
         checking = true
-        statusText = "Verifying dashboard session..."
+        statusText = context.getString(R.string.dashboard_oauth_verifying)
         scope.launch {
             try {
                 val session = withDashboardClient(
@@ -2301,11 +2447,11 @@ private fun DashboardOAuthSignInDialog(
                     onAuthenticated(session)
                 } else {
                     checking = false
-                    statusText = "Sign-in was not accepted yet. Finish the dashboard flow to continue."
+                    statusText = context.getString(R.string.dashboard_oauth_not_accepted)
                 }
             } catch (e: Exception) {
                 checking = false
-                val message = e.message ?: "Dashboard sign-in verification failed"
+                val message = e.message ?: context.getString(R.string.dashboard_oauth_verify_failed)
                 statusText = message
                 onError(message)
             }
@@ -2329,7 +2475,7 @@ private fun DashboardOAuthSignInDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Sign in with ${provider.displayName ?: provider.name}",
+                            text = stringResource(R.string.dashboard_signin_with_provider, provider.displayName ?: provider.name),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
@@ -2343,7 +2489,7 @@ private fun DashboardOAuthSignInDialog(
                     IconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = "Close sign-in",
+                            contentDescription = stringResource(R.string.dashboard_close_signin),
                         )
                     }
                 }
@@ -2419,7 +2565,7 @@ private fun DashboardDetailDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Done")
+                Text(stringResource(R.string.dashboard_done))
             }
         },
     )
@@ -2501,6 +2647,7 @@ private fun ModelPickerDialog(
     onSelect: (provider: String, model: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -2539,15 +2686,15 @@ private fun ModelPickerDialog(
         title = {
             Text(
                 when (target) {
-                    is ModelPickerTarget.Main -> "Main model"
-                    is ModelPickerTarget.Profile -> "Model for ${target.name}"
+                    is ModelPickerTarget.Main -> stringResource(R.string.dashboard_main_model_title)
+                    is ModelPickerTarget.Profile -> stringResource(R.string.dashboard_profile_model_title, target.name)
                 },
             )
         },
         text = {
             when {
                 loading -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Loading provider catalog...")
+                    Text(stringResource(R.string.dashboard_loading_provider_catalog))
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
                 error != null -> Text(
@@ -2589,9 +2736,9 @@ private fun ModelPickerDialog(
                     LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
                         providers.forEach { provider ->
                             item(key = "provider-${provider.id}") {
+                                val keyMissingSuffix = if (provider.authenticated) "" else stringResource(R.string.dashboard_key_missing_suffix)
                                 Text(
-                                    text = provider.label +
-                                        if (provider.authenticated) "" else " · key missing",
+                                    text = provider.label + keyMissingSuffix,
                                     style = MaterialTheme.typography.labelLarge,
                                     color = if (provider.authenticated) {
                                         MaterialTheme.colorScheme.primary
@@ -2644,7 +2791,7 @@ private fun ModelPickerDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.dashboard_cancel)) }
         },
     )
 }
@@ -2698,6 +2845,7 @@ private fun SkillsHubDialog(
     onMessage: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
@@ -2749,7 +2897,7 @@ private fun SkillsHubDialog(
                     searched = true
                     showingFeatured = false
                 },
-                onFailure = { err -> error = err.message ?: "Hub search failed" },
+                onFailure = { err -> error = err.message ?: context.getString(R.string.dashboard_hub_search_failed) },
             )
             searching = false
         }
@@ -2766,16 +2914,15 @@ private fun SkillsHubDialog(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("Skills hub", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.dashboard_skills_hub_title), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "Search the configured hub sources. Preview reads the " +
-                        "SKILL.md before anything is installed.",
+                    text = stringResource(R.string.dashboard_skills_hub_help),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 sourcesLine?.let { line ->
                     Text(
-                        text = "Sources: $line",
+                        text = stringResource(R.string.dashboard_skills_hub_sources, line),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace,
@@ -2791,16 +2938,16 @@ private fun SkillsHubDialog(
                         onValueChange = { query = it },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        label = { Text("Search skills") },
+                        label = { Text(stringResource(R.string.dashboard_search_skills)) },
                     )
                     Button(onClick = { runSearch() }, enabled = !searching && query.isNotBlank()) {
-                        Text("Search")
+                        Text(stringResource(R.string.dashboard_search))
                     }
                 }
                 if (searching) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text(
-                        text = "Searching hub sources (can take up to ~30s)...",
+                        text = stringResource(R.string.dashboard_hub_searching),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2814,14 +2961,14 @@ private fun SkillsHubDialog(
                 }
                 if (searched && !searching && results.isEmpty() && error == null) {
                     Text(
-                        text = "No skills matched \"${query.trim()}\".",
+                        text = stringResource(R.string.dashboard_hub_no_matches, query.trim()),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (showingFeatured && results.isNotEmpty() && !searching) {
                     Text(
-                        text = "Featured skills",
+                        text = stringResource(R.string.dashboard_hub_featured),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -2851,7 +2998,7 @@ private fun SkillsHubDialog(
                                     result.source,
                                     result.trustLevel,
                                     result.tags.take(3).joinToString(", ").takeIf { it.isNotBlank() },
-                                    "installed".takeIf { result.installedName != null },
+                                    stringResource(R.string.dashboard_hub_installed).takeIf { result.installedName != null },
                                 ).joinToString(" · "),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
@@ -2878,19 +3025,19 @@ private fun SkillsHubDialog(
                                                         ?: compactJsonLines(root)
                                                     onPreview(
                                                         DashboardDetailResult(
-                                                            title = "${result.name} · SKILL.md",
+                                                            title = context.getString(R.string.dashboard_hub_skill_md_title, result.name),
                                                             body = body.take(6_000),
                                                         ),
                                                     )
                                                 },
                                                 onFailure = { err ->
-                                                    onMessage(err.message ?: "Preview failed")
+                                                    onMessage(err.message ?: context.getString(R.string.dashboard_hub_preview_failed))
                                                 },
                                             )
                                         }
                                     },
                                     enabled = !busy,
-                                ) { Text("Preview") }
+                                ) { Text(stringResource(R.string.dashboard_hub_preview)) }
                                 if (result.installedName != null) {
                                     OutlinedButton(
                                         onClick = {
@@ -2907,17 +3054,17 @@ private fun SkillsHubDialog(
                                                 onMessage(
                                                     uninstall.fold(
                                                         onSuccess = {
-                                                            "Uninstall of ${result.installedName} started — refresh Skills shortly"
+                                                            context.getString(R.string.dashboard_hub_uninstall_started, result.installedName)
                                                         },
                                                         onFailure = { err ->
-                                                            err.message ?: "Uninstall failed to start"
+                                                            err.message ?: context.getString(R.string.dashboard_hub_uninstall_failed)
                                                         },
                                                     ),
                                                 )
                                             }
                                         },
                                         enabled = !busy,
-                                    ) { Text("Uninstall") }
+                                    ) { Text(stringResource(R.string.dashboard_hub_uninstall)) }
                                 } else {
                                     Button(
                                         onClick = {
@@ -2938,17 +3085,17 @@ private fun SkillsHubDialog(
                                                 onMessage(
                                                     install.fold(
                                                         onSuccess = {
-                                                            "Install of ${result.name} started — refresh Skills shortly"
+                                                            context.getString(R.string.dashboard_hub_install_started, result.name)
                                                         },
                                                         onFailure = { err ->
-                                                            err.message ?: "Install failed to start"
+                                                            err.message ?: context.getString(R.string.dashboard_hub_install_failed)
                                                         },
                                                     ),
                                                 )
                                             }
                                         },
                                         enabled = !busy,
-                                    ) { Text("Install") }
+                                    ) { Text(stringResource(R.string.dashboard_hub_install)) }
                                 }
                             }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -2959,7 +3106,7 @@ private fun SkillsHubDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Close") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.dashboard_close)) }
                 }
             }
         }
@@ -2990,12 +3137,12 @@ private fun SoulEditorDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "SOUL.md · ${editor.profileName}",
+                    text = stringResource(R.string.dashboard_soul_editor_title, editor.profileName),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 if (!editor.exists) {
                     Text(
-                        text = "No SOUL.md exists for this profile yet — saving creates it.",
+                        text = stringResource(R.string.dashboard_soul_editor_missing),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -3017,14 +3164,14 @@ private fun SoulEditorDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "${content.length} chars",
+                        text = stringResource(R.string.dashboard_soul_editor_chars, content.length),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") }
+                        TextButton(onClick = onDismiss, enabled = !saving) { Text(stringResource(R.string.dashboard_cancel)) }
                         Button(onClick = { onSave(content) }, enabled = !saving) {
-                            Text(if (saving) "Saving..." else "Save")
+                            Text(if (saving) stringResource(R.string.dashboard_saving) else stringResource(R.string.dashboard_save))
                         }
                     }
                 }
@@ -3037,20 +3184,20 @@ private fun summarize(
     section: DashboardManagementSection,
     root: JsonElement,
 ): List<DashboardSummaryItem> {
-    return when (section.label) {
-        "Skills" -> root.arrayItems("skills", "items")
+    return when (section) {
+        DashboardManagementSection.Skills -> root.arrayItems("skills", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Skill ${index + 1}") }
             ?: emptyList()
-        "Cron" -> root.arrayItems("jobs", "items")
+        DashboardManagementSection.Cron -> root.arrayItems("jobs", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Job ${index + 1}") }
             ?: emptyList()
-        "MCP" -> root.arrayItems("servers", "items")
+        DashboardManagementSection.Mcp -> root.arrayItems("servers", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Server ${index + 1}") }
             ?: emptyList()
-        "Catalog" -> root.arrayItems("entries", "catalog", "items")
+        DashboardManagementSection.Catalog -> root.arrayItems("entries", "catalog", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Catalog ${index + 1}") }
             ?: emptyList()
-        "Profiles" -> {
+        DashboardManagementSection.Profiles -> {
             root.arrayItems("profiles", "items")
                 ?.mapIndexed { index, item -> summarizeObjectItem(item, "Profile ${index + 1}") }
                 ?: ((root as? JsonObject)?.get("profiles") as? JsonObject)
@@ -3061,10 +3208,9 @@ private fun summarize(
                     ?.map { (name, value) -> summarizeObjectItem(value, name) }
                 ?: listOf(summarizeObjectItem(root, "Profile"))
         }
-        "Models" -> summarizeKeyValueOrList(root, "Model")
-        "Keys" -> summarizeEnvVars(root)
-        "Config" -> summarizeKeyValueOrList(root, "Config")
-        else -> emptyList()
+        DashboardManagementSection.Models -> summarizeKeyValueOrList(root, "Model")
+        DashboardManagementSection.Keys -> summarizeEnvVars(root)
+        DashboardManagementSection.Config -> summarizeKeyValueOrList(root, "Config")
     }
 }
 
@@ -3438,7 +3584,11 @@ private val DashboardActionKind.isDetailAction: Boolean
         this == DashboardActionKind.ViewProfileSoul ||
         this == DashboardActionKind.RevealEnvKey
 
-private fun detailBodyFor(kind: DashboardActionKind, root: JsonObject): String {
+private fun detailBodyFor(
+    context: android.content.Context,
+    kind: DashboardActionKind,
+    root: JsonObject,
+): String {
     return when (kind) {
         DashboardActionKind.RevealEnvKey -> {
             val key = root.stringField("key").orEmpty()
@@ -3453,14 +3603,14 @@ private fun detailBodyFor(kind: DashboardActionKind, root: JsonObject): String {
             val content = root.stringField("content").orEmpty()
             when {
                 content.isNotBlank() -> content.take(6_000)
-                root.booleanField("exists") == false -> "No SOUL.md exists for this profile yet."
+                root.booleanField("exists") == false -> context.getString(R.string.dashboard_soul_not_exists)
                 else -> compactJsonLines(root)
             }
         }
         DashboardActionKind.ViewCronRuns -> {
             val runs = root.arrayField("runs", "items", "sessions")
             if (runs == null || runs.isEmpty()) {
-                "No recent runs returned."
+                context.getString(R.string.dashboard_no_recent_runs)
             } else {
                 runs.take(12).mapIndexed { index, item ->
                     "${index + 1}. ${item.rowDisplay()}"

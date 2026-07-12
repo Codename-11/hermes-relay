@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.Attachment
@@ -341,7 +342,7 @@ class ChatViewModel : ViewModel() {
     val errorEvents: SharedFlow<HumanError> = _errorEvents.asSharedFlow()
 
     private fun emitError(t: Throwable?, context: String?) {
-        val human = classifyError(t, context = context)
+        val human = classifyError(t, context = context, ctx = appContext)
         // Cold-start / reconnect bootstrap (session-list load, session create)
         // runs without the user asking and on every reconnect. A "can't reach
         // the server" failure there is non-actionable noise — the themed
@@ -3004,18 +3005,18 @@ class ChatViewModel : ViewModel() {
         val card = when (ask.kind) {
             GatewayAsk.Kind.APPROVAL -> HermesCard(
                 type = HermesCard.BuiltInTypes.ASK_APPROVAL,
-                title = "Approval requested",
+                title = (appContext?.getString(R.string.chat_approval_title) ?: "Approval requested"),
                 accent = HermesCard.Accents.WARNING,
                 fields = listOf(HermesCardField("Command", ask.text)),
                 actions = listOf(
                     HermesCardAction(
-                        label = "Approve",
+                        label = appContext?.getString(R.string.chat_approval_approve) ?: "Approve",
                         value = "approve",
                         style = HermesCardAction.Styles.PRIMARY,
                         mode = HermesCardAction.Modes.SUBMIT_ASK,
                     ),
                     HermesCardAction(
-                        label = "Deny",
+                        label = appContext?.getString(R.string.chat_approval_deny) ?: "Deny",
                         value = "deny",
                         style = HermesCardAction.Styles.DANGER,
                         mode = HermesCardAction.Modes.SUBMIT_ASK,
@@ -3026,7 +3027,7 @@ class ChatViewModel : ViewModel() {
 
             GatewayAsk.Kind.CLARIFY -> HermesCard(
                 type = HermesCard.BuiltInTypes.ASK_CLARIFY,
-                title = "Hermes needs clarification",
+                title = (appContext?.getString(R.string.chat_approval_clarify_title) ?: "Hermes needs clarification"),
                 body = ask.text,
                 accent = HermesCard.Accents.INFO,
                 id = cardKey,
@@ -3044,7 +3045,7 @@ class ChatViewModel : ViewModel() {
 
             GatewayAsk.Kind.SUDO -> HermesCard(
                 type = HermesCard.BuiltInTypes.ASK_SUDO,
-                title = "Elevated permission requested",
+                title = (appContext?.getString(R.string.chat_approval_sudo_title) ?: "Elevated permission requested"),
                 body = ask.text.takeIf { it != "Elevated permissions requested" },
                 accent = HermesCard.Accents.DANGER,
                 id = cardKey,
@@ -3058,7 +3059,7 @@ class ChatViewModel : ViewModel() {
                 // button (same wire shape as SECRET's Skip).
                 actions = listOf(
                     HermesCardAction(
-                        label = "Deny",
+                        label = appContext?.getString(R.string.chat_approval_deny) ?: "Deny",
                         value = "",
                         style = HermesCardAction.Styles.DANGER,
                         mode = HermesCardAction.Modes.SUBMIT_ASK,
@@ -3068,7 +3069,7 @@ class ChatViewModel : ViewModel() {
 
             GatewayAsk.Kind.SECRET -> HermesCard(
                 type = HermesCard.BuiltInTypes.ASK_SECRET,
-                title = "Secret requested",
+                title = (appContext?.getString(R.string.chat_approval_secret_title) ?: "Secret requested"),
                 subtitle = ask.envVar?.let { "Stored as $it" },
                 body = ask.text,
                 accent = HermesCard.Accents.WARNING,
@@ -3082,7 +3083,7 @@ class ChatViewModel : ViewModel() {
                 // so the wire's skip path has a button.
                 actions = listOf(
                     HermesCardAction(
-                        label = "Skip",
+                        label = appContext?.getString(R.string.chat_approval_skip) ?: "Skip",
                         value = "",
                         style = HermesCardAction.Styles.SECONDARY,
                         mode = HermesCardAction.Modes.SUBMIT_ASK,
@@ -4050,11 +4051,11 @@ class ChatViewModel : ViewModel() {
         }
         cancelAnswerRecovery(settleUi = false)
         _recoveringAnswer.value = true
-        handler.setTurnStatus("Reconnecting to your answer…")
+        handler.setTurnStatus(appContext?.getString(R.string.chat_approval_reconnecting) ?: "Reconnecting to your answer…")
         DiagnosticsLog.record(
             category = DiagnosticCategory.Api,
             severity = DiagnosticSeverity.Warning,
-            title = "Chat stream dropped — recovering the answer in the background",
+            title = (appContext?.getString(R.string.chat_approval_stream_dropped) ?: "Chat stream dropped — recovering the answer in the background"),
             detail = cause,
         )
         // Positional invariant for the anchor (issue #166): how many user-role
@@ -6129,7 +6130,7 @@ class ChatViewModel : ViewModel() {
                     // Classifier produces a specific label (disk full, bad
                     // URI, permission, …) for both the in-card text and the
                     // global snackbar — same event, two surfaces.
-                    val human = classifyError(e, context = "media_fetch")
+                    val human = classifyError(e, context = "media_fetch", ctx = appContext)
                     updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
@@ -6140,7 +6141,7 @@ class ChatViewModel : ViewModel() {
                 }
             },
             onFailure = { err ->
-                val human = classifyError(err, context = "media_fetch")
+                val human = classifyError(err, context = "media_fetch", ctx = appContext)
                 updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                     att.copy(
                         state = AttachmentState.FAILED,

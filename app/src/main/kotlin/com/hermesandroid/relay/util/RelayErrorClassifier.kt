@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.util
 
+import android.content.Context
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import java.io.IOException
@@ -27,7 +29,19 @@ data class HumanError(
     val actionLabel: String? = null,
 )
 
-private fun titlePrefix(context: String?): String = when (context) {
+private fun titlePrefix(context: String?, ctx: Context?): String = ctx?.let { c ->
+    when (context) {
+        "transcribe" -> c.getString(R.string.error_classify_transcribe)
+        "synthesize" -> c.getString(R.string.error_classify_synthesize)
+        "voice_config" -> c.getString(R.string.error_classify_voice_config)
+        "record" -> c.getString(R.string.error_classify_record)
+        "pair" -> c.getString(R.string.error_classify_pair)
+        "save_and_test" -> c.getString(R.string.error_classify_save_and_test)
+        "media_fetch" -> c.getString(R.string.error_classify_media_fetch)
+        "send_message" -> c.getString(R.string.error_classify_send_message)
+        else -> c.getString(R.string.error_classify_generic)
+    }
+} ?: when (context) {
     "transcribe" -> "Voice transcription failed"
     "synthesize" -> "Voice playback failed"
     "voice_config" -> "Voice config unavailable"
@@ -39,8 +53,20 @@ private fun titlePrefix(context: String?): String = when (context) {
     else -> "Something went wrong"
 }
 
-private fun nullFallback(context: String?): HumanError {
-    val base = when (context) {
+private fun nullFallback(context: String?, ctx: Context?): HumanError {
+    val base = ctx?.let { c ->
+        when (context) {
+            "transcribe" -> c.getString(R.string.error_classify_transcribe) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            "synthesize" -> c.getString(R.string.error_classify_synthesize) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            "voice_config" -> c.getString(R.string.error_classify_voice_config) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            "record" -> c.getString(R.string.error_classify_record) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            "pair" -> c.getString(R.string.error_classify_pair) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            "save_and_test" -> c.getString(R.string.error_classify_save_and_test) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            "media_fetch" -> c.getString(R.string.error_classify_media_fetch) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            "send_message" -> c.getString(R.string.error_classify_send_message) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+            else -> c.getString(R.string.error_classify_generic) + " — " + c.getString(R.string.error_classify_generic).lowercase()
+        }
+    } ?: when (context) {
         "transcribe" -> "Voice transcription failed — no details available"
         "synthesize" -> "Voice playback failed — no details available"
         "voice_config" -> "Voice config unavailable — no details available"
@@ -51,16 +77,16 @@ private fun nullFallback(context: String?): HumanError {
         "send_message" -> "Couldn't send message — no details available"
         else -> "Something went wrong — no details available"
     }
-    return HumanError(title = titlePrefix(context), body = base, retryable = false)
+    return HumanError(title = titlePrefix(context, ctx), body = base, retryable = false)
 }
 
-private fun classifyIoMessage(msg: String, context: String?): HumanError? {
+private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): HumanError? {
     // Ordered most-specific-first; callers have already handled the typed
     // SSL / timeout / connect exceptions so this only runs on generic IOs.
     return when {
         "hermes broker auth failed" in msg ||
             "relay-side hermes credential" in msg -> HumanError(
-            title = "Relay Hermes auth failed",
+            title = ctx?.getString(R.string.error_classify_relay_auth) ?: "Relay Hermes auth failed",
             body = "The relay could not authenticate to Hermes. Update the server-side Hermes credential and restart the relay.",
             retryable = false,
         )
@@ -69,10 +95,10 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
             "realtime rejected the relay auth" in msg ||
             "realtime oauth refresh failed" in msg ||
             "realtime provider credentials" in msg -> HumanError(
-            title = "Realtime provider auth unavailable",
+            title = ctx?.getString(R.string.error_classify_realtime_auth) ?: "Realtime provider auth unavailable",
             body = "The realtime voice provider is missing or rejected server-side auth. Refresh provider auth on the relay or choose another provider.",
             retryable = false,
-            actionLabel = "Voice settings",
+            actionLabel = ctx?.getString(R.string.error_classify_voice_settings) ?: "Voice settings",
         )
         (
             "api key" in msg ||
@@ -80,19 +106,19 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
                 "api auth" in msg ||
                 (context == "send_message" && ("401" in msg || "unauthorized" in msg))
             ) -> HumanError(
-            title = "API key rejected",
+            title = ctx?.getString(R.string.error_classify_api_key) ?: "API key rejected",
             body = "The Hermes API rejected the saved API key - update it in Settings",
             retryable = false,
-            actionLabel = "Settings",
+            actionLabel = ctx?.getString(R.string.error_classify_settings) ?: "Settings",
         )
         "401" in msg || "unauthorized" in msg -> HumanError(
-            title = "Session expired",
+            title = ctx?.getString(R.string.error_classify_session_expired) ?: "Session expired",
             body = "Your session is no longer valid — re-pair this device",
             retryable = false,
-            actionLabel = "Re-pair",
+            actionLabel = ctx?.getString(R.string.error_classify_repair) ?: "Re-pair",
         )
         "403" in msg || "forbidden" in msg -> HumanError(
-            title = "Not allowed",
+            title = ctx?.getString(R.string.error_classify_not_allowed) ?: "Not allowed",
             body = "The server refused this action",
             retryable = false,
         )
@@ -102,34 +128,34 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
         // which carries no "field", so requiring both avoids mislabeling real
         // input errors. Tell the user to update the relay, not to retry.
         "400" in msg && "unsupported" in msg && "field" in msg -> HumanError(
-            title = "Relay update needed",
+            title = ctx?.getString(R.string.error_classify_relay_update) ?: "Relay update needed",
             body = "This feature needs a newer Hermes Relay plugin on your " +
                 "server. Update the relay, then try again.",
             retryable = false,
         )
         "404" in msg -> HumanError(
-            title = "Endpoint not found",
+            title = ctx?.getString(R.string.error_classify_endpoint) ?: "Endpoint not found",
             body = if (context == "voice_config")
                 "The relay doesn't have voice endpoints — it may be an older version"
             else "The relay doesn't have this endpoint — it may be an older version",
             retryable = false,
         )
         "413" in msg -> HumanError(
-            title = "Too large",
+            title = ctx?.getString(R.string.error_classify_too_large) ?: "Too large",
             body = "The request exceeded the server's size limit",
             retryable = false,
         )
         "503" in msg -> HumanError(
-            title = "Service unavailable",
+            title = ctx?.getString(R.string.error_classify_service_unavailable) ?: "Service unavailable",
             body = "The underlying provider is offline — try again in a moment",
             retryable = true,
-            actionLabel = "Retry",
+            actionLabel = ctx?.getString(R.string.error_classify_retry) ?: "Retry",
         )
         "500" in msg || "internal" in msg -> HumanError(
-            title = "Server error",
+            title = ctx?.getString(R.string.error_classify_server_error) ?: "Server error",
             body = "The relay hit an error — check its logs",
             retryable = true,
-            actionLabel = "Retry",
+            actionLabel = ctx?.getString(R.string.error_classify_retry) ?: "Retry",
         )
         else -> null
     }
@@ -179,8 +205,8 @@ fun isConnectivityError(t: Throwable?): Boolean = when (t) {
     else -> false
 }
 
-fun classifyError(t: Throwable?, context: String? = null): HumanError {
-    val human = classifyErrorInternal(t, context)
+fun classifyError(t: Throwable?, context: String? = null, ctx: Context? = null): HumanError {
+    val human = classifyErrorInternal(t, context, ctx)
     if (t != null) {
         // Record after classification so the clean title and the raw trace both
         // reach the log. Defensive: never let logging turn a handled error fatal.
@@ -196,8 +222,8 @@ fun classifyError(t: Throwable?, context: String? = null): HumanError {
     return human
 }
 
-private fun classifyErrorInternal(t: Throwable?, context: String?): HumanError {
-    if (t == null) return nullFallback(context)
+private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?): HumanError {
+    if (t == null) return nullFallback(context, ctx)
 
     val msg = t.message.orEmpty().lowercase()
 
@@ -205,43 +231,44 @@ private fun classifyErrorInternal(t: Throwable?, context: String?): HumanError {
     // would otherwise swallow SSL/timeout/connect errors whose messages
     // happen to contain HTTP-ish substrings. Only fall through to the
     // message scan once we know it's a plain IOException.
+    val retryAction = ctx?.getString(R.string.error_classify_retry) ?: "Retry"
     return when (t) {
         // Bodies say "server", not "relay" — these exceptions also surface
         // from the standard API/dashboard routes, where relay wording would
         // send users debugging the wrong box.
         is UnknownHostException -> HumanError(
-            title = "Can't reach server",
+            title = ctx?.getString(R.string.error_classify_cant_reach) ?: "Can't reach server",
             body = "Check your network and the server URL in Settings",
             retryable = true,
-            actionLabel = "Retry",
+            actionLabel = retryAction,
         )
         is ConnectException -> HumanError(
-            title = "Connection refused",
+            title = ctx?.getString(R.string.error_classify_conn_refused) ?: "Connection refused",
             body = "The server isn't accepting connections — make sure it's running",
             retryable = true,
-            actionLabel = "Retry",
+            actionLabel = retryAction,
         )
         is SocketTimeoutException -> HumanError(
-            title = "Network timeout",
+            title = ctx?.getString(R.string.error_classify_timeout) ?: "Network timeout",
             body = "The server took too long to respond",
             retryable = true,
-            actionLabel = "Retry",
+            actionLabel = retryAction,
         )
         is SSLPeerUnverifiedException, is SSLException -> HumanError(
-            title = "Certificate mismatch",
+            title = ctx?.getString(R.string.error_classify_cert_mismatch) ?: "Certificate mismatch",
             body = "The server certificate changed since you paired — re-pair to trust it",
             retryable = false,
-            actionLabel = "Re-pair",
+            actionLabel = ctx?.getString(R.string.error_classify_repair) ?: "Re-pair",
         )
         is SecurityException -> HumanError(
-            title = "Permission needed",
+            title = ctx?.getString(R.string.error_classify_perm_needed) ?: "Permission needed",
             body = t.message?.takeIf { it.isNotBlank() }
                 ?: "This action needs a permission Android hasn't granted",
             retryable = false,
-            actionLabel = "Open Settings",
+            actionLabel = ctx?.getString(R.string.error_classify_open_settings) ?: "Open Settings",
         )
         is IllegalStateException -> HumanError(
-            title = titlePrefix(context),
+            title = titlePrefix(context, ctx),
             // Voice routing throws IllegalStateException with actionable copy
             // ("needs dashboard sign-in — open Manage"); preserve it instead
             // of rewriting every not-ready state into relay advice.
@@ -252,24 +279,24 @@ private fun classifyErrorInternal(t: Throwable?, context: String?): HumanError {
         is IOException -> {
             if ("timeout" in msg) {
                 HumanError(
-                    title = "Network timeout",
+                    title = ctx?.getString(R.string.error_classify_timeout) ?: "Network timeout",
                     body = "The server took too long to respond",
                     retryable = true,
-                    actionLabel = "Retry",
+                    actionLabel = retryAction,
                 )
             } else {
-                classifyIoMessage(msg, context) ?: HumanError(
-                    title = "Network error",
+                classifyIoMessage(msg, context, ctx) ?: HumanError(
+                    title = ctx?.getString(R.string.error_classify_network_error) ?: "Network error",
                     body = t.message?.takeIf { it.isNotBlank() }
                         ?: "Couldn't complete the request",
                     retryable = true,
-                    actionLabel = "Retry",
+                    actionLabel = retryAction,
                 )
             }
         }
         else -> HumanError(
-            title = titlePrefix(context),
-            body = t.message ?: "Unknown error",
+            title = titlePrefix(context, ctx),
+            body = t.message ?: (ctx?.getString(R.string.error_classify_unknown) ?: "Unknown error"),
             retryable = false,
         )
     }

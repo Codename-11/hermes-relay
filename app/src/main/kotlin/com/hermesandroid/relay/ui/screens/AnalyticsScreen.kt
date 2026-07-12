@@ -20,7 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.hermesandroid.relay.R
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.components.StatsForNerds
 import com.hermesandroid.relay.ui.components.TimelineView
@@ -50,12 +52,12 @@ fun AnalyticsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Analytics") },
+                title = { Text(stringResource(R.string.analytics_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.analytics_back),
                         )
                     }
                 },
@@ -78,13 +80,13 @@ fun AnalyticsScreen(
             // and each card's own header below).
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    text = "Stats for Nerds",
+                    text = stringResource(R.string.analytics_section_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    text = "Local, on-device performance and usage metrics.",
+                    text = stringResource(R.string.analytics_section_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

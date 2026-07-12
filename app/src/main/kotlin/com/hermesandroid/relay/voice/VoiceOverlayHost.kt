@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,6 +76,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
@@ -324,7 +326,7 @@ private fun VoiceFloatingOverlayPill(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "Voice Overlay",
+                            text = stringResource(R.string.voice_overlay_title),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.SemiBold,
@@ -351,7 +353,7 @@ private fun VoiceFloatingOverlayPill(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Exit voice mode",
+                        contentDescription = stringResource(R.string.voice_overlay_exit_a11y),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
@@ -370,25 +372,25 @@ private fun VoiceFloatingOverlayPill(
                     onClick = { minimized = true },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Minimize")
+                    Text(stringResource(R.string.voice_overlay_minimize))
                 }
                 TextButton(
                     onClick = session.onReturnToHermes,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Hermes")
+                    Text(stringResource(R.string.voice_overlay_hermes))
                 }
                 TextButton(
                     onClick = session.onDismissOverlay,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Hide")
+                    Text(stringResource(R.string.voice_overlay_hide))
                 }
                 TextButton(
                     onClick = session.onExit,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Exit")
+                    Text(stringResource(R.string.voice_overlay_exit))
                 }
             }
         }
@@ -410,12 +412,12 @@ private fun VoiceFloatingOverlayBubble(
     val isHot = uiState.state == VoiceState.Listening || uiState.state == VoiceState.Speaking
     val stateLabel = overlayBubbleStateLabel(uiState.state)
     val tapAction = when (uiState.state) {
-        VoiceState.Idle, VoiceState.Error -> "start listening"
-        VoiceState.Listening -> "stop listening"
+        VoiceState.Idle, VoiceState.Error -> stringResource(R.string.voice_overlay_tap_action_idle)
+        VoiceState.Listening -> stringResource(R.string.voice_overlay_tap_action_listening)
         VoiceState.Speaking ->
-            if (uiState.interactionMode == InteractionMode.Continuous) "pause auto mode" else "interrupt"
+            if (uiState.interactionMode == InteractionMode.Continuous) stringResource(R.string.voice_overlay_tap_action_pause) else stringResource(R.string.voice_overlay_tap_action_interrupt)
         VoiceState.Transcribing, VoiceState.Thinking ->
-            if (uiState.interactionMode == InteractionMode.Continuous) "pause auto mode" else "interrupt"
+            if (uiState.interactionMode == InteractionMode.Continuous) stringResource(R.string.voice_overlay_tap_action_pause) else stringResource(R.string.voice_overlay_tap_action_interrupt)
     }
     val containerColor = when (uiState.state) {
         VoiceState.Listening, VoiceState.Speaking -> Color(0xFFE53935)
@@ -475,7 +477,7 @@ private fun VoiceFloatingOverlayBubble(
             ) {
                 Icon(
                     imageVector = icon,
-                    contentDescription = "Voice overlay $stateText. Tap to $tapAction, double tap to expand.",
+                    contentDescription = stringResource(R.string.voice_overlay_a11y, stateText, tapAction),
                     tint = Color.White,
                     modifier = Modifier.size(23.dp),
                 )
@@ -600,13 +602,14 @@ private fun rememberOverlayWaveformPhase(amplitude: Float): Float {
     return phase
 }
 
+@Composable
 private fun overlayBubbleStateLabel(state: VoiceState): String = when (state) {
-    VoiceState.Idle -> "Ready"
-    VoiceState.Listening -> "Listen"
-    VoiceState.Transcribing -> "STT"
-    VoiceState.Thinking -> "Think"
-    VoiceState.Speaking -> "Speak"
-    VoiceState.Error -> "Error"
+    VoiceState.Idle -> stringResource(R.string.voice_overlay_bubble_label_ready)
+    VoiceState.Listening -> stringResource(R.string.voice_overlay_bubble_label_listen)
+    VoiceState.Transcribing -> stringResource(R.string.voice_overlay_bubble_label_stt)
+    VoiceState.Thinking -> stringResource(R.string.voice_overlay_bubble_label_think)
+    VoiceState.Speaking -> stringResource(R.string.voice_overlay_bubble_label_speak)
+    VoiceState.Error -> stringResource(R.string.voice_overlay_bubble_label_error)
 }
 
 @Composable
@@ -652,7 +655,7 @@ private fun MicControlButton(
                         Icons.Filled.Stop
                     else -> Icons.Filled.Mic
                 },
-                contentDescription = "Voice overlay mic",
+                contentDescription = stringResource(R.string.voice_overlay_mic_a11y),
                 tint = Color.White,
                 modifier = Modifier.size(22.dp),
             )

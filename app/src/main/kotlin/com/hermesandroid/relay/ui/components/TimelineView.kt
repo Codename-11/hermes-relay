@@ -38,10 +38,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.diagnostics.CheckStatus
 import com.hermesandroid.relay.diagnostics.StatusCheck
@@ -95,7 +97,7 @@ fun TimelineView(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Timeline",
+                    text = stringResource(R.string.timeline_title),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -110,7 +112,7 @@ fun TimelineView(
 
             if (buckets.isEmpty()) {
                 Text(
-                    text = "No activity yet",
+                    text = stringResource(R.string.timeline_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -219,7 +221,7 @@ fun StatusCheckTimeline(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Status checks",
+                    text = stringResource(R.string.timeline_status_checks),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -238,7 +240,7 @@ fun StatusCheckTimeline(
 
             if (checks.isEmpty()) {
                 Text(
-                    text = "No checks yet — connect to a server to populate diagnostics.",
+                    text = stringResource(R.string.timeline_checks_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -361,7 +363,7 @@ private fun StatusCheckRow(
 
             if (hasDetail) {
                 Text(
-                    text = "Tap for log detail",
+                    text = stringResource(R.string.timeline_tap_detail),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )

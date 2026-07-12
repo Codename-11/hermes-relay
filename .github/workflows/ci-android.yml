@@ -25,6 +25,7 @@ on:
       - "gradle.properties"
       - "gradlew"
       - "gradlew.bat"
+      - "scripts/check-android-locales.py"
       - ".github/workflows/ci-android.yml"
   pull_request:
     branches: [main, dev]
@@ -36,6 +37,7 @@ on:
       - "gradle.properties"
       - "gradlew"
       - "gradlew.bat"
+      - "scripts/check-android-locales.py"
       - ".github/workflows/ci-android.yml"
 
 # Cancel in-progress runs for the same branch/PR, but let main and dev finish
@@ -65,6 +67,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+      - name: Validate translation catalogs
+        run: python3 scripts/check-android-locales.py
 
       - name: Run Android lint
         run: ./gradlew lint --console=plain

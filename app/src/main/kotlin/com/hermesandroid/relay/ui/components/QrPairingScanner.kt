@@ -66,6 +66,8 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -534,6 +536,9 @@ fun QrPairingScanner(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    // Pre-resolve strings used inside non-Composable contexts (CameraX
+    // listeners, exception handlers, etc. don't have a Composable scope).
+    val cameraErrorMsg = stringResource(R.string.qr_scanner_camera_error)
     // AtomicBoolean for thread-safe detection flag (accessed from camera executor thread)
     val hasDetected = remember { AtomicBoolean(false) }
     val cameraProviderRef = remember { mutableStateOf<ProcessCameraProvider?>(null) }
@@ -618,12 +623,12 @@ fun QrPairingScanner(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "Close scanner",
+                        contentDescription = stringResource(R.string.qr_scanner_cd_close),
                         tint = MaterialTheme.colorScheme.onSurface
                     )
                 }
                 Text(
-                    text = "Scan Hermes QR",
+                    text = stringResource(R.string.qr_scanner_title),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.align(Alignment.Center)
@@ -670,7 +675,7 @@ fun QrPairingScanner(
                                 cameraProviderFuture.get()
                             } catch (t: Throwable) {
                                 Log.e("QrPairingScanner", "Camera provider init failed", t)
-                                cameraError = "Couldn't start the camera on this device."
+                                cameraError = cameraErrorMsg
                                 return@addListener
                             }
                             cameraProviderRef.value = cameraProvider
@@ -758,7 +763,7 @@ fun QrPairingScanner(
                                 )
                             } catch (e: Exception) {
                                 Log.e("QrPairingScanner", "Camera bind failed", e)
-                                cameraError = "Couldn't start the camera on this device."
+                                cameraError = cameraErrorMsg
                             }
                         }, ContextCompat.getMainExecutor(ctx))
 
@@ -793,13 +798,13 @@ fun QrPairingScanner(
                     modifier = Modifier.size(32.dp)
                 )
                 Text(
-                    text = "Scan a Hermes setup QR",
+                    text = stringResource(R.string.qr_scanner_instruction),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "Ask Hermes: \"Generate a QR code with my API URL and API key.\" Relay pairing QRs require the Relay plugin.",
+                    text = stringResource(R.string.qr_scanner_subtext),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -843,14 +848,14 @@ private fun CameraUnavailableCard(
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "You can pair without the camera.",
+            text = stringResource(R.string.qr_scanner_fallback_message),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(16.dp))
         Button(onClick = onPairManually) {
-            Text("Pair manually")
+            Text(stringResource(R.string.qr_scanner_pair_manual))
         }
     }
 }

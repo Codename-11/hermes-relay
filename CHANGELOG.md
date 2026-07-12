@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-07-11
+
+### Added
+
+- **Android now supports Simplified Chinese.** Chat, Manage, Voice, connection setup, settings, diagnostics, notifications, accessibility labels, and both product flavors follow the device language, with Android per-app language discovery on supported versions.
+- **Localization is contributor-ready.** CI enforces resource, plural, and format-argument parity; translated README and VitePress entry points establish a repeatable path for adding languages without duplicating fast-moving technical references.
+
+### Fixed
+
+- **Connection scan and queued-message counts use proper plurals.** Count formatting no longer depends on English-only suffix arguments and cannot fail when a locale needs a different plural structure.
+
 ## [1.4.1] - 2026-07-11
 
 ### Added
@@ -1523,7 +1534,9 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.0...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.2...HEAD
+[1.4.2]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.1...android-v1.4.2
+[1.4.1]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.0...android-v1.4.1
 [1.4.0]: https://github.com/Codename-11/hermes-relay/compare/android-v1.3.0...android-v1.4.0
 [1.0.0]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...android-v1.0.0
 [0.8.1]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...android-v0.8.1

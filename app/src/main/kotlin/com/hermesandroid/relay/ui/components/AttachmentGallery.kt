@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImagePainter
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentRenderMode
 import com.hermesandroid.relay.data.AttachmentState
@@ -308,7 +310,7 @@ private fun GalleryImageFailure(description: String, modifier: Modifier) {
     ) {
         Icon(
             imageVector = Icons.Filled.BrokenImage,
-            contentDescription = "Couldn't load $description",
+            contentDescription = stringResource(R.string.attachment_load_failed_a11y, description),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(28.dp),
         )

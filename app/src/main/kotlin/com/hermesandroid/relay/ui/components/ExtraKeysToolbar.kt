@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.viewmodel.TerminalViewModel.SpecialKey
 
 /**
@@ -88,20 +90,20 @@ fun ExtraKeysToolbar(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ToolbarKey(label = "ESC", onClick = onEsc)
-            ToolbarKey(label = "TAB", onClick = onTab)
-            ToolbarKey(label = "CTRL", active = ctrlActive, onClick = onCtrlToggle)
-            ToolbarKey(label = "ALT", active = altActive, onClick = onAltToggle)
+            ToolbarKey(label = stringResource(R.string.extra_keys_esc), onClick = onEsc)
+            ToolbarKey(label = stringResource(R.string.extra_keys_tab), onClick = onTab)
+            ToolbarKey(label = stringResource(R.string.extra_keys_ctrl), active = ctrlActive, onClick = onCtrlToggle)
+            ToolbarKey(label = stringResource(R.string.extra_keys_alt), active = altActive, onClick = onAltToggle)
 
             // Clipboard + keyboard cluster — selecting/copying/pasting and
             // raising the soft keyboard are all unreliable through long-press
             // inside an Android WebView, so these explicit keys are the
             // dependable path.
             onCopy?.let { copy ->
-                ToolbarKey(label = "COPY", onClick = copy)
+                ToolbarKey(label = stringResource(R.string.extra_keys_copy), onClick = copy)
             }
             onPaste?.let { paste ->
-                ToolbarKey(label = "PASTE", onClick = paste)
+                ToolbarKey(label = stringResource(R.string.extra_keys_paste), onClick = paste)
             }
             onToggleKeyboard?.let { toggle ->
                 ToolbarKey(label = "⌨", onClick = toggle) // show/hide soft keyboard

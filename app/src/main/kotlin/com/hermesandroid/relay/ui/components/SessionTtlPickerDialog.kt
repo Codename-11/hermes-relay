@@ -24,8 +24,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.annotation.StringRes
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.PairingPreferences
 
 /**
@@ -83,7 +86,7 @@ fun SessionTtlPickerDialog(
         },
         title = {
             Text(
-                text = "Keep this pairing for…",
+                text = stringResource(R.string.ttl_title),
                 style = MaterialTheme.typography.titleLarge
             )
         },
@@ -93,17 +96,16 @@ fun SessionTtlPickerDialog(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Your phone will reconnect automatically during " +
-                        "this window. After it expires you'll need to re-pair.",
+                    text = stringResource(R.string.ttl_body),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 // Transport hint / Tailscale helper line
                 val helperLine = when {
-                    isTailscaleDetected -> "Transport: Tailscale detected"
-                    transportHint.equals("wss", ignoreCase = true) -> "Transport: TLS (wss://)"
-                    transportHint.equals("ws", ignoreCase = true) -> "Transport: plain ws://"
+                    isTailscaleDetected -> stringResource(R.string.ttl_helper_tailscale)
+                    transportHint.equals("wss", ignoreCase = true) -> stringResource(R.string.ttl_helper_tls)
+                    transportHint.equals("ws", ignoreCase = true) -> stringResource(R.string.ttl_helper_plain)
                     else -> null
                 }
                 if (helperLine != null) {
@@ -134,7 +136,7 @@ fun SessionTtlPickerDialog(
                                 onClick = { selectedIndex = index }
                             )
                             Text(
-                                text = option.label,
+                                text = stringResource(option.labelRes),
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(start = 8.dp)
                             )
@@ -160,10 +162,7 @@ fun SessionTtlPickerDialog(
                                 .height(16.dp)
                         )
                         Text(
-                            text = "This device will stay paired until you " +
-                                "revoke it manually from Relay sessions. " +
-                                "Only choose this if you control the network " +
-                                "— LAN, Tailscale, VPN, or TLS.",
+                            text = stringResource(R.string.ttl_never_expire_warning),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -175,12 +174,12 @@ fun SessionTtlPickerDialog(
             TextButton(
                 onClick = { onConfirm(options[selectedIndex].seconds) }
             ) {
-                Text("Pair")
+                Text(stringResource(R.string.ttl_pair))
             }
         },
         dismissButton = {
             TextButton(onClick = onCancel) {
-                Text("Cancel")
+                Text(stringResource(R.string.ttl_cancel))
             }
         }
     )
@@ -190,16 +189,16 @@ fun SessionTtlPickerDialog(
  * A single entry in the TTL picker. `seconds == 0` means "never expire"
  * (wire contract alignment — matches `ttl_seconds: 0` on the QR payload).
  */
-data class TtlOption(val label: String, val seconds: Long)
+data class TtlOption(@StringRes val labelRes: Int, val seconds: Long)
 
 /** The canonical set of TTL options shown in the picker. */
 fun ttlPickerOptions(): List<TtlOption> = listOf(
-    TtlOption("1 day", 24L * 60 * 60),
-    TtlOption("7 days", 7L * 24 * 60 * 60),
-    TtlOption("30 days", 30L * 24 * 60 * 60),
-    TtlOption("90 days", 90L * 24 * 60 * 60),
-    TtlOption("1 year", 365L * 24 * 60 * 60),
-    TtlOption("Never expire", PairingPreferences.TTL_NEVER),
+    TtlOption(R.string.ttl_option_1d, 24L * 60 * 60),
+    TtlOption(R.string.ttl_option_7d, 7L * 24 * 60 * 60),
+    TtlOption(R.string.ttl_option_30d, 30L * 24 * 60 * 60),
+    TtlOption(R.string.ttl_option_90d, 90L * 24 * 60 * 60),
+    TtlOption(R.string.ttl_option_1y, 365L * 24 * 60 * 60),
+    TtlOption(R.string.ttl_option_never, PairingPreferences.TTL_NEVER),
 )
 
 /** Fallback default when no previous selection and no QR hint — 30 days. */

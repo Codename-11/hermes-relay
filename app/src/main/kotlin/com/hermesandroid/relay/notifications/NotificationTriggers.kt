@@ -235,7 +235,7 @@ object NotificationTriggerPromptNotifier {
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val tapPending = PendingIntent.getActivity(context, notificationId(entry), tapIntent, pendingFlags)
 
-        val title = "Ask Hermes about this?"
+        val title = context.getString(R.string.notification_trigger_prompt_title)
         val source = entry.title?.takeIf { it.isNotBlank() } ?: entry.packageName
         val body = entry.text?.takeIf { it.isNotBlank() }
             ?: "Rule matched: ${rule.summary()}"

@@ -96,6 +96,52 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
 
 Release-prep commits (version bump, changelog promotion) land on `dev` first, then a surface-specific release PR merges `dev` → `main` with `--no-ff`. Tags are cut from `main` after the merge: `android-vX.Y.Z`, `server-vX.Y.Z`, or `desktop-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release process.
 
+## Stale PR salvage and contributor credit
+
+A valuable pull request can become unsafe to merge when `dev` has materially
+changed around it. Maintainers may create a replacement **salvage PR** from the
+current `dev` instead of resolving a stale branch by choosing whole conflict
+sides.
+
+A salvage PR must:
+
+- Link the original PR and contributor in its title or opening summary.
+- Recover only the intended feature; unrelated fork, release, signing, and
+  generated migration changes stay out.
+- Preserve the original commit author when a substantive commit can be safely
+  cherry-picked.
+- Use a verified `Co-authored-by: Name <email>` trailer when the implementation
+  must be reconstructed or substantially rewritten.
+- Include a `Lineage` section listing source and superseded PRs, plus a concise
+  explanation of integration changes made for current `dev`.
+- Run current verification rather than relying on checks from the stale branch.
+- Leave a comment linking the replacement before the source PR is closed.
+
+The maintainer remains the committer for integration commits. The original
+contributor remains the author or co-author of the recovered work. Do not guess
+an email address: use the source commit's verified address or ask the
+contributor.
+
+## Localization contributions
+
+English resources are canonical and Android locale catalogs must retain exact
+resource and format-argument parity. Read [docs/localization.md](docs/localization.md)
+before changing user-facing strings or adding a language.
+
+Translation PRs should cover one locale or one clear catalog refresh. They must
+not include custom APK publishing, signing configuration, version bumps, or
+fork-specific branding. Run:
+
+```bash
+python scripts/check-android-locales.py
+./gradlew lint
+```
+
+Also identify a fluent reviewer or explain the device and language review used.
+Translated READMEs use separate `README.<locale>.md` files; `README.md` remains
+the canonical project description. User docs may be added incrementally under
+`user-docs/<locale>/`, with links back to canonical English reference material.
+
 ## Changelog & writing conventions
 
 This is a **public repo** — `CHANGELOG.md`, `DEVLOG.md`, the README, and everything under `docs/` ship publicly. Keep them clean:

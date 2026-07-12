@@ -55,9 +55,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.components.ChatTransportStatus
@@ -104,12 +106,12 @@ fun ChatSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Chat") },
+                title = { Text(stringResource(R.string.settings_chat)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.chat_settings_back),
                         )
                     }
                 },
@@ -155,11 +157,11 @@ fun ChatSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Smooth auto-scroll",
+                                text = stringResource(R.string.chat_settings_smooth_auto_scroll),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Follow new messages while streaming. Scroll up to pause; tap the arrow or scroll back to the bottom to resume.",
+                                text = stringResource(R.string.chat_settings_smooth_auto_scroll_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -189,11 +191,11 @@ fun ChatSettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Thinking indicator",
+                                    text = stringResource(R.string.chat_settings_thinking_indicator),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    text = "The animation shown in a reply bubble while Hermes is working.",
+                                    text = stringResource(R.string.chat_settings_thinking_indicator_desc),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -214,7 +216,7 @@ fun ChatSettingsScreen(
                             }
                         }
                         val styleOptions = listOf("dots", "matrix")
-                        val styleLabels = listOf("Dots", "Matrix")
+                        val styleLabels = listOf(stringResource(R.string.chat_settings_dots), stringResource(R.string.chat_settings_matrix))
                         val selectedStyleIndex =
                             styleOptions.indexOf(thinkingIndicatorStyle).coerceAtLeast(0)
                         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -239,7 +241,7 @@ fun ChatSettingsScreen(
                         AnimatedVisibility(visible = thinkingIndicatorStyle == "matrix") {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(
-                                    text = "Pattern",
+                                    text = stringResource(R.string.chat_settings_pattern),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -276,7 +278,7 @@ fun ChatSettingsScreen(
                                 // Accents come from the active theme, so the same
                                 // choice re-themes (e.g. Amber → bronze in Ember).
                                 Text(
-                                    text = "Color",
+                                    text = stringResource(R.string.chat_settings_color),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -330,11 +332,11 @@ fun ChatSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Close sessions on send",
+                                text = stringResource(R.string.chat_settings_close_sessions_on_send),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Return to the conversation after sending from the session drawer. Off keeps the drawer open for session triage.",
+                                text = stringResource(R.string.chat_settings_close_sessions_on_send_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -354,11 +356,11 @@ fun ChatSettingsScreen(
                     val hiddenSources by connectionViewModel.hiddenSources.collectAsState()
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "Session sources",
+                            text = stringResource(R.string.chat_settings_session_sources),
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Text(
-                            text = "Hide a gateway's sessions from the drawer (cron and webhook are hidden by default). Your chats and Threads always show.",
+                            text = stringResource(R.string.chat_settings_session_sources_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -396,11 +398,11 @@ fun ChatSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Recent prompt chips",
+                                text = stringResource(R.string.chat_settings_recent_prompt_chips),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Show your recent messages as tappable chips above the composer to send them again. Off by default.",
+                                text = stringResource(R.string.chat_settings_recent_prompt_chips_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -422,11 +424,11 @@ fun ChatSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Keep keyboard open on send",
+                                text = stringResource(R.string.chat_settings_keep_keyboard_open),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Stay in the composer after sending. Turn off to dismiss the keyboard after each sent message.",
+                                text = stringResource(R.string.chat_settings_keep_keyboard_open_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -457,11 +459,11 @@ fun ChatSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Notify when Hermes finishes",
+                                text = stringResource(R.string.chat_settings_notify_when_finishes),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Post a notification when a reply completes while the app is in the background",
+                                text = stringResource(R.string.chat_settings_notify_when_finishes_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -497,11 +499,11 @@ fun ChatSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Share phone status with agent",
+                                text = stringResource(R.string.chat_settings_share_phone_status),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Include a short system message about the app and phone on every chat turn",
+                                text = stringResource(R.string.chat_settings_share_phone_status_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -522,11 +524,11 @@ fun ChatSettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Bridge + permissions",
+                                        text = stringResource(R.string.chat_settings_bridge_permissions),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                     Text(
-                                        text = "Whether accessibility, screen capture, overlay, notifications are granted",
+                                        text = stringResource(R.string.chat_settings_bridge_permissions_desc),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -545,11 +547,11 @@ fun ChatSettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Foreground app",
+                                        text = stringResource(R.string.chat_settings_foreground_app),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                     Text(
-                                        text = "The package name of whatever app is currently visible. Off by default.",
+                                        text = stringResource(R.string.chat_settings_foreground_app_desc),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -568,11 +570,11 @@ fun ChatSettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Battery level",
+                                        text = stringResource(R.string.chat_settings_battery_level),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                     Text(
-                                        text = "Current battery percent. Off by default.",
+                                        text = stringResource(R.string.chat_settings_battery_level_desc),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -591,11 +593,11 @@ fun ChatSettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Safety rails",
+                                        text = stringResource(R.string.chat_settings_safety_rails),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                     Text(
-                                        text = "Blocklist count, destructive-verb count, and auto-disable timer",
+                                        text = stringResource(R.string.chat_settings_safety_rails_desc),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -648,12 +650,12 @@ fun ChatSettingsScreen(
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Text(
-                                        text = "Preview",
+                                        text = stringResource(R.string.chat_settings_preview),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
-                                        text = previewText ?: "(no system message will be sent)",
+                                        text = previewText ?: stringResource(R.string.chat_settings_no_system_message),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (previewText == null)
                                             MaterialTheme.colorScheme.onSurfaceVariant
@@ -700,11 +702,11 @@ fun ChatSettingsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    text = "Parse tool annotations",
+                                    text = stringResource(R.string.chat_settings_parse_tool_annotations),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    text = "Experimental",
+                                    text = stringResource(R.string.chat_settings_experimental),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onTertiary,
                                     modifier = Modifier
@@ -717,9 +719,9 @@ fun ChatSettingsScreen(
                             }
                             Text(
                                 text = if (isTextAnnotationMode) {
-                                    "Detect tool usage from text markers on endpoints without structured tool events."
+                                    stringResource(R.string.chat_settings_parse_tool_annotations_desc)
                                 } else {
-                                    "Only available for text-stream endpoints — Runs should provide structured tool events."
+                                    stringResource(R.string.chat_settings_parse_tool_annotations_note)
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -749,11 +751,11 @@ fun ChatSettingsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    text = "Show system messages",
+                                    text = stringResource(R.string.chat_settings_show_system_messages),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    text = "Debug",
+                                    text = stringResource(R.string.chat_settings_debug),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onTertiary,
                                     modifier = Modifier
@@ -765,8 +767,7 @@ fun ChatSettingsScreen(
                                 )
                             }
                             Text(
-                                text = "Show the server's hidden \"[System: …]\" markers " +
-                                    "(model / personality changes). Off matches the desktop/TUI.",
+                                text = stringResource(R.string.chat_settings_show_system_messages_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -782,29 +783,27 @@ fun ChatSettingsScreen(
                     // Streaming endpoint selector
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Streaming endpoint",
+                            text = stringResource(R.string.chat_settings_streaming_endpoint),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         val resolvedHelp = when (streamingEndpoint) {
                             "auto" -> {
-                                "Auto: picks the best path based on what your server exposes. " +
-                                        "Currently using: $resolvedStreamingEndpoint" +
+                                stringResource(R.string.chat_settings_streaming_endpoint_auto_prefix) +
+                                        resolvedStreamingEndpoint +
                                         when {
                                             resolvedStreamingEndpoint == "gateway" ->
-                                                " (live thinking via the dashboard WebSocket)"
+                                                stringResource(R.string.chat_settings_gateway_suffix)
                                             !serverCaps.sessionsChatStream && serverCaps.portable ->
-                                                " (chat via /v1/chat/completions)"
+                                                stringResource(R.string.chat_settings_chat_completions_suffix)
                                             !serverCaps.sessionsChatStream && serverCaps.runs ->
-                                                " (chat via explicitly streamed /v1/runs)"
+                                                stringResource(R.string.chat_settings_runs_suffix)
                                             else -> ""
                                         }
                             }
-                            "gateway" -> "Gateway: live thinking + rich tool events over the " +
-                                "dashboard WebSocket (/api/ws) — what the desktop app uses. " +
-                                "Requires Manage sign-in; falls back to SSE per turn when unavailable."
-                            "sessions" -> "Sessions: Hermes-native /api/sessions/{id}/chat/stream."
-                            "completions" -> "Chat: OpenAI-compatible SSE via /v1/chat/completions."
-                            "runs" -> "Runs: use only when your server streams /v1/runs directly."
+                            "gateway" -> stringResource(R.string.chat_settings_gateway_desc)
+                            "sessions" -> stringResource(R.string.chat_settings_sessions_desc)
+                            "completions" -> stringResource(R.string.chat_settings_chat_desc)
+                            "runs" -> stringResource(R.string.chat_settings_runs_desc)
                             else -> ""
                         }
                         Text(
@@ -825,7 +824,7 @@ fun ChatSettingsScreen(
                         )
 
                         val endpointOptions = listOf("auto", "gateway", "sessions", "completions", "runs")
-                        val endpointLabels = listOf("Auto", "Gateway", "Sessions", "Chat", "Runs")
+                        val endpointLabels = listOf(stringResource(R.string.chat_settings_auto), stringResource(R.string.chat_settings_gateway), stringResource(R.string.chat_settings_sessions), stringResource(R.string.settings_chat), stringResource(R.string.chat_settings_runs))
                         val selectedEndpointIndex = endpointOptions.indexOf(streamingEndpoint).coerceAtLeast(0)
 
                         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -865,12 +864,12 @@ fun ChatSettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Limits",
+                            text = stringResource(R.string.chat_settings_limits),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Icon(
                             imageVector = if (limitsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            contentDescription = if (limitsExpanded) "Collapse" else "Expand",
+                            contentDescription = if (limitsExpanded) stringResource(R.string.chat_settings_collapse) else stringResource(R.string.chat_settings_expand),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
                         )
@@ -885,7 +884,7 @@ fun ChatSettingsScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "Max attachment size",
+                                        text = stringResource(R.string.chat_settings_max_attachment_size),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                     Text(
@@ -918,7 +917,7 @@ fun ChatSettingsScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "Max message length",
+                                        text = stringResource(R.string.chat_settings_max_message_length),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                     Text(
@@ -928,7 +927,7 @@ fun ChatSettingsScreen(
                                     )
                                 }
                                 val lengthOptions = listOf(1024, 2048, 4096, 8192, 16384)
-                                val lengthLabels = listOf("1K", "2K", "4K", "8K", "16K")
+                                val lengthLabels = listOf(stringResource(R.string.chat_settings_1k), stringResource(R.string.chat_settings_2k), stringResource(R.string.chat_settings_4k), stringResource(R.string.chat_settings_8k), stringResource(R.string.chat_settings_16k))
                                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                                     lengthOptions.forEachIndexed { index, len ->
                                         SegmentedButton(
@@ -1026,7 +1025,13 @@ private fun TransportTierCell(
         ),
     ) {
         Text(
-            text = tier.ladderLabel(),
+            text = when (tier) {
+                ChatTransportTier.Gateway -> stringResource(R.string.chat_settings_gateway)
+                ChatTransportTier.Sessions -> stringResource(R.string.chat_settings_sessions)
+                ChatTransportTier.Completions -> stringResource(R.string.chat_settings_completions)
+                ChatTransportTier.Runs -> stringResource(R.string.chat_settings_runs)
+                ChatTransportTier.Offline -> stringResource(R.string.chat_settings_offline)
+            },
             style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (active) {
                 FontWeight.Bold
             } else {
@@ -1060,11 +1065,11 @@ private fun GatewaySignInCallout() {
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "Gateway needs Manage sign-in",
+                    text = stringResource(R.string.chat_settings_gateway_needs_signin),
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                 )
                 Text(
-                    text = "Sign in once from the Manage tab to unlock live thinking over /api/ws.",
+                    text = stringResource(R.string.chat_settings_gateway_needs_signin_desc),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -1083,13 +1088,4 @@ private fun tierAvailable(
         ChatTransportTier.Sessions -> serverCapabilities.healthy && serverCapabilities.sessionsChatStream
         ChatTransportTier.Gateway -> gatewayAvailability == GatewayAvailability.Ready
         ChatTransportTier.Offline -> false
-    }
-
-private fun ChatTransportTier.ladderLabel(): String =
-    when (this) {
-        ChatTransportTier.Gateway -> "Gateway"
-        ChatTransportTier.Sessions -> "Sessions"
-        ChatTransportTier.Completions -> "Completions"
-        ChatTransportTier.Runs -> "Runs"
-        ChatTransportTier.Offline -> "offline"
     }

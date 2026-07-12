@@ -49,11 +49,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ToolCall
 
 @Composable
@@ -115,10 +117,10 @@ fun ToolProgressCard(
 
     val toolIcon = toolIcon(toolCall.name)
     val statusText = when {
-        toolCall.isComplete && toolCall.success == true -> "completed"
-        toolCall.isComplete && toolCall.success == false -> "failed"
-        isPreparing -> "preparing"
-        else -> "running"
+        toolCall.isComplete && toolCall.success == true -> stringResource(R.string.tool_progress_status_completed)
+        toolCall.isComplete && toolCall.success == false -> stringResource(R.string.tool_progress_status_failed)
+        isPreparing -> stringResource(R.string.tool_preparing_a11y)
+        else -> stringResource(R.string.tool_progress_status_running)
     }
 
     // Slow alpha breathe on the tool icon while preparing — an indeterminate
@@ -137,12 +139,14 @@ fun ToolProgressCard(
         val seconds = (toolCall.completedAt - toolCall.startedAt) / 1000.0
         String.format("%.1fs", seconds)
     } else null
+    val durationDescription = duration?.let { stringResource(R.string.tool_duration_a11y, it) }.orEmpty()
+    val toolDescription = stringResource(R.string.tool_a11y, toolCall.name, statusText, durationDescription)
 
     Card(
         modifier = modifier
             .fillMaxWidth()
             .semantics {
-                contentDescription = "Tool ${toolCall.name} $statusText${duration?.let { " in $it" } ?: ""}"
+                contentDescription = toolDescription
             },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
@@ -239,7 +243,7 @@ fun ToolProgressCard(
                 Column(modifier = Modifier.padding(top = 8.dp)) {
                     toolCall.runId?.takeIf { it.isNotBlank() }?.let { runId ->
                         Text(
-                            text = "Run: $runId",
+                            text = stringResource(R.string.tool_run_id, runId),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -259,7 +263,7 @@ fun ToolProgressCard(
                     toolCall.args?.let { args ->
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Arguments:",
+                            text = stringResource(R.string.tool_arguments),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -275,7 +279,7 @@ fun ToolProgressCard(
                         val preview = compactToolDetail(error)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Error:",
+                            text = stringResource(R.string.tool_error),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -292,7 +296,7 @@ fun ToolProgressCard(
                         val preview = compactToolDetail(result)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Result:",
+                            text = stringResource(R.string.tool_result),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

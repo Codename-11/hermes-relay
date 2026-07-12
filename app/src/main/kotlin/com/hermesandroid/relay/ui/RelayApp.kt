@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.createSavedStateHandle
@@ -67,6 +68,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.CrashReportGate
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
@@ -1066,11 +1068,19 @@ fun RelayApp() {
             bridgePrimaryReturnLabel = null
         }
 
-        val bridgeReturnTitle = bridgePrimaryReturnLabel?.let { "Return to $it" }
+        val bridgeReturnLabelResId = when (bridgePrimaryReturnLabel) {
+            "Chat" -> R.string.bridge_return_chat_label
+            "Manage" -> R.string.bridge_return_manage_label
+            else -> R.string.bridge_return_default_label
+        }
+        val bridgeReturnDisplayLabel = stringResource(bridgeReturnLabelResId)
+        val bridgeReturnTitle = bridgePrimaryReturnLabel?.let {
+            stringResource(R.string.bridge_return_title_format, bridgeReturnDisplayLabel)
+        }
         val bridgeReturnSubtitle = when (bridgePrimaryReturnLabel) {
-            "Chat" -> "Back to conversation"
-            "Manage" -> "Back to management"
-            else -> "Back to previous tab"
+            "Chat" -> stringResource(R.string.bridge_return_chat_subtitle)
+            "Manage" -> stringResource(R.string.bridge_return_manage_subtitle)
+            else -> stringResource(R.string.bridge_return_default_subtitle)
         }
         val bridgeReturnAction: (() -> Unit)? = bridgePrimaryReturnRoute?.let { route ->
             {
@@ -1343,6 +1353,7 @@ fun RelayApp() {
                 connectionId = connection.id,
                 dashboardUrl = effectiveDashboardUrl,
                 cacheDir = hydrateContext.cacheDir,
+                context = hydrateContext,
             )
         }
 
@@ -1350,13 +1361,17 @@ fun RelayApp() {
         // so voice/chat/settings screens can call showHumanError from their
         // error-collector LaunchedEffects without threading state downwards.
         val snackbarHostState = remember { SnackbarHostState() }
+        val profilesUpdatedLabel = stringResource(R.string.relay_app_profiles_updated)
+        val reconnectingRelayLabel = stringResource(R.string.relay_app_reconnecting)
+        val renameFailedLabel = stringResource(R.string.relay_app_rename_failed)
+        val revokeOnlyActiveLabel = stringResource(R.string.relay_app_revoke_only_active)
 
         // Relay-pushed `profiles.updated` announcements. AuthManager
         // filters out idempotent pushes (same names + same count), so
         // this only fires when the profile list actually changed.
         LaunchedEffect(connectionViewModel) {
             connectionViewModel.profilesUpdatedEvents.collect {
-                UiMessageBus.success("Profiles updated")
+                UiMessageBus.success(profilesUpdatedLabel)
             }
         }
 
@@ -1576,7 +1591,7 @@ fun RelayApp() {
                 if (!suppressGlobalChrome && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
                     val routeLabel = activeEndpoint?.displayLabel()
                         ?: activeConnection?.label
-                        ?: "no route"
+                        ?: stringResource(R.string.status_no_route)
                     val transportStatus = resolveChatTransportStatus(
                         streamingEndpoint = streamingEndpoint,
                         gatewayAvailability = gatewayAvailability,
@@ -1587,7 +1602,8 @@ fun RelayApp() {
                     } else {
                         routeLabel
                     }
-                    val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() } ?: "default"
+                    val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() }
+                        ?: stringResource(R.string.status_profile_default)
                     val displayProfile = AgentDisplay.effectiveDisplayProfile(
                         selectedProfile = selectedProfile,
                         profiles = agentProfiles,
@@ -1595,11 +1611,12 @@ fun RelayApp() {
                     val modelLabel = AgentDisplay.displayModelName(gatewayCurrentModel)
                         ?: AgentDisplay.displayModelName(displayProfile?.model)
                         ?: AgentDisplay.displayModelName(serverModelName)
-                        ?: "model pending"
+                        ?: stringResource(R.string.status_model_pending)
                     val safetyLabel = if (BuildFlavor.isSideload && masterEnabled) {
-                        "safety: ${if (unattendedEnabled) "unattended" else "on"}"
+                        if (unattendedEnabled) stringResource(R.string.status_safety_unattended)
+                        else stringResource(R.string.status_safety_on)
                     } else {
-                        "profile: $profileLabel"
+                        stringResource(R.string.status_profile_format, profileLabel)
                     }
                     val openConnections = {
                         navController.navigate(Screen.ConnectionsSettings.route) {
@@ -1714,6 +1731,8 @@ fun RelayApp() {
                     val openAgentSheetArg = backStackEntry.arguments
                         ?.getBoolean(Screen.Chat.ARG_OPEN_AGENT_SHEET, false) == true
 
+                    val screenChatLabel = stringResource(R.string.screen_chat_label)
+
                     ChatScreen(
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
@@ -1754,7 +1773,7 @@ fun RelayApp() {
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Chat.route(openAgentSheet = false),
-                                label = "Chat",
+                                label = screenChatLabel,
                             )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
@@ -1792,10 +1811,11 @@ fun RelayApp() {
                         // so show a friendly demo empty state instead of
                         // attempting a sign-in / fetch.
                         DemoUnavailableContent(
-                            feature = "Manage",
+                            feature = stringResource(R.string.demo_feature_manage),
                             onConnect = exitDemoToConnect,
                         )
                     } else {
+                    val screenManageLabel = stringResource(R.string.screen_manage_label)
                     DashboardManagementScreen(
                         connectionViewModel = connectionViewModel,
                         onNavigateToConnections = {
@@ -1811,7 +1831,7 @@ fun RelayApp() {
                         onNavigateToBridge = {
                             rememberBridgeReturn(
                                 route = Screen.Manage.route,
-                                label = "Manage",
+                                label = screenManageLabel,
                             )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
@@ -1843,8 +1863,8 @@ fun RelayApp() {
                         )
                     } else {
                         PowerFeatureGateScreen(
-                            title = "Terminal",
-                            summary = "Open a server shell through your paired relay session.",
+                            title = stringResource(R.string.power_gate_terminal_title),
+                            summary = stringResource(R.string.power_gate_terminal_summary),
                             status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())
@@ -1856,8 +1876,8 @@ fun RelayApp() {
                 composable(Screen.Bridge.route) {
                     if (coldStartAuthState !is AuthState.Paired) {
                         PowerFeatureGateScreen(
-                            title = "Bridge",
-                            summary = "Let Hermes send approved bridge commands to this phone.",
+                            title = stringResource(R.string.power_gate_bridge_title),
+                            summary = stringResource(R.string.power_gate_bridge_summary),
                             status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())
@@ -1870,7 +1890,9 @@ fun RelayApp() {
                                 connectionViewModel = connectionViewModel,
                                 returnTitle = bridgeReturnTitle,
                                 returnSubtitle = bridgeReturnSubtitle,
-                                returnLabel = bridgePrimaryReturnLabel ?: "Back",
+                                returnLabel = bridgePrimaryReturnLabel?.let {
+                                    stringResource(bridgeReturnLabelResId)
+                                } ?: stringResource(R.string.bridge_return_default_label),
                                 onReturn = bridgeReturnAction,
                                 onNavigateToBridgeSafety = {
                                     navController.navigate(Screen.BridgeSafetySettings.route)
@@ -1904,7 +1926,9 @@ fun RelayApp() {
                                 connectionViewModel = connectionViewModel,
                                 returnTitle = bridgeReturnTitle,
                                 returnSubtitle = bridgeReturnSubtitle,
-                                returnLabel = bridgePrimaryReturnLabel ?: "Back",
+                                returnLabel = bridgePrimaryReturnLabel?.let {
+                                    stringResource(bridgeReturnLabelResId)
+                                } ?: stringResource(R.string.bridge_return_default_label),
                                 onReturn = bridgeReturnAction,
                                 onNavigateToConnections = {
                                     navController.navigate(Screen.ConnectionsSettings.route)
@@ -2034,7 +2058,7 @@ fun RelayApp() {
                         // Voice runs through the live server (transcribe /
                         // synthesize) — show the demo empty state offline.
                         DemoUnavailableContent(
-                            feature = "Voice",
+                            feature = stringResource(R.string.screen_voice_label),
                             onConnect = exitDemoToConnect,
                         )
                     } else {
@@ -2157,8 +2181,8 @@ fun RelayApp() {
                         )
                     } else {
                         PowerFeatureGateScreen(
-                            title = "Relay sessions",
-                            summary = "Review and revoke devices paired with this relay.",
+                            title = stringResource(R.string.screen_relay_sessions_label),
+                            summary = stringResource(R.string.power_gate_relay_sessions_summary),
                             status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())
@@ -2233,14 +2257,14 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         onReconnect = {
                             connectionViewModel.connectRelay()
-                            UiMessageBus.status("Reconnecting to relay…")
+                            UiMessageBus.status(reconnectingRelayLabel)
                         },
                         onRename = { id, newLabel ->
                             connectionSwitchScope.launch {
                                 connectionViewModel.renameConnection(id, newLabel)
                                     .onFailure { err ->
                                         snackbarHostState.showSnackbar(
-                                            err.message ?: "Rename failed",
+                                            err.message ?: renameFailedLabel,
                                         )
                                     }
                             }
@@ -2255,9 +2279,7 @@ fun RelayApp() {
                             connectionSwitchScope.launch {
                                 val result = connectionViewModel.revokeConnection(id)
                                 if (result.isFailure) {
-                                    snackbarHostState.showSnackbar(
-                                        "Only the active connection can be revoked right now",
-                                    )
+                                    snackbarHostState.showSnackbar(revokeOnlyActiveLabel)
                                 }
                             }
                         },
@@ -2429,8 +2451,8 @@ fun RelayApp() {
                         ?: Screen.ProfileInspector.SECTION_CONFIG
                     if (coldStartAuthState !is AuthState.Paired) {
                         PowerFeatureGateScreen(
-                            title = "Profile Inspector",
-                            summary = "Inspect relay-backed profile config, SOUL, memory files, and skills.",
+                            title = stringResource(R.string.screen_profile_inspector_label),
+                            summary = stringResource(R.string.power_gate_profile_inspector_summary),
                             status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())
@@ -2559,13 +2581,13 @@ fun RelayApp() {
                         .padding(bottom = 120.dp)
                 ) {
                     Text(
-                        text = "Hermes-Relay",
+                        text = stringResource(R.string.app_title),
                         style = MaterialTheme.typography.headlineMedium,
                         color = RelayRefresh.Paper.copy(alpha = 0.92f)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "agent interface",
+                        text = stringResource(R.string.agent_interface),
                         style = MaterialTheme.typography.bodyMedium,
                         color = RelayRefresh.Muted.copy(alpha = 0.72f),
                         letterSpacing = 2.sp

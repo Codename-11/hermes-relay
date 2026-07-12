@@ -2,6 +2,7 @@ package com.hermesandroid.relay.network.relay
 
 import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
@@ -542,7 +543,7 @@ class RelayVoiceClient(
         getRealtimeProviderOptionsAt(
             providerId = providerId,
             pathPrefix = "/voice/realtime-agent/providers",
-            label = "Realtime agent provider options",
+            label = context.getString(R.string.voice_diag_agent_provider_options),
         )
 
     suspend fun validateRealtimeAgentProvider(
@@ -557,7 +558,7 @@ class RelayVoiceClient(
             voice = voice,
             sampleRate = sampleRate,
             pathPrefix = "/voice/realtime-agent/providers",
-            label = "Realtime agent provider validation",
+            label = context.getString(R.string.voice_diag_agent_provider_validation),
         )
 
     suspend fun updateRealtimeAgentConfig(
@@ -574,7 +575,7 @@ class RelayVoiceClient(
             voice = voice,
             sampleRate = sampleRate,
             path = "/voice/realtime-agent/config",
-            label = "Realtime agent config update",
+            label = context.getString(R.string.voice_diag_agent_config_update),
         )
 
     /**
@@ -879,7 +880,7 @@ class RelayVoiceClient(
                 if (resumeAttempted.get()) {
                     onHandoff(
                         VoiceHandoffEvent(
-                            label = "Voice handoff failed",
+                            label = context.getString(R.string.voice_diag_handoff_failed),
                             detail = message,
                             active = false,
                         )
@@ -904,7 +905,7 @@ class RelayVoiceClient(
             if (resume) {
                 onHandoff(
                     VoiceHandoffEvent(
-                        label = "Trying voice route",
+                        label = context.getString(R.string.voice_diag_trying_route),
                         route = routeLabel(currentWsBase),
                         active = true,
                     )
@@ -930,7 +931,7 @@ class RelayVoiceClient(
                         )
                         onHandoff(
                             VoiceHandoffEvent(
-                                label = "Resume sent",
+                                label = context.getString(R.string.voice_diag_resume_sent),
                                 route = routeLabel(webSocket.request().url.toString()),
                                 active = true,
                             )
@@ -1016,7 +1017,7 @@ class RelayVoiceClient(
                         requestRouteProbeOnce("Voice output", t.message, routeProbeRequested)
                         onHandoff(
                             VoiceHandoffEvent(
-                                label = "Waiting for route",
+                                label = context.getString(R.string.voice_diag_waiting_for_route),
                                 detail = t.message,
                                 route = routeLabel(webSocket.request().url.toString()),
                                 active = true,
@@ -1030,7 +1031,7 @@ class RelayVoiceClient(
                             requestRouteProbeOnce("Voice output", t.message, routeProbeRequested)
                             onHandoff(
                                 VoiceHandoffEvent(
-                                    label = "Connection changed",
+                                    label = context.getString(R.string.voice_diag_connection_changed),
                                     detail = t.message,
                                     route = routeLabel(webSocket.request().url.toString()),
                                     active = true,
@@ -1058,7 +1059,7 @@ class RelayVoiceClient(
                         requestRouteProbeOnce("Voice output", "Closed $code $reason", routeProbeRequested)
                         onHandoff(
                             VoiceHandoffEvent(
-                                label = "Waiting for route",
+                                label = context.getString(R.string.voice_diag_waiting_for_route),
                                 detail = "Closed $code $reason",
                                 route = routeLabel(webSocket.request().url.toString()),
                                 active = true,
@@ -1076,7 +1077,7 @@ class RelayVoiceClient(
                             requestRouteProbeOnce("Voice output", "Closed $code $reason", routeProbeRequested)
                             onHandoff(
                                 VoiceHandoffEvent(
-                                    label = "Connection changed",
+                                    label = context.getString(R.string.voice_diag_connection_changed),
                                     detail = "Closed $code $reason",
                                     route = routeLabel(webSocket.request().url.toString()),
                                     active = true,
@@ -2365,7 +2366,7 @@ class RelayVoiceClient(
                 )
                 onHandoff(
                     VoiceHandoffEvent(
-                        label = "Route changed",
+                        label = context.getString(R.string.voice_diag_route_changed),
                         previousRoute = routeLabel(previousWsBase),
                         nextRoute = routeLabel(nextWsBase),
                         route = routeLabel(nextWsBase),
@@ -2830,7 +2831,7 @@ class RelayVoiceClient(
         when (event.type) {
             "voice.session.resumed" -> onHandoff(
                 VoiceHandoffEvent(
-                    label = "Voice reconnected",
+                    label = context.getString(R.string.voice_diag_reconnected),
                     detail = surface,
                     route = route,
                     active = false,
@@ -2840,7 +2841,7 @@ class RelayVoiceClient(
             )
             "voice.replay.started" -> onHandoff(
                 VoiceHandoffEvent(
-                    label = "Replaying missed audio",
+                    label = context.getString(R.string.voice_diag_replaying_audio),
                     route = route,
                     active = true,
                     transitionRevision = transitionRevision,
@@ -2848,7 +2849,7 @@ class RelayVoiceClient(
             )
             "voice.replay.done" -> onHandoff(
                 VoiceHandoffEvent(
-                    label = "Caught up",
+                    label = context.getString(R.string.voice_diag_caught_up),
                     detail = surface,
                     route = route,
                     active = false,
@@ -2858,7 +2859,7 @@ class RelayVoiceClient(
             )
             "voice.session.resume_failed" -> onHandoff(
                 VoiceHandoffEvent(
-                    label = "Resume rejected",
+                    label = context.getString(R.string.voice_diag_resume_rejected),
                     detail = event.message,
                     route = route,
                     active = false,

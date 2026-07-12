@@ -33,9 +33,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.viewmodel.BridgeStatus
 
 /**
@@ -61,6 +63,7 @@ fun BridgeMasterToggle(
     onToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     label: String = "Agent Control",
+    // Note: label default is intentionally a literal — it's resolved from the caller, not from stringResource
     // Called when the user taps the switch to enable but accessibility
     // hasn't been granted yet. The default no-op keeps the v0.4 behaviour
     // for callers that don't wire this up; BridgeScreen hooks a snackbar
@@ -81,17 +84,15 @@ fun BridgeMasterToggle(
     val isSideloadLabel = label.contains("Agent", ignoreCase = true)
     val subtitle = if (isSideloadLabel) {
         if (enabled) {
-            "Master switch — agent can read screen and act via the " +
-                "sub-features below."
+            stringResource(R.string.bmt_master_switch_on)
         } else {
-            "Master switch — off. All bridge features (unattended, " +
-                "commands, voice intents) are inactive."
+            stringResource(R.string.bmt_master_switch_off)
         }
     } else {
         if (enabled) {
-            "Master switch — bridge is providing screen content to chat."
+            stringResource(R.string.bmt_master_switch_on_googleplay)
         } else {
-            "Master switch — off. Bridge is not reading screen content."
+            stringResource(R.string.bmt_master_switch_off_googleplay)
         }
     }
 
@@ -125,7 +126,7 @@ fun BridgeMasterToggle(
                 IconButton(onClick = { showExplain = true }) {
                     Icon(
                         imageVector = Icons.Filled.Info,
-                        contentDescription = "What does this do?",
+                        contentDescription = stringResource(R.string.bmt_what_does_this_do),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -149,7 +150,7 @@ fun BridgeMasterToggle(
 
             if (!accessibilityGranted) {
                 Text(
-                    text = "Grant the Accessibility Service permission below to enable.",
+                    text = stringResource(R.string.bmt_grant_accessibility),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -159,22 +160,22 @@ fun BridgeMasterToggle(
                 Spacer(modifier = Modifier.height(2.dp))
                 StatusInlineRow(
                     icon = Icons.Filled.PhoneAndroid,
-                    label = "Device",
+                    label = stringResource(R.string.bmt_device),
                     value = status.deviceName
                 )
                 StatusInlineRow(
                     icon = Icons.Filled.BatteryFull,
-                    label = "Battery",
+                    label = stringResource(R.string.bmt_battery),
                     value = status.batteryPercent?.let { "$it%" } ?: "—"
                 )
                 StatusInlineRow(
                     icon = Icons.Filled.ScreenLockPortrait,
-                    label = "Screen",
-                    value = if (status.screenOn) "ON" else "OFF"
+                    label = stringResource(R.string.bmt_screen),
+                    value = if (status.screenOn) stringResource(R.string.bmt_on) else stringResource(R.string.bmt_off)
                 )
                 StatusInlineRow(
                     icon = Icons.Filled.Smartphone,
-                    label = "Current app",
+                    label = stringResource(R.string.bmt_current_app),
                     value = status.currentApp ?: "—"
                 )
             }
@@ -184,40 +185,29 @@ fun BridgeMasterToggle(
     if (showExplain) {
         AlertDialog(
             onDismissRequest = { showExplain = false },
-            title = { Text("About Agent Control") },
+            title = { Text(stringResource(R.string.bmt_about_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Agent Control lets your Hermes agent read what's on " +
-                            "your screen and interact with apps on your behalf " +
-                            "(tap, type, scroll, screenshot).",
+                        stringResource(R.string.bmt_about_body1),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        "This uses Android's Accessibility Service API, which " +
-                            "is the same permission screen readers use. You must " +
-                            "enable it in Android Settings before this switch works.",
+                        stringResource(R.string.bmt_about_body2),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        "While this is on, a 'Hermes has device control' " +
-                            "notification stays in your notification shade — " +
-                            "that's tied to this master switch, not to any " +
-                            "sub-feature (like Unattended Access), and goes " +
-                            "away the moment you turn this off.",
+                        stringResource(R.string.bmt_about_body3),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        "You can turn Agent Control off at any time from this " +
-                            "screen or by disabling the service in Android " +
-                            "Settings. All bridge commands are logged in the " +
-                            "Activity Log below.",
+                        stringResource(R.string.bmt_about_body4),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showExplain = false }) { Text("Got it") }
+                TextButton(onClick = { showExplain = false }) { Text(stringResource(R.string.bmt_got_it)) }
             }
         )
     }
@@ -254,7 +244,7 @@ private fun MasterPill() {
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
     ) {
         Text(
-            text = "MASTER",
+            text = stringResource(R.string.bmt_master),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             maxLines = 1,

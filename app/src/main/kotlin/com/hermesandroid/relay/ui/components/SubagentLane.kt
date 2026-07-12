@@ -36,10 +36,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
@@ -79,7 +81,7 @@ fun SubagentLane(
 
     val laneLabel = calls.firstNotNullOfOrNull { call ->
         call.taskLabel?.takeIf { it.isNotBlank() }
-    } ?: "Agent ${taskIndex + 1}"
+    } ?: stringResource(R.string.subagent_lane_label_fallback, taskIndex + 1)
 
     // Lane duration: first child start → last child completion.
     val duration = run {
@@ -90,12 +92,18 @@ fun SubagentLane(
         } else null
     }
 
-    val toolCountLabel = "${calls.size} tool${if (calls.size == 1) "" else "s"}"
+    val toolCountLabel = stringResource(R.string.subagent_lane_tool_count, calls.size)
     val statusMeta = when {
-        anyRunning -> "$runningCount running"
+        anyRunning -> stringResource(R.string.subagent_lane_running_count, runningCount)
         duration != null -> "$toolCountLabel · $duration"
         else -> toolCountLabel
     }
+    val laneA11y = stringResource(R.string.subagent_lane_a11y, laneLabel, statusMeta) +
+        if (anyFailed) ", " + stringResource(R.string.cd_subagent_failed) else ""
+    val completionLabel = stringResource(R.string.cd_subagent_completed)
+    val collapseLabel = stringResource(R.string.cd_subagent_collapse)
+    val expandLabel = stringResource(R.string.cd_subagent_expand)
+    val failureLabel = stringResource(R.string.cd_subagent_failed)
 
     var expanded by remember { mutableStateOf(!allComplete) }
 
@@ -111,8 +119,7 @@ fun SubagentLane(
             .padding(start = 8.dp)
             .height(IntrinsicSize.Min)
             .semantics {
-                contentDescription = "Subagent $laneLabel, $statusMeta" +
-                    if (anyFailed) ", failed" else ""
+                contentDescription = laneA11y
             },
     ) {
         // Guide rail
@@ -165,7 +172,7 @@ fun SubagentLane(
                     Spacer(modifier = Modifier.width(6.dp))
                     Icon(
                         imageVector = if (anyFailed) Icons.Filled.Close else Icons.Filled.Check,
-                        contentDescription = if (anyFailed) "Failed" else "Completed",
+                        contentDescription = if (anyFailed) failureLabel else completionLabel,
                         modifier = Modifier.size(14.dp),
                         tint = if (anyFailed) MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.primary,
@@ -176,7 +183,7 @@ fun SubagentLane(
 
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    contentDescription = if (expanded) collapseLabel else expandLabel,
                     modifier = Modifier.size(14.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

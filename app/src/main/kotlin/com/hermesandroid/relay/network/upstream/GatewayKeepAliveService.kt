@@ -150,8 +150,8 @@ class GatewayKeepAliveService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Hermes connection active")
-            .setContentText("Keeping your connection to Hermes open in the background.")
+            .setContentTitle(getString(R.string.gateway_keepalive_title))
+            .setContentText(getString(R.string.gateway_keepalive_body))
             .setContentIntent(tapPending)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

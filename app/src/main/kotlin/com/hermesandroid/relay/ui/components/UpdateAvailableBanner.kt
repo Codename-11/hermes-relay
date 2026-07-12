@@ -43,12 +43,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hermesandroid.relay.BuildConfig
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.update.UpdateAvailabilitySource
 import com.hermesandroid.relay.update.UpdateDismissalPreferences
 import com.hermesandroid.relay.update.UpdateStatus
@@ -318,21 +320,21 @@ fun UpdateAvailableBanner(
 
     when (status) {
         is UpdateStatus.Available -> {
-            title = "Update available"
-            subtitle = "${displayVersion(status.versionLabel)} is ready to install."
-            actionLabel = "Update"
+            title = stringResource(R.string.update_banner_available)
+            subtitle = stringResource(R.string.update_banner_subtitle_available, displayVersion(status.versionLabel))
+            actionLabel = stringResource(R.string.update_banner_update)
             showDismiss = true
         }
         is UpdateStatus.Downloading -> {
-            title = "Downloading update…"
+            title = stringResource(R.string.update_banner_downloading)
             subtitle = displayVersion(status.versionLabel)
             actionLabel = null
             showDismiss = true
         }
         is UpdateStatus.Downloaded -> {
-            title = "Update ready — restart"
-            subtitle = "${displayVersion(status.versionLabel)} downloaded. Restart to finish."
-            actionLabel = "Restart"
+            title = stringResource(R.string.update_banner_ready)
+            subtitle = stringResource(R.string.update_banner_subtitle_downloaded, displayVersion(status.versionLabel))
+            actionLabel = stringResource(R.string.update_banner_restart)
             showDismiss = false
         }
         UpdateStatus.UpToDate, UpdateStatus.Unsupported -> return
@@ -416,7 +418,7 @@ fun UpdateAvailableBanner(
                     IconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.Outlined.Close,
-                            contentDescription = "Dismiss",
+                            contentDescription = stringResource(R.string.update_banner_cd_dismiss),
                             tint = contentColor,
                         )
                     }
