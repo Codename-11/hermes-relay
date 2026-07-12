@@ -858,10 +858,15 @@ class ChatViewModel : ViewModel() {
     fun activateGatewayProfile(profile: Profile?) {
         val gateway = gatewayClient ?: return
         if (streamingEndpoint != "gateway") return
+        // A profile switch is a UI/context detach, not a Stop action. Preserve
+        // an in-flight upstream turn and reconcile it into its original durable
+        // session when it finishes, while freeing this client to bind the newly
+        // selected profile immediately.
+        gateway.backgroundActiveTurn()
         // Mirror the desktop's hot-swap: switching the SELECTED profile (done by
         // the sheet's selectProfile call just before this) already drives
-        // RelayApp's profile-context switch, which cancels any in-flight turn and
-        // resets the thread (fresh draft, or the new profile's last session). We
+        // RelayApp's profile-context switch, which detaches an in-flight Gateway
+        // turn and resets the thread (fresh draft, or the new profile's last session). We
         // must NOT also createNewChat() here — that second reset races the context
         // switch (the "reply typing, then a new chat appears" jank). All we do is
         // drop the live gateway session so the NEXT turn's session.create rebinds
@@ -2301,7 +2306,13 @@ class ChatViewModel : ViewModel() {
         if (!isInitialContextBinding) clearTurnCheckpoint()
         activeStream?.let { stream ->
             intentionallyCancelled = true
-            stream.cancel()
+            if (streamingEndpoint == "gateway") {
+                gatewayClient?.backgroundActiveTurn()
+                stream.detach()
+                handler.clearStreamingStatus()
+            } else {
+                stream.cancel()
+            }
         }
         activeStream = null
         cancelAnswerRecovery(settleUi = false)

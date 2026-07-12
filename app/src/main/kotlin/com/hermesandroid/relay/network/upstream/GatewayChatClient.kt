@@ -352,6 +352,17 @@ class GatewayChatClient(
     private var activeTurn: GatewayTurn? = null
 
     /**
+     * Turns deliberately detached when the user switches profile/session.
+     * Upstream continues them server-side; retain the live→durable binding so
+     * their terminal event can trigger an authoritative history reconcile.
+     */
+    private val backgroundTurns = ConcurrentHashMap<String, BackgroundTurn>()
+
+    private data class BackgroundTurn(
+        val storedSessionId: String,
+    )
+
+    /**
      * Upstream may emit the interrupted turn's tail and terminal event after
      * `session.interrupt` returns. Keep a short exact-session tombstone so that
      * tail cannot be mistaken for an unsolicited completion or complete a
@@ -555,6 +566,24 @@ class GatewayChatClient(
         storedSessionId = null
         liveSessionProfile = null
         cancelledTurnDrain = null
+    }
+
+    /**
+     * Detach the visible callbacks without interrupting the server-side turn.
+     * This is the profile/session switch primitive: the old turn keeps running,
+     * while this client is free to create or resume another profile-bound
+     * session. Completion is reported through [unmatchedTurnCompleteListener]
+     * using the original durable id.
+     */
+    fun backgroundActiveTurn(): Boolean {
+        val turn = activeTurn?.takeIf { !it.ended } ?: return false
+        val liveId = liveSessionId ?: return false
+        val storedId = storedSessionId ?: return false
+        backgroundTurns[liveId] = BackgroundTurn(
+            storedSessionId = storedId,
+        )
+        turn.detach()
+        return true
     }
 
     /**
@@ -1199,6 +1228,7 @@ class GatewayChatClient(
     fun shutdown() {
         activeTurn?.cancel()
         activeTurn = null
+        backgroundTurns.clear()
         cancelledTurnDrain = null
         unsolicitedTurnProvider = null
         coldPrewarmSessionReadyListener = null
@@ -1589,6 +1619,26 @@ class GatewayChatClient(
 
         if (type == "gateway.ready") {
             ready.complete(Unit)
+            return
+        }
+
+        // A profile/session switch may leave an upstream turn running while a
+        // different profile becomes visible. Its events must never paint the
+        // new transcript, but the terminal event still needs to reconcile the
+        // original durable session so the answer is waiting when the user
+        // switches back.
+        val backgroundTurn = eventSessionId?.let(backgroundTurns::get)
+        if (backgroundTurn != null) {
+            if (type == "message.complete") {
+                backgroundTurns.remove(eventSessionId, backgroundTurn)
+                val expectedText = payload?.stringField("text")
+                callbackDispatcher {
+                    unmatchedTurnCompleteListener?.invoke(
+                        backgroundTurn.storedSessionId,
+                        expectedText,
+                    )
+                }
+            }
             return
         }
 

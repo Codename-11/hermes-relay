@@ -75,6 +75,8 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfilePresence
+import com.hermesandroid.relay.data.ProfilePresenceResolver
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.network.upstream.ChatMode
@@ -731,6 +733,9 @@ fun AgentInfoSheet(
     // a radio tap during an in-flight chat turn would race the request. Apply
     // to BOTH sections (profile + personality) since they both feed startStream.
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    // Gateway turns are profile-bound upstream and can continue after Android
+    // detaches their visible callbacks. SSE transports cannot safely do that.
+    val profileSwitchEnabled = !isStreaming || chatViewModel.streamingEndpoint == "gateway"
 
     // Session context + analytics for the stats section. Session label
     // derived by matching the currently-active session id against the
@@ -877,19 +882,24 @@ fun AgentInfoSheet(
                     LockedProfileRow(lockedDisplayName = lockedDisplayName)
                   } else {
 
-                    val defaultDotColor = serverDefaultProfile?.let { profile ->
-                        if (profile.gatewayRunning) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                    val profileHostReachable = gatewayAvailability == GatewayAvailability.Ready
+                    val defaultPresence = serverDefaultProfile?.let { profile ->
+                        ProfilePresenceResolver.resolve(profile, profileHostReachable)
+                    }
+                    val defaultDotColor = defaultPresence?.let { presence ->
+                        when (presence) {
+                            ProfilePresence.ONLINE -> MaterialTheme.colorScheme.primary
+                            ProfilePresence.AVAILABLE -> MaterialTheme.colorScheme.tertiary
+                            ProfilePresence.OFFLINE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                         }
                     }
                     val defaultDotA11y = serverDefaultProfile?.let { profile ->
-                        if (profile.gatewayRunning) stringResource(R.string.conn_info_gateway_running) else stringResource(R.string.conn_info_gateway_idle)
+                        when (defaultPresence) {
+                            ProfilePresence.ONLINE -> stringResource(R.string.conn_info_profile_online_desc)
+                            ProfilePresence.AVAILABLE -> stringResource(R.string.conn_info_profile_available_desc)
+                            else -> stringResource(R.string.conn_info_profile_offline_desc)
+                        }
                     }
-                    val defaultRunning = serverDefaultProfile?.let { profile ->
-                        if (profile.gatewayRunning) stringResource(R.string.conn_info_running_suffix) else stringResource(R.string.conn_info_idle_suffix)
-                    }.orEmpty()
                     val defaultDisplay = if (selectedProfile == null && profileDisplayAlias != null) {
                         profileDisplayAlias
                     } else {
@@ -901,7 +911,7 @@ fun AgentInfoSheet(
                     val defaultSecondary = serverDefaultProfile?.let { profile ->
                         listOfNotNull(
                             defaultDisplay,
-                            profile.model.takeIf { it.isNotBlank() }?.plus(defaultRunning),
+                            profile.model.takeIf { it.isNotBlank() },
                         ).joinToString(" \u2022 ")
                     } ?: stringResource(R.string.conn_info_use_default_profile)
                     val soulBg = MaterialTheme.colorScheme.primaryContainer
@@ -924,12 +934,32 @@ fun AgentInfoSheet(
                         secondary = defaultSecondary,
                         tertiary = usesDefaultProfileTertiary,
                         selected = selectedProfile == null,
-                        enabled = !isStreaming,
+                        enabled = profileSwitchEnabled,
                         leadingDotColor = defaultDotColor,
                         leadingDotContentDescription = defaultDotA11y,
                         secondaryTrailing = serverDefaultProfile?.let { profile ->
-                            if (profile.hasSoul || profile.skillCount > 0) {
-                                {
+                            {
+                                defaultPresence?.let { presence ->
+                                    ProfileMetadataBadge(
+                                        text = stringResource(
+                                            when (presence) {
+                                                ProfilePresence.ONLINE -> R.string.conn_info_profile_online
+                                                ProfilePresence.AVAILABLE -> R.string.conn_info_profile_available
+                                                ProfilePresence.OFFLINE -> R.string.conn_info_profile_offline
+                                            },
+                                        ),
+                                        background = when (presence) {
+                                            ProfilePresence.ONLINE -> MaterialTheme.colorScheme.primary
+                                            ProfilePresence.AVAILABLE -> MaterialTheme.colorScheme.tertiaryContainer
+                                            ProfilePresence.OFFLINE -> MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                        contentColor = when (presence) {
+                                            ProfilePresence.ONLINE -> MaterialTheme.colorScheme.onPrimary
+                                            ProfilePresence.AVAILABLE -> MaterialTheme.colorScheme.onTertiaryContainer
+                                            ProfilePresence.OFFLINE -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                    )
+                                }
                                     if (profile.skillCount > 0) {
                                         ProfileMetadataBadge(
                                             text = skillsBadgeText.format(profile.skillCount),
@@ -944,9 +974,6 @@ fun AgentInfoSheet(
                                             contentColor = soulFg,
                                         )
                                     }
-                                }
-                            } else {
-                                null
                             }
                         },
                         onSelect = {
@@ -961,29 +988,19 @@ fun AgentInfoSheet(
                     )
 
                     selectableProfiles.forEach { profile ->
-                        // v0.7.0 runtime metadata indicators:
-                        //   - leadingDotColor: green when this profile's
-                        //     gateway is the live one, grey otherwise.
-                        //   - SOUL badge: primary-container when has_soul.
-                        //   - Skills chip: surface-variant when skill_count > 0.
-                        // Upstream Hermes runs one gateway at a time, so
-                        // non-active profiles correctly report off — that's
-                        // informational, not disabling. Every row stays at
-                        // full alpha; the dot alone communicates status.
-                        val dotColor = if (profile.gatewayRunning) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                        // Presence is distinct from selection: several profile
+                        // gateways may be Online, while Available profiles can
+                        // still start/resume chats lazily through tui_gateway.
+                        val presence = ProfilePresenceResolver.resolve(profile, profileHostReachable)
+                        val dotColor = when (presence) {
+                            ProfilePresence.ONLINE -> MaterialTheme.colorScheme.primary
+                            ProfilePresence.AVAILABLE -> MaterialTheme.colorScheme.tertiary
+                            ProfilePresence.OFFLINE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                         }
-                        val dotA11y = if (profile.gatewayRunning) {
-                            stringResource(R.string.conn_info_gateway_running)
-                        } else {
-                            stringResource(R.string.conn_info_gateway_idle)
-                        }
-                        val runningLabel = if (profile.gatewayRunning) {
-                            stringResource(R.string.conn_info_running_suffix)
-                        } else {
-                            stringResource(R.string.conn_info_idle_suffix)
+                        val dotA11y = when (presence) {
+                            ProfilePresence.ONLINE -> stringResource(R.string.conn_info_profile_online_desc)
+                            ProfilePresence.AVAILABLE -> stringResource(R.string.conn_info_profile_available_desc)
+                            ProfilePresence.OFFLINE -> stringResource(R.string.conn_info_profile_offline_desc)
                         }
                         val isApparentActive =
                             apparentActiveProfile?.name == profile.name
@@ -1019,7 +1036,11 @@ fun AgentInfoSheet(
                         val tertiaryLine: String? = null
 
                         // Pre-resolve strings for profile badges
-                        val activeBadgeText = stringResource(R.string.conn_info_active)
+                        val presenceBadgeText = when (presence) {
+                            ProfilePresence.ONLINE -> stringResource(R.string.conn_info_profile_online)
+                            ProfilePresence.AVAILABLE -> stringResource(R.string.conn_info_profile_available)
+                            ProfilePresence.OFFLINE -> stringResource(R.string.conn_info_profile_offline)
+                        }
                         val skillsBadgeTextFormat = stringResource(R.string.conn_info_skills_count)
                         val soulBadgeText = stringResource(R.string.conn_info_soul)
                         val profileApiActiveSuffix = stringResource(R.string.conn_info_profile_api_active_suffix)
@@ -1039,41 +1060,39 @@ fun AgentInfoSheet(
                             // the name is the headline.
                             tertiary = null,
                             selected = selectedProfile?.name == profile.name,
-                            enabled = !isStreaming,
+                            enabled = profileSwitchEnabled,
                             contentAlpha = 1f,
                             leadingDotColor = dotColor,
                             leadingDotContentDescription = dotA11y,
-                            secondaryTrailing = if (
-                                profile.gatewayRunning || profile.hasSoul || profile.skillCount > 0
-                            ) {
-                                {
-                                    // Prominent status chip — the running/active
-                                    // profile, so the dropped "· Running" text
-                                    // doesn't cost status visibility (the green
-                                    // leading dot still reinforces it).
-                                    if (profile.gatewayRunning) {
-                                        ProfileMetadataBadge(
-                                            text = activeBadgeText,
-                                            background = MaterialTheme.colorScheme.primary,
-                                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                                        )
-                                    }
-                                    if (profile.skillCount > 0) {
-                                        ProfileMetadataBadge(
-                                            text = skillsBadgeTextFormat.format(profile.skillCount),
-                                            background = skillsBg,
-                                            contentColor = skillsFg,
-                                        )
-                                    }
-                                    if (profile.hasSoul) {
-                                        ProfileMetadataBadge(
-                                            text = soulBadgeText,
-                                            background = soulBg,
-                                            contentColor = soulFg,
-                                        )
-                                    }
+                            secondaryTrailing = {
+                                ProfileMetadataBadge(
+                                    text = presenceBadgeText,
+                                    background = when (presence) {
+                                        ProfilePresence.ONLINE -> MaterialTheme.colorScheme.primary
+                                        ProfilePresence.AVAILABLE -> MaterialTheme.colorScheme.tertiaryContainer
+                                        ProfilePresence.OFFLINE -> MaterialTheme.colorScheme.surfaceVariant
+                                    },
+                                    contentColor = when (presence) {
+                                        ProfilePresence.ONLINE -> MaterialTheme.colorScheme.onPrimary
+                                        ProfilePresence.AVAILABLE -> MaterialTheme.colorScheme.onTertiaryContainer
+                                        ProfilePresence.OFFLINE -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                                if (profile.skillCount > 0) {
+                                    ProfileMetadataBadge(
+                                        text = skillsBadgeTextFormat.format(profile.skillCount),
+                                        background = skillsBg,
+                                        contentColor = skillsFg,
+                                    )
                                 }
-                            } else null,
+                                if (profile.hasSoul) {
+                                    ProfileMetadataBadge(
+                                        text = soulBadgeText,
+                                        background = soulBg,
+                                        contentColor = soulFg,
+                                    )
+                                }
+                            },
                             onSelect = {
                                 if (selectedProfile?.name != profile.name) {
                                     connectionViewModel.selectProfile(profile)
