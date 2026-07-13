@@ -742,6 +742,12 @@ Four sub-decisions captured together:
 
 3. **Loopback-only for the three new relay routes.** `/bridge/activity`, `/media/inspect`, `/relay/info` are gated with the same `_require_loopback()` helper pattern as `/bridge/status`, `/pairing/register`, and `/media/register` — any `request.remote` other than `127.0.0.1` / `::1` gets HTTP 403. The plugin backend runs inside the gateway process (itself bound to localhost) and calls the relay at `http://127.0.0.1:{HERMES_RELAY_PORT}/...` — no bearer minting, no new credentials, no new attack surface. We also added a loopback-exempt branch to the existing bearer-gated `/sessions` handler so the plugin can list paired devices without the relay needing to hand itself a token. Media paths are sanitized (basename-only) at the `MediaRegistry.list_all()` layer so a future decision to expose these routes externally wouldn't leak filesystem layout.
 
+   **2026-07-12 amendment:** `/relay/info` now has a second, paired-device
+   bearer-authenticated path for Android Diagnostics. The loopback dashboard
+   path is unchanged. The remote response is the same sanitized contract and
+   contains no tokens, secrets, config contents, or filesystem paths;
+   `/bridge/activity` and `/media/inspect` remain loopback-only.
+
 4. **Dashboard backend is a thin proxy; relay is source of truth.** `plugin_api.py` exposes five routes at `/api/plugins/hermes-relay/{overview,sessions,bridge-activity,media,push}` and forwards to the relay over `httpx.AsyncClient` with a 5-second timeout. No business logic — the plugin never maintains its own state, never caches, never retries. Relay connect-error / timeout / 5xx translate to `HTTPException(502, detail=…)` carrying the relay address, so the UI can render a "relay unreachable at 127.0.0.1:8767" banner; 4xx passes through verbatim. The one exception is `/push` — since FCM isn't wired, this route is a static stub returning `{configured: false, reason: "FCM not yet wired; …"}` with no network call. Keeps the four-tab nav layout correct for when FCM lands; swapping in real data only touches `PushConsole.jsx` + `plugin_api.py::get_push`.
 
 **Consequences:**

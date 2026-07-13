@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Desktop chat can use Relay typed streaming over WSS.** The opt-in `--relay-chat` mode sends `chat.send`, renders typed `stream.event` v1 assistant/tool/artifact/memory/skill/error lifecycles, de-duplicates reconnect events, and preserves the existing gateway chat path as the default.
 
+## [1.4.4] - 2026-07-12
+
+### Added
+
+- **Android adds AI-assisted Spanish.** A repeatable translation harness and freshness checks keep catalogs structurally complete while tracking fluent review separately.
+- **Diagnostics exposes the Relay contract.** A manual refresh reports the installed plugin version, protocol version, capability count, profile enablement state, and last-check time; shared issue reports include sanitized Android and device metadata.
+- **What’s New links to complete release history.** The polished modal now provides direct access to every bundled version, with large-text screenshot coverage.
+
+### Fixed
+
+- **Profile operations stay inside the selected Hermes profile.** Session list, history, rename, delete, and in-flight recovery no longer fall through to the default database after a scoped failure; optimistic writes roll back and repeated recovery failures stop cleanly.
+
 ## [1.4.3] - 2026-07-11
 
 ### Added
@@ -1548,7 +1560,8 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.3...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.4...HEAD
+[1.4.4]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.3...android-v1.4.4
 [1.4.3]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.2...android-v1.4.3
 [1.4.2]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.1...android-v1.4.2
 [1.4.1]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.0...android-v1.4.1

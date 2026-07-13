@@ -918,7 +918,7 @@ Hermes-Relay ships a hermes-agent Dashboard Plugin that surfaces relay-specific 
 |-------|--------|---------|
 | `/bridge/activity` | GET | Ring buffer of recent bridge commands; `?limit=N` (max 500, default 100). |
 | `/media/inspect` | GET | Active media tokens; `?include_expired=true` to include evicted entries (default false). |
-| `/relay/info` | GET | Aggregate status for the management tab: `{version, uptime_seconds, session_count, paired_device_count, pending_commands, media_entry_count, health}`. |
+| `/relay/info` | GET | Authenticated Relay contract and aggregate status: plugin/protocol versions, capabilities, per-profile enablement, counters, and health. Loopback dashboard requests may omit bearer auth. |
 | `/sessions` | GET | Loopback branch now returns the full session list without a bearer (for the dashboard proxy). Non-loopback callers still require the bearer and retain the `is_current` flag. |
 
 **Auth model.** The dashboard plugin's FastAPI router mounts under `/api/plugins/hermes-relay/*` inside the gateway process (itself bound to localhost). It forwards to the relay at `http://127.0.0.1:{HERMES_RELAY_PORT}` (default 8767). Both hops are loopback-only — no bearer is minted and no new credentials are introduced. Media paths are sanitized to basename-only in `MediaRegistry.list_all()` so even a future decision to expose these routes externally wouldn't leak filesystem layout.

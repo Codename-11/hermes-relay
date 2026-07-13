@@ -156,7 +156,11 @@ For the full wire-shape of each route (query params, response schemas, redaction
 
 ## Security Notes
 
-All three new relay routes (`/bridge/activity`, `/media/inspect`, `/relay/info`) are gated to `127.0.0.1` / `::1` — any remote request returns HTTP 403. The plugin backend itself runs inside the gateway process, which binds to localhost by default; neither layer introduces a new remote attack surface.
+`/bridge/activity` and `/media/inspect` remain gated to `127.0.0.1` / `::1`.
+`/relay/info` also accepts a remote request carrying a valid paired-device
+bearer so the Android Diagnostics screen can read the sanitized version,
+capability, and profile contract. It never returns tokens or configuration
+paths.
 
 The `MediaRegistry.list_all()` snapshot strips absolute paths server-side before the relay serializes its response, so even if you deliberately exposed these routes externally (by fronting the relay with a reverse proxy, for example), the inspector couldn't be used to enumerate your filesystem.
 

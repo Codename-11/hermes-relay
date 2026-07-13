@@ -62,6 +62,8 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.update.UpdateCheckResult
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -96,6 +98,7 @@ fun AboutScreen(
     var lastTapTime by remember { mutableStateOf(0L) }
 
     var showWhatsNew by remember { mutableStateOf(false) }
+    var showChangelog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -463,6 +466,20 @@ fun AboutScreen(
 
     // What's New dialog
     if (showWhatsNew) {
-        WhatsNewDialog(onDismiss = { showWhatsNew = false })
+        WhatsNewDialog(
+            onDismiss = { showWhatsNew = false },
+            onViewHistory = {
+                showWhatsNew = false
+                showChangelog = true
+            },
+        )
+    }
+    if (showChangelog) {
+        Dialog(
+            onDismissRequest = { showChangelog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            ChangelogScreen(onClose = { showChangelog = false })
+        }
     }
 }

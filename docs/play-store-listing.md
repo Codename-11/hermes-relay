@@ -85,15 +85,14 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.3 - Language picker
+v1.4.4 - Spanish and clearer diagnostics
 
 Language
-* Open Settings > Appearance to choose System default, English, or Simplified Chinese.
-* Your choice stays synchronized with Android's per-app language setting.
-* Android 12 and lower now persist the same in-app selection.
+* Use Spanish throughout the app from Settings > Appearance.
 
-Compatibility
-* Release builds now reject collection APIs that can crash on older Android versions.
+Diagnostics
+* Refresh Relay plugin, protocol, capability, and profile status.
+* Open the full release history from What's New.
 ```
 
 ## Category

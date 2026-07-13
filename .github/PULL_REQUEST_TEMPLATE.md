@@ -27,7 +27,7 @@ otherwise use verified Co-authored-by trailers. Write "N/A" for original work.
 
 - [ ] Target branch is `dev` unless this is a release PR
 - [ ] Android changes: lint and focused unit tests ran, or rationale is listed above
-- [ ] Translation changes: `python scripts/check-android-locales.py` ran and the locale was reviewed on a device/emulator, or N/A
+- [ ] Translation changes: locale status/review references are accurate, `python scripts/check-android-locales.py` ran, and device/emulator review is documented, or N/A
 - [ ] Server changes: focused `python -m unittest ...` checks ran, or rationale is listed above
 - [ ] Desktop changes: `npm run build` or a narrower documented check ran, or rationale is listed above
 - [ ] Docs/site changes: docs build or link check ran, or rationale is listed above

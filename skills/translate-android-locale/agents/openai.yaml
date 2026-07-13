@@ -1,0 +1,4 @@
+interface:
+  display_name: "Translate Android Locale"
+  short_description: "Generate and validate AI-assisted Android translations"
+  default_prompt: "Use $translate-android-locale to translate one Android locale, critique sensitive strings, and run validation."

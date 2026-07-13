@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.diagnostics.DiagnosticLogEntry
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import android.os.Build
 
 /**
  * Pure builder for the GitHub "new issue" prefill derived from a diagnostics
@@ -90,6 +91,8 @@ object DiagnosticIssuePrefill {
             appendLine("### Environment")
             appendLine("- Hermes-Relay version/tag: ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")
             appendLine("- Install surface: $surface")
+            appendLine("- Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+            appendLine("- Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("- Connection mode: ${connectionMode(entry)}")
             appendLine()
             appendLine("### Diagnostic")

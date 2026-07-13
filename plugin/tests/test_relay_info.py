@@ -27,6 +27,10 @@ class RelayInfoRouteTests(AioHTTPTestCase):
 
         required = {
             "version",
+            "plugin_version",
+            "protocol_version",
+            "capabilities",
+            "profiles",
             "uptime_seconds",
             "session_count",
             "paired_device_count",
@@ -39,6 +43,9 @@ class RelayInfoRouteTests(AioHTTPTestCase):
         self.assertEqual(body["health"], "ok")
         self.assertIsInstance(body["version"], str)
         self.assertGreater(len(body["version"]), 0)
+        self.assertEqual(body["plugin_version"], body["version"])
+        self.assertEqual(body["protocol_version"], 1)
+        self.assertIn("profiles", body["capabilities"])
 
         for counter in (
             "uptime_seconds",
@@ -62,7 +69,7 @@ class RelayInfoRouteTests(AioHTTPTestCase):
 
 
 class RelayInfoNonLoopbackTests(unittest.IsolatedAsyncioTestCase):
-    async def test_non_loopback_raises_forbidden(self) -> None:
+    async def test_non_loopback_requires_bearer(self) -> None:
         config = RelayConfig()
         app = create_app(config)
 
@@ -77,8 +84,23 @@ class RelayInfoNonLoopbackTests(unittest.IsolatedAsyncioTestCase):
                 return {}
 
         req = _Req(remote="10.1.2.3", a=app)
-        with self.assertRaises(web.HTTPForbidden):
+        with self.assertRaises(web.HTTPUnauthorized):
             await handle_relay_info(req)  # type: ignore[arg-type]
+
+    async def test_non_loopback_accepts_paired_bearer(self) -> None:
+        app = create_app(RelayConfig())
+        session = app["server"].sessions.create_session("phone", "phone-id")
+
+        class _Req:
+            remote = "10.1.2.3"
+            query: dict[str, str] = {}
+            headers = {"Authorization": f"Bearer {session.token}"}
+
+            def __init__(self, a: web.Application) -> None:
+                self.app = a
+
+        response = await handle_relay_info(_Req(app))  # type: ignore[arg-type]
+        self.assertEqual(response.status, 200)
 
 
 if __name__ == "__main__":

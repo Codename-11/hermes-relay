@@ -245,6 +245,7 @@ fun AppearanceSettingsScreen(
                         AppLanguage.SYSTEM_DEFAULT to stringResource(R.string.appearance_language_system),
                         AppLanguage.ENGLISH to stringResource(R.string.appearance_language_english),
                         AppLanguage.SIMPLIFIED_CHINESE to stringResource(R.string.appearance_language_simplified_chinese),
+                        AppLanguage.SPANISH to stringResource(R.string.appearance_language_spanish),
                     )
 
                     FlowRow(

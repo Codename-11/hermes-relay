@@ -231,6 +231,7 @@
     <string name="chat_approval_secret_title">Secret requested</string>
     <string name="chat_approval_skip">Skip</string>
     <string name="chat_approval_reconnecting">Reconnecting to your answer…</string>
+    <string name="chat_profile_history_unavailable">The active profile’s conversation history could not be reached. Reconnect and try again.</string>
     <string name="chat_approval_stream_dropped">Chat stream dropped — recovering the answer in the background</string>
 
     <!-- RelayErrorClassifier error titles -->
@@ -1052,6 +1053,7 @@
     <string name="appearance_language_system">System default</string>
     <string name="appearance_language_english">English</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
+    <string name="appearance_language_spanish">Español</string>
     <string name="appearance_appearance">Appearance</string>
     <string name="appearance_light_dark">Light / Dark</string>
     <string name="appearance_fixed_light">%1$s is a fixed light theme.</string>
@@ -2157,6 +2159,12 @@
     <string name="conn_info_fast_mode_title">Fast mode</string>
     <string name="conn_info_gateway_idle">Gateway idle</string>
     <string name="conn_info_gateway_running">Gateway running</string>
+    <string name="conn_info_profile_online">Online</string>
+    <string name="conn_info_profile_online_desc">Online — gateway and messaging channels are running</string>
+    <string name="conn_info_profile_available">Available</string>
+    <string name="conn_info_profile_available_desc">Available on demand — conversations can start or resume</string>
+    <string name="conn_info_profile_offline">Offline</string>
+    <string name="conn_info_profile_offline_desc">Offline — this profile cannot currently be reached</string>
     <string name="conn_info_gateway_unavailable_api_server">Gateway unavailable — API server is not reachable.</string>
     <string name="conn_info_gateway_unavailable_sign_in">Gateway unavailable — sign-in required.</string>
     <string name="conn_info_grant_never">%1$s: never</string>
@@ -2921,6 +2929,10 @@
     <string name="diag_check_no_network">No network</string>
     <string name="diag_check_no_server_yet">No server yet</string>
     <string name="diag_check_not_checked">Not checked</string>
+    <string name="diag_refresh">Refresh diagnostics</string>
+    <string name="diag_last_checked">Last checked %1$s</string>
+    <string name="diag_plugin_contract">Relay plugin %1$s · protocol %2$d · %3$d capabilities</string>
+    <string name="diag_plugin_profile">Profile %1$s · plugin %2$s</string>
     <string name="diag_check_not_paired">Not paired</string>
     <string name="diag_check_not_reachable">Not reachable</string>
     <string name="diag_check_not_reachable_at">Not reachable at %s</string>
@@ -2935,6 +2947,13 @@
     <string name="diag_check_relay_active">Relay active</string>
     <string name="diag_check_relay_not_configured">Relay not configured</string>
     <string name="diag_check_relay_server">Check relay server</string>
+    <string name="diag_check_relay_plugin">Relay plugin</string>
+    <string name="diag_plugin_not_configured">Optional plugin is not configured</string>
+    <string name="diag_plugin_unreachable">Plugin availability cannot be checked while the relay is disconnected</string>
+    <string name="diag_plugin_version_unknown">Connected; version status unavailable (older plugin or check pending)</string>
+    <string name="diag_plugin_current">Plugin v%1$s installed · current</string>
+    <string name="diag_plugin_update_available">Plugin v%1$s installed · v%2$s available</string>
+    <string name="diag_plugin_check_error">Plugin connected · version check: %1$s</string>
     <string name="diag_check_server_capabilities">Server capabilities</string>
     <string name="diag_check_sse_fallback">No session SSE — falling back to %1$s</string>
     <string name="diag_check_voice">Voice</string>
@@ -3021,8 +3040,10 @@
     <string name="voice_overlay_tool_status_failed">Failed</string>
     <string name="voice_overlay_tool_status_running">Running</string>
     <string name="whats_new_got_it">Got it</string>
+    <string name="whats_new_full_history">View full history</string>
     <string name="whats_new_no_notes">No release notes available</string>
     <string name="whats_new_title">What\u0027s new</string>
+    <string name="whats_new_subtitle">Latest release highlights</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Bridge auto-disabled</string>
     <string name="bridge_notification_auto_disabled_body">Paused after idle — tap to re-enable in the Bridge tab.</string>

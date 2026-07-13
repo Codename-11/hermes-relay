@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "canonical_locale": "en",
+  "verification_definitions": {
+    "canonical": "English source text that defines product meaning.",
+    "ai-translated": "AI-assisted translation that passed technical checks but has no recorded fluent review.",
+    "community-reviewed": "Reviewed or substantively corrected by at least one fluent contributor.",
+    "verified": "Comprehensively reviewed in context by a fluent contributor across the shipped surface."
+  },
+  "locales": {
+    "en": {
+      "native_name": "English",
+      "verification": "canonical",
+      "review_refs": [],
+      "surfaces": {
+        "android": "canonical",
+        "readme": "canonical",
+        "user_docs": "canonical"
+      }
+    },
+    "es": {
+      "native_name": "Español",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "29051c0c2873a9e0b9c5b2cf04859b5320f0ec4b6f3d274eb95b2d740546427c",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "english-fallback"
+      }
+    },
+    "zh-Hans": {
+      "native_name": "简体中文",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "29051c0c2873a9e0b9c5b2cf04859b5320f0ec4b6f3d274eb95b2d740546427c",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "maintained-summary",
+        "user_docs": "core-pages"
+      }
+    }
+  }
+}

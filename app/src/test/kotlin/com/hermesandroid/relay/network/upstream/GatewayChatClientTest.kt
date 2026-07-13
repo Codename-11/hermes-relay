@@ -1669,6 +1669,46 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `backgrounding active turn lets another profile bind while original completes`() {
+        val foreground = Recorder()
+        val reconciled = ConcurrentLinkedQueue<Pair<String, String?>>()
+        client.setUnmatchedTurnCompleteListener { storedId, text ->
+            reconciled.add(storedId to text)
+        }
+        client.sessionProfileProvider = { "coder" }
+        client.sendTurn(null, "long task", null, foreground.callbacks) {
+            foreground.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        assertTrue(client.backgroundActiveTurn())
+        client.clearSession()
+        client.sessionProfileProvider = { "writer" }
+
+        // The original server-side turn remains alive and is reconciled by its
+        // durable id even though the visible profile has moved on.
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "coder finished") },
+                "live-1",
+            ),
+        )
+
+        repeat(50) {
+            if (reconciled.isNotEmpty()) return@repeat
+            Thread.sleep(20)
+        }
+        assertEquals(
+            listOf("20260612_120000_abc123" to "coder finished"),
+            reconciled.toList(),
+        )
+        assertFalse(client.hasActiveTurn())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
     fun `idle watchdog does not fire while events keep arriving slowly`() {
         rebuildClient(turnIdleTimeoutMs = 1_000L)
         val r = Recorder()

@@ -495,6 +495,54 @@ class RelayHttpClient(
         val error: String? = null,
     )
 
+    @Serializable
+    data class RelayProfileInfo(
+        val name: String,
+        @SerialName("relay_state") val relayState: String,
+    )
+
+    @Serializable
+    data class RelayInfo(
+        @SerialName("plugin_version") val pluginVersion: String = "",
+        @SerialName("protocol_version") val protocolVersion: Int = 0,
+        val capabilities: List<String> = emptyList(),
+        val profiles: List<RelayProfileInfo> = emptyList(),
+        val health: String = "unknown",
+    )
+
+    /** Fetch the installed plugin/protocol/profile capability contract. */
+    suspend fun fetchRelayInfo(): Result<RelayInfo?> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        val token = sessionTokenProvider()
+        if (relayUrl.isEmpty() || token.isNullOrBlank()) {
+            return@withContext Result.failure(IllegalStateException("Relay is not configured and paired"))
+        }
+        val base = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = try { "$base/relay/info".toHttpUrl() } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+        }
+        val request = Request.Builder().url(url).get()
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json").build()
+        try {
+            okHttpClient.newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(request).execute().use { response ->
+                    if (response.code == 404) return@withContext Result.success(null)
+                    if (!response.isSuccessful) return@withContext Result.failure(IOException("HTTP ${response.code}"))
+                    val body = response.body?.string().orEmpty()
+                    Result.success(body.takeIf { it.isNotBlank() }?.let {
+                        sessionsJson.decodeFromString(RelayInfo.serializer(), it)
+                    })
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchRelayInfo failed: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
     /**
      * Ask the relay whether a newer plugin release is available — it compares its
      * installed version against the latest `plugin-v*` GitHub release (cached an

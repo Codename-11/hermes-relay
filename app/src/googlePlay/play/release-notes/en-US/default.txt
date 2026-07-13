@@ -1,9 +1,1 @@
-v1.4.3 - Language picker
-
-Language
-* Open Settings > Appearance to choose System default, English, or Simplified Chinese.
-* Your choice stays synchronized with Android's per-app language setting.
-* Android 12 and lower now persist the same in-app selection.
-
-Compatibility
-* Release builds now reject collection APIs that can crash on older Android versions.
+Spanish is now available throughout Hermes-Relay from Settings > Appearance. Diagnostics can refresh Relay plugin, protocol, capability, and profile status, and What’s New now opens the full release history. Translation freshness checks make future language updates safer.

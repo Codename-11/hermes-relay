@@ -6,6 +6,33 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Multi-profile Phone/Threads routing — deferred (2026-07-12)
+
+Android profile hot-swap and concurrent Gateway turns are separate from proactive
+Phone/Threads routing. The relay currently has one proactive subscriber and one
+shared inbound-reply queue drained by a single gateway adapter; enabling the phone
+platform in several profile gateways would let those pollers race for replies.
+
+Before advertising simultaneous multi-profile Phone/Threads support:
+
+- Add a stable `profile` / `profile_id` to proactive messages, replies, queued
+  outbound items, acknowledgements, notifications, and diagnostics.
+- Partition relay reply queues by profile; each profile gateway adapter must drain
+  only its own queue.
+- Key Android Threads by `(connection, profile, chat_id)` and route replies to the
+  originating profile even when another profile is visible.
+- Show per-profile Phone-channel presence separately from chat selection and the
+  server's sticky default profile.
+- Preserve one relay pairing across profiles; do not require one phone pairing per
+  agent.
+- Define migration/fallback behavior for older relay/plugin builds that omit profile
+  identity, including collision handling for identical `chat_id` values.
+- Add two-profile end-to-end coverage for simultaneous outbound pushes, interleaved
+  replies, offline buffering/reconnect, notification reply, and profile deletion or
+  rename while messages are queued.
+
+---
+
 ## Active — 1.4.1 release verification (2026-07-10)
 
 Implementation plan: `docs/plans/2026-07-09-1.4.1-chat-voice-enhancements.md`.
