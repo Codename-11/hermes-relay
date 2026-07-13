@@ -33,6 +33,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticLogEntry
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.diagnostics.StatusCheck
+import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.shared.ConnectivityObserver
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.components.DiagnosticDetailDialog
@@ -67,6 +68,7 @@ fun DiagnosticsScreen(
     val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
     val relayHealth by connectionViewModel.relayServerHealth.collectAsState()
     val relayReady by connectionViewModel.relayReady.collectAsState()
+    val relayUpdateInfo by connectionViewModel.relayUpdateInfo.collectAsState()
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
     val entries by DiagnosticsLog.entries.collectAsState()
@@ -75,7 +77,8 @@ fun DiagnosticsScreen(
 
     val checks = remember(
         network, apiHealth, apiUrl, capabilities, authState, chatReady,
-        relayConfigured, relayHealth, relayReady, voiceReady, relayVoiceReady, entries,
+        relayConfigured, relayHealth, relayReady, relayUpdateInfo,
+        voiceReady, relayVoiceReady, entries,
     ) {
         buildStatusChecks(
             network = network,
@@ -87,6 +90,7 @@ fun DiagnosticsScreen(
             relayConfigured = relayConfigured,
             relayHealth = relayHealth,
             relayReady = relayReady,
+            relayUpdateInfo = relayUpdateInfo,
             voiceReady = voiceReady,
             relayVoiceReady = relayVoiceReady,
             recentEntries = entries,
@@ -189,6 +193,7 @@ internal fun buildStatusChecks(
     relayConfigured: Boolean,
     relayHealth: ConnectionViewModel.HealthStatus,
     relayReady: Boolean,
+    relayUpdateInfo: RelayHttpClient.RelayUpdateInfo?,
     voiceReady: Boolean,
     relayVoiceReady: Boolean,
     recentEntries: List<DiagnosticLogEntry>,
@@ -389,7 +394,59 @@ internal fun buildStatusChecks(
             )
     }
 
-    // 7) Voice readiness.
+    // 7) Relay plugin version + release availability. The update route is
+    // optional on older plugin versions, so a connected relay with no result is
+    // explicitly Unknown rather than incorrectly reported as current.
+    val pluginLabel = context.getString(R.string.diag_check_relay_plugin)
+    val pluginState = classifyRelayPlugin(
+        relayConfigured = relayConfigured,
+        relayReady = relayReady,
+        relayUpdateInfo = relayUpdateInfo,
+    )
+    checks += when (pluginState) {
+        RelayPluginDiagnosticState.NotConfigured ->
+            StatusCheck(
+                pluginLabel, CheckStatus.Unknown,
+                reason = context.getString(R.string.diag_plugin_not_configured),
+                category = DiagnosticCategory.Relay,
+            )
+        RelayPluginDiagnosticState.Unavailable ->
+            StatusCheck(
+                pluginLabel, CheckStatus.Fail,
+                reason = context.getString(R.string.diag_plugin_unreachable),
+                category = DiagnosticCategory.Relay,
+            )
+        RelayPluginDiagnosticState.VersionUnknown ->
+            StatusCheck(
+                pluginLabel, CheckStatus.Unknown,
+                reason = context.getString(R.string.diag_plugin_version_unknown),
+                category = DiagnosticCategory.Relay,
+            )
+        is RelayPluginDiagnosticState.Current ->
+            StatusCheck(
+                pluginLabel, CheckStatus.Pass,
+                reason = context.getString(R.string.diag_plugin_current, pluginState.version),
+                category = DiagnosticCategory.Relay,
+            )
+        is RelayPluginDiagnosticState.UpdateAvailable ->
+            StatusCheck(
+                pluginLabel, CheckStatus.Warn,
+                reason = context.getString(
+                    R.string.diag_plugin_update_available,
+                    pluginState.current,
+                    pluginState.latest,
+                ),
+                category = DiagnosticCategory.Relay,
+            )
+        is RelayPluginDiagnosticState.CheckError ->
+            StatusCheck(
+                pluginLabel, CheckStatus.Warn,
+                reason = context.getString(R.string.diag_plugin_check_error, pluginState.message),
+                category = DiagnosticCategory.Relay,
+            )
+    }
+
+    // 8) Voice readiness.
     val voiceLabel = context.getString(R.string.diag_check_voice)
     val voiceRelayReady = context.getString(R.string.diag_check_voice_relay)
     val voiceStandardReady = context.getString(R.string.diag_check_voice_standard)
@@ -412,4 +469,34 @@ internal fun buildStatusChecks(
     }
 
     return checks
+}
+
+internal sealed interface RelayPluginDiagnosticState {
+    data object NotConfigured : RelayPluginDiagnosticState
+    data object Unavailable : RelayPluginDiagnosticState
+    data object VersionUnknown : RelayPluginDiagnosticState
+    data class Current(val version: String) : RelayPluginDiagnosticState
+    data class UpdateAvailable(val current: String, val latest: String) : RelayPluginDiagnosticState
+    data class CheckError(val message: String) : RelayPluginDiagnosticState
+}
+
+internal fun classifyRelayPlugin(
+    relayConfigured: Boolean,
+    relayReady: Boolean,
+    relayUpdateInfo: RelayHttpClient.RelayUpdateInfo?,
+): RelayPluginDiagnosticState {
+    if (!relayConfigured) return RelayPluginDiagnosticState.NotConfigured
+    if (!relayReady) return RelayPluginDiagnosticState.Unavailable
+    if (relayUpdateInfo == null) return RelayPluginDiagnosticState.VersionUnknown
+    relayUpdateInfo.error?.takeIf { it.isNotBlank() }?.let {
+        return RelayPluginDiagnosticState.CheckError(it)
+    }
+    val current = relayUpdateInfo.current.trim()
+    val latest = relayUpdateInfo.latest?.trim().orEmpty()
+    if (current.isEmpty()) return RelayPluginDiagnosticState.VersionUnknown
+    return if (relayUpdateInfo.updateAvailable && latest.isNotEmpty()) {
+        RelayPluginDiagnosticState.UpdateAvailable(current, latest)
+    } else {
+        RelayPluginDiagnosticState.Current(current)
+    }
 }

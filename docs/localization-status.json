@@ -18,6 +18,16 @@
         "user_docs": "canonical"
       }
     },
+    "es": {
+      "native_name": "Español",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "english-fallback"
+      }
+    },
     "zh-Hans": {
       "native_name": "简体中文",
       "verification": "ai-translated",

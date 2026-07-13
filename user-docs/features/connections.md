@@ -74,6 +74,12 @@ selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
 strings, and token-like values are hidden. The same consolidated log is available
 from **Settings -> Diagnostics**, where you can clear the in-app buffer.
 
+Diagnostics also reports the optional Relay plugin separately from basic relay
+reachability. When the plugin exposes version metadata, the row shows the
+installed version and whether a newer plugin release is available. Older plugins
+without the update-check route remain usable and appear as **version unavailable**
+rather than being incorrectly marked current.
+
 Connection feedback sits where it matters and never covers the nav or shifts the
 screen. There are really two connections, shown in two places:
 

@@ -1053,6 +1053,7 @@
     <string name="appearance_language_system">System default</string>
     <string name="appearance_language_english">English</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
+    <string name="appearance_language_spanish">Español</string>
     <string name="appearance_appearance">Appearance</string>
     <string name="appearance_light_dark">Light / Dark</string>
     <string name="appearance_fixed_light">%1$s is a fixed light theme.</string>
@@ -2942,6 +2943,13 @@
     <string name="diag_check_relay_active">Relay active</string>
     <string name="diag_check_relay_not_configured">Relay not configured</string>
     <string name="diag_check_relay_server">Check relay server</string>
+    <string name="diag_check_relay_plugin">Relay plugin</string>
+    <string name="diag_plugin_not_configured">Optional plugin is not configured</string>
+    <string name="diag_plugin_unreachable">Plugin availability cannot be checked while the relay is disconnected</string>
+    <string name="diag_plugin_version_unknown">Connected; version status unavailable (older plugin or check pending)</string>
+    <string name="diag_plugin_current">Plugin v%1$s installed · current</string>
+    <string name="diag_plugin_update_available">Plugin v%1$s installed · v%2$s available</string>
+    <string name="diag_plugin_check_error">Plugin connected · version check: %1$s</string>
     <string name="diag_check_server_capabilities">Server capabilities</string>
     <string name="diag_check_sse_fallback">No session SSE — falling back to %1$s</string>
     <string name="diag_check_voice">Voice</string>
@@ -3030,6 +3038,7 @@
     <string name="whats_new_got_it">Got it</string>
     <string name="whats_new_no_notes">No release notes available</string>
     <string name="whats_new_title">What\u0027s new</string>
+    <string name="whats_new_subtitle">Latest release highlights</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Bridge auto-disabled</string>
     <string name="bridge_notification_auto_disabled_body">Paused after idle — tap to re-enable in the Bridge tab.</string>

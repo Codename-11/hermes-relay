@@ -1,8 +1,8 @@
 # Localization
 
-English is the canonical product language. Android currently ships Simplified
-Chinese as `values-b+zh+Hans`; additional languages can be added without changing
-the runtime architecture.
+English is the canonical product language. Android ships Simplified Chinese and
+Spanish catalogs; additional languages can be added without changing the runtime
+architecture.
 
 Translation coverage and linguistic verification are separate. Shipped locale
 status is recorded in `docs/localization-status.json` as `ai-translated`,
@@ -83,12 +83,9 @@ new UI cannot silently remain English.
 out by locale under `user-docs/<locale>/`; untranslated technical references
 should link to the canonical English page rather than copying stale content.
 
-| Surface | English | Simplified Chinese |
-|---|---:|---:|
-| Android app | Canonical | Complete catalog |
-| Root README | Canonical | Maintained summary |
-| User docs | Canonical | Quick start and core navigation |
-| Maintainer `docs/` and ADRs | Canonical | English fallback |
+`docs/localization-status.json` is the authoritative per-locale and per-surface
+status. README and user-documentation translations may follow app translation;
+maintainer `docs/` and ADRs remain canonical English.
 
 ## Translation corrections and pull requests
 
