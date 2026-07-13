@@ -2169,7 +2169,7 @@ async def handle_relay_info(request: web.Request) -> web.Response:
     else:
         server, _session = _require_bearer_session(request)
 
-    from plugin.profiles import discover_profile_configs, relay_state
+    from ..profiles import discover_profile_configs, relay_state
 
     profiles = [
         {"name": name, "relay_state": relay_state(path)}
