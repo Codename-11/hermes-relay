@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Desktop chat can use Relay typed streaming over WSS.** The opt-in `--relay-chat` mode sends `chat.send`, renders typed `stream.event` v1 assistant/tool/artifact/memory/skill/error lifecycles, de-duplicates reconnect events, and preserves the existing gateway chat path as the default.
 - **Android adds AI-assisted Spanish.** A repository Codex skill and deterministic draft/install harness make locale generation repeatable, while CI tracks linguistic verification separately from structural completeness and accepts canonical community correction PRs.
+- **Diagnostics reports relay-plugin availability and version status.** Paired connections now distinguish an unavailable plugin, unknown legacy version, current install, available update, and version-check error.
+- **The in-app What’s New modal matches the persistent changelog.** Release notes now use the same clean card hierarchy, close affordance, scrolling body, and full-width acknowledgement action as the complete release-history surface.
 
 ### Fixed
 

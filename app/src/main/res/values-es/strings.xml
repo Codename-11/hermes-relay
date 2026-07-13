@@ -2616,6 +2616,13 @@
     <string name="diag_check_relay_active">Relay activo</string>
     <string name="diag_check_relay_not_configured">Relay no configurado</string>
     <string name="diag_check_relay_server">Verifique el servidor relay</string>
+    <string name="diag_check_relay_plugin">Plugin de Relay</string>
+    <string name="diag_plugin_not_configured">El plugin opcional no está configurado</string>
+    <string name="diag_plugin_unreachable">No se puede comprobar el plugin mientras Relay está desconectado</string>
+    <string name="diag_plugin_version_unknown">Conectado; estado de versión no disponible (plugin antiguo o comprobación pendiente)</string>
+    <string name="diag_plugin_current">Plugin v%1$s instalado · versión actual</string>
+    <string name="diag_plugin_update_available">Plugin v%1$s instalado · v%2$s disponible</string>
+    <string name="diag_plugin_check_error">Plugin conectado · comprobación de versión: %1$s</string>
     <string name="diag_check_server_capabilities">Capacidades del servidor</string>
     <string name="diag_check_sse_fallback">Sin sesión SSE: volviendo a %1$s</string>
     <string name="diag_check_voice">Voz</string>
@@ -2704,6 +2711,7 @@
     <string name="whats_new_got_it">Entiendo</string>
     <string name="whats_new_no_notes">No hay notas de versión disponibles</string>
     <string name="whats_new_title">¿Qué hay de nuevo?</string>
+    <string name="whats_new_subtitle">Novedades de la última versión</string>
     <string name="bridge_notification_auto_disabled_title">Bridge auto deshabilitado</string>
     <string name="bridge_notification_auto_disabled_body">En pausa después de inactivo: toque para volver a habilitarlo en la pestaña Bridge.</string>
     <string name="bridge_notification_control_title">El agente Hermes tiene control del dispositivo.</string>

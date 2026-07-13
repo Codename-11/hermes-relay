@@ -1904,9 +1904,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun refreshRelayUpdateInfo() {
         viewModelScope.launch {
-            relayHttpClient.fetchUpdateCheck().onSuccess { info ->
-                if (info != null) _relayUpdateInfo.value = info
-            }
+            _relayUpdateInfo.value = null
+            relayHttpClient.fetchUpdateCheck()
+                .onSuccess { info -> _relayUpdateInfo.value = info }
+                .onFailure { _relayUpdateInfo.value = null }
         }
     }
 
