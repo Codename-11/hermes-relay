@@ -213,7 +213,10 @@ def validate_status_registry(errors: list[str]) -> None:
 
     source_hashes = {
         source_set.name: hashlib.sha256(
-            (source_set / "res" / "values" / "strings.xml").read_bytes()
+            (source_set / "res" / "values" / "strings.xml")
+            .read_text(encoding="utf-8")
+            .replace("\r\n", "\n")
+            .encode("utf-8")
         ).hexdigest()
         for source_set in APP_SRC.iterdir()
         if (source_set / "res" / "values" / "strings.xml").is_file()
