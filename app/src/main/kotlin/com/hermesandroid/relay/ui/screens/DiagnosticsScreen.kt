@@ -8,6 +8,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,6 +71,10 @@ fun DiagnosticsScreen(
     val relayHealth by connectionViewModel.relayServerHealth.collectAsState()
     val relayReady by connectionViewModel.relayReady.collectAsState()
     val relayUpdateInfo by connectionViewModel.relayUpdateInfo.collectAsState()
+    val relayInfo by connectionViewModel.relayInfo.collectAsState()
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val checkedAt by connectionViewModel.diagnosticsCheckedAt.collectAsState()
+    val refreshing by connectionViewModel.diagnosticsRefreshing.collectAsState()
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
     val entries by DiagnosticsLog.entries.collectAsState()
@@ -113,6 +119,18 @@ fun DiagnosticsScreen(
                         )
                     }
                 },
+                actions = {
+                    IconButton(
+                        onClick = connectionViewModel::refreshDiagnostics,
+                        enabled = !refreshing,
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(modifier = Modifier.padding(10.dp))
+                        } else {
+                            Icon(Icons.Filled.Refresh, stringResource(R.string.diag_refresh))
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
@@ -132,6 +150,36 @@ fun DiagnosticsScreen(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
+            Text(
+                text = checkedAt?.let {
+                    stringResource(
+                        R.string.diag_last_checked,
+                        java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(it),
+                    )
+                } ?: stringResource(R.string.diag_check_not_checked),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            relayInfo?.let { info ->
+                Text(
+                    text = stringResource(
+                        R.string.diag_plugin_contract,
+                        info.pluginVersion.ifBlank { "?" },
+                        info.protocolVersion,
+                        info.capabilities.size,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val profileKey = selectedProfile?.name ?: "(default)"
+                val profileState = info.profiles.firstOrNull { it.name == profileKey }?.relayState
+                    ?: stringResource(R.string.diag_check_not_checked)
+                Text(
+                    text = stringResource(R.string.diag_plugin_profile, profileKey, profileState),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             StatusCheckTimeline(
                 checks = checks,

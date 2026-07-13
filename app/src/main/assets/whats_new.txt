@@ -1,9 +1,9 @@
-v1.4.3 - Language picker
+v1.4.4 - Spanish and clearer diagnostics
 
 Language
-* Open Settings > Appearance to choose System default, English, or Simplified Chinese.
-* Your choice stays synchronized with Android's per-app language setting.
-* Android 12 and lower now persist the same in-app selection.
+* Use Spanish throughout the app from Settings > Appearance.
+* Translation freshness checks flag catalogs when English source text changes.
 
-Compatibility
-* Release builds now reject collection APIs that can crash on older Android versions.
+Diagnostics and release history
+* Refresh relay diagnostics to see plugin, protocol, capability, and profile status.
+* Open the complete release history directly from What’s New.

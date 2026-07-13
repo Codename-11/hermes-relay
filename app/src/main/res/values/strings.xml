@@ -2929,6 +2929,10 @@
     <string name="diag_check_no_network">No network</string>
     <string name="diag_check_no_server_yet">No server yet</string>
     <string name="diag_check_not_checked">Not checked</string>
+    <string name="diag_refresh">Refresh diagnostics</string>
+    <string name="diag_last_checked">Last checked %1$s</string>
+    <string name="diag_plugin_contract">Relay plugin %1$s · protocol %2$d · %3$d capabilities</string>
+    <string name="diag_plugin_profile">Profile %1$s · plugin %2$s</string>
     <string name="diag_check_not_paired">Not paired</string>
     <string name="diag_check_not_reachable">Not reachable</string>
     <string name="diag_check_not_reachable_at">Not reachable at %s</string>
@@ -3036,6 +3040,7 @@
     <string name="voice_overlay_tool_status_failed">Failed</string>
     <string name="voice_overlay_tool_status_running">Running</string>
     <string name="whats_new_got_it">Got it</string>
+    <string name="whats_new_full_history">View full history</string>
     <string name="whats_new_no_notes">No release notes available</string>
     <string name="whats_new_title">What\u0027s new</string>
     <string name="whats_new_subtitle">Latest release highlights</string>

@@ -9,17 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Desktop chat can use Relay typed streaming over WSS.** The opt-in `--relay-chat` mode sends `chat.send`, renders typed `stream.event` v1 assistant/tool/artifact/memory/skill/error lifecycles, de-duplicates reconnect events, and preserves the existing gateway chat path as the default.
-- **Android adds AI-assisted Spanish.** A repository Codex skill and deterministic draft/install harness make locale generation repeatable, while CI tracks linguistic verification separately from structural completeness and accepts canonical community correction PRs.
-- **Diagnostics reports relay-plugin availability and version status.** Paired connections now distinguish an unavailable plugin, unknown legacy version, current install, available update, and version-check error.
-- **The in-app What’s New modal matches the persistent changelog.** Release notes now use the same clean card hierarchy, close affordance, scrolling body, and full-width acknowledgement action as the complete release-history surface.
+
+## [1.4.4] - 2026-07-12
+
+### Added
+
+- **Android adds AI-assisted Spanish.** A repeatable translation harness and freshness checks keep catalogs structurally complete while tracking fluent review separately.
+- **Diagnostics exposes the Relay contract.** A manual refresh reports the installed plugin version, protocol version, capability count, profile enablement state, and last-check time; shared issue reports include sanitized Android and device metadata.
+- **What’s New links to complete release history.** The polished modal now provides direct access to every bundled version, with large-text screenshot coverage.
 
 ### Fixed
 
-- **Profile operations stay inside the selected Hermes profile.** Session list, history, rename, delete, and in-flight recovery no longer fall through to the launch/default database after a scoped failure. Optimistic writes roll back, and repeated recovery failures stop with an actionable reconnect message instead of leaving the turn busy for up to 30 minutes.
-
-### Fixed
-
-- **Non-default profile chat recovery stays inside the selected profile.** Failed profile-scoped history reads no longer fall through to the default Hermes database, and repeated recovery failures now stop with an actionable reconnect message instead of leaving the turn busy for up to 30 minutes.
+- **Profile operations stay inside the selected Hermes profile.** Session list, history, rename, delete, and in-flight recovery no longer fall through to the default database after a scoped failure; optimistic writes roll back and repeated recovery failures stop cleanly.
 
 ## [1.4.3] - 2026-07-11
 
@@ -1559,7 +1560,8 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.3...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.4...HEAD
+[1.4.4]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.3...android-v1.4.4
 [1.4.3]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.2...android-v1.4.3
 [1.4.2]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.1...android-v1.4.2
 [1.4.1]: https://github.com/Codename-11/hermes-relay/compare/android-v1.4.0...android-v1.4.1

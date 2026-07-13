@@ -56,7 +56,8 @@ import kotlinx.serialization.json.Json
  */
 @Composable
 fun WhatsNewDialog(
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onViewHistory: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // Prefer the structured changelog's latest entry; fall back to the legacy
@@ -145,13 +146,19 @@ fun WhatsNewDialog(
                         }
                     }
                 }
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(stringResource(R.string.whats_new_got_it))
+                    onViewHistory?.let { action ->
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = action,
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.whats_new_full_history)) }
+                    }
+                    Button(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.whats_new_got_it))
+                    }
                 }
             }
         }

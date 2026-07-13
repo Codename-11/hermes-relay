@@ -162,6 +162,11 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
   </tr>
 </table>
 
+The Android app also ships a complete AI-assisted Spanish catalog. Choose
+**Español** from **Settings → Appearance → Language**; translation status and
+fluent review are tracked independently so community corrections remain easy
+to contribute.
+
 <p align="center"><sub>▶ <a href="https://codename-11.github.io/hermes-relay/guide/getting-started.html#see-it-working">Watch the demo</a> on the docs site</sub></p>
 
 ## Features

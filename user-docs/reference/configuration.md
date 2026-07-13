@@ -121,6 +121,7 @@ Available in **Settings > Appearance**.
 |---------|---------|-------------|
 | Theme | `system` | Light, dark, or follow system setting |
 | Dynamic colors | `true` | Use Material You wallpaper-based colors (Android 12+) |
+| Language | System default | System default, English, Español, or 简体中文; synchronized with Android per-app language settings |
 
 ## Session State
 

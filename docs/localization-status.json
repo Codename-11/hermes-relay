@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "canonical_locale": "en",
   "verification_definitions": {
     "canonical": "English source text that defines product meaning.",
@@ -22,6 +22,10 @@
       "native_name": "Español",
       "verification": "ai-translated",
       "review_refs": [],
+      "source_sha256": {
+        "main": "c73f3ee2ff4757909892cb26cd820871222a2530f51bd31c6e4597998e4a65f9",
+        "sideload": "20a9245c3f260ccc10afc8ce4c370175473e8fa2a66f89a6a71295ee8899d529"
+      },
       "surfaces": {
         "android": "complete",
         "readme": "english-fallback",
@@ -32,6 +36,10 @@
       "native_name": "简体中文",
       "verification": "ai-translated",
       "review_refs": [],
+      "source_sha256": {
+        "main": "c73f3ee2ff4757909892cb26cd820871222a2530f51bd31c6e4597998e4a65f9",
+        "sideload": "20a9245c3f260ccc10afc8ce4c370175473e8fa2a66f89a6a71295ee8899d529"
+      },
       "surfaces": {
         "android": "complete",
         "readme": "maintained-summary",

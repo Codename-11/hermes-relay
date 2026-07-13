@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.4.4",
+   "title": "Spanish and clearer diagnostics",
+   "date": "2026-07-12",
+   "sections": [
+    {
+     "header": "Language that is ready to grow",
+     "bullets": [
+      "Use Spanish throughout the app from Settings → Appearance.",
+      "Translation freshness checks flag catalogs whenever the English source changes, while fluent verification remains tracked separately."
+     ]
+    },
+    {
+     "header": "Know what is connected",
+     "bullets": [
+      "Refresh Diagnostics to see the Relay plugin version, protocol, capability count, profile status, and last-check time.",
+      "Open the complete release history directly from the cleaner What’s New modal."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.3",
    "title": "Language switching inside the app",
    "date": "2026-07-11",

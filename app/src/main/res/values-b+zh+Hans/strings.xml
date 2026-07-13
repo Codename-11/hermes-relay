@@ -2864,6 +2864,10 @@
     <string name="diag_check_no_network">无网络</string>
     <string name="diag_check_no_server_yet">尚无服务器</string>
     <string name="diag_check_not_checked">未检查</string>
+    <string name="diag_refresh">刷新诊断</string>
+    <string name="diag_last_checked">上次检查：%1$s</string>
+    <string name="diag_plugin_contract">Relay 插件 %1$s · 协议 %2$d · %3$d 项能力</string>
+    <string name="diag_plugin_profile">配置文件 %1$s · 插件%2$s</string>
     <string name="diag_check_not_paired">未配对</string>
     <string name="diag_check_not_reachable">无法访问</string>
     <string name="diag_check_not_reachable_at">无法访问 %s</string>
@@ -2971,6 +2975,7 @@
     <string name="voice_overlay_tool_status_failed">失败</string>
     <string name="voice_overlay_tool_status_running">运行中</string>
     <string name="whats_new_got_it">知道了</string>
+    <string name="whats_new_full_history">查看完整历史记录</string>
     <string name="whats_new_no_notes">无可用的发布说明</string>
     <string name="whats_new_title">更新内容</string>
     <string name="whats_new_subtitle">最新版本亮点</string>

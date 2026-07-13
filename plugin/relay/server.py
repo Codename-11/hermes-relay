@@ -2156,16 +2156,25 @@ async def handle_media_inspect(request: web.Request) -> web.Response:
 
 
 async def handle_relay_info(request: web.Request) -> web.Response:
-    """Aggregate relay-status endpoint consumed by the dashboard overview tab.
+    """Return the authenticated relay contract and a sanitized status snapshot.
 
     GET /relay/info
-      → 200 {version, uptime_seconds, session_count, paired_device_count,
-             pending_commands, media_entry_count, health}
-      → 403 non-loopback caller
+      → 200 {plugin_version, protocol_version, capabilities, profiles, ...}
+      → 401 non-loopback caller without a valid paired-device bearer
     """
-    _require_loopback(request)
+    if request.remote in ("127.0.0.1", "::1") and not request.headers.get(
+        "Authorization"
+    ):
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
 
-    server: RelayServer = request.app["server"]
+    from plugin.profiles import discover_profile_configs, relay_state
+
+    profiles = [
+        {"name": name, "relay_state": relay_state(path)}
+        for name, path in discover_profile_configs()
+    ]
     uptime_seconds = int(time.monotonic() - server.start_time)
     session_count = len(server.sessions.list_sessions())
     pending_commands = len(server.bridge.pending)
@@ -2174,6 +2183,18 @@ async def handle_relay_info(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "version": __version__,
+            "plugin_version": __version__,
+            "protocol_version": 1,
+            "capabilities": [
+                "bridge",
+                "media",
+                "notifications",
+                "profiles",
+                "proactive",
+                "relay_voice",
+                "terminal",
+            ],
+            "profiles": profiles,
             "uptime_seconds": uptime_seconds,
             "session_count": session_count,
             # Sessions == paired devices in the current auth model.

@@ -2602,6 +2602,10 @@
     <string name="diag_check_no_network">Sin red</string>
     <string name="diag_check_no_server_yet">Aún no hay servidor</string>
     <string name="diag_check_not_checked">No comprobado</string>
+    <string name="diag_refresh">Actualizar diagnósticos</string>
+    <string name="diag_last_checked">Última comprobación: %1$s</string>
+    <string name="diag_plugin_contract">Plugin Relay %1$s · protocolo %2$d · %3$d capacidades</string>
+    <string name="diag_plugin_profile">Perfil %1$s · plugin %2$s</string>
     <string name="diag_check_not_paired">No emparejado</string>
     <string name="diag_check_not_reachable">No accesible</string>
     <string name="diag_check_not_reachable_at">No accesible en %s</string>
@@ -2709,6 +2713,7 @@
     <string name="voice_overlay_tool_status_failed">Fallido</string>
     <string name="voice_overlay_tool_status_running">En curso</string>
     <string name="whats_new_got_it">Entiendo</string>
+    <string name="whats_new_full_history">Ver historial completo</string>
     <string name="whats_new_no_notes">No hay notas de versión disponibles</string>
     <string name="whats_new_title">¿Qué hay de nuevo?</string>
     <string name="whats_new_subtitle">Novedades de la última versión</string>

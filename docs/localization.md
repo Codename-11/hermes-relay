@@ -11,7 +11,7 @@ technical gates pass; the status must not imply human review that did not occur.
 See `docs/translation-playbook.md` for the required translation and critique
 workflow.
 
-Users can switch between System default, English, and Simplified Chinese from
+Users can switch between System default, English, Spanish, and Simplified Chinese from
 Settings → Appearance → Language. The picker stays synchronized with Android's
 per-app language setting; Android 12 and lower use AppCompat's automatic locale
 storage.
@@ -53,6 +53,11 @@ notifications, dialogs, onboarding, connection setup, Chat, Manage, Voice, and
 both product flavors. Android automatically falls back to English if a runtime
 resource is unavailable, but CI intentionally requires complete catalogs so
 new UI cannot silently remain English.
+
+Each non-English status entry also records SHA-256 hashes of the canonical
+English catalogs it was translated from. Changing English without refreshing a
+locale therefore fails the catalog gate instead of silently leaving a
+structurally complete but semantically stale translation.
 
 ## Adding a language
 

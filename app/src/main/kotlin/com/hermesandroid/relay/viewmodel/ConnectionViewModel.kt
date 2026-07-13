@@ -1902,12 +1902,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _relayUpdateInfo = MutableStateFlow<RelayHttpClient.RelayUpdateInfo?>(null)
     val relayUpdateInfo: StateFlow<RelayHttpClient.RelayUpdateInfo?> = _relayUpdateInfo.asStateFlow()
 
+    private val _relayInfo = MutableStateFlow<RelayHttpClient.RelayInfo?>(null)
+    val relayInfo: StateFlow<RelayHttpClient.RelayInfo?> = _relayInfo.asStateFlow()
+    private val _diagnosticsCheckedAt = MutableStateFlow<Long?>(null)
+    val diagnosticsCheckedAt: StateFlow<Long?> = _diagnosticsCheckedAt.asStateFlow()
+    private val _diagnosticsRefreshing = MutableStateFlow(false)
+    val diagnosticsRefreshing: StateFlow<Boolean> = _diagnosticsRefreshing.asStateFlow()
+
     fun refreshRelayUpdateInfo() {
         viewModelScope.launch {
             _relayUpdateInfo.value = null
             relayHttpClient.fetchUpdateCheck()
                 .onSuccess { info -> _relayUpdateInfo.value = info }
                 .onFailure { _relayUpdateInfo.value = null }
+        }
+    }
+
+    fun refreshDiagnostics() {
+        _diagnosticsRefreshing.value = true
+        probeNow()
+        viewModelScope.launch {
+            val info = relayHttpClient.fetchRelayInfo().getOrNull()
+            _relayInfo.value = info
+            relayHttpClient.fetchUpdateCheck().onSuccess { _relayUpdateInfo.value = it }
+            _diagnosticsCheckedAt.value = System.currentTimeMillis()
+            _diagnosticsRefreshing.value = false
         }
     }
 

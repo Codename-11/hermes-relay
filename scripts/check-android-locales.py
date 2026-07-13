@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -188,8 +189,8 @@ def validate_status_registry(errors: list[str]) -> None:
         fail(f"{STATUS_PATH.relative_to(REPO_ROOT)}: cannot read status registry: {exc}", errors)
         return
 
-    if data.get("schema_version") != 1:
-        fail("localization status schema_version must be 1", errors)
+    if data.get("schema_version") != 2:
+        fail("localization status schema_version must be 2", errors)
     if data.get("canonical_locale") != "en":
         fail("localization status canonical_locale must be 'en'", errors)
 
@@ -209,6 +210,14 @@ def validate_status_registry(errors: list[str]) -> None:
             f"localization status locales {sorted(locales)} do not match shipped locales {sorted(expected)}",
             errors,
         )
+
+    source_hashes = {
+        source_set.name: hashlib.sha256(
+            (source_set / "res" / "values" / "strings.xml").read_bytes()
+        ).hexdigest()
+        for source_set in APP_SRC.iterdir()
+        if (source_set / "res" / "values" / "strings.xml").is_file()
+    }
 
     for tag, entry in locales.items():
         if not isinstance(entry, dict):
@@ -233,6 +242,12 @@ def validate_status_registry(errors: list[str]) -> None:
         surfaces = entry.get("surfaces")
         if not isinstance(surfaces, dict) or surfaces.get("android") not in {"canonical", "complete"}:
             fail(f"localization status {tag!r} must track the Android surface", errors)
+        if tag != "en" and entry.get("source_sha256") != source_hashes:
+            fail(
+                f"localization status {tag!r} is stale; translate the current English catalogs "
+                "and refresh source_sha256",
+                errors,
+            )
 
 
 def main() -> int:
