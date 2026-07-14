@@ -32,6 +32,19 @@ then `docs/spec.md` and `docs/decisions.md`.
   zero runtime deps, strict TS + ES modules, ship compiled `dist/`. Full
   per-language style and the dev loop live in CLAUDE.md → "Code Style".
 
+## Review guidelines
+
+- Report only actionable correctness, security, compatibility, or release-risk
+  findings; avoid stylistic preferences unless they violate a documented rule.
+- Treat the vanilla Hermes upstream boundary as release-critical. Flag any
+  default-path dependency on relay-only or fork-only server behavior.
+- Check that changes preserve public-repo writing hygiene and do not expose
+  secrets, private infrastructure, or personal information.
+- Use the affected surface's CI result as evidence, but do not imply Android UI
+  or device behavior was proven without an explicit on-device verification.
+- Prioritize findings that warrant holding the merge. State the impacted path
+  and the concrete failure mode.
+
 ## Public-repo writing hygiene
 
 Everything committed is public. In CHANGELOG, DEVLOG, README, docs, and release

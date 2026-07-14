@@ -1,5 +1,24 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-14 — Codex review and path-aware required CI
+
+GitHub pull-request review moved from repository-hosted Claude Actions to the
+subscription-backed Codex repository integration. Repository review guidance now
+lives in `AGENTS.md`, while provider availability is deliberately separated from
+merge protection. The Claude review, mention responder, and model-backed issue
+triage workflows were removed. Deterministic issue type and area labeling remains
+as a no-LLM GitHub workflow.
+
+The former always-green required-check sentinel now classifies changed paths and
+calls the existing Android, CLI, plugin, dashboard, and upstream-contract workflows
+as reusable checks. Public documentation changes receive a VitePress production
+build. One stable `Required checks` result reports failure whenever any selected
+surface fails, while unaffected toolchains remain skipped.
+
+Verification: workflow syntax was checked with actionlint, changed-path selection
+was exercised against representative file sets, and repository documentation was
+scanned to ensure no removed Claude workflow, action, trigger, or secret remained.
+
 ## 2026-07-14 — Hermes active-profile default alignment
 
 **Why.** Hermes resolves a bare CLI or gateway invocation through the root `active_profile` marker before importing runtime modules. Relay profile discovery ignored that marker and always populated its synthetic `default` row from the root config, so native clients could show the wrong default identity/model/SOUL and route profile API metadata incorrectly.

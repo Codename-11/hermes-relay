@@ -1,0 +1,65 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to label again"
+        required: true
+        type: string
+
+concurrency:
+  group: issue-triage-${{ github.event.issue.number || github.event.inputs.issue_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  auto-label:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.issue.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label from title prefix and issue area
+        uses: actions/github-script@v8
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+        with:
+          script: |
+            const issue_number = Number(process.env.ISSUE_NUMBER);
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number,
+            });
+            const title = (issue.title || '').toLowerCase();
+            const body = (issue.body || '').toLowerCase();
+            const haystack = `${title}\n${body}`;
+            const labels = [];
+
+            if (title.startsWith('[bug]')) labels.push('bug');
+            else if (title.startsWith('[feature]') || title.startsWith('[feat]')) labels.push('enhancement');
+            else if (title.startsWith('[docs]')) labels.push('documentation');
+
+            if (/\b(cli|desktop|terminal|daemon|pty|hermes-relay (install|binary|tray))\b/.test(haystack)) labels.push('area:cli');
+            else if (/\b(dashboard|plugin ui|react)\b/.test(haystack)) labels.push('area:dashboard');
+            else if (/\b(relay|plugin|aiohttp|python|pairing|voice (transcribe|synthesize)|bridge (endpoint|route))\b/.test(haystack)) labels.push('area:plugin');
+            else if (/\b(readme|user-?docs|documentation)\b/.test(haystack)) labels.push('area:docs');
+            else if (/\b(android|app|compose|apk|phone|samsung|gradle|chat|voice|notification|sphere|keystore)\b/.test(haystack)) labels.push('area:android');
+
+            if (!labels.length) {
+              core.info('No deterministic label matched; leaving the issue for maintainer triage.');
+              return;
+            }
+
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number, labels,
+              });
+              core.info(`Applied labels: ${labels.join(', ')}`);
+            } catch (error) {
+              core.warning(`Could not apply ${labels.join(', ')}: ${error.message}`);
+            }
