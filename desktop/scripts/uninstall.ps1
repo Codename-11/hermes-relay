@@ -4,7 +4,7 @@
 #
 # Reverses install.ps1. Three tiers:
 #
-#   (default)    Remove the binary and the user-PATH entry for $INSTALL_DIR.
+#   (default)    Remove the CLI, optional systray, and user-PATH entry for $INSTALL_DIR.
 #                Preserves $HOME\.hermes\remote-sessions.json so a future
 #                re-install pairs seamlessly.
 #   --purge      Also delete $HOME\.hermes\remote-sessions.json (bearer tokens,
@@ -56,6 +56,14 @@ else             { Say "  mode     : binary-only (preserves remote-sessions.json
 Say ''
 
 # -- Tier 1: binary + PATH --------------------------------------------------
+
+$trayTarget = Join-Path $dir 'hermes-relay-tray.exe'
+if (Test-Path -LiteralPath $trayTarget) {
+  Get-Process -Name 'hermes-relay-tray' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $trayTarget -Force -ErrorAction SilentlyContinue
+  Say "-> removed $trayTarget"
+}
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'HermesRelayTray' -ErrorAction SilentlyContinue
 
 $target = Join-Path $dir 'hermes-relay.exe'
 if (Test-Path -LiteralPath $target) {

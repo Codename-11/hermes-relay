@@ -44,6 +44,7 @@ import {
   isPidAlive,
   readDaemonStatus,
   writeDaemonStatus,
+  type DaemonComputerGrantStatus,
   type DaemonState,
   type DaemonStatus
 } from '../lib/daemonStatus.js'
@@ -57,10 +58,19 @@ import {
   desktopHandlers,
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
-import { configureComputerUseRuntime } from '../tools/computerGrants.js'
+import {
+  cancelComputerGrant,
+  configureComputerUseRuntime,
+  getActiveComputerGrant,
+  setComputerGrantChangeListener,
+  type ComputerGrant
+} from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
+import { grantBridgeDir } from '../lib/grantBridge.js'
+import { currentProcessIdentity } from '../lib/processPrivilege.js'
+import { consumeComputerGrantCancellation } from '../lib/desktopUseSettings.js'
 import { startVoiceServer, type VoiceServer } from '../voiceServer.js'
 
 const VOICE_DISCOVERY_FILE = 'desktop-voice.json'
@@ -72,11 +82,12 @@ const STATUS_HEARTBEAT_MS = 30_000
 const DAEMON_USAGE: UsageSpec = {
   name: 'daemon',
   summary: 'run headless — expose desktop tools to the agent even when no shell is open',
-  usage: ['daemon [run]', 'daemon start', 'daemon stop', 'daemon status'],
+  usage: ['daemon [run]', 'daemon start', 'daemon stop', 'daemon restart', 'daemon status'],
   subcommands: [
     { verb: 'run', desc: 'Run in the foreground (current console; default)' },
     { verb: 'start', desc: 'Start in the background — no console window; survives terminal close' },
     { verb: 'stop', desc: 'Stop the background daemon' },
+    { verb: 'restart', desc: 'Restart the background daemon, preserving caller privileges' },
     { verb: 'status', desc: 'Print state + uptime of the running daemon (alias: --status)' }
   ],
   flags: [
@@ -87,9 +98,14 @@ const DAEMON_USAGE: UsageSpec = {
     { flag: '--no-voice', desc: 'Do not start the loopback voice server' },
     { flag: '--log-human', desc: 'Human-readable logs (auto on a TTY)' },
     { flag: '--log-json', desc: 'Force JSON-line logs even on a TTY' },
-    { flag: '--experimental-computer-use', desc: 'Also advertise computer-use tools (see top-level help)' }
+    { flag: '--experimental-computer-use', desc: 'One-process computer-use enable override (see top-level help)' }
   ],
-  examples: ['hermes-relay daemon start', 'hermes-relay daemon status', 'hermes-relay daemon stop']
+  examples: [
+    'hermes-relay daemon start',
+    'hermes-relay daemon status',
+    'hermes-relay daemon restart',
+    'hermes-relay daemon stop'
+  ]
 }
 
 type LogLevel = 'info' | 'warn' | 'error'
@@ -187,6 +203,20 @@ async function printDaemonStatus(args: ParsedArgs): Promise<number> {
   }
   if (status.voice_url) {
     process.stdout.write(kv('voice', status.voice_url) + '\n')
+  }
+  if (status.username || status.privilege) {
+    const user = status.username ?? 'unknown user'
+    const privilege = status.privilege === 'administrator' ? 'Administrator' : 'User'
+    process.stdout.write(kv('account', `${user} (${privilege})`) + '\n')
+  }
+  process.stdout.write(kv('desktop', status.computer_use_enabled ? 'enabled' : 'disabled') + '\n')
+  if (status.computer_grant?.active) {
+    process.stdout.write(
+      kv(
+        'grant',
+        `${status.computer_grant.mode} until ${status.computer_grant.expires_at ?? 'expiry unknown'}`
+      ) + '\n'
+    )
   }
   return alive ? 0 : 1
 }
@@ -294,6 +324,32 @@ async function stopDaemon(args: ParsedArgs): Promise<number> {
   return 0
 }
 
+async function restartDaemon(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  const existing = await readDaemonStatus()
+  if (existing && isPidAlive(existing.pid)) {
+    try {
+      process.kill(existing.pid)
+    } catch (error) {
+      process.stderr.write(
+        t.err(`failed to stop daemon pid ${existing.pid}: ${(error as Error).message}`) + '\n'
+      )
+      return 1
+    }
+
+    const deadline = Date.now() + 5_000
+    while (isPidAlive(existing.pid) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    if (isPidAlive(existing.pid)) {
+      process.stderr.write(t.err(`daemon pid ${existing.pid} did not stop within 5 seconds`) + '\n')
+      return 1
+    }
+  }
+  await clearDaemonStatus()
+  return startDetachedDaemon(args)
+}
+
 export async function daemonCommand(args: ParsedArgs): Promise<number> {
   if (args.flags.help) {
     printUsage(DAEMON_USAGE, makeTheme({ noColor: !!args.flags['no-color'] }))
@@ -305,6 +361,9 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   }
   if (sub === 'stop') {
     return stopDaemon(args)
+  }
+  if (sub === 'restart') {
+    return restartDaemon(args)
   }
   if (sub === 'start' || args.flags.detach) {
     return startDetachedDaemon(args)
@@ -399,13 +458,19 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
 
   // Observable status file — `hermes-relay daemon --status` reads this.
   const nowSec = () => Math.floor(Date.now() / 1000)
+  const identity = currentProcessIdentity()
+  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
   const status: DaemonStatus = {
     pid: process.pid,
     url,
     state: 'starting',
     started_at: nowSec(),
     updated_at: nowSec(),
-    last_event: 'starting'
+    last_event: 'starting',
+    username: identity.username,
+    privilege: identity.privilege,
+    computer_use_enabled: computerUseEnabled,
+    computer_grant: { active: false, mode: 'none', expires_at: null }
   }
   const updateStatus = (partial: Partial<DaemonStatus> & { state?: DaemonState }) => {
     Object.assign(status, partial, { updated_at: nowSec() })
@@ -468,6 +533,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // future code path that constructs a router from the daemon without
   // passing `interactive: false` explicitly still gets the right default.
   process.env.HERMES_RELAY_DAEMON = '1'
+  process.env.HERMES_RELAY_GRANT_BRIDGE_DIR ??= grantBridgeDir()
 
   // Wire the desktop tool router. consentGranted is true by this point —
   // we gated on stored consent (or --allow-tools override) above.
@@ -475,13 +541,42 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // or redirected daemon still fails host input closed because no visible
   // local grant approval prompt can run.
   const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
-  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
   configureComputerUseRuntime({
     url,
     computerUseConsented: computerUseEnabled,
     consentSource: consented ? 'stored' : 'override'
   })
   const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
+  const toDaemonGrantStatus = (grant: ComputerGrant | null): DaemonComputerGrantStatus => ({
+    active: grant !== null,
+    mode: grant?.mode ?? 'none',
+    expires_at: grant?.expires_at ?? null,
+    reason: grant?.reason
+  })
+  const restoreGrantListener = setComputerGrantChangeListener(grant => {
+    updateStatus({ computer_grant: toDaemonGrantStatus(grant), last_event: 'grant_changed' })
+  })
+
+  let cancellationCheckRunning = false
+  const grantControlInterval = setInterval(async () => {
+    if (cancellationCheckRunning) return
+    cancellationCheckRunning = true
+    try {
+      const request = await consumeComputerGrantCancellation()
+      if (request) {
+        const result = cancelComputerGrant(request.reason)
+        log.info({ event: 'computer_grant_cancelled_locally', reason: request.reason, result })
+      } else {
+        getActiveComputerGrant()
+      }
+    } catch (error) {
+      log.warn({ event: 'computer_grant_control_failed', message: rpcErrorMessage(error) })
+    } finally {
+      cancellationCheckRunning = false
+    }
+  }, 500)
+  grantControlInterval.unref?.()
+
   const router = new DesktopToolRouter({
     consentGranted: true,
     interactive,
@@ -552,6 +647,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const cleanup = async () => {
     log.info({ event: 'shutdown' })
     clearInterval(statusHeartbeat)
+    clearInterval(grantControlInterval)
+    restoreGrantListener()
     try {
       await clearDaemonStatus()
     } catch {

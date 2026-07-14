@@ -1,5 +1,6 @@
 node_modules/
 dist/
+tray/target/
 tray/src-tauri/bin/
 tray/src-tauri/target/
 *.log

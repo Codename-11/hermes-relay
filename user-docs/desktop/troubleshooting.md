@@ -22,7 +22,56 @@ echo 'export PATH="$HOME/.hermes/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Or run with full path: `~/.hermes/bin/hermes-relay --version`.
+Or run with the platform-appropriate full path:
+
+```powershell
+# PowerShell
+& "$env:USERPROFILE\.hermes\bin\hermes-relay.exe" --version
+```
+
+```bat
+:: Command Prompt — one pair of quotes, no leading apostrophe or escaped quote
+"%USERPROFILE%\.hermes\bin\hermes-relay.exe" --version
+```
+
+If Command Prompt says `'\"C:\Users\...\hermes-relay.exe\"' is not recognized`, the quotes were copied with a literal apostrophe/backslash wrapper. Use the exact `cmd.exe` form above.
+
+## The tray icon is running but no desktop window opens
+
+That is expected. The Windows systray is deliberately menu-only. Find **Hermes Relay** in the notification area (including the hidden-icons chevron) and right-click it. Interactive actions open the real CLI in a terminal; there is no dashboard or WebView window.
+
+If the icon is absent, launch **Hermes Relay Systray** from the Start menu. Check `~/.hermes/tray.log` for startup errors and confirm only one copy is running:
+
+```powershell
+Get-Process hermes-relay-tray -ErrorAction SilentlyContinue
+```
+
+## The daemon is User but I need Administrator access
+
+Normal-user operation is the safe default. Right-click the tray and choose **Start daemon as Administrator…** or **Restart daemon as Administrator…**, then approve the Windows UAC prompt. The tray remains a normal user process; only the daemon and its approved tool/input actions are elevated.
+
+Use `hermes-relay daemon status` or the tray status row to confirm the privilege. Elevation is never automatic and is not required for ordinary user files/apps.
+
+## Desktop use is enabled but the daemon still advertises 23 tools
+
+The persistent preference is read when the daemon starts. Check the state and restart requirement:
+
+```powershell
+hermes-relay computer-use status
+hermes-relay daemon restart
+```
+
+The Windows tray restarts automatically after **Enable desktop use…** or **Disable desktop use** while preserving the daemon's User/Administrator level. `--no-computer-use` suppresses the feature for one invocation even when the preference is enabled.
+
+## A desktop-control request is waiting or needs to be stopped
+
+Run `hermes-relay grants` to review pending assist/control requests. The Windows tray raises a native alert and its **Review pending grants…** action opens the same command. To end active access immediately:
+
+```powershell
+hermes-relay computer-use cancel
+```
+
+Disabling desktop use also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
 
 ## `auth timed out after 15000ms`
 

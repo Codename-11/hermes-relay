@@ -1294,7 +1294,7 @@ Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter tra
 
 ## ADR 27 — Desktop control native shell uses Tauri v2 with CLI fallback
 
-**Status:** Accepted (desktop-control enhanced plan, 2026-05-16).
+**Status:** Superseded by ADR 37 (2026-07-13). Retained as historical context.
 
 **Context.** The desktop computer-use surface needs more than a terminal prompt once it graduates from experimental CLI use. Safe control needs a tray icon, always-visible observing/control chip, local grant prompt, task log, settings, and an emergency stop that is available even when no terminal window is open. At the same time, the existing TypeScript CLI and daemon are already the durable thin-client surface and must keep working for operators, headless boxes, and scripting.
 
@@ -1340,7 +1340,7 @@ Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter tra
 
 ## ADR 28 - Desktop Android pairing parity and one active tray relay
 
-**Status:** Accepted for next desktop tray UI pass (2026-05-17).
+**Status:** Superseded by ADR 37 (2026-07-13). CLI pairing behavior remains.
 
 **Context.** The first Windows tray pass made the desktop surface testable: real tray icon, click-through overlay pill, sticky daemon controls, dashboard refresh wiring, and shared Hermes branding. The next gap is product parity with the Android pairing/settings experience. Android already has the right model: pairing is a first-class route, endpoint candidates make LAN/Tailscale/public routes visible, auth failures separate API health from relay session auth, and advanced settings are tucked behind expandable sections instead of crowding the default screen.
 
@@ -1421,7 +1421,8 @@ behaviors should not be reimplemented separately in every provider adapter.
 
 ## ADR 30 - Desktop surface plugins and built-in Herm launcher
 
-**Status:** Accepted for desktop tray/CLI plugin surface (2026-05-18).
+**Status:** Amended by ADR 37 (2026-07-13). The CLI plugin commands remain;
+the tray plugin view and embedded PTY do not.
 
 **Context.** The desktop tray already owns a local xterm/PTY host for the
 remote Hermes Relay TUI. Herm (`liftaris/herm`) is a separate OpenTUI dashboard
@@ -1475,7 +1476,7 @@ design.
 
 ## ADR 31 - Desktop Chat tab and first-run chat route
 
-**Status:** Accepted for desktop tray chat surface (2026-05-18).
+**Status:** Superseded by ADR 37 (2026-07-13). Chat remains a CLI/TUI surface.
 
 **Context.** `fathah/hermes-desktop` is useful as a product reference for a
 chat-first desktop surface and first-run setup, but Hermes-Relay's desktop app
@@ -1982,4 +1983,66 @@ private preflight.
 - `.github/workflows/approve-release-android.yml`
 - `.github/workflows/release-android.yml`
 - `scripts/check-android-collection-apis.py`
+- `RELEASE.md`
+
+---
+
+## ADR 37 — Desktop is CLI/TUI plus an optional menu-only Windows systray
+
+**Status:** Accepted (2026-07-13).
+
+**Context.** The Windows Tauri shell grew from a tray convenience into a second
+desktop client with Chat, embedded PTYs, sessions, plugins, voice, diagnostics,
+settings, an overlay, and its own daemon ownership. That duplicated the CLI/TUI
+contract, obscured which surface was authoritative, and made a background tray
+helper carry a full WebView application architecture.
+
+**Decision.** Hermes-Relay desktop has exactly two deliverables on the `cli-v*`
+track:
+
+1. `hermes-relay`, the primary cross-platform CLI and terminal TUI. Interactive
+   behavior, pairing, sessions, daemon management, grants, audit, diagnostics,
+   plugins, chat, and voice remain CLI-owned.
+2. `hermes-relay-tray`, an optional Windows-only native tray process. Its only
+   interface is the right-click context menu. It may display daemon state and
+   invoke the installed CLI for TUI, start/stop/restart, pairing, pending grant
+   review, audit, diagnostics, logs, sign-in startup, emergency stop, and exit.
+   Left-click does nothing. Daemon state includes PID liveness and the current
+   User/Administrator privilege level; elevation is an explicit UAC-confirmed
+   daemon action, never a permanently elevated tray. Desktop computer use is a
+   persistent CLI-owned machine preference, while the tray displays and invokes
+   that contract rather than maintaining private settings.
+
+The tray must not create an application window, WebView, overlay, embedded
+terminal, chat view, session manager, plugin view, voice view, diagnostics
+dashboard, or settings panel. Actions requiring interaction open the real CLI
+in a terminal. The Windows installer places one CLI binary and the tray binary
+beside each other under `~/.hermes/bin`; there is no private bundled sidecar.
+
+**Consequences.**
+
+- Tauri, xterm, dashboard assets, tray IPC, and tray-owned PTY/process state are
+  removed.
+- Pending computer-use requests gain a CLI command so approval is available
+  without a GUI window and stays scriptable.
+- Normal-user operation remains the default. Administrator desktop-tool access
+  is available through an explicit UAC prompt, and elevated daemon lifecycle
+  actions retain that privilege boundary.
+- Experimental desktop use remains separately opt-in. The tray shows its state,
+  active grant and expiry, alerts on pending local approval, supports immediate
+  cancellation, and warns when an Administrator input grant is active.
+- The tray is a small native Rust process built on `tray-icon`; NSIS packages it
+  with the same compiled CLI released separately.
+- Rich full-window desktop chat and management remain upstream desktop-product
+  concerns, not a Hermes-Relay surface.
+- The CLI package version remains canonical for both binaries and the installer.
+
+**Key files:**
+
+- `desktop/src/cli.ts`
+- `desktop/src/commands/grants.ts`
+- `desktop/tray/Cargo.toml`
+- `desktop/tray/src/main.rs`
+- `desktop/tray/installer/hermes-relay.nsi`
+- `desktop/README.md`
 - `RELEASE.md`

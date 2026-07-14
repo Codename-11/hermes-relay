@@ -8,9 +8,58 @@ permissions:
   contents: write
 
 jobs:
+  validate-release:
+    name: Validate tag, branch, and version metadata
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Extract and validate tag version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#cli-v}"
+          if [[ -z "$version" || "$version" == "$GITHUB_REF_NAME" ]]; then
+            echo "Expected a cli-v* tag, got $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          npm run check:version-sync -- --expect "$version"
+
+      - name: Verify tagged commit belongs to main
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          git fetch origin main --no-tags
+          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "CLI releases must be tagged from main; $tag_commit is not in origin/main" >&2
+            exit 1
+          fi
+
   build-cli-binaries:
     name: Build cross-platform CLI binaries via Bun compile
     runs-on: ubuntu-latest
+    needs: validate-release
     defaults:
       run:
         working-directory: desktop
@@ -34,6 +83,9 @@ jobs:
 
       - name: Type-check
         run: npm run type-check
+
+      - name: Test CLI
+        run: npm test
 
       - name: Build dist/ (tsc)
         run: npm run build
@@ -100,6 +152,7 @@ jobs:
   build-windows-tray-installer:
     name: Build Windows tray installer
     runs-on: windows-latest
+    needs: validate-release
     defaults:
       run:
         working-directory: desktop
@@ -130,19 +183,17 @@ jobs:
       - name: Build dist/ (tsc)
         run: npm run build
 
+      - name: Check and lint tray shell
+        run: npm run tray:fmt && npm run tray:lint
+
       - name: Test tray shell
         run: npm run tray:test
 
+      - name: Install NSIS
+        run: choco install nsis --yes --no-progress
+
       - name: Build tray installer
         run: npm run tray:build
-
-      - name: Normalize installer asset name
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/tray | Out-Null
-          $installer = Get-ChildItem -Path tray/src-tauri/target/release/bundle/nsis -Filter '*_x64-setup.exe' | Select-Object -First 1
-          if (-not $installer) { throw 'NSIS installer was not produced' }
-          Copy-Item -Force $installer.FullName dist/tray/hermes-relay-desktop-windows-x64-setup.exe
 
       - name: Smoke-test tray exe launch
         shell: pwsh
@@ -154,17 +205,22 @@ jobs:
           New-Item -ItemType Directory -Force -Path $smokeHome | Out-Null
           $env:USERPROFILE = $smokeHome
           $env:HOME = $smokeHome
-          $proc = Start-Process -FilePath tray/src-tauri/target/release/hermes-relay-desktop.exe -WindowStyle Hidden -PassThru
+          $env:HERMES_RELAY_CLI_PATH = (Resolve-Path dist/bin/hermes-relay-win-x64.exe).Path
+          $proc = Start-Process -FilePath tray/target/release/hermes-relay-tray.exe -WindowStyle Hidden -PassThru
           Start-Sleep -Seconds 5
           if ($proc.HasExited) { throw "tray app exited early with code $($proc.ExitCode)" }
+          $proc.Refresh()
+          if ($proc.MainWindowHandle -ne 0) { throw 'menu-only systray created an application window' }
+          $traySize = (Get-Item tray/target/release/hermes-relay-tray.exe).Length
+          if ($traySize -gt 5242880) { throw "tray executable exceeds 5 MiB: $traySize bytes" }
           Stop-Process -Id $proc.Id -Force
-          Write-Host "tray launch smoke OK pid=$($proc.Id)"
+          Write-Host "menu-only tray launch smoke OK pid=$($proc.Id) bytes=$traySize"
 
       - name: Upload Windows tray release asset
         uses: actions/upload-artifact@v4
         with:
-          name: cli-windows-tray-installer
-          path: desktop/dist/tray/hermes-relay-desktop-windows-x64-setup.exe
+          name: cli-windows-installer
+          path: desktop/dist/tray/hermes-relay-windows-x64-setup.exe
           retention-days: 7
 
   publish-release:
@@ -221,5 +277,5 @@ jobs:
             release-assets/cli-binaries/hermes-relay-linux-x64
             release-assets/cli-binaries/hermes-relay-darwin-x64
             release-assets/cli-binaries/hermes-relay-darwin-arm64
-            release-assets/cli-windows-tray-installer/hermes-relay-desktop-windows-x64-setup.exe
+            release-assets/cli-windows-installer/hermes-relay-windows-x64-setup.exe
             release-assets/SHA256SUMS.txt

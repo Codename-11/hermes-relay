@@ -91,5 +91,5 @@ keystore.properties
 .smoke-relay.pid
 .smoke-relay.log
 
-# Generated tray frontend vendor assets copied from desktop/node_modules
+# Legacy generated desktop tray assets may remain after upgrading a worktree.
 desktop/tray/ui/vendor/

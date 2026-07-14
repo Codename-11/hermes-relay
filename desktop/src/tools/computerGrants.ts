@@ -22,6 +22,7 @@ export interface ComputerUseRuntime {
 }
 
 let activeGrant: ComputerGrant | null = null
+let grantChangeListener: ((grant: ComputerGrant | null) => void) | null = null
 let runtime: ComputerUseRuntime = {
   url: null,
   computerUseConsented: false,
@@ -76,6 +77,17 @@ function expireIfNeeded(): void {
   }
   if (Date.parse(activeGrant.expires_at) <= nowMs()) {
     activeGrant = null
+    grantChangeListener?.(null)
+  }
+}
+
+export function setComputerGrantChangeListener(
+  listener: ((grant: ComputerGrant | null) => void) | null
+): () => void {
+  const previous = grantChangeListener
+  grantChangeListener = listener
+  return () => {
+    grantChangeListener = previous
   }
 }
 
@@ -151,6 +163,7 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
     expires_at: new Date(createdAt.getTime() + durationSeconds * 1000).toISOString()
   }
   activeGrant = grant
+  grantChangeListener?.(grant)
 
   return {
     ok: true,
@@ -165,6 +178,7 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
 export function cancelComputerGrant(reason = 'cancelled'): Record<string, unknown> {
   const previous = getActiveComputerGrant()
   activeGrant = null
+  if (previous) grantChangeListener?.(null)
   return {
     ok: true,
     cancelled: previous !== null,

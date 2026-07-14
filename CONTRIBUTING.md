@@ -94,7 +94,7 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
 
 **Branching model (as of 2026-04-19): `main` + `dev`.** Feature branches — `feature/<name>`, `fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back into `dev` via `--no-ff` PRs. `main` is released state only; it receives release merges from `dev` and nothing else. There is no straight-to-main exemption — even single-file typos go through `dev`.
 
-Release-prep commits (version bump, changelog promotion) land on `dev` first, then a surface-specific release PR merges `dev` → `main` with `--no-ff`. Tags are cut from `main` after the merge: `android-vX.Y.Z`, `server-vX.Y.Z`, or `desktop-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release process.
+Release-prep commits (version bump, changelog promotion) land on `dev` first, then a surface-specific release PR merges `dev` → `main` with `--no-ff`. Tags are cut from `main` after the merge: `android-vX.Y.Z`, `plugin-vX.Y.Z`, or `cli-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release process.
 
 ## Stale PR salvage and contributor credit
 
