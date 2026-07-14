@@ -345,9 +345,9 @@ This is an indie project and every report helps shape where it goes next. If som
 
 <a href="https://www.star-history.com/?repos=Codename-11%2Fhermes-relay&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Codename-11/hermes-relay&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Codename-11/hermes-relay&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Codename-11/hermes-relay&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Codename-11/hermes-relay&type=date&theme=dark&legend=top-left&sealed_token=LpoTO7nnGWAwvnRyEeMuKowbf1fe6tQP9n6EbjX-9HTG0uGPrSD_OaNkloMDIM5ugTCg_14LB3XpQTx7v4fBn7PAtMZhO87iIlK5lo42Z31x8myptmcmnQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Codename-11/hermes-relay&type=date&legend=top-left&sealed_token=LpoTO7nnGWAwvnRyEeMuKowbf1fe6tQP9n6EbjX-9HTG0uGPrSD_OaNkloMDIM5ugTCg_14LB3XpQTx7v4fBn7PAtMZhO87iIlK5lo42Z31x8myptmcmnQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Codename-11/hermes-relay&type=date&legend=top-left&sealed_token=LpoTO7nnGWAwvnRyEeMuKowbf1fe6tQP9n6EbjX-9HTG0uGPrSD_OaNkloMDIM5ugTCg_14LB3XpQTx7v4fBn7PAtMZhO87iIlK5lo42Z31x8myptmcmnQ" />
  </picture>
 </a>
 
