@@ -29,8 +29,8 @@ installation, release PR, and tag sequence.
 
 Verification: `npm run verify` passed 15 CLI tests, compiled CLI smoke tests,
 and 4 native tray contract tests. Rust formatting and Clippy passed with warnings
-denied. The release build produced a 0.88 MiB tray executable and a 26.98 MiB
-NSIS installer at version `0.4.0-alpha.1`; launch smoke confirmed a live singleton
+denied. The release build produced a 0.88 MiB tray executable and a 26.97 MiB
+NSIS installer at version `0.4.0-alpha.2`; launch smoke confirmed a live singleton
 process with no main window until explicit teardown.
 
 ## 2026-07-12 — Multi-profile presence and concurrent Gateway turns

@@ -1,6 +1,6 @@
 [package]
 name = "hermes-relay-tray"
-version = "0.4.0-alpha.1"
+version = "0.4.0-alpha.2"
 description = "Optional menu-only Windows systray for the Hermes Relay CLI"
 authors = ["Axiom Labs"]
 edition = "2021"
