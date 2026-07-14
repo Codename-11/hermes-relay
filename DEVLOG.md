@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-14 — Dependency PR routing and Roborazzi alignment
+
+The paired Roborazzi screenshot-test libraries moved together from 1.66.0 to
+1.68.0. Dependabot now targets `dev` for Gradle and GitHub Actions updates,
+groups the coupled Roborazzi artifacts into one testing PR, and uses repository
+labels that exist. This keeps dependency work inside the normal release branch
+flow and avoids duplicate PRs carrying the same resolved Gradle patch.
+
 ## 2026-07-14 — Codex review and path-aware required CI
 
 GitHub pull-request review moved from repository-hosted Claude Actions to the
