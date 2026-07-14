@@ -1,49 +1,137 @@
-# Required-checks sentinel — always runs on every PR + push to main/dev so
-# branch protection on `main` has a check name it can rely on, regardless
-# of which paths the PR touches.
+# Path-aware required CI for pull requests targeting main or dev.
 #
-# Why this exists. The other CI workflows (`ci-android.yml`, `ci-plugin.yml`,
-# `ci-desktop.yml`) are scoped via `paths:` filters so a docs-only or
-# desktop-only PR doesn't spin up the Android toolchain. Branch protection's
-# "required status checks" treat a check that doesn't run as failing — so
-# any PR that didn't touch the protected paths was blocked from merging,
-# even with all the relevant gates green. We were admin-overriding every
-# desktop-only PR. Same for relay-touching PRs (the protection rule named
-# `Relay Check (Python)` didn't even match any actual job — broken since
-# day one).
-#
-# This sentinel + claude-review become the only required checks. The
-# path-filtered workflows still run when relevant and surface their
-# results on the PR — visible, clickable, but advisory rather than
-# blocking. Reviewers (human + claude-review) eyeball them. This is the
-# standard pattern for monorepos with path-filtered CI.
-#
-# Trade-off acknowledged: a broken Android build on an Android-touching
-# PR could merge if the reviewer ignores the failing CI badge. Mitigation:
-# claude-review reads CI conclusions in its review prompt + the project's
-# release-merge cadence catches issues before they reach a tag. If a
-# stricter gate is later wanted, fold it into this workflow as a job that
-# fans out to the path-filtered work — but the simplest version (just an
-# `echo`) is what's needed to make branch protection useful again today.
+# The change detector selects the existing surface workflows, which are exposed
+# through workflow_call. The final job keeps one stable branch-protection check
+# while ensuring that every relevant build or test actually completed.
 
 name: Required checks
 
 on:
-  push:
-    branches: [main, dev]
   pull_request:
     branches: [main, dev]
+    types: [opened, synchronize, reopened, ready_for_review]
 
-# Cancel in-progress runs for the same branch/PR. Doesn't matter much for
-# a 5-second job, but matches every other workflow's concurrency shape.
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ci-required-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+  cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect affected surfaces
+    runs-on: ubuntu-latest
+    outputs:
+      android: ${{ steps.filter.outputs.android }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+      plugin: ${{ steps.filter.outputs.plugin }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+      contract: ${{ steps.filter.outputs.contract }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Test path classifier
+        run: node .github/scripts/classify-ci-paths.test.cjs
+
+      - name: Classify changed files
+        id: filter
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const paths = files.map((file) => file.filename);
+            const { classifyCiPaths } = require(
+              `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-ci-paths.cjs`,
+            );
+            const outputs = classifyCiPaths(paths);
+
+            for (const [surface, affected] of Object.entries(outputs)) {
+              core.setOutput(surface, affected ? 'true' : 'false');
+            }
+            core.notice(`Changed paths: ${paths.join(', ')}`);
+            core.notice(`Selected checks: ${Object.entries(outputs).filter(([, value]) => value).map(([key]) => key).join(', ') || 'none'}`);
+
+  android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    uses: ./.github/workflows/ci-android.yml
+
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    uses: ./.github/workflows/ci-desktop.yml
+
+  plugin:
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true'
+    uses: ./.github/workflows/ci-plugin.yml
+
+  dashboard:
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true'
+    uses: ./.github/workflows/ci-dashboard.yml
+
+  contract:
+    needs: changes
+    if: needs.changes.outputs.contract == 'true'
+    uses: ./.github/workflows/ci-contract.yml
+
+  docs:
+    name: Build public docs
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: user-docs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: user-docs/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+
   guard:
     name: Required checks
+    if: always()
+    needs: [changes, android, desktop, plugin, dashboard, contract, docs]
     runs-on: ubuntu-latest
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      ANDROID_RESULT: ${{ needs.android.result }}
+      DESKTOP_RESULT: ${{ needs.desktop.result }}
+      PLUGIN_RESULT: ${{ needs.plugin.result }}
+      DASHBOARD_RESULT: ${{ needs.dashboard.result }}
+      CONTRACT_RESULT: ${{ needs.contract.result }}
+      DOCS_RESULT: ${{ needs.docs.result }}
     steps:
-      - name: OK
-        run: echo "Required-checks sentinel — see ci-required.yml header for context."
+      - name: Require every selected check to pass
+        shell: bash
+        run: |
+          failed=0
+          for check in CHANGES ANDROID DESKTOP PLUGIN DASHBOARD CONTRACT DOCS; do
+            result_var="${check}_RESULT"
+            result="${!result_var}"
+            echo "$check: $result"
+            case "$result" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          exit "$failed"
