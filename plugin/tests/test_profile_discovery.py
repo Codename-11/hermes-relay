@@ -205,6 +205,76 @@ class ProfileDiscoveryTests(unittest.TestCase):
         self.assertIsNotNone(default["system_message"])
         self.assertIn("You are the house default.", default["system_message"])
 
+    def test_default_entry_uses_sticky_active_profile(self) -> None:
+        """Hermes' bare runtime follows ``active_profile`` before startup.
+
+        Relay's synthetic ``default`` row must describe that same effective
+        profile while retaining the named row for explicit profile selection.
+        """
+        self._write_root_config(
+            model="root-model", description="Root profile"
+        )
+        active_home = self._write_profile(
+            "victor",
+            config_body=(
+                "model:\n"
+                "  default: openai-codex/gpt-5.6\n"
+                "description: Victor\n"
+            ),
+            soul="# Victor\n\nActive profile soul.\n",
+        )
+        (active_home / ".env").write_text(
+            "API_SERVER_PORT=8666\nAPI_SERVER_KEY=secret-never-exposed\n",
+            encoding="utf-8",
+        )
+        (self.hermes_dir / "active_profile").write_text(
+            "victor\n", encoding="utf-8"
+        )
+
+        out = self._load(base_api_url="https://hermes.example.test:8642")
+        default = next(p for p in out if p["name"] == "default")
+        victor = next(p for p in out if p["name"] == "victor")
+
+        self.assertEqual(default["model"], "openai-codex/gpt-5.6")
+        self.assertEqual(default["description"], "Victor")
+        self.assertIn("Active profile soul.", default["system_message"])
+        self.assertEqual(
+            default["api_server_url"],
+            "https://hermes.example.test:8666",
+        )
+        self.assertEqual(default["model"], victor["model"])
+        self.assertEqual(default["system_message"], victor["system_message"])
+
+    def test_invalid_active_profile_falls_back_to_root_default(self) -> None:
+        self._write_root_config(
+            model="root-model", description="Root profile"
+        )
+        (self.hermes_dir / "active_profile").write_text(
+            "../outside\n", encoding="utf-8"
+        )
+
+        with self.assertLogs("plugin.relay.config", level="WARNING") as cm:
+            out = self._load()
+
+        default = next(p for p in out if p["name"] == "default")
+        self.assertEqual(default["model"], "root-model")
+        self.assertTrue(any("active_profile" in line for line in cm.output))
+
+    def test_missing_active_profile_directory_falls_back_to_root_default(self) -> None:
+        self._write_root_config(
+            model="root-model", description="Root profile"
+        )
+        (self.hermes_dir / "active_profile").write_text(
+            "removed-profile\n", encoding="utf-8"
+        )
+
+        with self.assertLogs("plugin.relay.config", level="WARNING") as cm:
+            out = self._load()
+
+        default = next(p for p in out if p["name"] == "default")
+        self.assertEqual(default["model"], "root-model")
+        self.assertTrue(any("removed-profile" in line for line in cm.output))
+
     def test_missing_root_config_still_lists_directory_profiles(self) -> None:
         """If the root ``config.yaml`` is absent but ``profiles/`` has
         entries, we return the directory profiles and no default."""

@@ -27,6 +27,14 @@ Verification: workflow syntax was checked with actionlint, changed-path selectio
 was exercised against representative file sets, and repository documentation was
 scanned to ensure no removed Claude workflow, action, trigger, or secret remained.
 
+## 2026-07-14 — Hermes active-profile default alignment
+
+**Why.** Hermes resolves a bare CLI or gateway invocation through the root `active_profile` marker before importing runtime modules. Relay profile discovery ignored that marker and always populated its synthetic `default` row from the root config, so native clients could show the wrong default identity/model/SOUL and route profile API metadata incorrectly.
+
+- **Effective default resolution.** `plugin/relay/config.py` now validates and reads the canonical root `active_profile` marker, maps the synthetic `default` row to that named profile home, and retains the named profile row for explicit selection. Missing, unreadable, malformed, stale, or unusable markers safely fall back to the root profile.
+- **Regression coverage.** Profile discovery tests cover active model/description/SOUL/API metadata, named-row retention, malformed path-like values, and removed profile directories.
+- **Verification.** `PYTHONPATH=$PWD python -m unittest plugin.tests.test_profile_discovery plugin.tests.test_profiles_updated_broadcast plugin.tests.test_profile_voice_config plugin.tests.test_profile_soul_endpoint plugin.tests.test_profile_memory_endpoint plugin.tests.test_profile_write_endpoints` → 81 tests green (1 intentional platform skip). `python -m ruff check plugin/relay/config.py plugin/tests/test_profile_discovery.py`, `python -m py_compile ...`, and `git diff --check` green.
+
 ## 2026-07-13 — CLI/TUI and menu-only Windows systray
 
 The Windows desktop boundary now consists of the true CLI/TUI plus an optional
