@@ -1,31 +1,15 @@
 # Hermes-Relay — Plugin CI Pipeline
 #
-# Runs on pushes to main/dev and on PRs targeting main/dev, scoped to
-# plugin-affecting paths so Android-only changes don't spin up the
-# Python toolchain.
+# Runs directly on plugin-affecting pushes to main/dev and is called by the
+# path-aware required-check workflow for relevant pull requests.
 #
 # Pipeline: syntax-check and focused plugin tests run concurrently.
 
 name: CI — Plugin
 
 on:
+  workflow_call:
   push:
-    branches: [main, dev]
-    paths:
-      - "plugin/*.py"
-      - "plugin/plugin.yaml"
-      - "plugin/relay/**"
-      - "plugin/tools/**"
-      - "plugin/tests/**"
-      - "relay_server/**"
-      - "hermes_relay_bootstrap/**"
-      - "pyproject.toml"
-      - "scripts/check-plugin-version-sync.py"
-      - "scripts/check-server-version-sync.py"
-      - "scripts/bump-plugin-version.sh"
-      - "scripts/bump-server-version.sh"
-      - ".github/workflows/ci-plugin.yml"
-  pull_request:
     branches: [main, dev]
     paths:
       - "plugin/*.py"

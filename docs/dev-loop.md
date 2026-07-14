@@ -1,10 +1,8 @@
 # Issue → fix dev-loop
 
-How an incoming issue becomes a worktree you (or a local agent) can start working in,
-with Claude's triage already done. This documents the automation in
-`.github/workflows/claude-triage.yml`, the PR-review changes in
-`.github/workflows/claude-code-review.yml`, and the local bridge
-`scripts/start-issue.sh`.
+How an incoming issue becomes a worktree you (or a local agent) can start working
+in. This documents deterministic issue labeling, subscription-backed Codex review,
+path-aware required CI, and the local bridge `scripts/start-issue.sh`.
 
 It complements — does not replace — `RELEASE.md` (how a fix ships) and `CLAUDE.md`
 (the non-negotiables: vanilla-Hermes-path-upstream-only, commit conventions,
@@ -13,51 +11,46 @@ public-repo writing hygiene).
 ## The loop at a glance
 
 ```
-issue opened ──▶ auto-label (keywords)           ┐
-             └─▶ triage-ai (classify + opinion)   │  CI (claude-triage.yml)
-add triage:deep ─▶ deep-dive (root cause + plan)  │
-reporter replies ─▶ triage-followup (next step /  ┘
-                    escalate to a maintainer)
-                                │
-                                ▼
-        scripts/start-issue.sh <N>   ── local bridge
-                                │
-                                ▼
-   ../hr-issue-<N>  worktree on  fix/issue-<N>-<slug>  off origin/dev
-   + ISSUE-BRIEF.md  (body + bot triage notes + verification plan)
-                                │
-                                ▼
-        work it (claude / codex / hand-edit) ─▶ PR to dev ─▶ Claude Code Review
+issue opened ──▶ deterministic type + area labels ──▶ maintainer triage
+                                                        │
+                                                        ▼
+                         scripts/start-issue.sh <N>   ── local bridge
+                                                        │
+                                                        ▼
+                 ../hr-issue-<N> worktree on fix/issue-<N>-<slug>
+                 off origin/dev + ISSUE-BRIEF.md
+                                                        │
+                                                        ▼
+                 implement + verify ─▶ PR to dev ─┬─▶ Required checks
+                                                  └─▶ Codex review
 ```
 
-## CI: the four triage jobs
+## Deterministic issue triage
 
-All run on Sonnet, are read-only against the repo (`Bash(gh:*),Read,Grep,Glob`),
-treat the issue text as untrusted input, and never close issues or edit bodies.
+`.github/workflows/issue-triage.yml` runs a no-LLM keyword classifier when an
+issue opens. It applies a title-derived type label and, when the issue text is
+clear, one `area:*` label. It never closes an issue, edits its body, diagnoses a
+root cause, or posts an automated opinion.
 
-| Job | Fires on | What it does |
-|-----|----------|--------------|
-| `auto-label` | issue opened | Free, deterministic keyword labeler — TYPE from the title prefix, `area:*` from keywords. No LLM, no cost. |
-| `triage-ai` | issue opened / manual dispatch | Always-on. Dedupes, sets exactly one TYPE + one `area:*` label, and posts ONE hedged note: probable cause, likely files, suggested direction. |
-| `deep-dive` | `triage:deep` label added | Opt-in. Investigates the codebase and posts a root-cause hypothesis, a concrete fix plan, a surface-specific **verification plan**, and a maintainer quick-start (the worktree command). |
-| `triage-followup` | reporter comments on an open `bug` issue | Re-reads the thread; gives the next diagnostic step, or escalates (`needs-maintainer-review` + @maintainer) after ~2 rounds. NOT gated on commenter write-access, so external crash reporters get follow-up. |
-
-To deep-dive an old issue, just add the `triage:deep` label — that fires the
-`issues: labeled` trigger. To re-run the basic triage, use the workflow's
-`workflow_dispatch` with the issue number (Actions tab, or
-`gh workflow run claude-triage.yml -f issue_number=NNN`).
+To label an older issue again, use the workflow's `workflow_dispatch` input or
+run `gh workflow run issue-triage.yml -f issue_number=NNN`.
 
 ## PR review
 
-`claude-code-review.yml` runs the `/code-review` plugin on every non-release,
-non-bot PR (release `dev → main` PRs and bot PRs are skipped; so is a PR that
-edits the review workflow itself — the action needs the workflow to match the
-default branch first). It now also:
+Codex automatic review is configured through the repository's Codex cloud
+integration, not a GitHub Actions secret. It reviews every PR and follows the
+top-level `AGENTS.md` plus the closest nested `AGENTS.md`. Request another pass
+or a narrower focus with `@codex review` in a PR comment.
 
-- adds a short constructive **"🔭 Maintainer's-eye verdict"** (quality / biggest
-  risk / ship-or-hold) above the findings, and
-- uses `use_sticky_comment: true` so re-pushes update one comment instead of
-  stacking a fresh review per `synchronize`.
+Codex review is advisory. Merge availability is controlled by deterministic CI
+and normal maintainer review, so a provider outage cannot strand a release PR.
+
+## Required CI
+
+`.github/workflows/ci-required.yml` classifies the PR's changed files and calls
+the relevant Android, CLI, plugin, dashboard, upstream-contract, and public-docs
+checks. Its final `Required checks` job succeeds only when every selected check
+passes. Unaffected toolchains are skipped rather than started.
 
 ## Verification matrix (surface → how a fix is proven)
 
@@ -86,10 +79,10 @@ scripts/start-issue.sh <issue-number> [base-branch]   # base defaults to dev
 
 Creates `../hr-issue-<N>`, a git worktree on `fix|feature|docs/issue-<N>-<slug>`
 (prefix chosen from the TYPE label) off `origin/<base>`, and writes
-`ISSUE-BRIEF.md` into it: the issue body, the bot's triage/deep-dive comments, and
-the verification plan for the issue's surface. Open your agent session there and it
-starts pre-briefed. Worktrees share the main checkout's object store, so several
-issue branches can run concurrently. `ISSUE-BRIEF.md` is git-ignored. Tear down with
+`ISSUE-BRIEF.md` with the issue body, existing discussion, and the verification
+plan for the issue's surface. Open your agent session there and it starts
+pre-briefed. Worktrees share the main checkout's object store, so several issue
+branches can run concurrently. `ISSUE-BRIEF.md` is git-ignored. Tear down with
 `git worktree remove ../hr-issue-<N>`.
 
 ## Setup (one-time)
@@ -97,8 +90,6 @@ issue branches can run concurrently. `ISSUE-BRIEF.md` is git-ignored. Tear down 
 The workflows can only apply labels that already exist. Create them once:
 
 ```bash
-gh label create "triage:deep"             -c "5319e7" -d "Request a deep code-level triage pass"
-gh label create "needs-maintainer-review" -c "d93f0b" -d "Automated triage exhausted; needs a human"
 gh label create "area:android"            -c "1d76db" -d "Kotlin app"
 gh label create "area:cli"                -c "0e8a16" -d "desktop/ Node CLI"
 gh label create "area:plugin"             -c "fbca04" -d "plugin/ Python relay + tools"
@@ -106,19 +97,11 @@ gh label create "area:dashboard"          -c "c5def5" -d "plugin/dashboard React
 gh label create "area:docs"               -c "bfd4f2" -d "docs/ or user-docs/"
 ```
 
-Secret: `CLAUDE_CODE_OAUTH_TOKEN` (already configured for the existing Claude
-workflows).
-
 ## Operational notes
 
-- **Activation lag.** Issue-triggered workflows run the copy on the **default
-  branch (`main`)**. Changes here stay dormant on `dev` until a release-merge lands
-  them on `main`. Test by triaging a throwaway issue after the merge.
-- **Cost control.** `auto-label` is free; `triage-ai` is one cheap Sonnet pass per
-  new issue; `deep-dive` only runs when you opt in with the label; `triage-followup`
-  self-limits to ~2 rounds then escalates. Bump `--model` to a current Opus in the
-  `deep-dive` step if you want deeper reasoning (cost tradeoff).
-- **No write-access escalation here.** None of these jobs push code or open PRs —
-  triage is read-only by design. Auto-attempting a fix from issue content (a
-  `contents: write` job triggered by untrusted text) was intentionally left out;
-  revisit only behind a hard maintainer-gated label if ever wanted.
+- **Activation lag.** Issue-triggered workflows run the copy on the default branch
+  (`main`). Changes stay dormant on `dev` until a release merge lands them on main.
+- **No model cost for issue labeling.** The issue workflow is deterministic
+  `github-script`; Codex review usage is accounted through the connected Codex plan.
+- **No write-access escalation here.** Issue triage cannot push code or open PRs.
+  Auto-attempting a fix from untrusted issue text remains intentionally out of scope.
