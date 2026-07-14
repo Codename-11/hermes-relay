@@ -1,12 +1,8 @@
 name: CI dashboard plugin
 
 on:
+  workflow_call:
   push:
-    branches: [main, dev]
-    paths:
-      - "plugin/dashboard/**"
-      - ".github/workflows/ci-dashboard.yml"
-  pull_request:
     branches: [main, dev]
     paths:
       - "plugin/dashboard/**"

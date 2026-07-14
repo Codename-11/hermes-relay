@@ -1,7 +1,7 @@
 # Hermes-Relay — Android CI Pipeline
 #
-# Runs on pushes to main/dev and on PRs targeting main/dev, scoped to
-# Android-affecting paths so Python-only changes don't spin up the JVM.
+# Runs directly on Android-affecting pushes to main/dev and is called by the
+# path-aware required-check workflow for relevant pull requests.
 #
 # Pipeline: lint, build, and focused tests run concurrently. PRs build debug
 # APKs before merge; dev pushes keep lint/tests only to avoid duplicate
@@ -15,27 +15,15 @@
 name: CI — Android
 
 on:
+  workflow_call:
   push:
     branches: [main, dev]
     paths:
       - "app/**"
-      - "gradle/**"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - "gradlew"
-      - "gradlew.bat"
-      - "scripts/check-android-locales.py"
-      - "scripts/android-locale-harness.py"
-      - "scripts/check-android-collection-apis.py"
-      - ".github/workflows/ci-android.yml"
-      - ".github/workflows/play-preflight-android.yml"
-      - ".github/workflows/approve-release-android.yml"
-      - ".github/workflows/release-android.yml"
-  pull_request:
-    branches: [main, dev]
-    paths:
-      - "app/**"
+      - "relay-core/**"
+      - "relay-ui/**"
+      - "ui-preview/**"
+      - "quest/**"
       - "gradle/**"
       - "build.gradle.kts"
       - "settings.gradle.kts"

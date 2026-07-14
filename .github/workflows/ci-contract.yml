@@ -6,19 +6,14 @@
 # boot, no pip install, no model keys); see scripts/check-upstream-route-contract.py
 # for the design + tradeoff (catches renamed/removed routes; not runtime auth).
 #
-# PR/push runs check a pinned ref (non-flaky); the weekly schedule tracks
-# upstream `main` as a drift siren so a route rename surfaces on our clock.
+# Required-PR and direct push runs check a pinned ref (non-flaky); the weekly
+# schedule tracks upstream `main` as a drift siren.
 
 name: CI — Upstream Contract
 
 on:
+  workflow_call:
   push:
-    branches: [main, dev]
-    paths:
-      - "scripts/check-upstream-route-contract.py"
-      - ".github/workflows/ci-contract.yml"
-      - "app/src/main/kotlin/com/hermesandroid/relay/network/upstream/**"
-  pull_request:
     branches: [main, dev]
     paths:
       - "scripts/check-upstream-route-contract.py"
