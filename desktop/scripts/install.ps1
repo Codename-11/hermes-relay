@@ -2,7 +2,7 @@
 #
 #   irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 #
-# Downloads the tray app installer from GitHub Releases by default - no Node.js required.
+# Downloads the CLI + optional menu-only systray installer by default - no Node.js required.
 # Install only the CLI binary instead:
 #   $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm ... | iex
 # Pin a specific release:
@@ -16,7 +16,7 @@
 #
 # **Experimental phase** - assets are unsigned. Windows SmartScreen may warn
 # on first launch. The CLI branch documents the `Unblock-File` escape hatch on
-# completion; the tray branch runs the downloaded NSIS installer.
+# completion; the systray branch runs the downloaded NSIS installer.
 
 #Requires -Version 5.1
 $ErrorActionPreference = 'Stop'
@@ -106,7 +106,7 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 }
 
 $arch  = 'x64'  # No ARM64 build yet; add hermes-relay-win-arm64 when cross-compile target lands.
-$asset = if ($surface -eq 'tray') { "hermes-relay-desktop-windows-$arch-setup.exe" } else { "hermes-relay-win-$arch.exe" }
+$asset = if ($surface -eq 'tray') { "hermes-relay-windows-$arch-setup.exe" } else { "hermes-relay-win-$arch.exe" }
 
 # Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL
 # always skips prereleases, which breaks install during any all-alpha window.
@@ -214,7 +214,7 @@ if ($surface -eq 'tray') {
   }
 
   Say ''
-  Say 'Installed Hermes Relay Desktop. Launch it from the Start menu to pair, manage devices, view the task log, pause, or emergency-stop the daemon.'
+  Say 'Installed the Hermes Relay CLI and optional menu-only systray. Right-click the tray icon to manage the daemon or open the real CLI/TUI.'
   Say 'For CLI-only installs, rerun with:'
   Say "  `$env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/$repo/main/desktop/scripts/install.ps1 | iex"
   return

@@ -38,6 +38,9 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      - name: Verify CLI and tray versions are synchronized
+        run: npm run check:version-sync
+
       - name: Type-check
         run: npm run type-check
 
@@ -107,6 +110,12 @@ jobs:
 
       - name: Install deps
         run: npm ci
+
+      - name: Check tray formatting
+        run: npm run tray:fmt
+
+      - name: Lint tray shell
+        run: npm run tray:lint
 
       - name: Cargo check tray shell
         run: npm run tray:check

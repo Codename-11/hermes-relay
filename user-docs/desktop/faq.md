@@ -89,9 +89,9 @@ You can't — each `(URL, device)` gets its own stored session token. Pair each 
 Because:
 
 - Binaries are unsigned (SmartScreen/Gatekeeper warnings).
-- `hermes-relay daemon` mode hasn't shipped yet (currently tools only work while a shell/chat is open).
 - Multi-client routing is single-client MVP (one desktop per relay session).
 - Wire protocol may change between releases.
+- Full desktop use (screenshots plus mouse/keyboard input) remains opt-in and experimental even though the normal 23 desktop tools are available today.
 - No npm publish yet — installation is binary-via-curl or source clone.
 
 Everything currently shipped works — pairing, shell, chat, tools, devices, status. It's "experimental" in the sense of "the stability contract isn't promised yet," not "expect it to break."
@@ -119,7 +119,13 @@ You can totally use MCP alongside Hermes-Relay — the agent sees MCP tools (und
 
 Yes — it shipped. `hermes-relay daemon` runs the tool router headless (no PTY, no TUI), advertising your `desktop_*` tools so the agent can reach you with no shell open. `hermes-relay daemon start` runs it in the **background**: no console window, logs to `~/.hermes/daemon.log`, and it survives closing the terminal. `daemon status` shows state/uptime, `daemon stop` stops it.
 
-The one piece still outstanding is **auto-start across reboots/logout** — installing as a Windows service / systemd user unit / launchd agent. That's v1.0 work (tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track)); until then, `daemon start` covers "background, this session," or wrap the foreground `hermes-relay daemon` with your own service manager.
+On Windows, the optional systray can register itself to start when you sign in and starts the daemon when it launches. This is a per-user login entry, not a Windows service. On Linux/macOS, or for a machine-level service, wrap foreground `hermes-relay daemon` with your service manager.
+
+## Does the Windows tray have an app window?
+
+No. It is a native, right-click-only notification-area menu. There is no dashboard, WebView, embedded terminal, chat window, or settings window. Interactive actions—TUI, pairing, grant review, audit, and diagnostics—open the installed CLI in a normal terminal.
+
+The tray and daemon run as your normal Windows user by default. Choosing **Start/Restart daemon as Administrator…** is the only tray action that requests UAC; the tray itself remains unprivileged and labels the elevated daemon clearly.
 
 ## Can multiple people use the same Hermes host from different CLI clients?
 
@@ -129,7 +135,7 @@ For now: one desktop attached at a time. Or two if you pair them with different 
 
 ## Is there voice mode?
 
-Not in the CLI. The Android client has voice mode. The CLI is text-first.
+The CLI is text-first, but `hermes-relay voice mode` can start push-to-talk in a browser tab through the local daemon voice endpoint. The Windows tray does not embed a voice window. Android remains the primary hands-free voice surface.
 
 ## Is there a Windows-on-ARM build?
 

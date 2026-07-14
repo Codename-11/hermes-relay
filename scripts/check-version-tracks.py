@@ -67,6 +67,19 @@ def _package_lock_root_version() -> str:
     return root_pkg["version"]
 
 
+def _desktop_package_lock_versions() -> tuple[str, str]:
+    data = _read_json("desktop/package-lock.json")
+    if not isinstance(data, dict) or not isinstance(data.get("version"), str):
+        raise ValueError("desktop/package-lock.json has no root version")
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        raise ValueError("desktop/package-lock.json has no packages object")
+    root_pkg = packages.get("")
+    if not isinstance(root_pkg, dict) or not isinstance(root_pkg.get("version"), str):
+        raise ValueError('desktop/package-lock.json packages[""] has no version')
+    return data["version"], root_pkg["version"]
+
+
 def _android_track(errors: list[str]) -> Track:
     data = tomllib.loads(_read_text("gradle/libs.versions.toml"))
     versions = data.get("versions")
@@ -122,19 +135,40 @@ def _plugin_track(errors: list[str]) -> Track:
 def _cli_track(errors: list[str]) -> Track:
     version = _json_version("desktop/package.json")
     generated = _regex_version("desktop/src/version.ts", r'^export const VERSION = "([^"]+)" as const')
+    package_lock, package_lock_root = _desktop_package_lock_versions()
+    versions = [
+        ("desktop/src/version.ts", generated),
+        ("desktop/package-lock.json", package_lock),
+        ('desktop/package-lock.json packages[""]', package_lock_root),
+        (
+            "desktop/tray/Cargo.toml",
+            _regex_version(
+                "desktop/tray/Cargo.toml",
+                r'^version\s*=\s*"([^"]+)"',
+            ),
+        ),
+        (
+            "desktop/tray/Cargo.lock",
+            _regex_version(
+                "desktop/tray/Cargo.lock",
+                r'\[\[package\]\]\s*\nname\s*=\s*"hermes-relay-tray"\s*\nversion\s*=\s*"([^"]+)"',
+            ),
+        ),
+    ]
     if not SEMVER_RE.match(version):
         errors.append(f"desktop CLI version is not SemVer: {version!r}")
-    if generated != version:
-        errors.append(
-            "desktop CLI version mismatch: desktop/src/version.ts has "
-            f"{generated}, expected {version}; run npm run gen:version in desktop/"
-        )
+    for source, found in versions:
+        if found != version:
+            errors.append(
+                f"desktop CLI version mismatch: {source} has {found}, expected {version}; "
+                "run npm run sync:version in desktop/"
+            )
     return Track(
         name="cli",
         version=version,
         source="desktop/package.json",
         tag=f"cli-v{version}",
-        details="src/version.ts generated",
+        details="CLI + tray metadata",
     )
 
 

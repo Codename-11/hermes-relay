@@ -41,7 +41,6 @@ import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { openInBrowser, startVoiceServer } from '../voiceServer.js'
-import { discoverTray, notifyTrayShowVoice } from '../trayBridge.js'
 
 const READY_TIMEOUT_MS = 60_000
 
@@ -454,32 +453,11 @@ async function createOrResumeSession(
 
 async function voiceMode(args: ParsedArgs): Promise<number> {
   const noOpen = !!args.flags['no-open']
-  const noTray = !!args.flags['no-tray']
   const portFlag = typeof args.flags.port === 'string' ? parseInt(args.flags.port, 10) : NaN
   const port = Number.isFinite(portFlag) && portFlag >= 0 && portFlag <= 65535 ? portFlag : 0
   const conversation =
     (typeof args.flags.conversation === 'string' ? args.flags.conversation : null) ??
     (typeof args.flags.session === 'string' ? args.flags.session : null)
-
-  // Tray-first short-circuit: if the tray app is running AND it has its
-  // own voice surface (the daemon's voice server is up + the tray UI has
-  // a voice tab), just ask the tray to focus voice and exit. We don't
-  // need to spin up our own gateway/session for that — the daemon already
-  // owns one. `--no-tray` opts out for testing the browser path.
-  // `--conversation` forces our own session, so we skip the short-circuit
-  // there too — the daemon's session is independent of any --conversation
-  // the user requested.
-  if (!noTray && !conversation) {
-    const ctl = await discoverTray()
-    if (ctl) {
-      const ok = await notifyTrayShowVoice(ctl)
-      if (ok) {
-        process.stderr.write('Tray-hosted voice mode focused. (Pass --no-tray to use the standalone browser path.)\n')
-        return 0
-      }
-      process.stderr.write('Tray IPC unreachable; falling back to standalone voice server.\n')
-    }
-  }
 
   process.stderr.write(`Connecting to relay...\n`)
   let authed: AuthedRelay

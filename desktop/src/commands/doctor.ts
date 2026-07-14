@@ -49,12 +49,26 @@ function readVersion(): string {
   }
 }
 
+export function resolveBinaryPathForRuntime(
+  execPath: string,
+  invokedPath: string | undefined,
+  fallbackPath = fileURLToPath(import.meta.url)
+): string {
+  const executable = execPath.split(/[\\/]/).at(-1)?.toLowerCase()
+  const isScriptHost = executable === 'node' || executable === 'node.exe' ||
+    executable === 'bun' || executable === 'bun.exe'
+
+  // Node/tsx/Bun script runs should identify the invoked source or dist entry.
+  // Bun-compiled binaries expose a virtual argv[1] such as B:/~BUN/root/..., but
+  // process.execPath remains the physical executable the user actually ran.
+  if (isScriptHost) {
+    return invokedPath ?? fallbackPath
+  }
+  return execPath || invokedPath || fallbackPath
+}
+
 function resolveBinaryPath(): string {
-  // argv[1] is the invoked script (the bin shim under normal `hermes-relay`
-  // usage, or dist/cli.js under `node dist/cli.js`, or the tsx entry under
-  // `tsx src/cli.ts`). It's what the user actually ran, so it's the right
-  // answer for "where is my binary?"
-  return process.argv[1] ?? fileURLToPath(import.meta.url)
+  return resolveBinaryPathForRuntime(process.execPath, process.argv[1])
 }
 
 function isOnPath(installDir: string): boolean {

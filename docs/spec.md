@@ -4,7 +4,7 @@
 
 **Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-06-16
+**Updated:** 2026-07-13
 
 ---
 
@@ -433,7 +433,7 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
 | `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
-| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard, desktop GUI, and CLI pair/repair flows. Optional request field `dashboard_url` is copied into the QR payload for custom dashboard routes. |
+| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard and CLI/tray pair/repair flows. Optional request field `dashboard_url` is copied into the QR payload for custom dashboard routes. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |

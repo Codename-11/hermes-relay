@@ -43,11 +43,12 @@ import {
   computerStatusHandler
 } from './handlers/computer.js'
 import type { ToolHandler } from './router.js'
+import { readDesktopUseSettingsSync } from '../lib/desktopUseSettings.js'
 
 /** Experimental computer-use tools are registered in the local handler map
- * but heartbeat-advertised only when explicitly feature-flagged after normal
- * desktop-tool consent. Host input still fails closed unless a task-scoped
- * grant exists and was approved from a visible local prompt. */
+ * but heartbeat-advertised only when persistently enabled or explicitly
+ * overridden after normal desktop-tool consent. Host input still fails closed
+ * unless a task-scoped grant exists and was approved locally. */
 export const DESKTOP_COMPUTER_USE_TOOLS: readonly string[] = Object.freeze([
   'desktop_computer_status',
   'desktop_computer_screenshot',
@@ -121,7 +122,8 @@ function envEnabled(value: string | undefined): boolean {
 
 export function shouldAdvertiseComputerUse(
   flags: Record<string, string | true> = {},
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  persistedEnabled = readDesktopUseSettingsSync().computer_use_enabled
 ): boolean {
   if (flags['no-computer-use'] === true) {
     return false
@@ -130,7 +132,8 @@ export function shouldAdvertiseComputerUse(
     return true
   }
   return envEnabled(env.HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE) ||
-    envEnabled(env.HERMES_RELAY_COMPUTER_USE)
+    envEnabled(env.HERMES_RELAY_COMPUTER_USE) ||
+    persistedEnabled
 }
 
 export function desktopHandlers(
@@ -143,7 +146,7 @@ export function desktopHandlers(
 }
 
 /** Stable list of advertised tool names — what the heartbeat claims to
- * service. Computer-use tools are feature-flagged so the regular desktop
+ * service. Computer-use tools are separately enabled so the regular desktop
  * CLI/daemon surface stays primary and backward-compatible. */
 export function advertisedDesktopTools(
   opts: DesktopAdvertiseOptions = {}

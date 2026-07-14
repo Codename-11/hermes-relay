@@ -6,9 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0-alpha.2] - 2026-07-13
+
 ### Added
 
 - **Desktop chat can use Relay typed streaming over WSS.** The opt-in `--relay-chat` mode sends `chat.send`, renders typed `stream.event` v1 assistant/tool/artifact/memory/skill/error lifecycles, de-duplicates reconnect events, and preserves the existing gateway chat path as the default.
+- **Pending computer-use grants are manageable from the CLI.** `hermes-relay grants` lists and interactively approves or rejects local grant-bridge requests, with explicit `approve`, `reject`, and JSON forms for scripts.
+- **Desktop use has a durable CLI control plane.** `hermes-relay computer-use` persists enablement, reports daemon and grant state, and cancels active task-scoped grants through the local daemon bridge.
+
+### Changed
+
+- **The optional Windows systray is a native context menu for the CLI.** The WebView dashboard, embedded terminals, overlays, chat, sessions, plugins, voice, and settings windows were removed. The sub-megabyte tray now invokes the single installed CLI for TUI, pairing, daemon control, grants, audit, and logs.
+- **Systray daemon controls are state- and privilege-aware.** The menu cross-checks PID liveness, identifies User versus Administrator daemons, disables invalid lifecycle actions, shows pending-grant counts and version metadata, toggles sign-in startup, and requests UAC only for an explicit elevated daemon start or restart.
+- **Systray desktop-use controls preserve safety across restart and elevation.** The menu enables or disables the persistent capability, displays active grant mode and expiry, raises a native pending-approval alert, supports immediate cancellation, and warns while Administrator input authority is active.
+- **CLI and tray releases use one synchronized version contract.** A single npm lifecycle keeps package, compiled CLI, Cargo, and installer metadata aligned; local verification and tag CI reject drift, off-main release tags, and untested CLI changes before publishing.
+
+### Fixed
+
+- **Compiled CLI diagnostics report the physical executable.** `hermes-relay doctor` no longer mistakes Bun's virtual embedded path for the installed binary, so PATH and install-directory checks describe the executable that actually launched.
 
 ## [1.4.4] - 2026-07-12
 
