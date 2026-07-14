@@ -1,6 +1,6 @@
 # Installing the CLI <ExperimentalBadge />
 
-One-liner install on **Windows today — macOS / Linux builds coming soon**. The installer downloads a prebuilt single-file binary — **no Node required, no Python required**.
+Prebuilt, self-contained CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64 — **no Node or Python required**. Windows also has an optional native, menu-only systray installer.
 
 ## Prerequisites
 
@@ -15,30 +15,34 @@ If you'd rather install from source, see the [source install](#install-from-sour
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
-The script:
+By default the script installs the Windows CLI **and** optional systray through the signed-checksum NSIS package. It:
 
 1. Detects architecture (x64; ARM64 lands once Bun's cross-compile target stabilizes).
 2. Resolves the **latest** CLI release by querying the GitHub Releases API directly and picking the SemVer-max `cli-v*` tag, with a migration fallback to historical `desktop-v*` prereleases. Prereleases are included, so alpha builds aren't skipped (see CHANGELOG entry on alpha.11 for why this matters).
-3. Downloads `hermes-relay-win-x64.exe` and verifies SHA256 against the published `SHA256SUMS.txt`.
-4. Reads the existing binary's `--version` (if present) and prints one of:
-   - `existing install detected: 0.3.0-alpha.17 — upgrading to 0.3.0-alpha.18`
-   - `reinstalling 0.3.0-alpha.18`
-   - `installing fresh`
-5. Installs to `%USERPROFILE%\.hermes\bin\hermes-relay.exe`.
-6. Drops a `hermes.cmd` shim next to the binary so `hermes <prompt>` works as a short alias — **collision-safe**: if a `hermes` already exists in the install dir (e.g. from a local hermes-agent install), the installer leaves it untouched and prints a skip notice.
-7. Adds `%USERPROFILE%\.hermes\bin` to your **user** PATH (no admin needed).
-8. Re-runs the new binary's `--version` post-install to confirm the upgrade landed.
+3. Downloads `hermes-relay-windows-x64-setup.exe` and verifies SHA256 against the published `SHA256SUMS.txt`.
+4. Runs the per-user installer. No administrator access is required.
+5. Installs `hermes-relay.exe`, `hermes-relay-tray.exe`, and the uninstaller to `%USERPROFILE%\.hermes\bin`.
+6. Adds that directory to your **user** PATH and creates Start-menu shortcuts for the TUI, systray, and uninstaller.
+7. Offers an optional **Start systray when I sign in** component. The same preference can be changed later from the tray menu.
+8. Starts the systray from the finish page when selected. The tray has no application window; right-click its notification-area icon.
+
+For a CLI-only install, set the surface explicitly. This path downloads and verifies `hermes-relay-win-x64.exe` directly and prints the existing/new version comparison:
+
+```powershell
+$env:HERMES_RELAY_INSTALL_SURFACE = 'cli'
+irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
+```
 
 Open a **new** terminal (PATH updates don't retroactively apply to in-process shells), then verify:
 
 ```powershell
 hermes-relay --version
-hermes --version
+hermes-relay daemon status
 ```
 
 ### SmartScreen warning on first launch
 
-The binary is unsigned during the experimental phase. Windows will show "Windows protected your PC" the first time you run it. Click **More info → Run anyway**, or pre-allow from PowerShell:
+The binaries are unsigned during the experimental phase. Windows may show "Windows protected your PC" for the installer or first launch. Click **More info → Run anyway**. For a CLI-only install, you can also pre-allow the executable from PowerShell:
 
 ```powershell
 Unblock-File "$env:USERPROFILE\.hermes\bin\hermes-relay.exe"
@@ -49,21 +53,17 @@ Code signing (EV cert) is a v1.0 milestone — the experimental phase doesn't ju
 ### Pin a specific version
 
 ```powershell
-$env:HERMES_RELAY_VERSION = 'cli-v0.3.0-alpha.18'
+$env:HERMES_RELAY_VERSION = 'cli-v0.4.0-alpha.2'
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
-The version-aware readback compares full SemVer including the prerelease tail, so `cli-v0.3.0-alpha.17` → `cli-v0.3.0-alpha.18` is recognized as an upgrade rather than a reinstall.
+The resolver compares full SemVer including the prerelease tail, so an older alpha is correctly recognized as an upgrade.
 
 ### Uninstall
 
-See [Uninstall](#uninstall) below — the PowerShell one-liner reverses everything install.ps1 did (binary + `hermes.cmd` alias + user-PATH entry), with optional tiers for session-data purge and service cleanup.
+Use **Apps → Installed apps → Hermes Relay CLI + Systray**, the Start-menu uninstaller, or `%USERPROFILE%\.hermes\bin\uninstall-hermes-relay.exe`. Uninstall stops the tray and daemon, removes the installed binaries, Start-menu shortcuts, sign-in entry, and user-PATH entry, while preserving pairing/session data.
 
 ## macOS / Linux — curl one-liner
-
-::: warning Coming soon
-macOS / Linux binaries aren't published yet — the installer script below is ready and documented ahead of those builds. Watch [Releases](https://github.com/Codename-11/hermes-relay/releases) for the first `darwin`/`linux` assets.
-:::
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
@@ -71,7 +71,7 @@ curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/deskt
 
 The script:
 
-1. Detects OS/arch (supports `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`).
+1. Detects OS/arch (published assets: `linux-x64`, `darwin-x64`, and `darwin-arm64`).
 2. Resolves the latest `cli-v*` release via the Releases API + `sort -V`, with a migration fallback to historical `desktop-v*` prereleases (prerelease-aware, no shell deps beyond `curl` / `sort`).
 3. Downloads the matching binary + `SHA256SUMS.txt` and verifies SHA256 (`sha256sum` on Linux, `shasum -a 256` on macOS).
 4. Reads the existing binary's `--version` if present and prints `upgrading X → Y` / `reinstalling X` / `installing fresh`.
@@ -107,7 +107,7 @@ Apple Developer ID signing + notarization is a v1.0 milestone.
 ### Pin a specific version
 
 ```bash
-HERMES_RELAY_VERSION=cli-v0.3.0-alpha.18 \
+HERMES_RELAY_VERSION=cli-v0.4.0-alpha.2 \
   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
 ```
 
@@ -133,6 +133,8 @@ The updater:
 3. Downloads the platform asset and verifies SHA256.
 4. **POSIX (macOS / Linux):** atomic `fs.rename` over the running binary. The running process keeps the old inode open, so `hermes-relay daemon` (if running) keeps serving until restarted; the next `hermes-relay <verb>` invocation picks up the new binary.
 5. **Windows:** can't replace a running `.exe`, so the updater writes to `<bin>.new.exe` and `finalizePendingUpdate()` runs at the top of `main()` on every subsequent invocation to rename it into place. Result: the swap completes the **next** time you run `hermes-relay`.
+
+`hermes-relay update` updates the CLI binary only. Windows systray/installer changes ship in the same release but require rerunning the PowerShell installer (or downloading the new setup asset) so both executables stay on the same version.
 
 If `hermes-relay update --check` says "Up to date" but you know there's a newer alpha, see the [troubleshooting note](./troubleshooting.md#hermes-relay-update-says-up-to-date-but-i-know-there-s-a-newer-alpha).
 

@@ -15,9 +15,10 @@ This project should keep its native Android stack:
 
 Do not propose a React Native or Expo migration just because Orca's mobile app uses that stack. The useful lesson from Orca is the visual discipline and pairing UX, not the framework choice.
 
-Desktop tray surfaces can reference this document for shared Hermes visual direction. Reuse the graphite base, short status labels, compact controls, pairing/log language, and repo brand mark; do not copy Android navigation patterns or Compose implementation details into the Tauri shell.
-
-Desktop implementation parity is tracked in `docs/plans/2026-05-17-desktop-android-pairing-parity.md`. That plan adapts the Android pairing model to the Windows Tauri tray app: one active desktop relay instance for now, LAN/Tailscale/manual endpoint visibility, dark mode by default, no visible tier selector, and collapsed Advanced settings.
+The Windows systray no longer has a visual application surface. It uses a native
+right-click menu and opens the real CLI/TUI for interactive work, so this Android
+reference does not define desktop tray layout or navigation. Historical desktop
+parity plans remain under `docs/plans/`; ADR 37 records the current boundary.
 
 ## Source References
 

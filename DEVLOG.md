@@ -1,5 +1,38 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-13 — CLI/TUI and menu-only Windows systray
+
+The Windows desktop boundary now consists of the true CLI/TUI plus an optional
+native systray for right-click management. The Tauri/WebView dashboard, overlay,
+PTY-backed terminal, tray-owned chat worker, and browser UI assets were removed.
+The replacement Rust tray opens no application window and delegates interactive
+work to the installed `hermes-relay` CLI in a real terminal.
+
+The tray menu cross-checks daemon heartbeat and PID state, labels User versus
+Administrator execution, disables invalid lifecycle actions, and exposes
+pairing, pending-grant counts, audit, diagnostics, logs, sign-in startup,
+emergency stop, and explicit exit semantics. Elevated daemon start/restart uses
+Windows UAC while the tray remains a normal user process. A Windows mutex
+prevents duplicate tray instances. Pending computer-use grants are also
+reviewable directly through the CLI with `grants`, `approve`, and `reject`.
+Desktop use has a CLI-owned persistent preference, native pending-approval
+alerts, active grant/expiry status, immediate local cancellation, and a strong
+warning when task-scoped host input is active under Administrator privilege.
+
+The desktop package treats `desktop/package.json` as the canonical CLI/tray
+version and synchronizes npm lock metadata, the compiled CLI constant, Cargo,
+and NSIS metadata through one npm lifecycle. Desktop CI checks version drift,
+and the `cli-v*` tag workflow validates the tag version and `main` ancestry
+before building the standalone CLI and per-user Windows installer. Contributor
+and release documentation now covers the native tray dev loop, reversible local
+installation, release PR, and tag sequence.
+
+Verification: `npm run verify` passed 15 CLI tests, compiled CLI smoke tests,
+and 4 native tray contract tests. Rust formatting and Clippy passed with warnings
+denied. The release build produced a 0.88 MiB tray executable and a 26.98 MiB
+NSIS installer at version `0.4.0-alpha.1`; launch smoke confirmed a live singleton
+process with no main window until explicit teardown.
+
 ## 2026-07-12 — Multi-profile presence and concurrent Gateway turns
 
 The Android profile picker now distinguishes **Online** profiles whose dedicated

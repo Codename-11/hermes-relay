@@ -7,7 +7,7 @@
 It also includes a terminal escape hatch for when *you* want to drive: bare `hermes-relay` attaches your server's own Hermes TUI over a PTY, tmux-backed so disconnects lose nothing.
 
 ::: warning Experimental phase
-**Windows today — macOS / Linux builds coming soon.** Binaries are unsigned (SmartScreen warnings are expected — the installer prints the escape hatch). Wire protocol may shift between alphas. Multi-client routing is single-client MVP. Code-signed releases land with v1.0. Safe to use today — just expect occasional friction and [file an issue](https://github.com/Codename-11/hermes-relay/issues) when you hit one.
+Prebuilt CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64. The optional native systray is Windows-only. Assets are unsigned, so SmartScreen or Gatekeeper warnings are expected. Wire protocol details may shift between alphas, and multi-client routing remains a single-client MVP. [File an issue](https://github.com/Codename-11/hermes-relay/issues) when something does not behave as documented.
 :::
 
 ::: info Where this track is headed
@@ -47,7 +47,7 @@ The same chord set works on macOS (`Cmd+Shift+4` → screenshot to clipboard →
 | **Daemon** | `hermes-relay daemon start` | Headless tool router, in the **background** — no console window, survives closing the terminal. `daemon status` / `daemon stop` manage it; bare `daemon` runs foreground with JSON-line logs. |
 | **Shell** (default) | `hermes-relay` | The escape hatch: full Hermes Ink TUI over a PTY — banner, Victor, slash commands, the whole experience. Uses tmux on the host so disconnects preserve state. |
 | **Chat (structured)** | `hermes-relay chat "<prompt>"` / `hermes-relay "<prompt>"` | Scriptable, one-shot, pipes stdin. `--json` emits `GatewayEvent`s per line for `jq` / automation. Maintained for scripting; not a growth surface. |
-| **Surface plugins** | `hermes-relay plugins` | Install and launch terminal dashboard surfaces. Herm is built in as an installable `herm-tui` plugin with external-terminal and embedded-tray launch paths. |
+| **Surface plugins** | `hermes-relay plugins` | Install and launch optional terminal dashboard surfaces such as Herm from the CLI. |
 | **Pair / Sessions / Status / Tools / Devices / Relay / Audit / Doctor / Update / Workspace / Paste** | `hermes-relay <verb>` | First-time setup, TUI tmux session management, session inventory, server-side toolset introspection, paired-device management, relay-server inspection, desktop-tool activity audit, local diagnostics, self-update, workspace-context inspection, one-shot clipboard staging. See [Subcommands](./subcommands.md). |
 
 ### In-shell chord set
@@ -67,9 +67,9 @@ While inside the shell/TUI session (bare `hermes-relay`, the default mode), `Ctr
 ## Headline features
 
 - **[Native paste / screenshot / image](./subcommands.md)** — the chord set above, plus REPL slash commands `/paste`, `/screenshot`, `/screenshot primary`, `/screenshot 1`, `/image <path>`. Multi-monitor aware: `/screenshot` defaults to the virtual-screen union; `primary` / a 1-indexed display narrows. Identical wire format to a local Hermes paste.
-- **[Local tool routing](./tools.md)** — 23 agent-callable tools: file I/O, unified-diff patching, ripgrep, shell + PowerShell exec, process control, a background-job API, archive/transfer, clipboard, screenshot, and editor-launcher. Strict consent gate per relay URL; non-TTY stdin fails closed. (An experimental computer-use family is off by default.)
+- **[Local tool routing](./tools.md)** — 23 agent-callable tools: file I/O, unified-diff patching, ripgrep, shell + PowerShell exec, process control, a background-job API, archive/transfer, clipboard, screenshot, and editor-launcher. Strict consent gate per relay URL; non-TTY stdin fails closed. The experimental computer-use family is off by default and has a separate persistent enablement switch.
 - **[Self-update](./subcommands.md#hermes-relay-update)** — `hermes-relay update` polls GitHub Releases, semver-compares, downloads + verifies SHA256, and atomic-swaps the binary. POSIX renames in place; Windows uses cooperative `.new.exe` swap on next start.
-- **[Surface plugins](./subcommands.md#hermes-relay-plugins)** — install, update, launch, or embed terminal dashboard plugins from the tray or CLI. The first built-in plugin is [Herm](https://github.com/liftaris/herm), installed as `herm-tui` and resumed with `herm -c`.
+- **[Surface plugins](./subcommands.md#hermes-relay-plugins)** — install, update, and launch terminal dashboard plugins from the CLI. The first built-in plugin is [Herm](https://github.com/liftaris/herm), installed as `herm-tui` and resumed with `herm -c`.
 - **[Workspace awareness](./subcommands.md#hermes-relay-workspace)** — on connect, the client advertises `cwd`, `git_root`, `git_branch`, `repo_name`, `hostname`, `platform`, `active_shell` to the relay so the agent knows which repo you're in. Client-side capability shipped in alpha.6; server-side prompt-context consumption is on the way (see [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental)).
 - **[Conversation picker](./subcommands.md#hermes-relay-shell)** — on first or fresh attach, choose from recent server-side Hermes conversations with first-prompt previews before the TUI starts.
 - **[TUI session continuity](./subcommands.md#hermes-relay-sessions)** — bare `hermes-relay` resumes the active/default tmux session, replays recent scrollback, and `sessions list/resume/new/kill` gives explicit control when you need it.
@@ -103,7 +103,7 @@ hermes-relay pair --remote ws://<host>:8767
 hermes-relay
 ```
 
-```bash [macOS / Linux — coming soon]
+```bash [macOS / Linux]
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
 hermes-relay pair --remote ws://<host>:8767
 hermes-relay
@@ -115,11 +115,15 @@ The third command (`hermes-relay` with no args) drops you into `shell` mode — 
 
 See **[Installation](./installation.md)** for the full walkthrough (Bun-compiled binaries, version-aware install, `hermes` alias, self-update flow) and **[Pairing](./pairing.md)** for minting a 6-char code on the server.
 
-The tray app is a control surface for the hand — not a *full* chat app (it has a lightweight chat that shells out to the CLI; rich chat + management UX live in [hermes-desktop](https://github.com/NousResearch/hermes-agent)). It's essentially a **visual cockpit over the CLI**: it bundles the `hermes-relay` binary as a sidecar and, on launch, **auto-starts the daemon** (the background tool router) by default — so the agent's hands come up with the tray, no separate `daemon start` needed. (That's distinct from auto-start *on boot*, which is still a service-installer task — see the daemon notes in [Subcommands](./subcommands.md#hermes-relay-daemon).)
+## Windows systray: menu only, no desktop window
 
-It follows the same rule as the CLI for relay-backed control: daemon, devices, grants, and TUI controls unlock only after a paired session token exists in `~/.hermes/remote-sessions.json`. A raw Advanced relay URL is only an override hint, not a pairing, so fresh or signed-out installs show "Pair first" for those controls until pairing completes. The TUI tab runs the experimental embedded terminal: xterm.js renders inside the dashboard while the Rust tray process owns the local PTY and launches the same tmux-backed `hermes-relay` session path (so the `Ctrl+A v` paste chord + `/paste` `/screenshot` `/image` all work there). The Plugins tab uses the same embedded terminal host for installable dashboard surfaces such as Herm. Open in an external terminal remains the fallback for PTY focus, resize, and shortcut testing.
+The optional Windows systray is a native right-click menu over the installed CLI. It has no dashboard, WebView, embedded terminal, chat window, settings window, or background GUI framework. Choosing an interactive action opens the real CLI in a terminal.
 
-Beyond the terminal, the tray adds GUI surfaces the headless CLI can't: a **Grant Requests** tab where you approve [computer-use](./tools.md#computer-use-experimental) grants (headless daemons route the same approvals through a file-bridge), a **Voice Mode** tab that embeds the daemon's local voice page, and safety controls — a **pause** toggle and an **emergency-stop** (default `Ctrl+Shift+H`) that kill the hands instantly. Windows-only and experimental.
+The menu reports the daemon's connection and privilege state, opens the Hermes TUI, starts/stops/restarts the daemon, requests an explicit UAC elevation when you choose **Start/Restart daemon as Administrator…**, opens pairing, pending grants, recent activity, diagnostics, and logs, and provides an emergency stop. The tray itself remains a normal user process even when it starts an elevated daemon.
+
+Desktop use is independently disabled by default. **Enable desktop use…** stores the preference in `~/.hermes/desktop-settings.json`, restarts the daemon at its existing privilege level, and allows the experimental screenshot/input tool family to be advertised. Pending assist/control approvals raise a native security alert; **Review pending grants…** opens `hermes-relay grants` in a terminal, and **Cancel active desktop grant** ends the current task-scoped grant. The status rows show the grant mode and expiry, with an explicit warning when an Administrator control grant is active.
+
+The installer can register **Start tray at sign-in**, and the same setting is available from the menu. This is per-user startup—not a Windows service. The tray starts the daemon on launch; choosing **Exit tray** intentionally leaves the daemon running.
 
 ## Why both shell AND chat modes?
 
@@ -134,6 +138,6 @@ Use `shell` when you want to drive interactively; use `chat --json` from scripts
 
 - [Hermes-Relay Android client](/guide/) — same project, same relay, different surface (phone control, voice, bridge).
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent) — the agent platform the CLI talks to.
-- [Herm](https://github.com/liftaris/herm) — OpenTUI dashboard plugin installable from the desktop surface.
+- [Herm](https://github.com/liftaris/herm) — optional terminal dashboard plugin installable from the CLI.
 - [CLI GitHub source](https://github.com/Codename-11/hermes-relay/tree/main/desktop) — `@hermes-relay/cli` package.
 - [Release notes](https://github.com/Codename-11/hermes-relay/releases?q=cli) — tagged `cli-v*` (separate track from Android); old alpha prereleases are under `desktop-v*`.

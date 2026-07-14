@@ -22,7 +22,7 @@ for automation.
 |---|---|---|---|---|
 | Hermes-Relay-Android | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
 | Hermes-Relay-Plugin | `plugin-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-plugin-version.sh` | `.github/workflows/release-plugin.yml` |
-| Hermes-Relay-CLI | `cli-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-cli.yml` |
+| Hermes-Relay-CLI | `cli-v*` | `desktop/package.json` | `cd desktop && npm version --no-git-tag-version <version>` | `.github/workflows/release-cli.yml` |
 
 This split is intentional. The plugin carries relay features for both Android
 and CLI clients, so plugin fixes can ship without forcing an Android app
@@ -114,6 +114,40 @@ The `plugin-v*` release workflow validates the tag against the same metadata,
 runs plugin tests, builds a wheel and sdist, generates checksums, and
 publishes a `Hermes-Relay-Plugin vX.Y.Z` GitHub Release with the package
 artifacts.
+
+### CLI / tray versioning
+
+`desktop/package.json` is the CLI release track's source of truth. Its version
+must match the generated CLI and native Windows systray metadata. The systray is
+a menu-only controller for the installed CLI; it has no application window,
+WebView, embedded terminal, or separate desktop product surface. The public
+release remains one `Hermes-Relay-CLI` track containing CLI binaries plus the
+optional Windows installer.
+
+| File | Purpose |
+|---|---|
+| `desktop/package.json` | canonical CLI version |
+| `desktop/package-lock.json` | npm root/workspace package metadata |
+| `desktop/src/version.ts` | compiled CLI runtime version |
+| `desktop/tray/Cargo.toml` | native systray package version |
+| `desktop/tray/Cargo.lock` | locked systray package version |
+
+Prepare a new CLI version on `dev` without creating a tag or npm-generated
+commit:
+
+```powershell
+cd desktop
+npm version --no-git-tag-version 0.4.0-alpha.2
+npm run check:version-sync
+npm run verify
+```
+
+The npm `version` lifecycle runs `sync:version`, which copies the canonical
+version into the generated CLI and tray metadata. If `package.json` was edited
+manually, run `npm run sync:version` before checking. `npm run verify` is the
+single Windows release-parity gate: version sync, type-check, tests, TypeScript
+build, compiled CLI smoke, and tray formatting, Clippy, check, and tests. CI runs
+the portable portions on every desktop change and the Windows tray gates separately.
 
 ## Branching policy
 
@@ -585,6 +619,43 @@ validates all plugin-owned version metadata with
 touches more than one release surface. The workflow also runs plugin tests,
 builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates a GitHub
 Release named `Hermes-Relay-Plugin v<version>` for the plugin package.
+
+### CLI / Windows systray release
+
+Use this when the standalone CLI, daemon, desktop tools, or Windows tray changes.
+Android and plugin versions do not need to move with it.
+
+First rewrite `CLI_RELEASE_NOTES.md` for the new CLI release and promote only
+CLI/tray-relevant changelog bullets into the release block. Then:
+
+```powershell
+git switch dev
+git pull --ff-only origin dev
+
+cd desktop
+npm version --no-git-tag-version 0.4.0-alpha.2
+npm run verify
+cd ..
+
+git add desktop/package.json desktop/package-lock.json desktop/src/version.ts `
+  desktop/tray/Cargo.toml desktop/tray/Cargo.lock CHANGELOG.md CLI_RELEASE_NOTES.md
+git commit -m "release(cli): cli-v0.4.0-alpha.2"
+git push origin dev
+
+# Open the release PR (dev -> main) and merge with --no-ff.
+# After merge, tag from main:
+git switch main
+git pull --ff-only origin main
+cd desktop
+npm run check:version-sync -- --expect 0.4.0-alpha.2
+cd ..
+git tag cli-v0.4.0-alpha.2
+git push origin cli-v0.4.0-alpha.2
+```
+
+The tag workflow rejects version drift and tags whose commit is not in
+`origin/main`, reruns CLI tests, builds all four standalone binaries, tests and
+packages the Windows tray, generates checksums, and publishes the GitHub Release.
 
 ### 6. Play review and publishing behavior
 

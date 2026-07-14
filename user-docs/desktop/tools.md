@@ -59,7 +59,7 @@ Tools are registered in the `desktop` toolset. The agent sees them as normal too
 | `desktop_screenshot` | `(display?: number \| string, save_to?: string)` | Capture all monitors (default), primary (`'primary'`), or a specific display (`1` / `2` / ...). Returns base64 + dimensions, or saves to `save_to` and returns the path. |
 | `desktop_open_in_editor` | `(path: string, line?: number, col?: number, wait?: boolean)` | Open a file in the user's editor. Detects `$VISUAL` → `$EDITOR` → `code` / `cursor` / `subl` / `nvim` / `vim` on PATH → platform fallback. Injects `-g path:line:col` for GUI editors. |
 
-That's the 23 tools the client advertises by default. A further **computer-use** family (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) is registered for full local UI control but ships **experimental and off by default** — it advertises only behind an explicit feature flag (`--experimental-computer-use`), on top of the normal tool consent, and host input still fails closed without a task-scoped grant approved from a visible local prompt.
+That's the 23 tools the client advertises by default. A further **computer-use** family (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) is registered for full local UI control but ships **experimental and off by default**. Enable it persistently with `hermes-relay computer-use enable` or from the Windows tray; one-process flag/env overrides remain available. Host input still fails closed without a task-scoped grant approved locally.
 
 All tools run under a **30-second AbortController** ceiling enforced by the router. `desktop_terminal` / `desktop_powershell` accept a per-call `timeout` (seconds, per the wire spec — converted to ms internally) that's clamped to a 10-minute maximum. `desktop_screenshot` has its own 10 s timeout and 50 MB cap. `desktop_clipboard_*` 5 s timeout and 10 MB cap.
 
@@ -135,7 +135,7 @@ Consent is stored per-URL in `~/.hermes/remote-sessions.json` as `toolsConsented
 The desktop tools run **in-process on your machine** with your full user privileges. That's a real risk — a compromised relay or a misaligned agent could ask to `rm -rf /`, exfiltrate tokens, or rewrite your `.ssh/config`. The walls:
 
 1. **Consent per-URL, not per-run.** Once you say yes to `ws://hermes.example.com`, the agent on THAT server has persistent tool access. A different URL re-prompts.
-2. **No sudo / privilege escalation.** All tools inherit your shell's environment. `desktop_terminal "sudo rm -rf /"` requires a passwordless sudo configuration to succeed — we're not adding it.
+2. **User privilege by default; explicit elevation only.** All tools inherit the daemon's privilege. The Windows tray remains unprivileged and requests UAC only when you explicitly choose **Start/Restart daemon as Administrator…**. While an Administrator daemon is active, approved shell and input actions run elevated; the tray labels that state and displays a stronger warning for an active control grant.
 3. **Per-call AbortController ceiling.** 30 seconds per tool call hard stop. A long-running compromise would trip this.
 4. **Handler implementations are defensive:**
    - `desktop_read_file` caps at `max_bytes` (default 1 MB) and truncates with a marker.
@@ -158,17 +158,19 @@ The desktop tools run **in-process on your machine** with your full user privile
 
 Beyond the 23 default tools, an **experimental computer-use family** (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) drives full local mouse/keyboard UI control. It's **off by default** and gated in three stages:
 
-1. **Enable** — advertise the tools with `--experimental-computer-use` on `chat` / `shell` / `daemon` (or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`), on top of the normal desktop-tool consent.
-2. **Observe** — `desktop_computer_status` / `_screenshot` need no extra approval (read-only).
-3. **Grant + act** — `desktop_computer_grant_request(mode="assist"|"control")` must be **approved by you** before `desktop_computer_action` will send any input; the grant is task-scoped and time-boxed (default ~15 min), and `desktop_computer_cancel` ends it.
+1. **Enable** — run `hermes-relay computer-use enable` (or choose **Enable desktop use…** from the Windows tray) to persist the preference in `~/.hermes/desktop-settings.json`. Restart the daemon to apply it; the tray restarts automatically. `--experimental-computer-use` and `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1` are one-process enable overrides; `--no-computer-use` always wins for that invocation.
+2. **Observe grant** — the agent requests an `observe` grant before screenshot/status use. Observe grants allow reading only; they cannot inject input.
+3. **Assist/control approval + act** — `desktop_computer_grant_request(mode="assist"|"control")` must be **approved locally** before `desktop_computer_action` can send input. The grant is task-scoped and time-boxed (15 minutes by default, one hour maximum); `hermes-relay computer-use cancel`, the tray cancel action, disabling desktop use, or `desktop_computer_cancel` ends it.
 
 ### Approving a grant
 
 How you approve depends on how the client is running:
 
 - **Interactive (`shell` / `chat` on a TTY):** a visible prompt appears in your terminal — type `yes` to approve.
-- **Tray app:** approve or deny in the **Grant Requests** tab — the GUI surface that makes computer-use practical without a terminal open.
-- **Headless (`daemon`, no TTY):** approvals route through a **file-bridge** directory, `~/.hermes/grant-bridge` (set via `HERMES_RELAY_GRANT_BRIDGE_DIR`). The daemon writes `request-<id>.json`; an approver writes a matching response. The **tray sets this up automatically** when it launches the daemon (it passes the bridge dir and reads pending requests), so running the daemon under the tray gives you GUI approval out of the box. Without an approver wired up, a headless grant request simply times out — input stays failed-closed.
+- **Headless (`daemon`, no TTY):** approvals route through the local file bridge at `~/.hermes/grant-bridge` (override with `HERMES_RELAY_GRANT_BRIDGE_DIR`). The daemon writes `request-<id>.json`; `hermes-relay grants` reviews it and writes the matching response. Without a local approver, the request times out and input stays failed-closed.
+- **Windows tray:** a new pending request raises a native security alert. Choose **Review pending grants…** to open the same `hermes-relay grants` review in a terminal. The tray never auto-approves a request and has no hidden approval window.
+
+Use `hermes-relay computer-use status` to see the persisted preference, daemon privilege, active grant/expiry, pending count, and whether a restart is required. Disabling desktop use requests exact-once cancellation from the running daemon. The Windows tray displays the same state and warns explicitly when an Administrator control grant is active.
 
 Input injection is currently **Windows-only**; `status` / `screenshot` work cross-platform.
 
@@ -181,7 +183,7 @@ If the agent says "desktop_terminal is not available" or calls time out immediat
 ssh you@<host> curl -s "http://127.0.0.1:8767/desktop/_ping?tool=desktop_terminal"
 ```
 
-Expected (the default-advertised set — `desktop_computer_*` appears only when the client runs with `--experimental-computer-use`):
+Expected (the default-advertised set — `desktop_computer_*` appears only when desktop use is persistently enabled or a one-process override is active):
 ```json
 {
   "connected": true,
@@ -231,7 +233,7 @@ If `connected: true` but the agent still says the tool is missing:
 
 Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log.
 
-`daemon start` covers "background, this session." True auto-start across reboots/logout (Windows `sc.exe` service / systemd user unit / launchd agent) is still v1.0 work — until then, wrap foreground `hermes-relay daemon` with your service manager of choice. Tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental).
+`daemon start` covers "background, this session." On Windows, the optional tray can start at sign-in and starts the daemon when it launches; this is a per-user login entry, not a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
 
 ## Related
 

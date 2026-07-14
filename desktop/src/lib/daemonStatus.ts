@@ -11,7 +11,16 @@ import { promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import type { ProcessPrivilege } from './processPrivilege.js'
+
 export type DaemonState = 'starting' | 'connected' | 'reconnecting' | 'stopped'
+
+export interface DaemonComputerGrantStatus {
+  active: boolean
+  mode: string
+  expires_at: string | null
+  reason?: string
+}
 
 export interface DaemonStatus {
   pid: number
@@ -26,6 +35,10 @@ export interface DaemonStatus {
   advertised_tools?: number
   voice_url?: string | null
   last_event?: string
+  username?: string
+  privilege?: ProcessPrivilege
+  computer_use_enabled?: boolean
+  computer_grant?: DaemonComputerGrantStatus
 }
 
 export function daemonStatusPath(): string {

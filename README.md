@@ -187,7 +187,7 @@ to contribute.
 
 ## Hands on any machine — the Hermes-Relay CLI&nbsp;<sub>(alpha)</sub>
 
-> **Alpha · Windows today** (macOS / Linux coming soon). A single self-contained binary — no Node required. Binaries are unsigned during the experimental phase, so SmartScreen / Gatekeeper warnings are expected.
+> **Alpha.** Self-contained CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64 — no Node required. Windows also has an optional native, menu-only systray. Assets are unsigned during the experimental phase, so SmartScreen / Gatekeeper warnings are expected.
 
 The agent's brain stays on the host; the CLI lets it call tools **on your machine** over the same WSS relay — `read_file`, `write_file`, `terminal`, `search_files`, `screenshot`, `clipboard`, `open_in_editor`, and more — behind a one-time consent gate, interactive diff approval for patches, and a `--no-tools` kill-switch.
 
@@ -197,11 +197,13 @@ irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scri
 
 ```bash
 hermes-relay pair --remote ws://<host>:8767   # once
-hermes-relay daemon                            # headless tool router — agent reaches you anytime
+hermes-relay daemon start                      # background tool router — agent reaches you anytime
 hermes-relay update                            # self-update via GitHub Releases
 ```
 
 It pairs against the **same relay and credential store** as the Android app — pair once from either, both work. Tagged on a separate `cli-v*` [release track](https://github.com/Codename-11/hermes-relay/releases?q=cli), with old alpha prereleases still visible under `desktop-v*`.
+
+On Windows, the default installer adds the optional right-click-only systray: no dashboard or app window, just TUI launch, User/Administrator-aware daemon controls, pairing, local grant review, audit, diagnostics, logs, desktop-use status/cancellation, sign-in startup, and emergency stop.
 
 - **Docs:** [CLI guide](https://codename-11.github.io/hermes-relay/desktop/) · [`desktop/README.md`](desktop/README.md)
 - **AI-agent setup recipe:** `/hermes-relay-desktop-setup`

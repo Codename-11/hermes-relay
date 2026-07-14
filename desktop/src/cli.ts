@@ -5,10 +5,11 @@
 
 import { auditCommand } from './commands/audit.js'
 import { chatCommand } from './commands/chat.js'
-import { chatWorkerCommand } from './commands/chatWorker.js'
+import { computerUseCommand } from './commands/computerUse.js'
 import { daemonCommand } from './commands/daemon.js'
 import { devicesCommand } from './commands/devices.js'
 import { doctorCommand } from './commands/doctor.js'
+import { grantsCommand } from './commands/grants.js'
 import { pairCommand } from './commands/pair.js'
 import { pasteCommand } from './commands/paste.js'
 import { pluginsCommand } from './commands/plugins.js'
@@ -69,7 +70,6 @@ const BOOLEAN_FLAGS = new Set([
   'experimental-computer-use',
   'no-computer-use',
   'no-voice',
-  'no-tray',
   'no-open',
   'check',
   'yes',
@@ -136,10 +136,11 @@ function parseArgs(argv: string[]): ParsedArgs {
 const KNOWN_COMMANDS = new Set([
   'audit',
   'chat',
-  'chat-worker',
+  'computer-use',
   'daemon',
   'devices',
   'doctor',
+  'grants',
   'paste',
   'pair',
   'relay',
@@ -159,6 +160,7 @@ const HELP = `hermes-relay — thin-client CLI for a remote Hermes agent over WS
 Usage:
   hermes-relay [shell]             Pipe the full Hermes CLI over a PTY (default — interactive)
   hermes-relay chat [<prompt>]     Structured-event chat (REPL or one-shot, scriptable)
+  hermes-relay computer-use        Enable/disable desktop screenshots and task-scoped input
   hermes-relay "<prompt>"          One-shot structured chat (shortcut for chat "...")
   hermes-relay pair [CODE]         Pair with the relay and store a session token
   hermes-relay paste               Stage clipboard image for /paste in the TUI
@@ -169,8 +171,9 @@ Usage:
   hermes-relay audit               Show what the agent ran on this machine (desktop tools)
   hermes-relay devices             List / revoke / extend server-side paired devices
   hermes-relay relay               Inspect the relay server (info / security / context / queue)
-  hermes-relay daemon [start|stop|status]   Headless tool router — 'start' runs it in the background
+  hermes-relay daemon [start|stop|restart|status]   Headless tool router — 'start' runs it in the background
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
+  hermes-relay grants              Review pending local computer-use grants
   hermes-relay update              Check for and install the latest cli-v* release
   hermes-relay voice               Show native Hermes voice config (STT/TTS/realtime providers)
   hermes-relay voice mode          Push-to-talk in a browser tab (proxied through this CLI)
@@ -198,17 +201,15 @@ Flags:
   --relay-chat           chat: use Relay chat.send + typed stream.event over WSS
                          instead of the default TUI gateway session transport
   --experimental-computer-use
-                         chat/shell/daemon: advertise experimental desktop_computer_*
-                         tools (screenshots + mouse/keyboard). Three-stage safety:
-                           1. observe — desktop_computer_screenshot/status need only
-                              the normal desktop-tool consent (no extra approval).
-                           2. grant  — desktop_computer_grant_request(mode=assist|control)
-                              pops a visible local prompt you approve (or a file-bridge
-                              in headless via HERMES_RELAY_GRANT_BRIDGE_DIR).
-                           3. act    — desktop_computer_action runs only while a grant is
-                              live (default 15 min); desktop_computer_cancel ends it.
+                         One-process override enabling experimental desktop_computer_*
+                         tools. Prefer computer-use enable for the persistent setting.
+                         Observe grants allow screenshots; assist/control requests need
+                         local approval via a visible prompt or hermes-relay grants.
+                         Input runs only while the task-scoped grant is live (15 min
+                         default, 1 hour maximum) and can be canceled locally.
                          Env: HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1
-  --no-computer-use      Disable computer-use advertisement even if env enabled.
+  --no-computer-use      Disable computer-use advertisement for this invocation even
+                         when the persistent preference or environment enables it.
   --grant-tools          pair: prompt for desktop-tool consent during pairing (TTY required;
                          lets you go straight from \`pair\` to \`daemon\` with no \`shell\` round-trip)
   --auto-grant-tools     pair: stamp tool consent without prompting — explicit non-interactive
@@ -314,14 +315,16 @@ export async function main(argv = process.argv): Promise<number> {
       return auditCommand(args)
     case 'chat':
       return chatCommand(args)
-    case 'chat-worker':
-      return chatWorkerCommand(args)
+    case 'computer-use':
+      return computerUseCommand(args)
     case 'daemon':
       return daemonCommand(args)
     case 'devices':
       return devicesCommand(args)
     case 'doctor':
       return doctorCommand(args)
+    case 'grants':
+      return grantsCommand(args)
     case 'pair':
       return pairCommand(args)
     case 'paste':

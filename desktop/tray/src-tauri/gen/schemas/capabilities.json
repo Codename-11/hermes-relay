@@ -1,1 +1,0 @@
-{"main-capability":{"identifier":"main-capability","description":"Hermes Relay desktop tray management windows","local":true,"windows":["main","overlay"],"permissions":["core:default"]}}

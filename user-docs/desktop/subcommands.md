@@ -15,6 +15,8 @@ Full reference for every `hermes-relay` verb. Flags map one-to-one with env vars
 | `devices` | Server-side paired-device management — list / revoke / extend. |
 | `relay` | Inspect the relay server — `info`, `security`, injected `context`. |
 | `daemon` | Headless tool router — keeps `desktop_*` tools advertised even with no shell open. `daemon start` runs it in the background. |
+| `computer-use` | Persistently enable/disable experimental screenshot and input tools; show or cancel the active grant. |
+| `grants` | Review, approve, or reject pending local computer-use grant requests. |
 | `audit` | Show what the agent has run on this machine via desktop tools. |
 | `doctor` | Local diagnostic — version, install paths, session summary, daemon detection, platform info. |
 | `update` | Self-update via GitHub Releases. |
@@ -78,8 +80,6 @@ hermes-relay chat --no-tools                       # skip desktop tool handlers 
 
 **Ctrl+C** during a turn fires `session.interrupt` on the relay — the in-flight turn is cancelled, the REPL prompt returns. Ctrl+C at the empty prompt exits.
 
-The tray **Chat** tab uses this relay-backed JSON path when a paired relay is available. For unpaired chat-only setups, the tray uses an internal `chat-worker api` sidecar path that streams directly from the Hermes WebAPI (`/api/sessions/{id}/chat/stream`, then `/v1/runs` fallback). That worker is intentionally not part of the public CLI help; use the tray route selector for direct gateway mode.
-
 ### REPL slash commands
 
 Inside the chat REPL, these commands attach an image to the **next** message:
@@ -120,7 +120,7 @@ hermes-relay paste --remote ws://<host>:8767
 
 ## `hermes-relay plugins`
 
-Desktop surface plugin manager. It exposes installable terminal dashboard surfaces to the CLI and tray app without making them part of the core relay protocol. The first built-in plugin is [Herm](https://github.com/liftaris/herm), packaged as `herm-tui`.
+Desktop surface plugin manager. It exposes installable terminal dashboard surfaces to the CLI without making them part of the core relay protocol. The first built-in plugin is [Herm](https://github.com/liftaris/herm), packaged as `herm-tui`.
 
 ```bash
 hermes-relay plugins                         # list registered plugins
@@ -132,7 +132,7 @@ hermes-relay plugins launch herm             # herm, or bunx/npx fallback
 hermes-relay plugins resume herm             # herm -c, or fallback with -c
 ```
 
-The status output reports package name, source URL, install state, launch command, fallback command, tabs, and session actions. If `herm` is already on PATH, launch uses the installed binary. Otherwise the CLI and tray try `bunx herm-tui`, then `npx --yes herm-tui` when those runtimes are available.
+The status output reports package name, source URL, install state, launch command, fallback command, tabs, and session actions. If `herm` is already on PATH, launch uses the installed binary. Otherwise the CLI tries `bunx herm-tui`, then `npx --yes herm-tui` when those runtimes are available.
 
 ## `hermes-relay status`
 
@@ -251,11 +251,37 @@ transport_exited      → reconnect budget exhausted; exit 1 so service manager 
 
 **Fails closed:** no stored session + no `--token` → exits 1. No `toolsConsented: true` on the stored record → exits 1 unless `--allow-tools` is passed alongside an explicit `--token` (a headless binary must never be the thing that first grants tool access).
 
-::: tip Background ≠ service
-`daemon start` survives closing the terminal, but **not a reboot or logout**. True auto-start (Windows `sc.exe` service / systemd user unit / launchd agent) is still v1.0 work — until then, wrap `hermes-relay daemon` (foreground) with your service manager of choice, or use `daemon start` for "background, this session."
-
-The Windows **tray app** auto-starts the daemon when it launches (the `auto_start_daemon` default), so opening the tray is the GUI equivalent of `daemon start` — but it's the same "while it's running" lifetime, not boot-persistence.
+::: tip Background ≠ system service
+`daemon start` survives closing the terminal, but **not a reboot or logout**. On Windows, install the optional systray and enable **Start tray at sign-in**; the tray starts the daemon when it launches. This is a per-user login entry, not a Windows service. On Linux/macOS, or when a machine-level service is required, wrap foreground `hermes-relay daemon` with your service manager.
 :::
+
+## `hermes-relay computer-use`
+
+Manage the experimental screenshot and mouse/keyboard tool family independently from the normal 23 desktop tools:
+
+```bash
+hermes-relay computer-use status          # preference, daemon privilege, active/pending grants
+hermes-relay computer-use status --json   # machine-readable form
+hermes-relay computer-use enable          # confirm and persist enablement
+hermes-relay computer-use enable --yes    # explicit non-interactive confirmation
+hermes-relay computer-use cancel          # cancel the active task-scoped grant
+hermes-relay computer-use disable         # disable and request active-grant cancellation
+```
+
+Enablement is stored in `~/.hermes/desktop-settings.json`. Restart the daemon after changing it; the Windows tray does that automatically while preserving whether the daemon is running as User or Administrator. `--experimental-computer-use` is a one-process enable override, and `--no-computer-use` always suppresses advertisement for that invocation.
+
+## `hermes-relay grants`
+
+Review assist/control requests written by a headless daemon to the local grant bridge:
+
+```bash
+hermes-relay grants
+hermes-relay grants --json
+hermes-relay grants approve <id>
+hermes-relay grants reject <id> --reason "Not expected"
+```
+
+Interactive review shows the requested mode, duration, and reason before asking for confirmation. The Windows tray raises a native alert when a request arrives and opens this command when you choose **Review pending grants…**; approval never happens inside a hidden GUI.
 
 ## `hermes-relay audit`
 
@@ -286,7 +312,7 @@ hermes-relay doctor              # human format (⚠ for warnings, hint at botto
 hermes-relay doctor --json       # machine-readable; safe to paste — tokens are omitted entirely (no prefix)
 ```
 
-Fields: `version`, `binary_path`, `install_dir`, `on_path` (case-insensitive on Windows), `sessions` file size + count + per-URL summaries, `daemon` (stat of canonical service unit file paths), `workspace` (since alpha.6: `cwd`, `git_root`, `git_branch`, `repo_name`, `hostname`, `platform`, `active_shell`), platform + node version.
+Fields include `version`, physical `binary_path`, `install_dir`, `on_path` (case-insensitive on Windows), session-file size/count and per-URL summaries, live daemon state, workspace context (`cwd`, `git_root`, `git_branch`, `repo_name`, `hostname`, `platform`, `active_shell`), platform, and runtime version.
 
 ## `hermes-relay update`
 
@@ -350,6 +376,8 @@ Available on every subcommand. Every subcommand also answers `--help` with its o
 | `--raw` | — | `shell` only: skip auto-exec, bare tmux/bash |
 | `--watch-editor` | — | `shell` / `chat`: poll tmux / `$VSCODE` and send `active_editor` hints every 5 s |
 | `--no-tools` | — | Don't wire desktop tool handlers for this invocation |
+| `--experimental-computer-use` | `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1` | One-process override enabling the experimental computer-use handlers |
+| `--no-computer-use` | — | One-process override disabling computer-use advertisement even when persisted/enabled by env |
 | `--log-human` / `--log-json` | — | `daemon` only: force log format |
 | `--allow-tools` | — | `daemon` only: skip stored-consent gate (use only with `--token`; implies trust) |
 | `--detach` | — | `daemon` only: run in the background (alias for `daemon start`) |
@@ -379,6 +407,8 @@ Available on every subcommand. Every subcommand also answers `--help` with its o
 | `HERMES_RELAY_INSTALL_DIR` | Install script override (default `~/.hermes/bin`) |
 | `HERMES_RELAY_VERSION` | Install script pin (default `latest`) |
 | `HERMES_RELAY_DAEMON` | Set to `1` inside `daemon` mode — handlers read this to disable interactive prompts |
+| `HERMES_RELAY_GRANT_BRIDGE_DIR` | Override the local pending-grant bridge (default `~/.hermes/grant-bridge`) |
+| `HERMES_RELAY_COMPUTER_USE` | Enable experimental computer-use handlers for the current process |
 | `NO_COLOR` | Disable ANSI output |
 | `FORCE_COLOR=1` | Force ANSI even on non-TTY |
 
@@ -396,6 +426,9 @@ Available on every subcommand. Every subcommand also answers `--help` with its o
 |------|---------|
 | `~/.hermes/remote-sessions.json` | Session tokens, grants, TTLs, cert pins, tool consent (mode 0600, atomic tempfile+rename) |
 | `~/.hermes/desktop-sessions.json` | Active TUI tmux session metadata per relay URL |
+| `~/.hermes/desktop-settings.json` | Persistent local desktop-use preference |
+| `~/.hermes/grant-bridge/` | Pending grant requests/responses and exact-once active-grant cancellation bridge |
+| `~/.hermes/daemon-status.json` | Live daemon PID, connection, privilege, tool count, and active-grant state |
 | `~/.hermes/bin/hermes-relay` (`.exe` on Windows) | Installed binary path |
 | `~/.hermes/bin/hermes` (or `hermes.cmd` on Windows) | Short alias — created at install time, collision-safe |
 | `~/.hermes/bin/hermes-relay.new.exe` (Windows only, transient) | Pending self-update; renamed into place on next invocation |
