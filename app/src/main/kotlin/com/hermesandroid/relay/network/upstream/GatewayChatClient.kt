@@ -2303,6 +2303,7 @@ class GatewayChatClient(
         onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
         onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
         onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
+        onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },
         onTurnComplete = { callbackDispatcher { callbacks.onTurnComplete() } },
         onComplete = { callbackDispatcher { callbacks.onComplete() } },
         onUsage = { v -> callbackDispatcher { callbacks.onUsage(v) } },

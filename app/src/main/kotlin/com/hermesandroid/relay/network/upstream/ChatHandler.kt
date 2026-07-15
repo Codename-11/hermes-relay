@@ -935,6 +935,9 @@ class ChatHandler {
                 isGenerating = tool.isGenerating,
                 taskIndex = tool.taskIndex,
                 taskLabel = tool.taskLabel,
+                outputRisk = tool.outputRisk,
+                outputRiskFindings = tool.outputRiskFindings,
+                outputRiskRedacted = tool.outputRiskRedacted,
             )
         }
         val currentTools = currentAssistant?.toolCalls.orEmpty()
@@ -2744,6 +2747,27 @@ class ChatHandler {
                 resultPreview = error,
                 isFailure = true,
             )
+        }
+    }
+
+    /** Attach untrusted output-risk metadata to the exact matching tool call. */
+    fun onToolOutputRisk(messageId: String, outputRisk: GatewayToolOutputRisk) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                val updatedCalls = msg.toolCalls.map { call ->
+                    if (call.id == outputRisk.toolCallId) {
+                        call.copy(
+                            outputRisk = outputRisk.risk,
+                            outputRiskFindings = outputRisk.findings,
+                            outputRiskRedacted = outputRisk.redacted,
+                        )
+                    } else {
+                        call
+                    }
+                }
+                if (updatedCalls == msg.toolCalls) msg else msg.copy(toolCalls = updatedCalls)
+            }
         }
     }
 

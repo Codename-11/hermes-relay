@@ -133,8 +133,10 @@ data class GatewayAsk(
     val requestId: String?,
     /** Question / command / prompt — whatever the ask wants the user to read. */
     val text: String,
-    /** Clarify-only: server-suggested answers. */
+    /** Server-advertised answers for clarify and approval requests. */
     val choices: List<String>? = null,
+    /** Approval-only: the smart observer denied and the owner may override once. */
+    val smartDenied: Boolean = false,
     /** Secret-only: the env var the value will be stored under. */
     val envVar: String? = null,
     /**
@@ -158,6 +160,15 @@ data class GatewayAskExpiry(
 
 /** Outcome returned by the gateway's `*.respond` RPCs. */
 enum class GatewayAskResponse { ACCEPTED, EXPIRED }
+
+/** Deterministic, non-low risk metadata emitted after a tool returns output. */
+data class GatewayToolOutputRisk(
+    val toolCallId: String,
+    val toolName: String,
+    val risk: String,
+    val findings: List<String>,
+    val redacted: Boolean,
+)
 
 /**
  * One `subagent.*` lifecycle event, emitted on the PARENT session. Lifecycle
@@ -321,6 +332,8 @@ class GatewayTurnCallbacks(
     val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
     val onToolCallDone: (toolCallId: String, resultPreview: String?) -> Unit,
     val onToolCallFailed: (toolCallId: String, errorMsg: String?) -> Unit,
+    /** Attach deterministic output-risk metadata to the matching tool card. */
+    val onToolOutputRisk: (GatewayToolOutputRisk) -> Unit = { _ -> },
     val onTurnComplete: () -> Unit,
     val onComplete: () -> Unit,
     val onUsage: (UsageInfo?) -> Unit,

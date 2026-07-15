@@ -1245,6 +1245,12 @@ class ChatViewModel : ViewModel() {
             onToolCallFailed = { toolCallId, error ->
                 if (acceptsEvent()) handler.onToolCallFailed(messageId, toolCallId, error)
             },
+            onToolOutputRisk = { risk ->
+                if (acceptsEvent()) {
+                    handler.onToolOutputRisk(messageId, risk)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
             onTurnComplete = {
                 if (acceptsEvent()) handler.onTurnComplete(messageId)
             },
@@ -3070,23 +3076,21 @@ class ChatViewModel : ViewModel() {
         val card = when (ask.kind) {
             GatewayAsk.Kind.APPROVAL -> HermesCard(
                 type = HermesCard.BuiltInTypes.ASK_APPROVAL,
-                title = (appContext?.getString(R.string.chat_approval_title) ?: "Approval requested"),
+                title = if (ask.smartDenied) {
+                    appContext?.getString(R.string.chat_approval_smart_denied_title)
+                        ?: "Smart DENY — owner override"
+                } else {
+                    appContext?.getString(R.string.chat_approval_title) ?: "Approval requested"
+                },
+                body = if (ask.smartDenied) {
+                    appContext?.getString(R.string.chat_approval_smart_denied_body)
+                        ?: "The smart safety review denied this operation. You may override it once."
+                } else {
+                    null
+                },
                 accent = HermesCard.Accents.WARNING,
                 fields = listOf(HermesCardField("Command", ask.text)),
-                actions = listOf(
-                    HermesCardAction(
-                        label = appContext?.getString(R.string.chat_approval_approve) ?: "Approve",
-                        value = "approve",
-                        style = HermesCardAction.Styles.PRIMARY,
-                        mode = HermesCardAction.Modes.SUBMIT_ASK,
-                    ),
-                    HermesCardAction(
-                        label = appContext?.getString(R.string.chat_approval_deny) ?: "Deny",
-                        value = "deny",
-                        style = HermesCardAction.Styles.DANGER,
-                        mode = HermesCardAction.Modes.SUBMIT_ASK,
-                    ),
-                ),
+                actions = approvalActions(ask),
                 id = cardKey,
             )
 
@@ -3165,6 +3169,39 @@ class ChatViewModel : ViewModel() {
             receivedAt = now,
         )
         scheduleCheckpointWrite(immediate = true)
+    }
+
+    /** Render only upstream-supported approval values; old servers retain Approve/Deny. */
+    private fun approvalActions(ask: GatewayAsk): List<HermesCardAction> {
+        val advertised = ask.choices.orEmpty()
+            .map(String::lowercase)
+            .filter { it in setOf("once", "session", "always", "deny") }
+            .distinct()
+            .let { choices ->
+                if (ask.smartDenied) choices.filter { it == "once" || it == "deny" } else choices
+            }
+        val choices = advertised.ifEmpty {
+            if (ask.smartDenied) listOf("once", "deny") else listOf("approve", "deny")
+        }
+        return choices.map { choice ->
+            val label = when (choice) {
+                "once" -> appContext?.getString(R.string.chat_approval_once) ?: "Approve once"
+                "session" -> appContext?.getString(R.string.chat_approval_session) ?: "Approve for session"
+                "always" -> appContext?.getString(R.string.chat_approval_always) ?: "Always approve"
+                "deny" -> appContext?.getString(R.string.chat_approval_deny) ?: "Deny"
+                else -> appContext?.getString(R.string.chat_approval_approve) ?: "Approve"
+            }
+            HermesCardAction(
+                label = label,
+                value = choice,
+                style = when (choice) {
+                    "deny" -> HermesCardAction.Styles.DANGER
+                    "once", "approve" -> HermesCardAction.Styles.PRIMARY
+                    else -> HermesCardAction.Styles.SECONDARY
+                },
+                mode = HermesCardAction.Modes.SUBMIT_ASK,
+            )
+        }
     }
 
     /**
@@ -3676,6 +3713,9 @@ class ChatViewModel : ViewModel() {
                         isGenerating = tool.isGenerating,
                         taskIndex = tool.taskIndex,
                         taskLabel = tool.taskLabel,
+                        outputRisk = tool.outputRisk,
+                        outputRiskFindings = tool.outputRiskFindings,
+                        outputRiskRedacted = tool.outputRiskRedacted,
                     )
                 },
                 backgroundTask = assistant.backgroundTask?.let { task ->
@@ -3700,6 +3740,7 @@ class ChatViewModel : ViewModel() {
                     requestId = ask.ask.requestId,
                     text = ask.ask.text,
                     choices = ask.ask.choices,
+                    smartDenied = ask.ask.smartDenied,
                     envVar = ask.ask.envVar,
                     timeoutSeconds = ask.ask.timeoutSeconds,
                     messageId = ask.messageId,
@@ -3825,6 +3866,7 @@ class ChatViewModel : ViewModel() {
                 requestId = saved.requestId,
                 text = saved.text,
                 choices = saved.choices,
+                smartDenied = saved.smartDenied,
                 envVar = saved.envVar,
                 timeoutSeconds = saved.timeoutSeconds,
             ),
@@ -3966,6 +4008,12 @@ class ChatViewModel : ViewModel() {
             onToolCallFailed = { toolCallId, error ->
                 if (owns()) {
                     handler.onToolCallFailed(messageId, toolCallId, error)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
+            onToolOutputRisk = { risk ->
+                if (owns()) {
+                    handler.onToolOutputRisk(messageId, risk)
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
@@ -5881,6 +5929,10 @@ class ChatViewModel : ViewModel() {
                         onToolCallStart = onToolCallStartCb,
                         onToolCallDone = onToolCallDoneCb,
                         onToolCallFailed = onToolCallFailedCb,
+                        onToolOutputRisk = { risk ->
+                            handler.onToolOutputRisk(currentMessageId, risk)
+                            scheduleCheckpointWrite(immediate = true)
+                        },
                         onTurnComplete = onTurnCompleteCb,
                         onComplete = onCompleteCb,
                         onUsage = onUsageCb,

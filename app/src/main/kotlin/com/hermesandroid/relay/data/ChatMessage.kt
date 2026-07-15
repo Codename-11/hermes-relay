@@ -338,7 +338,13 @@ data class ToolCall(
      * goal truncated to 60 chars. Carried on each child call so the lane
      * header can render without a separate lane registry.
      */
-    val taskLabel: String? = null
+    val taskLabel: String? = null,
+    /** Deterministic non-low output risk reported by upstream for this call. */
+    val outputRisk: String? = null,
+    /** Human-readable deterministic findings; rendered as untrusted metadata. */
+    val outputRiskFindings: List<String> = emptyList(),
+    /** Upstream removed sensitive spans before emitting the findings. */
+    val outputRiskRedacted: Boolean = false,
 )
 
 enum class MessageRole {

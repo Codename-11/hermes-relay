@@ -83,6 +83,9 @@ data class ChatTurnToolCheckpoint(
     val isGenerating: Boolean = false,
     val taskIndex: Int? = null,
     val taskLabel: String? = null,
+    val outputRisk: String? = null,
+    val outputRiskFindings: List<String> = emptyList(),
+    val outputRiskRedacted: Boolean = false,
 )
 
 @Serializable
@@ -103,6 +106,7 @@ data class ChatTurnAskCheckpoint(
     val requestId: String? = null,
     val text: String,
     val choices: List<String>? = null,
+    val smartDenied: Boolean = false,
     val envVar: String? = null,
     val timeoutSeconds: Int,
     val messageId: String,
