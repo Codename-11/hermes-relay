@@ -64,6 +64,22 @@ class ProfilePresentationStoreTest {
     }
 
     @Test
+    fun hiddenServerDefaultRemainsVisibleWhileSelected() {
+        val presentation = ProfilePresentation(
+            hidden = setOf(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY),
+        )
+
+        assertEquals(
+            AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+            ProfilePresentationPolicy.visibleKeys(
+                profiles,
+                presentation,
+                selectedKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+            ).first(),
+        )
+    }
+
+    @Test
     fun clearRemovesOnlyOneConnectionsPreferences() = runBlocking {
         store.setOrder("one", listOf("beta"))
         store.setHidden("one", setOf("alpha"))
