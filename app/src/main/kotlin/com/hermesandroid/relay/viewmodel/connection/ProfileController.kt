@@ -8,6 +8,9 @@ import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileDisplayAliasStore
 import com.hermesandroid.relay.data.ProfileIconStore
 import com.hermesandroid.relay.data.ProfileLockStore
+import com.hermesandroid.relay.data.ProfilePresentation
+import com.hermesandroid.relay.data.ProfilePresentationPolicy
+import com.hermesandroid.relay.data.ProfilePresentationStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.SessionTransport
@@ -29,6 +32,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -158,6 +163,19 @@ class ProfileController(
      * orchestrators can clear it alongside the selection store.
      */
     val profileLockStore: ProfileLockStore = ProfileLockStore(context)
+
+    /** Local ordering/visibility preferences for the active connection's picker. */
+    val profilePresentationStore: ProfilePresentationStore = ProfilePresentationStore(context)
+    private val profilePresentationWriteMutex = Mutex()
+
+    val profilePresentation: StateFlow<ProfilePresentation> = activeConnectionId
+        .flatMapLatest { connectionId ->
+            if (connectionId == null) {
+                flowOf(ProfilePresentation())
+            } else {
+                profilePresentationStore.presentationFlow(connectionId)
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, ProfilePresentation())
 
     val profileDisplayAlias: StateFlow<String?> = combine(
         activeConnectionId,
@@ -331,6 +349,51 @@ class ProfileController(
             return
         }
         applyProfileSelection(normalizedProfile)
+    }
+
+    fun moveProfile(profileName: String?, delta: Int) {
+        val connectionId = activeConnectionId.value ?: return
+        val key = AgentDisplay.profileSessionKey(profileName)
+        scope.launch {
+            profilePresentationWriteMutex.withLock {
+                val current = profilePresentationStore.presentationFlow(connectionId).first()
+                val order = ProfilePresentationPolicy
+                    .orderedKeys(agentProfiles.value, current)
+                    .toMutableList()
+                val from = order.indexOf(key)
+                if (from < 0) return@withLock
+                val to = (from + delta).coerceIn(0, order.lastIndex)
+                if (from == to) return@withLock
+                order.removeAt(from)
+                order.add(to, key)
+                profilePresentationStore.setOrder(connectionId, order)
+            }
+        }
+    }
+
+    fun setProfileHidden(profileName: String?, hidden: Boolean) {
+        val connectionId = activeConnectionId.value ?: return
+        val key = AgentDisplay.profileSessionKey(profileName)
+        scope.launch {
+            profilePresentationWriteMutex.withLock {
+                val updated = profilePresentationStore
+                    .presentationFlow(connectionId)
+                    .first()
+                    .hidden
+                    .toMutableSet()
+                    .apply { if (hidden) add(key) else remove(key) }
+                profilePresentationStore.setHidden(connectionId, updated)
+            }
+        }
+    }
+
+    fun resetProfilePresentation() {
+        val connectionId = activeConnectionId.value ?: return
+        scope.launch {
+            profilePresentationWriteMutex.withLock {
+                profilePresentationStore.clear(connectionId)
+            }
+        }
     }
 
     /**

@@ -29,7 +29,10 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -75,6 +78,8 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfilePresentation
+import com.hermesandroid.relay.data.ProfilePresentationPolicy
 import com.hermesandroid.relay.data.ProfilePresence
 import com.hermesandroid.relay.data.ProfilePresenceResolver
 import com.hermesandroid.relay.data.displayLabel
@@ -651,6 +656,8 @@ fun AgentInfoSheet(
     // Profile + personality state — same flows the old pickers consumed.
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
+    var showProfileManager by remember { mutableStateOf(false) }
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     // Profile lock — when set, the picker below collapses to a single static
     // "Locked to <name>" row. Only the dedicated Settings control still lists
@@ -849,8 +856,9 @@ fun AgentInfoSheet(
                 // otherwise indistinguishable.
                 val serverDefaultProfile = agentProfiles
                     .firstOrNull { AgentDisplay.isServerDefaultAlias(it.name) }
-                val selectableProfiles = agentProfiles
-                    .filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
+                val selectedKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
+                val visibleProfileKeys = ProfilePresentationPolicy
+                    .visibleKeys(agentProfiles, profilePresentation, selectedKey)
                 val apparentActiveProfile = agentProfiles
                     .firstOrNull { it.gatewayRunning }
 
@@ -924,12 +932,11 @@ fun AgentInfoSheet(
                     val usesDefaultProfileTertiary = stringResource(R.string.conn_info_uses_default_profile)
                     val skillsBadgeText = stringResource(R.string.conn_info_skills_count)
 
-                    // "Server default" is the single selectable state for
-                    // the root Hermes config. If the relay advertises a
-                    // synthetic profile named "default" (usually displayed
-                    // as Victor), fold its metadata into this row instead of
-                    // creating a second chat/voice/session scope.
-                    ProfileRadioRow(
+                    // Render the default alias and named profiles through the same
+                    // saved order so non-default profiles are not second-class.
+                    visibleProfileKeys.forEach { profileKey ->
+                      if (profileKey == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
+                        ProfileRadioRow(
                         primary = serverDefaultPrimary,
                         secondary = defaultSecondary,
                         tertiary = usesDefaultProfileTertiary,
@@ -985,9 +992,10 @@ fun AgentInfoSheet(
                                 toast(usingServerDefaultToast)
                             }
                         },
-                    )
-
-                    selectableProfiles.forEach { profile ->
+                        )
+                      } else {
+                        val profile = agentProfiles.firstOrNull { it.name == profileKey }
+                            ?: return@forEach
                         // Presence is distinct from selection: several profile
                         // gateways may be Online, while Available profiles can
                         // still start/resume chats lazily through tui_gateway.
@@ -1112,12 +1120,25 @@ fun AgentInfoSheet(
                                 }
                             },
                         )
+                      }
+                    }
+
+                    TextButton(
+                        onClick = { showProfileManager = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(imageVector = Icons.Filled.Tune, contentDescription = null)
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text(stringResource(R.string.conn_info_manage_profiles))
                     }
 
                     val inspectProfileText = stringResource(R.string.conn_info_inspect_profile)
                     val inspectorTarget = selectedProfile
                         ?: serverDefaultProfile
-                        ?: selectableProfiles.firstOrNull()
+                        ?: visibleProfileKeys
+                            .asSequence()
+                            .mapNotNull { key -> agentProfiles.firstOrNull { it.name == key } }
+                            .firstOrNull()
                     inspectorTarget?.let { profile ->
                         TextButton(
                             onClick = {
@@ -1680,9 +1701,120 @@ fun AgentInfoSheet(
             }
         }
     }
+
+    if (showProfileManager) {
+        ProfileDisplayManagerDialog(
+            profiles = agentProfiles,
+            presentation = profilePresentation,
+            selectedProfileName = selectedProfile?.name,
+            onMove = connectionViewModel::moveProfile,
+            onHiddenChange = connectionViewModel::setProfileHidden,
+            onReset = connectionViewModel::resetProfilePresentation,
+            onDismiss = { showProfileManager = false },
+        )
+    }
 }
 
 // --- AgentInfoSheet helpers ----------------------------------------------
+
+@Composable
+private fun ProfileDisplayManagerDialog(
+    profiles: List<Profile>,
+    presentation: ProfilePresentation,
+    selectedProfileName: String?,
+    onMove: (String?, Int) -> Unit,
+    onHiddenChange: (String?, Boolean) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val orderedKeys = ProfilePresentationPolicy.orderedKeys(profiles, presentation)
+    val selectedKey = AgentDisplay.profileSessionKey(selectedProfileName)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.conn_info_manage_profiles)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.conn_info_manage_profiles_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                orderedKeys.forEachIndexed { index, key ->
+                    val isServerDefault = key == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
+                    val profile = profiles.firstOrNull { it.name == key }
+                    val label = if (isServerDefault) {
+                        stringResource(R.string.conn_info_server_default)
+                    } else {
+                        profile?.let(AgentDisplay::profileDisplayName)
+                            ?: key.replaceFirstChar { it.uppercase() }
+                    }
+                    val hidden = key in presentation.hidden
+                    ProfileDisplayManagerRow(
+                        label = label,
+                        hidden = hidden,
+                        canHide = hidden || selectedKey != key,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < orderedKeys.lastIndex,
+                        onMoveUp = { onMove(profile?.name, -1) },
+                        onMoveDown = { onMove(profile?.name, 1) },
+                        onHiddenChange = { onHiddenChange(profile?.name, it) },
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onReset) { Text(stringResource(R.string.conn_info_reset_profile_display)) }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_done)) }
+        },
+    )
+}
+
+@Composable
+private fun ProfileDisplayManagerRow(
+    label: String,
+    hidden: Boolean,
+    canHide: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onHiddenChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+            Icon(Icons.Filled.KeyboardArrowUp, stringResource(R.string.conn_info_move_profile_up, label))
+        }
+        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+            Icon(Icons.Filled.KeyboardArrowDown, stringResource(R.string.conn_info_move_profile_down, label))
+        }
+        IconButton(onClick = { onHiddenChange(!hidden) }, enabled = canHide) {
+            Icon(
+                imageVector = if (hidden) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                contentDescription = stringResource(
+                    if (hidden) R.string.conn_info_show_profile else R.string.conn_info_hide_profile,
+                    label,
+                ),
+            )
+        }
+    }
+}
 
 @Composable
 private fun SectionLabel(title: String, hint: String?) {

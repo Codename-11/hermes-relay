@@ -37,6 +37,7 @@ import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.computeConnectionSecurity
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.data.proactiveEnabledFlow
@@ -1202,6 +1203,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
+
+    val profilePresentation: StateFlow<ProfilePresentation> get() = profileController.profilePresentation
+
+    fun moveProfile(profileName: String?, delta: Int) = profileController.moveProfile(profileName, delta)
+
+    fun setProfileHidden(profileName: String?, hidden: Boolean) =
+        profileController.setProfileHidden(profileName, hidden)
+
+    fun resetProfilePresentation() = profileController.resetProfilePresentation()
 
     /**
      * True once the active connection's persisted profile selection has settled,
@@ -2815,6 +2825,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ConnectionStore's EncryptedSharedPrefs.
         profileController.profileSelectionStore.clear(connectionId)
         profileController.profileLockStore.clear(connectionId)
+        profileController.profilePresentationStore.clear(connectionId)
         profileController.profileSessionStore.clearConnection(connectionId)
         profileController.profileDisplayAliasStore.clearConnection(connectionId)
         profileController.profileIconStore.clearConnection(connectionId)
@@ -3329,6 +3340,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         connectionStore.removeConnection(duplicate.id)
                         profileController.profileSelectionStore.clear(duplicate.id)
                         profileController.profileLockStore.clear(duplicate.id)
+                        profileController.profilePresentationStore.clear(duplicate.id)
                         profileController.profileSessionStore.clearConnection(duplicate.id)
                     }
 
@@ -5804,6 +5816,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             dataManager.resetAppData()
             profileController.profileSelectionStore.clearAll()
             profileController.profileLockStore.clearAll()
+            profileController.profilePresentationStore.clearAll()
             profileController.profileSessionStore.clearAll()
             _apiServerUrl.value = ""
             _relayUrl.value = ""
