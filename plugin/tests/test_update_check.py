@@ -17,7 +17,7 @@ from plugin import update_check as uc
 class SemverTests(unittest.TestCase):
     def test_parse(self) -> None:
         self.assertEqual(uc.parse_semver("1.2.3"), (1, 2, 3))
-        self.assertEqual(uc.parse_semver("plugin-v1.2.0"), (1, 2, 0))
+        self.assertEqual(uc.parse_semver("server-v1.2.0"), (1, 2, 0))
         self.assertEqual(uc.parse_semver("v2.0.1-rc1"), (2, 0, 1))
         self.assertIsNone(uc.parse_semver("nope"))
         self.assertIsNone(uc.parse_semver(""))
@@ -31,15 +31,22 @@ class SemverTests(unittest.TestCase):
 
 
 class TagPickTests(unittest.TestCase):
-    def test_picks_highest_plugin_tag(self) -> None:
+    def test_picks_highest_server_tag(self) -> None:
         releases = [
             {"tag_name": "plugin-v1.2.0"},
             {"tag_name": "android-v1.5.0"},  # different track — ignored
-            {"tag_name": "plugin-v1.3.0"},
-            {"tag_name": "cli-v0.4.0"},
-            {"tag_name": "plugin-v1.9.0", "draft": True},  # draft — ignored
+            {"tag_name": "server-v1.3.0"},
+            {"tag_name": "desktop-v0.4.0"},
+            {"tag_name": "server-v1.9.0", "draft": True},  # draft — ignored
         ]
         self.assertEqual(uc.pick_latest_plugin_tag(releases), "1.3.0")
+
+    def test_falls_back_to_historical_plugin_tags(self) -> None:
+        releases = [
+            {"tag_name": "plugin-v1.2.0"},
+            {"tag_name": "plugin-v1.4.0"},
+        ]
+        self.assertEqual(uc.pick_latest_plugin_tag(releases), "1.4.0")
 
     def test_no_plugin_releases(self) -> None:
         self.assertIsNone(uc.pick_latest_plugin_tag([{"tag_name": "android-v1.0.0"}]))

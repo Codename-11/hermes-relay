@@ -14,9 +14,9 @@ See ``plugin/relay/server.py`` for the aiohttp server,
 # avoids a circular-import crash during package initialization.
 #
 # Canonical plugin version source is pyproject.toml's [project].version.
-# Keep this runtime constant in sync with pyproject.toml for plugin-v*
+# Keep this runtime constant in sync with pyproject.toml for server-v*
 # releases. Android releases use gradle/libs.versions.toml and android-v* tags;
-# CLI releases use desktop/package.json and cli-v* tags. The /health endpoint
+# Desktop releases use desktop/package.json and desktop-v* tags. The /health endpoint
 # reports this plugin version, and stale values make live diagnosis harder than
 # it should be.
 __version__ = "1.4.1"

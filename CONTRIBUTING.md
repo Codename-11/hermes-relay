@@ -92,9 +92,19 @@ After the plugin is in place, restart hermes and verify pairing with `hermes-pai
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
 
-**Branching model (as of 2026-04-19): `main` + `dev`.** Feature branches — `feature/<name>`, `fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back into `dev` via `--no-ff` PRs. `main` is released state only; it receives release merges from `dev` and nothing else. There is no straight-to-main exemption — even single-file typos go through `dev`.
+**Branching model: `main` + `dev`.** Feature branches — `feature/<name>`,
+`fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back
+into `dev` via merge-commit/no-ff PRs. This includes small documentation fixes.
+`main` is release history, not the normal contribution target; it receives
+approved release PRs from `dev` and focused hotfix PRs based on production tags.
 
-Release-prep commits (version bump, changelog promotion) land on `dev` first, then a surface-specific release PR merges `dev` → `main` with `--no-ff`. Tags are cut from `main` after the merge: `android-vX.Y.Z`, `plugin-vX.Y.Z`, or `cli-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release process.
+Feature completion means merged and verified on `dev`; it does not mean the
+change has been released. A separate Forge release issue/session owns release
+preparation, the `dev` → `main` release PR, tagging, artifacts, rollout or
+deployment, and live verification. Release-prep commits land on `dev`; tags are
+cut from the resulting `main` tip as `android-vX.Y.Z`, `server-vX.Y.Z`, or
+`desktop-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release and hotfix
+procedures.
 
 ## Stale PR salvage and contributor credit
 

@@ -174,7 +174,7 @@ Usage:
   hermes-relay daemon [start|stop|restart|status]   Headless tool router — 'start' runs it in the background
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
   hermes-relay grants              Review pending local computer-use grants
-  hermes-relay update              Check for and install the latest cli-v* release
+  hermes-relay update              Check for and install the latest desktop-v* release
   hermes-relay voice               Show native Hermes voice config (STT/TTS/realtime providers)
   hermes-relay voice mode          Push-to-talk in a browser tab (proxied through this CLI)
   hermes-relay workspace           Print local workspace context (cwd, git, editor, shell) — --json for scripting

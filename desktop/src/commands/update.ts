@@ -149,7 +149,7 @@ export async function updateCommand(args: ParsedArgs): Promise<number> {
       return 0
     }
     process.stdout.write(`Current version: ${VERSION}\n`)
-    process.stdout.write(`No cli-v* or historical desktop-v* releases found on the upstream repo.\n`)
+    process.stdout.write(`No desktop-v* or historical cli-v* releases found on the upstream repo.\n`)
     return 0
   }
 

@@ -3406,7 +3406,7 @@ async def handle_relay_update_check(request: web.Request) -> web.Response:
     The dashboard has its own (loopback) update-check; this is the **app-facing**
     twin on the relay port so the phone can surface a soft "your relay is behind"
     nudge. Compares the installed ``plugin.relay.__version__`` against the latest
-    ``plugin-v*`` GitHub release and names the right update command for the host.
+    ``server-v*`` GitHub release and names the right update command for the host.
 
     Loopback callers skip bearer auth (diagnostics); the paired phone presents
     its relay session bearer (same gate as ``/phone/threads``). The blocking

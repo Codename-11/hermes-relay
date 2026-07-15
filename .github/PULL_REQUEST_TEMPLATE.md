@@ -25,7 +25,7 @@ otherwise use verified Co-authored-by trailers. Write "N/A" for original work.
 
 ## Checklist
 
-- [ ] Target branch is `dev` unless this is a release PR
+- [ ] Target branch is `dev`, unless this is a `dev` → `main` release PR or a focused production-tag hotfix PR to `main`
 - [ ] Android changes: lint and focused unit tests ran, or rationale is listed above
 - [ ] Translation changes: locale status/review references are accurate, `python scripts/check-android-locales.py` ran, and device/emulator review is documented, or N/A
 - [ ] Server changes: focused `python -m unittest ...` checks ran, or rationale is listed above

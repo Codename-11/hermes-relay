@@ -2001,7 +2001,8 @@ settings, an overlay, and its own daemon ownership. That duplicated the CLI/TUI
 contract, obscured which surface was authoritative, and made a background tray
 helper carry a full WebView application architecture.
 
-**Decision.** Hermes-Relay desktop has exactly two deliverables on the `cli-v*`
+**Decision.** Hermes-Relay desktop has exactly two deliverables on the
+`desktop-v*` production track (historical `cli-v*` tags remain immutable):
 track:
 
 1. `hermes-relay`, the primary cross-platform CLI and terminal TUI. Interactive

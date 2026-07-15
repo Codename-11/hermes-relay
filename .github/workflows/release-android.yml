@@ -3,7 +3,7 @@
 # Triggered when an Android release tag (android-v*) is pushed.
 # Validates the tag matches the app version in libs.versions.toml,
 # runs focused Android checks, builds release APK/AAB artifacts, and creates a
-# GitHub Release. Plugin/Python package releases use plugin-v* tags.
+# GitHub Release. Server/Python package releases use server-v* tags.
 
 name: Release Android
 
@@ -35,6 +35,8 @@ jobs:
       version_code: ${{ steps.version.outputs.version_code }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Extract version from tag
         id: version
@@ -65,8 +67,22 @@ jobs:
             echo "::error::Tag version ($TAG_VERSION) does not match appVersionName ($TOML_VERSION) in gradle/libs.versions.toml"
             exit 1
           fi
+          if ! grep -Fq "## [$TAG_VERSION]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no release heading for $TAG_VERSION"
+            exit 1
+          fi
 
           echo "Version validated: $TAG_VERSION"
+
+      - name: Verify tagged commit belongs to main
+        run: |
+          set -euo pipefail
+          git fetch origin main --no-tags
+          tag_commit="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "Android releases must be tagged from main; $tag_commit is not in origin/main" >&2
+            exit 1
+          fi
 
       - name: Require successful Play preflight for this exact release tree
         if: ${{ !contains(steps.version.outputs.version, '-') }}

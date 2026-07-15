@@ -1,6 +1,9 @@
-# Hermes-Relay — Claude Code Context
+# Hermes-Relay — Claude Code Adapter
 
-> Read this before touching code. Then read docs/spec.md and docs/decisions.md.
+> Read [AGENTS.md](AGENTS.md) first. It is the provider-neutral canonical agent
+> context. Branch, release, staging, and hotfix rules live in `AGENTS.md` and
+> [RELEASE.md](RELEASE.md); this file only adds Claude-specific project and tool
+> guidance. Then read `docs/spec.md` and `docs/decisions.md`.
 
 ## What This Is
 
@@ -182,18 +185,16 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 ### Git
 
 - **Conventional Commits:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
-- **Branching model (as of 2026-04-19):** `main` + `dev`. Feature branches target `dev`, not `main`. `main` receives only release merges (and tags). No straight-to-main exemption — even single-file typos go through `dev`.
-- **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches on every merge in the chain (feature → dev → main).
-- **Merging ≠ releasing.** Feature branches land on `dev` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md` on `dev`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
-- **Version bumps happen on `dev`, then release-merge to `main`.** Bump only the surface being released: `scripts/bump-android-version.sh` for `android-vX.Y.Z`, `scripts/bump-plugin-version.sh` for `plugin-vX.Y.Z`, and `desktop/package.json` for `cli-vX.Y.Z`. The release commit lives on `dev`, then a release PR merges `dev` → `main` with `--no-ff`, then the surface tag is cut from `main`.
-- **Server tracks `dev` for staging.** The hermes-host deployment pulls `dev` so merged features are exercised before they reach a tag. Released state lives on tags cut from `main`.
-- **Branch protection** on `main` — direct push blocked; only release-merge PRs from `dev` land here. `dev` also requires CI to pass on PRs but accepts feature-branch merges freely.
+- **Branch/release policy:** follow the branch-contract table in `AGENTS.md` and
+  the executable release and hotfix procedures in `RELEASE.md`. Do not maintain
+  a Claude-specific parallel policy here.
 
 ### Testing
 
 - **Android:** JUnit + Compose testing for UI, MockK for mocks
 - **Python:** `python -m unittest plugin.tests.test_<name>` — avoid bare `pytest` (conftest imports `responses` which may not be installed in the venv)
-- **CI is split by path:** `.github/workflows/ci-android.yml` runs on app/Gradle changes; `.github/workflows/ci-plugin.yml` runs on plugin/Python changes. Both trigger on pushes to `main` and `dev` and on PRs targeting either. Build + tests must pass before merge to `dev`; release-merge to `main` requires the same.
+- **CI and release gates:** follow the repository-wide requirements in
+  `AGENTS.md` and `RELEASE.md`; Claude-specific guidance does not redefine them.
 
 ## Key Files
 
@@ -405,7 +406,7 @@ Curls every bridge HTTP route via `localhost:8767`. Catches the silent-drop regr
 2. **Python syntax check** — `python -m py_compile plugin/<file>.py`. Full tests run on the server.
 3. **Kotlin changes** — do NOT run `gradle build`. Bailey builds via Android Studio's ▶ button. Never `adb install` from Claude.
 4. **Before pushing Kotlin changes** — run `./gradlew lint` locally. It's the exact task CI runs and catches errors Android Studio's live inspections miss — e.g. `UnsafeOptInUsageError` with `kotlin.OptIn` vs `androidx.annotation.OptIn`, `FlowOperatorInvokedInComposition` (mapped flows inside Composables), Media3 `@UnstableApi` propagation. Android CI runs lint alongside build/test for faster feedback, but a local lint run still surfaces issues before the workflow spends runner time compiling and packaging.
-5. **Commit + push** — feature branch off `dev`, merged back to `dev` via PR. `main` is reserved for release merges.
+5. **Commit + push** — follow `AGENTS.md` and `RELEASE.md`; normal work PRs to `dev`.
 6. **Pull + restart on server** — see Server Deployment below.
 7. **Test on phone** — Bailey builds from Studio, installs to Samsung device, pairs via `/hermes-relay-pair`.
 
@@ -454,15 +455,10 @@ must not depend on this hook.
 
 ### Release Process
 
-See [RELEASE.md](RELEASE.md) for the full recipe.
-
-- **Android version source:** `gradle/libs.versions.toml` (`appVersionName`, `appVersionCode`); bump with `scripts/bump-android-version.sh`
-- **Relay plugin version source:** `pyproject.toml`; keep plugin/dashboard metadata synced with `scripts/check-plugin-version-sync.py`; bump with `scripts/bump-plugin-version.sh`
-- **Desktop CLI version source:** `desktop/package.json`; regenerate `desktop/src/version.ts` with `npm run gen:version`
-- **Track audit:** `python scripts/check-version-tracks.py` reports Android, plugin, and CLI versions without forcing them to match
-- `**appVersionCode` is monotonic** — always increment across Android prereleases
-- **Cut a release:** bump the target surface → commit → merge `dev` to `main` → tag with `android-v*`, `plugin-v*`, or `cli-v*` → push tag → CI builds + GitHub Release
-- **Required secrets:** `HERMES_KEYSTORE_BASE64`, `HERMES_KEYSTORE_PASSWORD`, `HERMES_KEY_ALIAS`, `HERMES_KEY_PASSWORD`
+See [AGENTS.md](AGENTS.md) for the canonical branch contract and
+[RELEASE.md](RELEASE.md) for version sources, release trains, surface tags,
+hotfixes, secrets, publishing, and verification. Claude-specific automation
+must not infer release authority from feature completion.
 
 ## Integration Points
 

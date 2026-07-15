@@ -36,4 +36,4 @@ Pairs with Hermes-Relay-Android v1.4.1 for the matching background-task, voice-c
 
 ---
 
-Tag prefixes: Android releases use android-v*, plugin releases use plugin-v*, and CLI releases use cli-v*.
+Tag prefixes: Android releases use android-v*, Server releases use server-v*, and Desktop releases use desktop-v*.
