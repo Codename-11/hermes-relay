@@ -70,6 +70,12 @@ class GatewayClientHarness(
     @Volatile
     var reasoningDisplay = "hide"
 
+    @Volatile
+    var askResponseStatus = "ok"
+
+    @Volatile
+    var approvalResolved = 1
+
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -177,8 +183,8 @@ class GatewayClientHarness(
                     put("ref_text", "@file:notes.txt")
                 }
                 "clarify.respond", "sudo.respond", "secret.respond" ->
-                    buildJsonObject { put("status", "ok") }
-                "approval.respond" -> buildJsonObject { put("resolved", true) }
+                    buildJsonObject { put("status", askResponseStatus) }
+                "approval.respond" -> buildJsonObject { put("resolved", approvalResolved) }
                 "commands.catalog" -> buildJsonObject {
                     put(
                         "pairs",
@@ -388,6 +394,9 @@ class GatewayChatClientTest {
             onToolGenerating = { toolGenerating += it ?: "" },
             onSubagentEvent = { subagentEvents += it },
             onInteractionRequest = { interactions += it },
+            onInteractionExpired = { },
+            onStatusUpdate = { _, _ -> },
+            onStatusClear = { },
         )
     }
 
@@ -1380,6 +1389,26 @@ class GatewayChatClientTest {
         assertEquals("live-1", (respond["session_id"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("approve", (respond["choice"] as? JsonPrimitive)?.contentOrNull)
         assertEquals(false, (respond["all"] as? JsonPrimitive)?.booleanOrNull)
+    }
+
+    @Test
+    fun `expired ask response is distinguished from accepted response`() {
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        harness.askResponseStatus = "expired"
+        assertEquals(
+            GatewayAskResponse.EXPIRED,
+            runBlocking { client.respondSecret("r3", "late") }.getOrThrow(),
+        )
+
+        harness.approvalResolved = 0
+        assertEquals(
+            GatewayAskResponse.EXPIRED,
+            runBlocking { client.respondApproval("approve") }.getOrThrow(),
+        )
     }
 
     // --- Commands catalog ---

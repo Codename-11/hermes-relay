@@ -246,4 +246,9 @@ data class HermesCardDispatch(
      * passes.
      */
     val syncedToServer: Boolean = false,
-)
+) {
+    companion object {
+        /** Local-only stamp used when Hermes expires an interactive ask. */
+        const val EXPIRED_STAMP = "expired"
+    }
+}

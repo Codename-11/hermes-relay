@@ -1,5 +1,26 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Upstream Gateway interaction compatibility
+
+The July upstream-impact ledger's highest-priority Gateway gaps were reconciled
+without inventing client-side server policy. Android now consumes
+`secret.expire` and `sudo.expire` by exact request id, collapses late
+`{status:"expired"}` responses, and treats a zero-resolution approval response
+as expired. It also accepts optional approval timeout metadata and a future
+session-scoped `approval.expire` event; the corresponding upstream contract is
+documented in `docs/upstream-contributions.md`, while older Hermes builds keep
+the safe no-countdown behavior.
+
+Canonical upstream provider-wait, reconnect, and continuation strings emitted
+through `thinking.delta` now replace one transient `provider_wait` status line.
+Genuine model thinking still enters the durable reasoning transcript, and new
+text, reasoning, tool, or subagent activity clears only the matching transient
+status kind.
+
+Verification: the focused sideload JVM suites reran 93 tests across
+`GatewayEventMapperTest` and `GatewayChatClientTest` with zero failures, and
+`git diff --check` passed.
+
 ## 2026-07-14 — Dependency PR routing and Roborazzi alignment
 
 The paired Roborazzi screenshot-test libraries moved together from 1.66.0 to

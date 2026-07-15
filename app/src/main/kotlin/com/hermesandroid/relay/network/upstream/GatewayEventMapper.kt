@@ -35,6 +35,7 @@ class GatewayEventMapper(
     private var sawTextDelta = false
     private var sawThinkingDelta = false
     private var syntheticToolCounter = 0
+    private var providerWaitStatusActive = false
 
     /**
      * `tool.complete` events match their `tool.start` by `tool_id`; when a
@@ -54,11 +55,26 @@ class GatewayEventMapper(
     fun onEvent(type: String, payload: JsonObject?) {
         if (turnEnded) return
         when (type) {
-            "reasoning.delta", "thinking.delta" -> {
+            "reasoning.delta" -> {
                 val text = payload.string("text")
                 if (!text.isNullOrEmpty()) {
+                    clearProviderWaitStatus()
                     sawThinkingDelta = true
                     callbacks.onThinkingDelta(text)
+                }
+            }
+
+            "thinking.delta" -> {
+                val text = payload.string("text")
+                if (!text.isNullOrEmpty()) {
+                    if (isProviderWaitNotice(text)) {
+                        providerWaitStatusActive = true
+                        callbacks.onStatusUpdate(PROVIDER_WAIT_STATUS_KIND, text)
+                    } else {
+                        clearProviderWaitStatus()
+                        sawThinkingDelta = true
+                        callbacks.onThinkingDelta(text)
+                    }
                 }
             }
 
@@ -75,6 +91,7 @@ class GatewayEventMapper(
             "message.delta" -> {
                 val text = payload.string("text")
                 if (!text.isNullOrEmpty()) {
+                    clearProviderWaitStatus()
                     sawTextDelta = true
                     callbacks.onTextDelta(text)
                 }
@@ -96,6 +113,7 @@ class GatewayEventMapper(
             }
 
             "tool.generating" -> {
+                clearProviderWaitStatus()
                 // `{name?}` with NO tool_id — the model is still streaming
                 // this tool's arguments.
                 val name = payload.string("name")
@@ -107,6 +125,7 @@ class GatewayEventMapper(
             }
 
             "tool.start" -> {
+                clearProviderWaitStatus()
                 val name = payload.string("name") ?: "unknown"
                 // A pending generating placeholder for this name is adopted
                 // (consumed FIFO) whether or not the server sent a real id.
@@ -123,6 +142,7 @@ class GatewayEventMapper(
             }
 
             "tool.complete" -> {
+                clearProviderWaitStatus()
                 val name = payload.string("name") ?: "unknown"
                 val toolId = payload.string("tool_id")
                     ?: openSyntheticIdsByName[name]?.removeFirstOrNull()
@@ -159,6 +179,7 @@ class GatewayEventMapper(
             "subagent.start", "subagent.thinking", "subagent.tool",
             "subagent.progress", "subagent.complete",
             -> {
+                clearProviderWaitStatus()
                 val phase = when (type) {
                     "subagent.start" -> GatewaySubagentEvent.Phase.START
                     "subagent.thinking" -> GatewaySubagentEvent.Phase.THINKING
@@ -204,7 +225,10 @@ class GatewayEventMapper(
                     text = listOfNotNull(payload.string("command"), payload.string("description"))
                         .joinToString(" — ")
                         .ifBlank { "a command approval" },
-                    timeoutSeconds = 0,
+                    // Current Hermes omits timeout metadata. Keep the legacy
+                    // no-countdown behavior unless a future contract exposes
+                    // the effective per-request timeout explicitly.
+                    timeoutSeconds = payload.int("timeout_seconds") ?: 0,
                 ),
             )
 
@@ -228,9 +252,33 @@ class GatewayEventMapper(
                 ),
             )
 
+            "sudo.expire" -> callbacks.onInteractionExpired(
+                GatewayAskExpiry(
+                    kind = GatewayAsk.Kind.SUDO,
+                    requestId = payload.string("request_id"),
+                ),
+            )
+
+            "secret.expire" -> callbacks.onInteractionExpired(
+                GatewayAskExpiry(
+                    kind = GatewayAsk.Kind.SECRET,
+                    requestId = payload.string("request_id"),
+                ),
+            )
+
+            // Forward-compatible consumer for the proposed upstream approval
+            // expiry event. Approvals correlate by session, never request id.
+            "approval.expire" -> callbacks.onInteractionExpired(
+                GatewayAskExpiry(
+                    kind = GatewayAsk.Kind.APPROVAL,
+                    requestId = null,
+                ),
+            )
+
             "status.update" -> {
                 val text = payload.string("text")
                 if (!text.isNullOrBlank()) {
+                    providerWaitStatusActive = false
                     callbacks.onStatusUpdate(payload.string("kind"), text)
                 }
             }
@@ -248,7 +296,29 @@ class GatewayEventMapper(
         return id
     }
 
+    private fun clearProviderWaitStatus() {
+        if (!providerWaitStatusActive) return
+        providerWaitStatusActive = false
+        callbacks.onStatusClear(PROVIDER_WAIT_STATUS_KIND)
+    }
+
     companion object {
+        const val PROVIDER_WAIT_STATUS_KIND = "provider_wait"
+
+        /**
+         * Hermes 2026-07-15 emits these operational wait lines through the
+         * legacy `thinking.delta` display callback. Match the deliberately
+         * narrow canonical prefixes so genuine legacy model thinking still
+         * remains durable reasoning.
+         */
+        fun isProviderWaitNotice(text: String): Boolean {
+            val normalized = text.trimStart()
+            return normalized.startsWith("⏳ waiting on ") ||
+                normalized.startsWith("⚠ no response from provider in ") ||
+                normalized.startsWith("⚠ no output from provider for ") ||
+                normalized.startsWith("↻ model returned reasoning with no final answer — asking it to continue")
+        }
+
         /**
          * `message.complete.usage` uses tui_gateway's own key names
          * (`input`/`output`/`total`, with `prompt`/`completion` as the raw

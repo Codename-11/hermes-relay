@@ -165,6 +165,31 @@ Adapters would gain a `send_card()` method with a default fallback that renders 
 
 **Workaround (current):** Our relay server (`relay_server/`) provides terminal via WSS as a separate service. This works but requires deploying an additional component.
 
+## 9. Gateway Approval Expiry Contract
+
+**Current state:** Hermes applies the configured `approvals.timeout` while the
+gateway client receives only `approval.request`. Unlike `secret.expire` and
+`sudo.expire`, there is no approval deadline or expiry event. A frontend cannot
+know when to disable a pending approval card, and a late `approval.respond`
+returns `resolved: 0` only after the user has already acted.
+
+**Proposed:** Include the effective `timeout_seconds` (or an absolute deadline)
+on `approval.request` and emit `approval.expire` when the canonical server-side
+timeout wins. The event remains session-scoped, matching `approval.respond`;
+it must not invent a request id. Keep `resolved: 0` as the late-response
+backstop.
+
+**Relay readiness:** Android consumes optional `timeout_seconds`, understands a
+future session-scoped `approval.expire`, and collapses a card when a late
+response returns `resolved: 0`. Older Hermes builds remain unchanged: no
+client-guessed timer is introduced, so custom server timeout values cannot
+silently diverge from the phone.
+
+**Verification gate:** Upstream gateway tests with a short custom timeout must
+prove that the request metadata and expiry event carry the effective value,
+that a late response resolves zero entries, and that expiry affects only the
+active session's approval.
+
 ## Notes
 
 - These are suggestions, not requirements. The app works without any of them.

@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.
+- **Expired Gateway prompts no longer remain actionable.** Android collapses matching secret and sudo cards when Hermes emits their expiry events, recognizes late expired responses, and is ready for an upstream session-scoped approval-expiry contract without guessing the server timeout.
+- **Provider wait notices stay transient.** Canonical Hermes provider-wait, reconnect, and continuation notices now use Chat's live status line instead of accumulating in the assistant reasoning transcript.
 
 ## [0.4.0-alpha.2] - 2026-07-13
 
