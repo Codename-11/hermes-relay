@@ -438,6 +438,7 @@ fun RelayApp() {
     val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val effectiveSessionProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
@@ -664,6 +665,9 @@ fun RelayApp() {
         chatViewModel.setSelectedProfileProvider {
             connectionViewModel.selectedProfile.value
         }
+        chatViewModel.setSessionProfileNameProvider {
+            connectionViewModel.effectiveSessionProfileName.value
+        }
         chatViewModel.setEffectiveProfileProvider {
             AgentDisplay.effectiveProfile(
                 selectedProfile = connectionViewModel.selectedProfile.value,
@@ -715,7 +719,14 @@ fun RelayApp() {
     // refreshSessions() that would flash/reload the chat. `switchProfileContext`
     // already no-ops when the context key + session are unchanged.
     val chatClientReady = chatApiClient != null
-    LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId, profileSelectionSettled) {
+    LaunchedEffect(
+        chatClientReady,
+        activeConnectionId,
+        selectedProfile?.name,
+        effectiveSessionProfileName,
+        lastSessionId,
+        profileSelectionSettled,
+    ) {
         if (!chatClientReady) return@LaunchedEffect
         // Cold-start profile-isolation guard: hold the first profile-scoped load
         // until the persisted profile selection has SETTLED, so the session
@@ -741,7 +752,7 @@ fun RelayApp() {
         chatViewModel.switchProfileContext(
             contextKey = AgentDisplay.profileContextKey(
                 connectionId = activeConnectionId,
-                profileName = selectedProfile?.name,
+                profileName = effectiveSessionProfileName,
             ),
             sessionId = lastSessionId,
         )

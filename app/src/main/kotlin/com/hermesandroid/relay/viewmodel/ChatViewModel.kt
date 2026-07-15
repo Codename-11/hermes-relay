@@ -1045,7 +1045,7 @@ class ChatViewModel : ViewModel() {
         }
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
-        client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
+        client?.sessionProfileProvider = { sessionProfileNameProvider() }
         // Bind the in-chat picks onto each fresh session.create so a brand-new
         // chat actually runs on the picked model/provider AND the chosen
         // reasoning effort / fast tier (not the global default) — and so setting
@@ -1648,6 +1648,9 @@ class ChatViewModel : ViewModel() {
     }
 
     private var selectedProfileProvider: () -> Profile? = { null }
+    private var sessionProfileNameProvider: () -> String? = {
+        AgentDisplay.profileRequestName(selectedProfileProvider()?.name)
+    }
     private var effectiveProfileProvider: () -> Profile? = { selectedProfileProvider() }
     private var displayProfileProvider: () -> Profile? = {
         effectiveProfileProvider() ?: selectedProfileProvider()
@@ -1674,6 +1677,16 @@ class ChatViewModel : ViewModel() {
     fun setSelectedProfileProvider(provider: () -> Profile?) {
         selectedProfileProvider = provider
         refreshActiveAgentName()
+    }
+
+    /**
+     * Supplies the single effective namespace for Gateway session.create/resume.
+     * This is separate from [selectedProfileProvider] because a null selection
+     * means the Server-default UI row, whose sticky upstream target may be a
+     * named profile even when the dashboard process was launched as default.
+     */
+    fun setSessionProfileNameProvider(provider: () -> String?) {
+        sessionProfileNameProvider = provider
     }
 
     fun setEffectiveProfileProvider(provider: () -> Profile?) {

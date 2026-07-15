@@ -15,6 +15,7 @@ import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardProfileScope
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -111,6 +112,23 @@ class ProfileController(
     private val _pendingSelectedProfileConnectionId = MutableStateFlow<String?>(null)
     private val _pendingSelectedProfileName = MutableStateFlow<String?>(null)
 
+    // `selectedProfile == null` is the UI's Server-default sentinel, not
+    // necessarily the running dashboard's launch profile. Upstream exposes the
+    // sticky default (`active`) separately from that process scope (`current`).
+    // Keep both values so the distinction stays explicit, and derive the one
+    // session namespace used by Gateway + dashboard CRUD below.
+    private val _serverDefaultProfileScope = MutableStateFlow<DashboardProfileScope?>(null)
+    val serverDefaultProfileScope: StateFlow<DashboardProfileScope?> =
+        _serverDefaultProfileScope.asStateFlow()
+    private val _serverDefaultProfileSettled = MutableStateFlow(false)
+
+    val effectiveSessionProfileName: StateFlow<String?> = combine(
+        selectedProfile,
+        serverDefaultProfileScope,
+    ) { selected, serverDefault ->
+        AgentDisplay.effectiveSessionProfileName(selected?.name, serverDefault?.active)
+    }.stateIn(scope, SharingStarted.Eagerly, null)
+
     /**
      * True once the active connection's persisted profile selection has SETTLED
      * — i.e. profile-scoped reads (session drawer, transcript restore, voice
@@ -118,8 +136,8 @@ class ProfileController(
      * the SERVER-DEFAULT profile. Settled when any of these hold:
      *  - there's no active connection yet (nothing profile-scoped to gate), or
      *  - the selection has resolved into [selectedProfile], or
-     *  - no NON-default profile is pending for the active connection (server
-     *    default / nothing to wait for), or
+     *  - Server default is selected and `/api/profiles/active` has resolved
+     *    (or cleanly degraded to the launch-profile fallback), or
      *  - the agent-profile list has arrived, so resolution has been ATTEMPTED —
      *    a genuinely-missing profile then falls back to server default rather
      *    than gating forever.
@@ -128,20 +146,27 @@ class ProfileController(
      * persisted but the profile list hasn't landed yet to resolve it — exactly
      * when an unscoped read would load the server-default profile by mistake.
      */
+    private val profileResolutionInputs = combine(
+        agentProfiles,
+        _serverDefaultProfileSettled,
+    ) { profiles, serverDefaultSettled -> profiles to serverDefaultSettled }
+
     val selectionSettled: StateFlow<Boolean> = combine(
         activeConnectionId,
         selectedProfile,
         _pendingSelectedProfileConnectionId,
         _pendingSelectedProfileName,
-        agentProfiles,
-    ) { connId, selected, pendingConnId, pendingName, profiles ->
+        profileResolutionInputs,
+    ) { connId, selected, pendingConnId, pendingName, resolution ->
+        val (profiles, serverDefaultSettled) = resolution
         when {
             connId == null -> true
             selected != null -> true
             // Pending state still points at a previous connection mid-switch —
             // hold until this connection's restore re-stamps the pending name.
             pendingConnId != connId -> false
-            pendingName == null || AgentDisplay.isServerDefaultAlias(pendingName) -> true
+            pendingName == null || AgentDisplay.isServerDefaultAlias(pendingName) ->
+                serverDefaultSettled
             // Non-default name pending: settled once the profile list is present
             // (resolution attempted), even if the name turns out to be gone.
             else -> profiles.isNotEmpty()
@@ -236,14 +261,41 @@ class ProfileController(
      */
     fun refreshDashboardProfiles() {
         val connectionId = activeConnectionId.value ?: return
-        val dashboardUrl = activeDashboardUrlProvider() ?: return
+        val dashboardUrl = activeDashboardUrlProvider()
+        if (dashboardUrl == null) {
+            _serverDefaultProfileScope.value = null
+            _serverDefaultProfileSettled.value = true
+            return
+        }
         scope.launch {
-            dashboardClientFactory(connectionId, dashboardUrl)
-                .listProfiles().onSuccess { profiles ->
+            val client = dashboardClientFactory(connectionId, dashboardUrl)
+            val defaultScope = client.getActiveProfileScope().getOrNull()
+            if (activeConnectionId.value != connectionId) return@launch
+
+            // Older dashboards may not expose this endpoint. Settle to null so
+            // they retain the historical launch-profile behavior rather than
+            // blocking chat indefinitely.
+            _serverDefaultProfileScope.value = defaultScope
+            _serverDefaultProfileSettled.value = true
+            if (_selectedProfile.value == null) {
+                refreshLastSessionForProfile(connectionId, null)
+                rebuildChatApiClient()
+            }
+
+            client.listProfiles().onSuccess { profiles ->
+                if (activeConnectionId.value == connectionId) {
                     _dashboardProfiles.value = profiles
                 }
+            }
         }
     }
+
+    /** Effective profile namespace for Gateway and profile-scoped session I/O. */
+    fun resolveSessionProfileName(selectedProfileName: String? = _selectedProfile.value?.name): String? =
+        AgentDisplay.effectiveSessionProfileName(
+            selectedProfileName = selectedProfileName,
+            serverDefaultProfileName = _serverDefaultProfileScope.value?.active,
+        )
 
     /**
      * The ACTIVE profile's chat sessions, scoped server-side via the dashboard
@@ -253,7 +305,7 @@ class ProfileController(
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
-        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        val profileName = resolveSessionProfileName()
         return dashboardClientFactory(connectionId, dashboardUrl)
             .listSessions(profile = profileName, limit = limit)
     }
@@ -266,9 +318,25 @@ class ProfileController(
     suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
-        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        val profileName = resolveSessionProfileName()
         return dashboardClientFactory(connectionId, dashboardUrl)
             .getSessionMessages(sessionId, profileName)
+    }
+
+    suspend fun deleteProfileScopedSession(sessionId: String): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .deleteSession(sessionId, resolveSessionProfileName())
+            .isSuccess
+    }
+
+    suspend fun renameProfileScopedSession(sessionId: String, title: String): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
+        val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .renameSession(sessionId, title, resolveSessionProfileName())
+            .isSuccess
     }
 
     fun setProfileDisplayAlias(alias: String?) {
@@ -551,14 +619,17 @@ class ProfileController(
         // current transport can't resume is exactly what forks a session
         // mid-conversation on a non-default profile.
         val transport = activeSessionTransport() ?: return
+        val sessionProfileName = resolveSessionProfileName(profileName)
         scope.launch {
             val profileScoped = profileSessionStore
-                .sessionIdFlow(connectionId, profileName, transport)
+                .sessionIdFlow(connectionId, sessionProfileName, transport)
                 .first()
             // Default profile shares the launch DB across both transports, so a
             // pre-transport (untransported) pointer is still resumable — surface
             // it as the fallback only for the server-default context.
-            val legacyDefault = if (profileName == null) {
+            val legacyDefault = if (
+                sessionProfileName == null || AgentDisplay.isServerDefaultAlias(sessionProfileName)
+            ) {
                 legacyDefaultSessionId()
             } else {
                 null
@@ -580,6 +651,8 @@ class ProfileController(
         _selectedProfile.value = null
         _pendingSelectedProfileConnectionId.value = null
         _pendingSelectedProfileName.value = null
+        _serverDefaultProfileScope.value = null
+        _serverDefaultProfileSettled.value = false
         // Dashboard profile lists are per-connection — drop the old one so the
         // pending persisted name can't resolve against the previous connection's
         // profiles before the new connection's list arrives.
@@ -591,6 +664,8 @@ class ProfileController(
         _selectedProfile.value = null
         _pendingSelectedProfileConnectionId.value = null
         _pendingSelectedProfileName.value = null
+        _serverDefaultProfileScope.value = null
+        _serverDefaultProfileSettled.value = false
     }
 
     fun clearSelectedProfile() {

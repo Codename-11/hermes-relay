@@ -5,7 +5,11 @@ import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardProfileScope
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.models.SessionItem
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -69,6 +74,8 @@ class ProfileControllerLockTest {
     private lateinit var authManagerFlow: MutableStateFlow<AuthManager>
     private lateinit var activeConnectionId: MutableStateFlow<String?>
     private lateinit var controller: ProfileController
+    private lateinit var dashboardClient: DashboardApiClient
+    private var dashboardUrl: String? = null
 
     private val lastSessionIds = mutableListOf<String?>()
 
@@ -87,14 +94,16 @@ class ProfileControllerLockTest {
         authManagerFlow = MutableStateFlow(authManager)
 
         activeConnectionId = MutableStateFlow<String?>(connectionId)
+        dashboardClient = mockk(relaxed = true)
+        dashboardUrl = null
 
         controller = ProfileController(
             context = context,
             scope = scope,
             authManagerFlow = authManagerFlow,
             activeConnectionId = activeConnectionId,
-            activeDashboardUrlProvider = { null },
-            dashboardClientFactory = { _, _ -> mockk<DashboardApiClient>(relaxed = true) },
+            activeDashboardUrlProvider = { dashboardUrl },
+            dashboardClientFactory = { _, _ -> dashboardClient },
             // Non-"auto" so activeSessionTransport() resolves deterministically
             // (no gateway probe gating) — keeps refreshLastSessionForProfile from
             // bailing early on Unknown.
@@ -156,6 +165,37 @@ class ProfileControllerLockTest {
         )
         assertNull(awaitSelected(null))
         assertTrue(awaitFlow(controller.isProfileLocked) { it })
+    }
+
+    @Test
+    fun serverDefault_resolvesStickyActiveProfileForSessionReads() {
+        dashboardUrl = "https://dashboard.example"
+        coEvery { dashboardClient.getActiveProfileScope() } returns Result.success(
+            DashboardProfileScope(active = "victor", current = "default"),
+        )
+        coEvery { dashboardClient.listProfiles() } returns Result.success(emptyList())
+        coEvery { dashboardClient.listSessions(profile = "victor", limit = 200) } returns
+            Result.success(emptyList<SessionItem>())
+        coEvery { dashboardClient.deleteSession("session-1", profile = "victor") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.renameSession("session-1", "Renamed", profile = "victor") } returns
+            Result.success(buildJsonObject { })
+        controller.setPendingConnectionId(connectionId)
+        controller.setPendingName(null)
+
+        controller.refreshDashboardProfiles()
+
+        assertEquals("victor", awaitFlow(controller.effectiveSessionProfileName) { it == "victor" })
+        assertEquals("default", controller.serverDefaultProfileScope.value?.current)
+        assertTrue(awaitFlow(controller.selectionSettled) { it })
+        runBlocking { controller.listProfileScopedSessions()?.getOrThrow() }
+        assertTrue(runBlocking { controller.deleteProfileScopedSession("session-1") })
+        assertTrue(runBlocking { controller.renameProfileScopedSession("session-1", "Renamed") })
+        coVerify(exactly = 1) { dashboardClient.listSessions(profile = "victor", limit = 200) }
+        coVerify(exactly = 1) { dashboardClient.deleteSession("session-1", profile = "victor") }
+        coVerify(exactly = 1) {
+            dashboardClient.renameSession("session-1", "Renamed", profile = "victor")
+        }
     }
 
     // --- selectProfile gating while locked ----------------------------------

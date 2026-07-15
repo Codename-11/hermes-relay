@@ -1,5 +1,24 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Server-default profile session reconciliation
+
+Android now keeps the Server default UI sentinel separate from its effective
+session namespace. The upstream dashboard's `/api/profiles/active` response is
+read as two distinct values: `active` is the sticky default selected for new
+Hermes invocations, while `current` describes the already-running dashboard
+process. An explicit named profile still wins; otherwise Android sends the
+resolved sticky name, including literal `default`, to Gateway session
+create/resume and the dashboard session list, history, rename, and delete
+routes. Per-profile last-session persistence and chat context keys use the same
+resolved namespace, preventing a named active agent from writing into or
+displaying the dashboard launch profile's database. Older dashboards without
+the endpoint retain the launch-profile fallback.
+
+Focused regression coverage exercises the upstream active/current response, a
+dashboard launched as default with another sticky active profile, explicit
+profile precedence, profile-scoped drawer reads, and ChatViewModel's Gateway
+binding.
+
 ## 2026-07-15 — Android 1.4.5 release and automated Play gate
 
 Android 1.4.5 shipped as versionCode 28 after the signed release build, final

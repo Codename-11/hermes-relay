@@ -1157,6 +1157,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     val agentProfiles: StateFlow<List<Profile>> get() = profileController.agentProfiles
 
+    /**
+     * Session namespace after resolving the Server-default UI sentinel through
+     * upstream `/api/profiles/active`. Explicit named selections are unchanged.
+     */
+    val effectiveSessionProfileName: StateFlow<String?>
+        get() = profileController.effectiveSessionProfileName
+
     fun refreshDashboardProfiles() = profileController.refreshDashboardProfiles()
 
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
@@ -1176,12 +1183,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * back to the shared api_server delete.
      */
     suspend fun deleteProfileScopedSession(sessionId: String): Boolean {
-        val connectionId = activeConnectionId.value ?: return false
-        val dashboardUrl = activeDashboardUrl() ?: return false
-        val profileName = AgentDisplay.profileRequestName(profileController.selectedProfile.value?.name)
-        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
-            .deleteSession(sessionId, profileName)
-            .isSuccess
+        return profileController.deleteProfileScopedSession(sessionId)
     }
 
     /**
@@ -1194,12 +1196,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * api_server rename.
      */
     suspend fun renameProfileScopedSession(sessionId: String, title: String): Boolean {
-        val connectionId = activeConnectionId.value ?: return false
-        val dashboardUrl = activeDashboardUrl() ?: return false
-        val profileName = AgentDisplay.profileRequestName(profileController.selectedProfile.value?.name)
-        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
-            .renameSession(sessionId, title, profileName)
-            .isSuccess
+        return profileController.renameProfileScopedSession(sessionId, title)
     }
 
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
@@ -5640,7 +5637,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun saveLastSessionId(sessionId: String?) {
         _lastSessionId.value = sessionId
         val connectionId = activeConnectionId.value
-        val profileName = profileController.selectedProfile.value?.name
+        val profileName = profileController.resolveSessionProfileName()
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {
@@ -5672,7 +5669,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
             }
-            if (profileName == null) {
+            if (profileName == null || AgentDisplay.isServerDefaultAlias(profileName)) {
                 getApplication<Application>().relayDataStore.edit { preferences ->
                     if (sessionId != null) {
                         preferences[KEY_LAST_SESSION_ID] = sessionId
