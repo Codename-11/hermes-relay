@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Profile display order and visibility are customizable per connection.** The profile manager can reorder every profile, including Server default, selectively hide inactive profiles, restore hidden active profiles, and reset the saved presentation without changing server configuration.
+
 ### Fixed
 
 - **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.

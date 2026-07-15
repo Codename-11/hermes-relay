@@ -1,5 +1,11 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-14 — Per-connection profile display management
+
+Android now stores profile presentation preferences independently for each connection. The Agent sheet applies one user-defined order to the Server default alias and named profiles, lets inactive rows be hidden without losing the active selection, keeps a previously hidden active profile visible and recoverable, and provides a reset action. Newly discovered profiles append in server order, stale profile keys are ignored, and connection/app-data cleanup removes the matching presentation state.
+
+The management dialog exposes accessible move and visibility actions and ships matching English, Spanish, and Simplified Chinese resources. Verification covers persistence isolation, ordering, hidden-profile filtering, active-profile visibility, connection cleanup, locale parity, both product-flavor Kotlin compilations, and focused profile-selection regressions.
+
 ## 2026-07-14 — Dependency PR routing and Roborazzi alignment
 
 The paired Roborazzi screenshot-test libraries moved together from 1.66.0 to

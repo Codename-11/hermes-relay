@@ -2183,6 +2183,13 @@
     <string name="conn_info_local_display_name">本地显示名称</string>
     <string name="conn_info_locked_to">锁定为 %1$s</string>
     <string name="conn_info_manage_connections">管理连接</string>
+    <string name="conn_info_manage_profiles">管理个人资料显示</string>
+    <string name="conn_info_manage_profiles_hint">重新排序个人资料，或隐藏不常用的个人资料。当前个人资料会保持可见。</string>
+    <string name="conn_info_move_profile_up">上移 %1$s</string>
+    <string name="conn_info_move_profile_down">下移 %1$s</string>
+    <string name="conn_info_hide_profile">隐藏 %1$s</string>
+    <string name="conn_info_show_profile">显示 %1$s</string>
+    <string name="conn_info_reset_profile_display">重置</string>
     <string name="conn_info_manage_lock_hint">在设置中更改锁定目标。</string>
     <string name="conn_info_messages">消息数</string>
     <string name="conn_info_model">%1$s</string>

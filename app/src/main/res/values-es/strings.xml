@@ -2000,6 +2000,13 @@
     <string name="conn_info_local_display_name">Nombre para mostrar local</string>
     <string name="conn_info_locked_to">Bloqueado en %1$s</string>
     <string name="conn_info_manage_connections">Administrar conexiones</string>
+    <string name="conn_info_manage_profiles">Administrar visualización de perfiles</string>
+    <string name="conn_info_manage_profiles_hint">Reordena los perfiles u oculta los que no uses. El perfil activo permanece visible.</string>
+    <string name="conn_info_move_profile_up">Mover %1$s hacia arriba</string>
+    <string name="conn_info_move_profile_down">Mover %1$s hacia abajo</string>
+    <string name="conn_info_hide_profile">Ocultar %1$s</string>
+    <string name="conn_info_show_profile">Mostrar %1$s</string>
+    <string name="conn_info_reset_profile_display">Restablecer</string>
     <string name="conn_info_manage_lock_hint">Cambie el objetivo de bloqueo en Configuración.</string>
     <string name="conn_info_messages">Mensajes</string>
     <string name="conn_info_model">%1$s</string>
