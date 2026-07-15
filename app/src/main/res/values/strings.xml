@@ -2407,8 +2407,8 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agent icon</string>
-    <string name="agent_icon_set">Set image</string>
-    <string name="agent_icon_change">Change</string>
+    <string name="agent_icon_set">Choose file</string>
+    <string name="agent_icon_change">Choose file</string>
     <string name="agent_icon_clear">Clear</string>
     <string name="agent_icon_import_host">Import from agent host</string>
     <string name="agent_icon_importing_host">Importing…</string>

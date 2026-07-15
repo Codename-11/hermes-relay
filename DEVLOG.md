@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Profile image import compatibility and picker clarity
+
+Android profile image import now distinguishes the Relay avatar endpoint's
+structured `profile_avatar_not_found` response from a generic route-level 404.
+Older Relay installations therefore prompt for a Relay update or local file
+selection instead of incorrectly claiming that a known host image is absent.
+The existing Android system document picker is labeled consistently as
+**Choose file** before and after an icon has been set.
+
 ## 2026-07-15 — Server-default profile session reconciliation
 
 Android now keeps the Server default UI sentinel separate from its effective

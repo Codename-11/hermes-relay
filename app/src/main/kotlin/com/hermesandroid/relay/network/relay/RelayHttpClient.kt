@@ -13,7 +13,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -373,10 +375,23 @@ class RelayHttpClient(
             try {
                 okHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
+                        val errorCode = runCatching {
+                            sessionsJson.parseToJsonElement(response.body.string())
+                                .jsonObject["error"]
+                                ?.jsonPrimitive
+                                ?.contentOrNull
+                        }.getOrNull()
                         val reason = when (response.code) {
                             401 -> "Unauthorized — re-pair with the relay"
                             403 -> "The host profile image is blocked by Relay file policy"
-                            404 -> "No host profile image found — add avatar.png or profile.jpg to the profile directory"
+                            404 -> when (errorCode) {
+                                "profile_avatar_not_found" ->
+                                    "No host profile image found — add avatar.png or profile.jpg to the profile directory"
+                                "profile_not_found" ->
+                                    "The selected profile directory was not found on the Relay host"
+                                else ->
+                                    "This Relay host does not support profile image import yet — update Relay or choose a file"
+                            }
                             415 -> "The host profile image format is not supported"
                             in 500..599 -> "Relay error (HTTP ${response.code})"
                             else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"

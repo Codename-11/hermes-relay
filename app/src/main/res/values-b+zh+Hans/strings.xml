@@ -2406,8 +2406,8 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">代理图标</string>
-    <string name="agent_icon_set">设置图像</string>
-    <string name="agent_icon_change">更改</string>
+    <string name="agent_icon_set">选择文件</string>
+    <string name="agent_icon_change">选择文件</string>
     <string name="agent_icon_clear">清除</string>
     <string name="agent_icon_import_host">从代理主机导入</string>
     <string name="agent_icon_importing_host">正在导入…</string>

@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Profile image import reports host compatibility accurately.** Android now distinguishes an older Relay without the optional avatar endpoint from a profile that genuinely has no conventional image, and presents the system file picker as a clear fallback.
 - **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.
 - **Server-default chats use one profile session scope.** Android resolves the Server default row through Hermes' sticky active profile before Gateway create/resume and dashboard session operations, so the drawer, transcript, writes, and agent no longer split across different profile databases when the dashboard was launched under another profile.
 
