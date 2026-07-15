@@ -48,10 +48,11 @@ Audit inventory:
   focused tests under `plugin/`.
 
 The repository audit also confirmed that GitHub-owned settings cannot be
-reconciled through repository files. At audit time, `main` was still the default
-branch, `dev` was unprotected, squash and rebase merges were enabled, and `main`
-protection did not apply to administrators. An operator must align those
-settings with the documented contract.
+reconciled through repository files. The default branch correctly remained
+`main`, the release-history branch. At audit time, `dev` was unprotected, squash
+and rebase merges were enabled, and `main` protection did not apply to
+administrators. An operator must align those remaining settings with the
+documented contract.
 
 ## 2026-07-15 — Android 1.4.5 release and automated Play gate
 

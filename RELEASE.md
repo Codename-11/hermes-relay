@@ -248,13 +248,15 @@ The intended settings are:
   blocked. This is the normal contribution target.
 - **Merge policy** — merge commits allowed; squash and rebase merges disabled so
   the no-ff contract cannot be bypassed in the GitHub UI.
-- **Default branch** — `dev`, so GitHub-created branches and contribution PRs
-  naturally use the integration branch.
+- **Default branch** — `main`, which remains the release-history branch and the
+  repository's canonical landing page. Normal contribution PRs must explicitly
+  target `dev`.
 
-As of the 2026-07-15 repository audit, GitHub still had `main` as the default
-branch, `dev` had no protection, squash and rebase merges were enabled, and
-`main` protection did not apply to administrators. Those operator-owned settings
-must be reconciled separately; this documentation PR does not mutate them.
+As of the 2026-07-15 repository audit, the default branch was correctly `main`.
+The remaining GitHub-owned gaps were that `dev` had no protection, squash and
+rebase merges were enabled, and `main` protection did not apply to
+administrators. Those settings must be reconciled separately; this documentation
+PR does not mutate them.
 
 ## One-time Setup
 
