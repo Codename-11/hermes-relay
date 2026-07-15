@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.
+
+## [1.4.5] - 2026-07-15
+
+### Fixed
+
 - **Running Android chats survive session switching.** On the upstream Gateway path, opening another chat, profile, draft, or Thread now detaches the visible stream without interrupting Hermes. Each running session keeps its own durable UI checkpoint, reconnects the shared event socket across route loss, and reattaches through `session.activate`/`session.resume` when selected again. SSE fallback remains intentionally single-stream and cancels on navigation.
 - **Expired Gateway prompts no longer remain actionable.** Android collapses matching secret and sudo cards when Hermes emits their expiry events, recognizes late expired responses, and is ready for an upstream session-scoped approval-expiry contract without guessing the server timeout.
 - **Provider wait notices stay transient.** Canonical Hermes provider-wait, reconnect, and continuation notices now use Chat's live status line instead of accumulating in the assistant reasoning transcript.
