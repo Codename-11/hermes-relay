@@ -216,9 +216,17 @@ class ChatHandler {
      */
     private val _turnStatus = MutableStateFlow<String?>(null)
     val turnStatus: StateFlow<String?> = _turnStatus.asStateFlow()
+    private var turnStatusKind: String? = null
 
-    fun setTurnStatus(text: String) {
+    fun setTurnStatus(text: String, kind: String? = null) {
+        turnStatusKind = kind
         _turnStatus.value = text
+    }
+
+    fun clearTurnStatus(kind: String? = null) {
+        if (kind != null && turnStatusKind != kind) return
+        turnStatusKind = null
+        _turnStatus.value = null
     }
 
     private val _isStreaming = MutableStateFlow(false)
@@ -237,7 +245,7 @@ class ChatHandler {
      */
     fun clearStreamingStatus() {
         _isStreaming.value = false
-        _turnStatus.value = null
+        clearTurnStatus()
     }
 
     private val _sessions = MutableStateFlow<List<ChatSession>>(emptyList())
@@ -927,6 +935,9 @@ class ChatHandler {
                 isGenerating = tool.isGenerating,
                 taskIndex = tool.taskIndex,
                 taskLabel = tool.taskLabel,
+                outputRisk = tool.outputRisk,
+                outputRiskFindings = tool.outputRiskFindings,
+                outputRiskRedacted = tool.outputRiskRedacted,
             )
         }
         val currentTools = currentAssistant?.toolCalls.orEmpty()
@@ -1017,6 +1028,7 @@ class ChatHandler {
             }
         }
         _isStreaming.value = true
+        turnStatusKind = null
         _turnStatus.value = checkpoint.turnStatus ?: "Reconnecting to the active turn…"
     }
 
@@ -1673,12 +1685,16 @@ class ChatHandler {
             val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
             val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
             val serverTitle = item.title?.takeIf { it.isNotBlank() }
+            val serverPreview = item.preview?.takeIf { it.isNotBlank() }
             // A user-chosen Thread name is authoritative (Discord-style): it
             // overrides the server's auto-title so the gateway's async auto-titler
-            // can't clobber the name the user set.
+            // can't clobber the name the user set. A known local preview remains
+            // ahead of the server's truncated first-message preview; the latter is
+            // the standard upstream/Desktop fallback for historical untitled rows.
             val resolvedTitle = userThreadNames[item.id]
                 ?: serverTitle
                 ?: existingById[item.id]?.title?.takeIf { it.isNotBlank() }
+                ?: serverPreview
             ChatSession(
                 sessionId = item.id,
                 title = resolvedTitle,
@@ -2734,6 +2750,27 @@ class ChatHandler {
         }
     }
 
+    /** Attach untrusted output-risk metadata to the exact matching tool call. */
+    fun onToolOutputRisk(messageId: String, outputRisk: GatewayToolOutputRisk) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                val updatedCalls = msg.toolCalls.map { call ->
+                    if (call.id == outputRisk.toolCallId) {
+                        call.copy(
+                            outputRisk = outputRisk.risk,
+                            outputRiskFindings = outputRisk.findings,
+                            outputRiskRedacted = outputRisk.redacted,
+                        )
+                    } else {
+                        call
+                    }
+                }
+                if (updatedCalls == msg.toolCalls) msg else msg.copy(toolCalls = updatedCalls)
+            }
+        }
+    }
+
     /**
      * A single assistant turn completed, but the agent run may continue
      * (e.g., tool calls pending → next assistant turn). Marks the current
@@ -2819,7 +2856,7 @@ class ChatHandler {
      */
     fun onStreamComplete(messageId: String) {
         _isStreaming.value = false
-        _turnStatus.value = null
+        clearTurnStatus()
         insideThinkingBlock = false
 
         // Flush any remaining annotation text that didn't end with a newline
@@ -2865,7 +2902,7 @@ class ChatHandler {
         _isStreaming.value = false
         // The turn is over — a stale lifecycle/recovery caption must not
         // outlive it (onStreamComplete clears the same way).
-        _turnStatus.value = null
+        clearTurnStatus()
         _error.value = message
         // Clear streaming flag on any actively streaming message
         _messages.update { messages ->

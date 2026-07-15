@@ -4,7 +4,7 @@
 
 **Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-07-13
+**Updated:** 2026-07-15
 
 ---
 
@@ -359,7 +359,8 @@ Bottom navigation bar with 4 tabs:
   1. **Connection chip** — tap to open `ConnectionSwitcherSheet` (all paired servers + health indicator). Auto-hidden when you only have one Connection. See `docs/decisions.md` §19.
   2. **Agent name + tappable region** — tap to open the consolidated **agent sheet** (bottom sheet) holding Profile + Personality selection and per-session info/analytics (message count, tokens in/out, avg TTFT). Sheet is scrollable. Toast confirmations fire on Profile/Personality switch. Replaces the separate `ProfilePicker` and `PersonalityPicker` top-bar chips that shipped in intermediate v0.5.x builds.
   3. Remaining top-bar actions (session drawer hamburger, ambient toggle, etc.).
-- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete.
+- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
+- **Concurrent Gateway chats** — switching sessions, profiles, drafts, or Threads detaches the visible turn without sending `session.interrupt`; each running chat keeps a connection/profile/session-scoped checkpoint and reattaches to its live Gateway session when reopened. Explicit Stop still interrupts. SSE fallback stays single-stream and cancels on navigation.
 - **Chat view** — message bubbles with markdown rendering, streaming text, tool call cards (Off/Compact/Detailed display modes)
 - **Input bar** — text field with 4096 char limit, `/` palette button, send button, stop button during streaming. Inline autocomplete on `/` keystroke + full searchable command palette (bottom sheet). Commands sourced from: 29 gateway built-ins, dynamic personalities from `config.agent.personalities`, and server skills from native `GET /v1/skills`.
 - **Empty state** — Logo + "Start a conversation" + suggestion chips that populate input

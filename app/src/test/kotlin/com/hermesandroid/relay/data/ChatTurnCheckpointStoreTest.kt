@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -31,7 +33,7 @@ class ChatTurnCheckpointStoreTest {
     @Before
     fun setUp() {
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val file = tempFolder.newFile("chat_checkpoint.preferences_pb")
+        val file = tempFolder.newFile("chat_checkpoint_${System.nanoTime()}.preferences_pb")
         file.delete()
         dataStore = PreferenceDataStoreFactory.create(
             scope = scope,
@@ -72,6 +74,35 @@ class ChatTurnCheckpointStoreTest {
 
         assertNull(store.read())
         assertNull(store.read())
+    }
+
+    @Test
+    fun legacySingleCheckpoint_isReadDuringMigration() = runTest {
+        val checkpoint = sampleCheckpoint()
+        dataStore.edit { preferences ->
+            preferences[stringPreferencesKey("chat_inflight_turn_checkpoint_v1")] =
+                Json.encodeToString(checkpoint)
+        }
+
+        assertEquals(checkpoint, store.read())
+    }
+
+    @Test
+    fun multipleRunningSessions_mergeAndRemoveIndependently() = runTest {
+        val first = sampleCheckpoint()
+        val second = sampleCheckpoint().copy(
+            contextKey = "connection-a::writer",
+            sessionId = "stored-99",
+            liveSessionId = "live-99",
+            updatedAt = now + 1L,
+        )
+
+        val merged = mergeChatTurnCheckpoints(listOf(first), second, now + 1L)
+        assertEquals(listOf(second, first), merged)
+        assertEquals(
+            listOf(second),
+            removeChatTurnCheckpoint(merged, first.contextKey, first.sessionId),
+        )
     }
 
     private fun sampleCheckpoint() = ChatTurnCheckpoint(

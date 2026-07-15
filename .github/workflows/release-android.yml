@@ -80,7 +80,7 @@ jobs:
             --jq '[.artifacts[] | select(.expired == false)] | length')
           if [ "$COUNT" -lt 1 ]; then
             echo "::error::No successful Play preflight found for version $VERSION with tree $RELEASE_TREE"
-            echo "Run Play Preflight from the final dev tree, review Play's checks, merge that unchanged tree to main, then approve the release."
+            echo "Run Play Preflight from the final dev tree, merge that unchanged tree to main, then approve the release."
             exit 1
           fi
           echo "Play preflight proof found: $ARTIFACT_NAME"

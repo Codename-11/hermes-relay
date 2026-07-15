@@ -1,24 +1,26 @@
-# Hermes-Relay-Android v1.4.4
+# Hermes-Relay-Android v1.4.5
 
-**Release Date:** July 12, 2026
-
-This patch adds Spanish across Android, clearer Relay diagnostics, safer translation maintenance, and a direct path from What’s New to the complete release history.
-
-## Highlights
-
-- Choose System default, English, Español, or 简体中文 in Settings → Appearance.
-- Refresh Diagnostics to see Relay plugin and protocol versions, capabilities, profile enablement, and when the check ran.
-- Diagnostic issue exports include sanitized app, Android, and device context.
-- What’s New opens the complete bundled release history and has large-text visual regression coverage.
-- CI detects translated catalogs whose canonical English source has changed.
-- Profile-scoped session operations and recovery no longer fall through to the default profile.
+**Release Date:** July 15, 2026
 
 ## Download
 
-Install `hermes-relay-1.4.4-sideload-release.apk` directly, or use the conservative Google Play build. The `.aab` artifact is for Play Console and cannot be installed directly.
+> Installing on your phone? Download `hermes-relay-1.4.5-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
-## Upgrade notes
+The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
-- App version: **1.4.4** (versionCode **26**).
-- The new diagnostics contract requires a current Relay plugin for full detail; older plugins remain supported and report version unknown.
+Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://codename-11.github.io/hermes-relay/guide/sideload) for installation help.
+
+## Summary
+
+This patch keeps Gateway chats running when you switch sessions, clears expired approval prompts, and keeps provider wait messages out of the conversation transcript.
+
+## Fixed
+
+- Switching to another chat, profile, draft, or Thread no longer interrupts a running Gateway reply. Returning to the session restores its live checkpoint and reattaches to Hermes.
+- Expired secret and sudo prompts collapse when Hermes reports their expiry, so stale actions no longer look usable.
+- Provider wait, reconnect, and continuation notices stay in Chat's live status line instead of accumulating as assistant reasoning.
+
+## Install / Verify
+
+- App version: **1.4.5** (versionCode **28**).
 - Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.

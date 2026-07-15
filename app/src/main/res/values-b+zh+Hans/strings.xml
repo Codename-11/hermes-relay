@@ -225,7 +225,12 @@
     <!-- ChatViewModel 审批 -->
     <string name="chat_approval_title">请求审批</string>
     <string name="chat_approval_approve">批准</string>
+    <string name="chat_approval_once">批准一次</string>
+    <string name="chat_approval_session">在此会话中批准</string>
+    <string name="chat_approval_always">始终批准</string>
     <string name="chat_approval_deny">拒绝</string>
+    <string name="chat_approval_smart_denied_title">智能拒绝 — 所有者覆盖</string>
+    <string name="chat_approval_smart_denied_body">智能安全审查拒绝了此操作。您可以覆盖一次。</string>
     <string name="chat_approval_clarify_title">Hermes 需要澄清</string>
     <string name="chat_approval_sudo_title">请求提升权限</string>
     <string name="chat_approval_secret_title">请求密钥</string>
@@ -3060,4 +3065,8 @@
     <string name="tool_arguments">参数：</string>
     <string name="tool_error">错误：</string>
     <string name="tool_result">结果：</string>
+    <string name="tool_output_risk_badge">%1$s 输出风险</string>
+    <string name="tool_output_risk_a11y">，%1$s 输出风险</string>
+    <string name="tool_output_risk_findings">输出风险发现</string>
+    <string name="tool_output_risk_redacted">敏感片段已在上游被隐去。</string>
 </resources>

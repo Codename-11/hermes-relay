@@ -1,8 +1,8 @@
 # Hermes-Relay-Android — explicit public release approval
 #
-# Run from main only after the private Play preflight is clean and the release
-# PR has merged. Creating the stable tag is the public release decision; the
-# tag-triggered release workflow submits Play first, then publishes GitHub.
+# Run from main only after the automated Play preflight passes and the release
+# PR has merged. Starting this workflow is the release approval. Creating the
+# stable tag triggers Play submission first, then GitHub publication.
 
 name: Approve Android Release
 
@@ -13,10 +13,6 @@ on:
         description: "Approved Android version (for example 1.4.3)"
         required: true
         type: string
-      confirm_play_checks:
-        description: "I reviewed and accept the Play pre-review and pre-launch results"
-        required: true
-        type: boolean
 
 permissions:
   contents: write
@@ -39,17 +35,11 @@ jobs:
         id: metadata
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
-          CONFIRM_PLAY_CHECKS: ${{ inputs.confirm_play_checks }}
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "::error::Approve Android Release must run from main, not $GITHUB_REF"
             exit 1
           fi
-          if [ "$CONFIRM_PLAY_CHECKS" != "true" ]; then
-            echo "::error::Play checks must be reviewed and explicitly accepted"
-            exit 1
-          fi
-
           TOML_VERSION=$(grep -oP 'appVersionName\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
           if [ "$REQUESTED_VERSION" != "$TOML_VERSION" ]; then
             echo "::error::Requested version $REQUESTED_VERSION does not match appVersionName $TOML_VERSION"

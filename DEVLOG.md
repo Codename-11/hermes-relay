@@ -1,10 +1,90 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Android 1.4.5 release and automated Play gate
+
+Android 1.4.5 shipped as versionCode 28 after the signed release build, final
+DEX compatibility scan, and Production-draft upload passed for the exact Git
+tree later tagged `android-v1.4.5`. Release approval promoted that same Play
+artifact to Production review before publishing the GitHub sideload APK, AAB,
+and checksums.
+
+The release workflow now treats Play upload and promotion acceptance as its
+automated store gate. Play Console-only pre-review and pre-launch reports remain
+informational because their detailed results are not available to the release
+automation. The Play release display name is the final product version at every
+stage, without an internal preflight suffix.
+
+## 2026-07-15 — Gateway safety and lifecycle parity
+
+Android gateway chat now clears only a live `compacting` status when model,
+tool, subagent, or MoA activity resumes, preserving unrelated lifecycle text.
+Approval cards consume the upstream capability-derived choice set, retain the
+legacy Approve/Deny fallback, and explain Smart DENY owner overrides while
+constraining their visible actions to one-operation approval or denial.
+
+Deterministic non-low `tool.output_risk` events now attach by `tool_id` to the
+matching tool card. Detailed and compact layouts expose the warning, detailed
+cards show the upstream findings and redaction state as untrusted plain text,
+and in-flight checkpoints preserve the metadata across reattachment.
+
+Verification: 139 focused Android JVM/Robolectric tests passed across gateway
+mapping, chat state, checkpoint recovery, and approval-card rendering. A
+separate 23-test upstream durability slice passed for completion deduplication,
+concurrent ownership, profile/session routing, compression continuation, and
+lineage export. Android lint and `git diff --check` passed after adding Spanish
+and Simplified Chinese strings for the new UI.
+
+## 2026-07-15 — Upstream Gateway interaction compatibility
+
+The July upstream-impact ledger's highest-priority Gateway gaps were reconciled
+without inventing client-side server policy. Android now consumes
+`secret.expire` and `sudo.expire` by exact request id, collapses late
+`{status:"expired"}` responses, and treats a zero-resolution approval response
+as expired. It also accepts optional approval timeout metadata and a future
+session-scoped `approval.expire` event; the corresponding upstream contract is
+documented in `docs/upstream-contributions.md`, while older Hermes builds keep
+the safe no-countdown behavior.
+
+Canonical upstream provider-wait, reconnect, and continuation strings emitted
+through `thinking.delta` now replace one transient `provider_wait` status line.
+Genuine model thinking still enters the durable reasoning transcript, and new
+text, reasoning, tool, or subagent activity clears only the matching transient
+status kind.
+
+Verification: the focused sideload JVM suites reran 93 tests across
+`GatewayEventMapperTest` and `GatewayChatClientTest` with zero failures, and
+`git diff --check` passed.
+
 ## 2026-07-14 — Per-connection profile display management
 
-Android now stores profile presentation preferences independently for each connection. The Agent sheet applies one user-defined order to the Server default alias and named profiles, lets inactive rows be hidden without losing the active selection, keeps a previously hidden active profile visible and recoverable, and provides a reset action. Newly discovered profiles append in server order, stale profile keys are ignored, and connection/app-data cleanup removes the matching presentation state.
+Android now stores profile presentation preferences independently for each
+connection. The Agent sheet applies one user-defined order to the Server default
+alias and named profiles, lets inactive rows be hidden without losing the active
+selection, keeps a previously hidden active profile visible and recoverable, and
+provides a reset action. Newly discovered profiles append in server order, stale
+profile keys are ignored, and connection/app-data cleanup removes the matching
+presentation state.
 
-The management dialog exposes accessible move and visibility actions and ships matching English, Spanish, and Simplified Chinese resources. Verification covers persistence isolation, ordering, hidden-profile filtering, active-profile visibility, connection cleanup, locale parity, both product-flavor Kotlin compilations, and focused profile-selection regressions.
+The management dialog exposes accessible move and visibility actions and ships
+matching English, Spanish, and Simplified Chinese resources. Verification covers
+persistence isolation, ordering, hidden-profile filtering, active-profile
+visibility, connection cleanup, locale parity, both product-flavor Kotlin
+compilations, and focused profile-selection regressions.
+
+## 2026-07-14 — Session drawer title parity with Hermes Desktop
+
+Android now decodes the upstream session-list `preview` field and uses it as the
+drawer label when a session has no persisted title. Explicit user names and
+server-generated titles remain authoritative, while a richer optimistic local
+label stays ahead of the server's truncated preview. This matches the standard
+Hermes Desktop fallback without changing or patching the upstream server.
+
+Live compatibility inspection confirmed that both the dashboard and native
+API-server session lists expose `preview`. Focused model/client and session
+mapping tests cover decoding, fallback behavior, and title precedence. The
+drawer audit also recorded two existing follow-ups in `TODO.md`: Pin/Archive
+state is currently ephemeral, and local-only search covers only the 200 most
+recent rows on large profiles.
 
 ## 2026-07-14 — Dependency PR routing and Roborazzi alignment
 

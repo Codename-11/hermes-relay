@@ -360,6 +360,7 @@ class GatewayChatClient(
 
     private data class BackgroundTurn(
         val storedSessionId: String,
+        val profile: String?,
     )
 
     /**
@@ -396,7 +397,7 @@ class GatewayChatClient(
     /** Exact-session completion observed without a bound live mapper. */
     @Volatile
     private var unmatchedTurnCompleteListener:
-        ((storedSessionId: String, expectedAssistantText: String?) -> Unit)? = null
+        ((GatewayBackgroundTurnCompletion) -> Unit)? = null
 
     /**
      * Connection-level process listener. Unlike [GatewayTurnCallbacks], this is
@@ -581,6 +582,7 @@ class GatewayChatClient(
         val storedId = storedSessionId ?: return false
         backgroundTurns[liveId] = BackgroundTurn(
             storedSessionId = storedId,
+            profile = liveSessionProfile,
         )
         turn.detach()
         return true
@@ -593,7 +595,7 @@ class GatewayChatClient(
      * recovers its own socket and keeps the live session. See
      * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.activeGatewayChatClient].
      */
-    fun hasActiveTurn(): Boolean = activeTurn?.ended == false
+    fun hasActiveTurn(): Boolean = activeTurn?.ended == false || backgroundTurns.isNotEmpty()
 
     /** Live id to persist beside a durable stored id while a turn is active. */
     fun currentLiveSessionId(storedId: String): String? =
@@ -611,7 +613,7 @@ class GatewayChatClient(
         Log.i(TAG, "Gateway retargeting to a new route (turn active=${hasActiveTurn()})")
         dashboardClient = newDashboardClient
         if (hasActiveTurn()) {
-            retargetedThisTurn = true
+            retargetedThisTurn = activeTurn?.ended == false
             webSocket?.cancel()
         }
     }
@@ -646,7 +648,7 @@ class GatewayChatClient(
     }
 
     fun setUnmatchedTurnCompleteListener(
-        listener: ((storedSessionId: String, expectedAssistantText: String?) -> Unit)?,
+        listener: ((GatewayBackgroundTurnCompletion) -> Unit)?,
     ) {
         unmatchedTurnCompleteListener = listener
     }
@@ -738,8 +740,14 @@ class GatewayChatClient(
 
             var response: JsonObject? = null
             var boundTurn: GatewayTurn? = null
+            var claimedBackground: BackgroundTurn? = null
 
             if (!preferredLiveId.isNullOrBlank()) {
+                // A deliberately detached sibling owns this id in
+                // backgroundTurns. Claim it before activation so the first
+                // post-attach delta reaches the new live mapper instead of the
+                // background completion-only gate.
+                claimedBackground = backgroundTurns.remove(preferredLiveId)
                 // Bind before session.activate: upstream swaps the live session's
                 // transport during the RPC, so an immediate next delta must not
                 // fall through the active-turn gate while the ack is in flight.
@@ -780,11 +788,21 @@ class GatewayChatClient(
                         put("cols", DEFAULT_COLS)
                         requestedProfile?.let { put("profile", it) }
                     },
-                ).getOrElse { error -> throw error }
+                ).getOrElse { error ->
+                    preferredLiveId?.let { liveId ->
+                        claimedBackground?.let { backgroundTurns.putIfAbsent(liveId, it) }
+                    }
+                    throw error
+                }
             }
 
             val recoveredLiveId = response.stringField("session_id")
-                ?: throw GatewayRpcException("session recovery returned no session_id")
+                ?: run {
+                    if (!preferredLiveId.isNullOrBlank()) {
+                        claimedBackground?.let { backgroundTurns.putIfAbsent(preferredLiveId, it) }
+                    }
+                    throw GatewayRpcException("session recovery returned no session_id")
+                }
             liveSessionId = recoveredLiveId
             storedSessionId = storedId
             liveSessionProfile = requestedProfile
@@ -856,48 +874,48 @@ class GatewayChatClient(
     }
 
     /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
-    suspend fun respondClarify(requestId: String, answer: String): Result<Unit> =
+    suspend fun respondClarify(requestId: String, answer: String): Result<GatewayAskResponse> =
         rpc(
             "clarify.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("answer", answer)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
 
     /**
      * Answer a [GatewayAsk.Kind.SUDO] ask. The password must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSudo(requestId: String, password: String): Result<Unit> =
+    suspend fun respondSudo(requestId: String, password: String): Result<GatewayAskResponse> =
         rpc(
             "sudo.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("password", password)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
 
     /**
      * Answer a [GatewayAsk.Kind.SECRET] ask. Empty [value] = skip (upstream
      * returns `skipped: true` to the tool). The value must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSecret(requestId: String, value: String): Result<Unit> =
+    suspend fun respondSecret(requestId: String, value: String): Result<GatewayAskResponse> =
         rpc(
             "secret.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("value", value)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
 
     /**
      * Answer a [GatewayAsk.Kind.APPROVAL] ask — correlated by the live
      * session, not a request id. [choice] is "approve" or "deny"; [all]
      * resolves every pending approval on the session at once.
      */
-    suspend fun respondApproval(choice: String, all: Boolean = false): Result<Unit> {
+    suspend fun respondApproval(choice: String, all: Boolean = false): Result<GatewayAskResponse> {
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
         return rpc(
@@ -907,7 +925,7 @@ class GatewayChatClient(
                 put("choice", choice)
                 put("all", all)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
     }
 
     /**
@@ -1629,15 +1647,19 @@ class GatewayChatClient(
         // switches back.
         val backgroundTurn = eventSessionId?.let(backgroundTurns::get)
         if (backgroundTurn != null) {
-            if (type == "message.complete") {
+            if (type == "message.complete" || type == "error") {
                 backgroundTurns.remove(eventSessionId, backgroundTurn)
-                val expectedText = payload?.stringField("text")
+                val expectedText = if (type == "message.complete") payload?.stringField("text") else null
                 callbackDispatcher {
                     unmatchedTurnCompleteListener?.invoke(
-                        backgroundTurn.storedSessionId,
-                        expectedText,
+                        GatewayBackgroundTurnCompletion(
+                            storedSessionId = backgroundTurn.storedSessionId,
+                            profile = backgroundTurn.profile,
+                            expectedAssistantText = expectedText,
+                        ),
                     )
                 }
+                if (!AppForegroundTracker.isForeground.value) scheduleBackgroundClose()
             }
             return
         }
@@ -1703,7 +1725,13 @@ class GatewayChatClient(
             ) {
                 val expectedText = payload?.stringField("text")
                 callbackDispatcher {
-                    unmatchedTurnCompleteListener?.invoke(storedId, expectedText)
+                    unmatchedTurnCompleteListener?.invoke(
+                        GatewayBackgroundTurnCompletion(
+                            storedSessionId = storedId,
+                            profile = liveSessionProfile,
+                            expectedAssistantText = expectedText,
+                        ),
+                    )
                 }
             }
             return
@@ -1777,7 +1805,20 @@ class GatewayChatClient(
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
         pendingRpcs.clear()
-        val turn = activeTurn ?: return
+        val turn = activeTurn
+        if (turn == null) {
+            if (backgroundTurns.isNotEmpty() && !backgroundRejoinInProgress) {
+                backgroundRejoinInProgress = true
+                scope.launch {
+                    try {
+                        attemptBackgroundTurnRejoin()
+                    } finally {
+                        backgroundRejoinInProgress = false
+                    }
+                }
+            }
+            return
+        }
         if (turn.ended) {
             if (activeTurn === turn) activeTurn = null
             return
@@ -1806,6 +1847,33 @@ class GatewayChatClient(
 
     @Volatile
     private var rejoinInProgress = false
+
+    @Volatile
+    private var backgroundRejoinInProgress = false
+
+    /** Keep the shared event socket attached while detached sibling turns run. */
+    private suspend fun attemptBackgroundTurnRejoin() {
+        val deadline = System.currentTimeMillis() + midTurnRejoinWindowMs
+        var backoffMs = 500L
+        while (backgroundTurns.isNotEmpty() && System.currentTimeMillis() < deadline) {
+            val reconnected = try {
+                connectMutex.withLock {
+                    connectCooldownUntil = 0L
+                    ensureConnected()
+                }
+                true
+            } catch (e: Exception) {
+                Log.d(TAG, "Background-turn reconnect retry failed: ${e.message}")
+                false
+            }
+            if (reconnected) {
+                Log.i(TAG, "Gateway socket rejoined for ${backgroundTurns.size} detached turn(s)")
+                return
+            }
+            delay(backoffMs)
+            backoffMs = (backoffMs * 2).coerceAtMost(5_000L)
+        }
+    }
 
     /**
      * Recover an in-flight turn after a mid-turn socket loss by reconnecting
@@ -1885,7 +1953,9 @@ class GatewayChatClient(
         backgroundCloseJob?.cancel()
         backgroundCloseJob = scope.launch {
             delay(BACKGROUND_CLOSE_GRACE_MS)
-            if (activeTurn == null && !AppForegroundTracker.isForeground.value) {
+            if (activeTurn == null && backgroundTurns.isEmpty() &&
+                !AppForegroundTracker.isForeground.value
+            ) {
                 closeSocket("app backgrounded")
             }
         }
@@ -2233,6 +2303,7 @@ class GatewayChatClient(
         onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
         onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
         onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
+        onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },
         onTurnComplete = { callbackDispatcher { callbacks.onTurnComplete() } },
         onComplete = { callbackDispatcher { callbacks.onComplete() } },
         onUsage = { v -> callbackDispatcher { callbacks.onUsage(v) } },
@@ -2240,6 +2311,7 @@ class GatewayChatClient(
         onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
         onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
+        onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
         // onStatusUpdate a default no-op, so omitting it here silently swallows
         // EVERY gateway status line — the ❌ terminal-error lifecycle update
@@ -2247,6 +2319,7 @@ class GatewayChatClient(
         // "Error", and onComplete's history reload wipes the error bubble (the
         // "reply appears then vanishes" bug).
         onStatusUpdate = { kind, text -> callbackDispatcher { callbacks.onStatusUpdate(kind, text) } },
+        onStatusClear = { kind -> callbackDispatcher { callbacks.onStatusClear(kind) } },
     )
 }
 
@@ -2300,3 +2373,13 @@ private fun JsonObject.stringField(key: String): String? =
 
 private fun JsonObject.booleanField(key: String): Boolean? =
     (get(key) as? JsonPrimitive)?.booleanOrNull
+
+private fun JsonObject.gatewayAskResponse(): GatewayAskResponse {
+    val status = stringField("status")
+    val resolved = (get("resolved") as? JsonPrimitive)?.intOrNull
+    return if (status.equals("expired", ignoreCase = true) || resolved == 0) {
+        GatewayAskResponse.EXPIRED
+    } else {
+        GatewayAskResponse.ACCEPTED
+    }
+}

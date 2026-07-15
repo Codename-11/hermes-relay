@@ -254,6 +254,11 @@ fun HermesCardBubble(
                             it.value == alreadyChosen.actionValue
                         }
                         when {
+                            alreadyChosen.actionValue == HermesCardDispatch.EXPIRED_STAMP -> ChoseRow(
+                                text = stringResource(R.string.card_expired),
+                                icon = Icons.Filled.HourglassBottom,
+                                iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                             chosenAction != null -> ChoseRow("Chose: ${chosenAction.label}")
                             input?.masked == true -> ChoseRow("Secret provided · ••••")
                             input != null -> ChoseRow("Answered: ${alreadyChosen.actionValue}")

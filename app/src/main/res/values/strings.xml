@@ -225,7 +225,12 @@
     <!-- ChatViewModel approval -->
     <string name="chat_approval_title">Approval requested</string>
     <string name="chat_approval_approve">Approve</string>
+    <string name="chat_approval_once">Approve once</string>
+    <string name="chat_approval_session">Approve for session</string>
+    <string name="chat_approval_always">Always approve</string>
     <string name="chat_approval_deny">Deny</string>
+    <string name="chat_approval_smart_denied_title">Smart DENY — owner override</string>
+    <string name="chat_approval_smart_denied_body">The smart safety review denied this operation. You may override it once.</string>
     <string name="chat_approval_clarify_title">Hermes needs clarification</string>
     <string name="chat_approval_sudo_title">Elevated permission requested</string>
     <string name="chat_approval_secret_title">Secret requested</string>
@@ -3125,4 +3130,8 @@
     <string name="tool_arguments">Arguments:</string>
     <string name="tool_error">Error:</string>
     <string name="tool_result">Result:</string>
+    <string name="tool_output_risk_badge">%1$s output risk</string>
+    <string name="tool_output_risk_a11y">, %1$s output risk</string>
+    <string name="tool_output_risk_findings">Output risk findings</string>
+    <string name="tool_output_risk_redacted">Sensitive spans were redacted upstream.</string>
 </resources>

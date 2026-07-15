@@ -34,6 +34,7 @@ import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
+import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.HermesCardField
 import com.hermesandroid.relay.data.HermesCardInput
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
@@ -41,6 +42,9 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.GatewayAsk
+import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
+import com.hermesandroid.relay.network.upstream.GatewayAskResponse
+import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
@@ -100,6 +104,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -145,9 +150,12 @@ class ChatViewModel : ViewModel() {
      */
     private var streamRecovery: ChatStreamRecovery? = null
 
-    /** Durable UI checkpoint for the one recoverable, session-backed turn. */
+    /** Durable UI checkpoints for recoverable, session-backed turns. */
     private var chatTurnCheckpointStore: ChatTurnCheckpointStore? = null
     private var activeTurnCheckpointSeed: ActiveTurnCheckpointSeed? = null
+    private data class TurnCheckpointKey(val contextKey: String, val sessionId: String)
+    private val backgroundTurnCheckpoints =
+        ConcurrentHashMap<TurnCheckpointKey, ChatTurnCheckpoint>()
     private var checkpointWriteJob: Job? = null
     private var checkpointStatusJob: Job? = null
     private var checkpointForegroundJob: Job? = null
@@ -1078,10 +1086,11 @@ class ChatViewModel : ViewModel() {
                 gatewayProcessController.sessionReady(storedSessionId)
             }
         }
-        client?.setUnmatchedTurnCompleteListener { storedSessionId, expectedText ->
+        client?.setUnmatchedTurnCompleteListener { completion ->
+            settleBackgroundTurnCheckpoint(completion)
             scheduleGatewayHistoryReconcile(
-                storedSessionId = storedSessionId,
-                expectedAssistantText = expectedText,
+                storedSessionId = completion.storedSessionId,
+                expectedAssistantText = completion.expectedAssistantText,
             )
         }
         // (Re)bind the session.info state sync to the live client so server-side
@@ -1129,6 +1138,26 @@ class ChatViewModel : ViewModel() {
             AppForegroundTracker.isForeground.value
         ) {
             prewarmGateway()
+        }
+    }
+
+    /** Remove the detached sibling's recovery snapshot after server completion. */
+    private fun settleBackgroundTurnCheckpoint(completion: GatewayBackgroundTurnCompletion) {
+        val profileKey = AgentDisplay.profileSessionKey(completion.profile)
+        val matching = backgroundTurnCheckpoints.keys.filter { key ->
+            key.sessionId == completion.storedSessionId &&
+                key.contextKey.substringAfterLast("::") == profileKey
+        }
+        if (matching.isEmpty()) return
+        matching.forEach(backgroundTurnCheckpoints::remove)
+        chatTurnCheckpointStore?.let { store ->
+            viewModelScope.launch {
+                checkpointMutex.withLock {
+                    matching.forEach { key ->
+                        runCatching { store.remove(key.contextKey, key.sessionId) }
+                    }
+                }
+            }
         }
     }
 
@@ -1216,6 +1245,12 @@ class ChatViewModel : ViewModel() {
             onToolCallFailed = { toolCallId, error ->
                 if (acceptsEvent()) handler.onToolCallFailed(messageId, toolCallId, error)
             },
+            onToolOutputRisk = { risk ->
+                if (acceptsEvent()) {
+                    handler.onToolOutputRisk(messageId, risk)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
             onTurnComplete = {
                 if (acceptsEvent()) handler.onTurnComplete(messageId)
             },
@@ -1276,11 +1311,17 @@ class ChatViewModel : ViewModel() {
             onInteractionRequest = { ask ->
                 if (acceptsEvent()) presentInteractionAsk(handler, ask)
             },
-            onStatusUpdate = { _, text ->
+            onInteractionExpired = { expiry ->
+                if (acceptsEvent()) expirePendingAsk(expiry)
+            },
+            onStatusUpdate = { kind, text ->
                 if (acceptsEvent()) {
-                    handler.setTurnStatus(text)
+                    handler.setTurnStatus(text, kind)
                     if (text.trimStart().startsWith("❌")) handler.markError(messageId)
                 }
+            },
+            onStatusClear = { kind ->
+                if (acceptsEvent()) handler.clearTurnStatus(kind)
             },
         )
         return GatewayInboundTurnRegistration(
@@ -2303,18 +2344,7 @@ class ChatViewModel : ViewModel() {
 
         // Initial cold-start binding is not a user switch. Its persisted
         // session may own the in-flight checkpoint we are about to recover.
-        if (!isInitialContextBinding) clearTurnCheckpoint()
-        activeStream?.let { stream ->
-            intentionallyCancelled = true
-            if (streamingEndpoint == "gateway") {
-                gatewayClient?.backgroundActiveTurn()
-                stream.detach()
-                handler.clearStreamingStatus()
-            } else {
-                stream.cancel()
-            }
-        }
-        activeStream = null
+        if (!isInitialContextBinding) releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
         sessionRefreshGeneration.incrementAndGet()
@@ -2350,7 +2380,6 @@ class ChatViewModel : ViewModel() {
         selectBackgroundProcessSession(sessionId, contextKey)
         if (sessionId != null) {
             onSessionChanged?.invoke(sessionId)
-            if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
         }
 
         if (sessionId == null || client == null) {
@@ -2377,9 +2406,17 @@ class ChatViewModel : ViewModel() {
                     handler.currentSessionId.value == sessionId
             }
             try {
-                val messages = loadSessionHistory(sessionId)
-                if (stillCurrent()) {
-                    handler.loadMessageHistory(messages)
+                val recovered = if (streamingEndpoint == "gateway") {
+                    recoverPersistedTurnIfNeeded(gatewayClient, handler, sessionId)
+                } else {
+                    false
+                }
+                if (!recovered) {
+                    val messages = loadSessionHistory(sessionId)
+                    if (stillCurrent()) {
+                        handler.loadMessageHistory(messages)
+                        if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -2530,10 +2567,8 @@ class ChatViewModel : ViewModel() {
         val client = apiClient ?: return
         val handler = chatHandler ?: return
 
-        // Cancel any in-flight stream (and any answer-recovery poller)
-        clearTurnCheckpoint()
-        activeStream?.cancel()
-        activeStream = null
+        // Gateway turns continue as detached siblings; SSE remains exclusive.
+        releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
         selectBackgroundProcessSession(null)
@@ -2621,9 +2656,7 @@ class ChatViewModel : ViewModel() {
      */
     fun startNewThread(name: String) {
         val handler = chatHandler ?: return
-        clearTurnCheckpoint()
-        activeStream?.cancel()
-        activeStream = null
+        releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         historyLoadGeneration.incrementAndGet()
         val slug = name.trim().lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(24)
@@ -2688,12 +2721,9 @@ class ChatViewModel : ViewModel() {
         apiClient ?: return
         val handler = chatHandler ?: return
 
-        // Cancel any in-flight stream (and any answer-recovery poller — the
-        // switched-to session must not receive the old turn's reconcile).
-        clearTurnCheckpoint()
-        intentionallyCancelled = true
-        activeStream?.cancel()
-        activeStream = null
+        // Keep a Gateway sibling alive and detach its callbacks. SSE remains a
+        // single exclusive stream and is interrupted on navigation.
+        releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
@@ -2710,18 +2740,25 @@ class ChatViewModel : ViewModel() {
         pendingYolo = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
-        if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
-
-        // Load message history (profile-scoped on gateway so a non-default
-        // profile's sessions resolve against their own DB).
+        // Recover a retained live turn before doing an ordinary history load.
+        // This avoids a concurrent list fetch wiping the restored streaming
+        // placeholder after session.activate has rebound its callbacks.
         _isLoadingHistory.value = true
         viewModelScope.launch {
-            val messages = loadSessionHistory(sessionId)
-            if (
-                historyLoadGeneration.get() == loadGeneration &&
-                handler.currentSessionId.value == sessionId
-            ) {
-                handler.loadMessageHistory(messages)
+            val recovered = if (streamingEndpoint == "gateway") {
+                recoverPersistedTurnIfNeeded(gatewayClient, handler, sessionId)
+            } else {
+                false
+            }
+            if (!recovered) {
+                val messages = loadSessionHistory(sessionId)
+                if (
+                    historyLoadGeneration.get() == loadGeneration &&
+                    handler.currentSessionId.value == sessionId
+                ) {
+                    handler.loadMessageHistory(messages)
+                    if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
+                }
             }
             if (historyLoadGeneration.get() == loadGeneration) {
                 _isLoadingHistory.value = false
@@ -3039,23 +3076,21 @@ class ChatViewModel : ViewModel() {
         val card = when (ask.kind) {
             GatewayAsk.Kind.APPROVAL -> HermesCard(
                 type = HermesCard.BuiltInTypes.ASK_APPROVAL,
-                title = (appContext?.getString(R.string.chat_approval_title) ?: "Approval requested"),
+                title = if (ask.smartDenied) {
+                    appContext?.getString(R.string.chat_approval_smart_denied_title)
+                        ?: "Smart DENY — owner override"
+                } else {
+                    appContext?.getString(R.string.chat_approval_title) ?: "Approval requested"
+                },
+                body = if (ask.smartDenied) {
+                    appContext?.getString(R.string.chat_approval_smart_denied_body)
+                        ?: "The smart safety review denied this operation. You may override it once."
+                } else {
+                    null
+                },
                 accent = HermesCard.Accents.WARNING,
                 fields = listOf(HermesCardField("Command", ask.text)),
-                actions = listOf(
-                    HermesCardAction(
-                        label = appContext?.getString(R.string.chat_approval_approve) ?: "Approve",
-                        value = "approve",
-                        style = HermesCardAction.Styles.PRIMARY,
-                        mode = HermesCardAction.Modes.SUBMIT_ASK,
-                    ),
-                    HermesCardAction(
-                        label = appContext?.getString(R.string.chat_approval_deny) ?: "Deny",
-                        value = "deny",
-                        style = HermesCardAction.Styles.DANGER,
-                        mode = HermesCardAction.Modes.SUBMIT_ASK,
-                    ),
-                ),
+                actions = approvalActions(ask),
                 id = cardKey,
             )
 
@@ -3136,6 +3171,39 @@ class ChatViewModel : ViewModel() {
         scheduleCheckpointWrite(immediate = true)
     }
 
+    /** Render only upstream-supported approval values; old servers retain Approve/Deny. */
+    private fun approvalActions(ask: GatewayAsk): List<HermesCardAction> {
+        val advertised = ask.choices.orEmpty()
+            .map(String::lowercase)
+            .filter { it in setOf("once", "session", "always", "deny") }
+            .distinct()
+            .let { choices ->
+                if (ask.smartDenied) choices.filter { it == "once" || it == "deny" } else choices
+            }
+        val choices = advertised.ifEmpty {
+            if (ask.smartDenied) listOf("once", "deny") else listOf("approve", "deny")
+        }
+        return choices.map { choice ->
+            val label = when (choice) {
+                "once" -> appContext?.getString(R.string.chat_approval_once) ?: "Approve once"
+                "session" -> appContext?.getString(R.string.chat_approval_session) ?: "Approve for session"
+                "always" -> appContext?.getString(R.string.chat_approval_always) ?: "Always approve"
+                "deny" -> appContext?.getString(R.string.chat_approval_deny) ?: "Deny"
+                else -> appContext?.getString(R.string.chat_approval_approve) ?: "Approve"
+            }
+            HermesCardAction(
+                label = label,
+                value = choice,
+                style = when (choice) {
+                    "deny" -> HermesCardAction.Styles.DANGER
+                    "once", "approve" -> HermesCardAction.Styles.PRIMARY
+                    else -> HermesCardAction.Styles.SECONDARY
+                },
+                mode = HermesCardAction.Modes.SUBMIT_ASK,
+            )
+        }
+    }
+
     /**
      * Answer the pending gateway ask. Routes per kind to the matching
      * respond RPC; collapses the card via [ChatHandler.recordCardDispatch]
@@ -3185,7 +3253,16 @@ class ChatViewModel : ViewModel() {
                         ?: Result.failure(GatewayRpcException("ask has no request id"))
             }
             result.fold(
-                onSuccess = {
+                onSuccess = { response ->
+                    if (response == GatewayAskResponse.EXPIRED) {
+                        expirePendingAsk(
+                            GatewayAskExpiry(
+                                kind = ask.kind,
+                                requestId = ask.requestId,
+                            ),
+                        )
+                        return@fold
+                    }
                     // Collapse only after the server confirms — a failed RPC
                     // must leave the card answerable for a retry.
                     handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
@@ -3200,6 +3277,29 @@ class ChatViewModel : ViewModel() {
                 },
             )
         }
+    }
+
+    /**
+     * Collapse only the server-expired interaction. Request-scoped asks must
+     * match exactly; approvals are session-scoped and match by kind. This also
+     * handles late `*.respond` RPCs that return `{status:"expired"}` or
+     * `{resolved:0}` before the expiry event reaches the socket.
+     */
+    private fun expirePendingAsk(expiry: GatewayAskExpiry) {
+        val pending = _pendingAsk.value ?: return
+        if (pending.ask.kind != expiry.kind) return
+        if (expiry.kind != GatewayAsk.Kind.APPROVAL) {
+            val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
+            if (pending.ask.requestId != requestId) return
+        }
+        _pendingAsk.value = null
+        answeredAskIds.remove(pending.cardKey)
+        scheduleCheckpointWrite(immediate = true)
+        chatHandler?.recordCardDispatch(
+            pending.messageId,
+            pending.cardKey,
+            HermesCardDispatch.EXPIRED_STAMP,
+        )
     }
 
     /**
@@ -3504,14 +3604,17 @@ class ChatViewModel : ViewModel() {
             },
             startedAt = assistantTimestamp,
         )
-        // Remove a prior turn immediately. The first rich write for this turn
-        // follows after the placeholder/session id exists; a sessionless turn
-        // must never leave an older recoverable checkpoint behind.
+        // Remove a prior turn for THIS session immediately. Detached sibling
+        // turns retain their own durable checkpoints while this chat starts a
+        // new one.
         chatTurnCheckpointStore?.let { store ->
             viewModelScope.launch {
                 checkpointMutex.withLock {
                     if (generation == checkpointGeneration.get()) {
-                        runCatching { store.clear() }
+                        val contextKey = activeTurnCheckpointSeed?.contextKey
+                        if (contextKey != null) {
+                            runCatching { store.remove(contextKey, sessionId) }
+                        }
                     }
                 }
             }
@@ -3610,6 +3713,9 @@ class ChatViewModel : ViewModel() {
                         isGenerating = tool.isGenerating,
                         taskIndex = tool.taskIndex,
                         taskLabel = tool.taskLabel,
+                        outputRisk = tool.outputRisk,
+                        outputRiskFindings = tool.outputRiskFindings,
+                        outputRiskRedacted = tool.outputRiskRedacted,
                     )
                 },
                 backgroundTask = assistant.backgroundTask?.let { task ->
@@ -3634,6 +3740,7 @@ class ChatViewModel : ViewModel() {
                     requestId = ask.ask.requestId,
                     text = ask.ask.text,
                     choices = ask.ask.choices,
+                    smartDenied = ask.ask.smartDenied,
                     envVar = ask.ask.envVar,
                     timeoutSeconds = ask.ask.timeoutSeconds,
                     messageId = ask.messageId,
@@ -3673,18 +3780,67 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun clearTurnCheckpoint() {
+        val key = activeTurnCheckpointSeed?.let { seed ->
+            seed.contextKey?.let { TurnCheckpointKey(it, seed.sessionId) }
+        }
         activeTurnCheckpointSeed = null
         val generation = checkpointGeneration.incrementAndGet()
         checkpointWriteJob?.cancel()
         checkpointWriteJob = null
+        if (key != null) backgroundTurnCheckpoints.remove(key)
         val store = chatTurnCheckpointStore ?: return
         viewModelScope.launch {
             checkpointMutex.withLock {
                 if (generation == checkpointGeneration.get() && activeTurnCheckpointSeed == null) {
-                    runCatching { store.clear() }
+                    if (key != null) runCatching { store.remove(key.contextKey, key.sessionId) }
                 }
             }
         }
+    }
+
+    /** Drop visible ownership while preserving a detached sibling's checkpoint. */
+    private fun releaseActiveTurnCheckpoint() {
+        activeTurnCheckpointSeed = null
+        checkpointGeneration.incrementAndGet()
+        checkpointWriteJob?.cancel()
+        checkpointWriteJob = null
+    }
+
+    /**
+     * Navigate away from the visible turn. Gateway can detach and multiplex;
+     * SSE cannot, so it retains the existing interrupt/cancel behavior.
+     */
+    private fun releaseTurnForNavigation(handler: ChatHandler) {
+        val gateway = gatewayClient
+        val canBackground = streamingEndpoint == "gateway" &&
+            activeStreamIsGateway && activeStream != null && gateway != null
+        val checkpoint = if (canBackground) buildTurnCheckpoint() else null
+        if (canBackground && gateway.backgroundActiveTurn()) {
+            if (checkpoint != null) {
+                val key = TurnCheckpointKey(checkpoint.contextKey, checkpoint.sessionId)
+                backgroundTurnCheckpoints[key] = checkpoint
+                chatTurnCheckpointStore?.let { store ->
+                    viewModelScope.launch {
+                        checkpointMutex.withLock { runCatching { store.write(checkpoint) } }
+                    }
+                }
+            }
+            activeStream?.detach()
+            activeStream = null
+            activeStreamIsGateway = false
+            releaseActiveTurnCheckpoint()
+            handler.clearStreamingStatus()
+            _steerableTurn.value = false
+            _steerNotice.value = null
+            intentionallyCancelled = false
+            return
+        }
+
+        clearTurnCheckpoint()
+        intentionallyCancelled = true
+        activeStream?.cancel()
+        activeStream = null
+        activeStreamIsGateway = false
     }
 
     /** Last-chance synchronous flush before the ViewModel scope is cancelled. */
@@ -3710,6 +3866,7 @@ class ChatViewModel : ViewModel() {
                 requestId = saved.requestId,
                 text = saved.text,
                 choices = saved.choices,
+                smartDenied = saved.smartDenied,
                 envVar = saved.envVar,
                 timeoutSeconds = saved.timeoutSeconds,
             ),
@@ -3735,14 +3892,14 @@ class ChatViewModel : ViewModel() {
         handler: ChatHandler,
         sessionId: String,
     ): Boolean {
-        val store = chatTurnCheckpointStore ?: return false
-        val checkpoint = runCatching { store.read() }.getOrNull() ?: return false
-        if (checkpoint.contextKey != activeProfileContextKey ||
-            checkpoint.sessionId != sessionId ||
-            checkpoint.transport !in setOf("gateway", "sessions")
-        ) {
-            return false
-        }
+        val contextKey = activeProfileContextKey ?: return false
+        val key = TurnCheckpointKey(contextKey, sessionId)
+        val checkpoint = backgroundTurnCheckpoints.remove(key)
+            ?: chatTurnCheckpointStore?.let { store ->
+                runCatching { store.read(contextKey, sessionId) }.getOrNull()
+            }
+            ?: return false
+        if (checkpoint.transport !in setOf("gateway", "sessions")) return false
         if (activeStream != null) return true
         if (streamRecovery != null) {
             if (checkpoint.transport == "gateway" && client != null) {
@@ -3854,6 +4011,12 @@ class ChatViewModel : ViewModel() {
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
+            onToolOutputRisk = { risk ->
+                if (owns()) {
+                    handler.onToolOutputRisk(messageId, risk)
+                    scheduleCheckpointWrite(immediate = true)
+                }
+            },
             onTurnComplete = {
                 if (owns()) {
                     handler.onTurnComplete(messageId)
@@ -3910,11 +4073,17 @@ class ChatViewModel : ViewModel() {
             onInteractionRequest = { ask ->
                 if (owns()) presentInteractionAsk(handler, ask)
             },
-            onStatusUpdate = { _, text ->
+            onInteractionExpired = { expiry ->
+                if (owns()) expirePendingAsk(expiry)
+            },
+            onStatusUpdate = { kind, text ->
                 if (owns()) {
-                    handler.setTurnStatus(text)
+                    handler.setTurnStatus(text, kind)
                     if (text.trimStart().startsWith("❌")) handler.markError(messageId)
                 }
+            },
+            onStatusClear = { kind ->
+                if (owns()) handler.clearTurnStatus(kind)
             },
         )
     }
@@ -5760,6 +5929,10 @@ class ChatViewModel : ViewModel() {
                         onToolCallStart = onToolCallStartCb,
                         onToolCallDone = onToolCallDoneCb,
                         onToolCallFailed = onToolCallFailedCb,
+                        onToolOutputRisk = { risk ->
+                            handler.onToolOutputRisk(currentMessageId, risk)
+                            scheduleCheckpointWrite(immediate = true)
+                        },
                         onTurnComplete = onTurnCompleteCb,
                         onComplete = onCompleteCb,
                         onUsage = onUsageCb,
@@ -5775,14 +5948,20 @@ class ChatViewModel : ViewModel() {
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)
                         },
-                        onStatusUpdate = { _, text ->
-                            handler.setTurnStatus(text)
+                        onInteractionExpired = { expiry ->
+                            expirePendingAsk(expiry)
+                        },
+                        onStatusUpdate = { kind, text ->
+                            handler.setTurnStatus(text, kind)
                             // The server prefixes terminal failures with ❌ —
                             // stamp the turn so a failed reply doesn't read as
                             // a normal answer.
                             if (text.trimStart().startsWith("❌")) {
                                 handler.markError(currentMessageId)
                             }
+                        },
+                        onStatusClear = { kind ->
+                            handler.clearTurnStatus(kind)
                         },
                     ),
                     attachments = attachments.orEmpty()

@@ -138,6 +138,8 @@ data class SessionItem(
     @Serializable(with = FlexibleIdNonNullSerializer::class)
     val id: String = "",
     val title: String? = null,
+    /** Upstream's first-user-message label when no persisted title exists. */
+    val preview: String? = null,
     val model: String? = null,
     val source: String? = null,
     @SerialName("started_at")

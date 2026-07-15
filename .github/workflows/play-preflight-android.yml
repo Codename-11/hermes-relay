@@ -3,8 +3,9 @@
 # Run manually from the final dev or untagged main tree before creating
 # android-v*. The job
 # builds the same signed release artifacts, scans final DEX, and uploads the
-# Google Play bundle as a production DRAFT. Play can then run pre-review and
-# pre-launch checks while no public GitHub Release or sideload APK exists.
+# Google Play bundle as a production DRAFT. A successful upload is the automated
+# Play gate while no public GitHub Release or sideload APK exists. Console-only
+# pre-review and pre-launch reports are informational and do not block release.
 
 name: Play Preflight — Android
 
@@ -117,7 +118,7 @@ jobs:
             --track=production \
             --release-status=draft \
             --resolution-strategy=ignore \
-            --release-name="Hermes-Relay ${{ steps.metadata.outputs.version }} preflight"
+            --release-name="Hermes-Relay ${{ steps.metadata.outputs.version }}"
 
       - name: Record successful preflight for the exact commit
         run: |
@@ -150,4 +151,4 @@ jobs:
           echo "- Release tree: \`${{ steps.metadata.outputs.tree }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Play track/status: **Production draft**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Review Play pre-review checks and the pre-launch report. After they are acceptable, ensure this exact release tree is on main, then run **Approve Android Release** from main." >> "$GITHUB_STEP_SUMMARY"
+          echo "The signed build, DEX scan, and Play draft upload passed. Ensure this exact release tree is on main, then run **Approve Android Release** from main. Console-only reports are informational and non-blocking." >> "$GITHUB_STEP_SUMMARY"

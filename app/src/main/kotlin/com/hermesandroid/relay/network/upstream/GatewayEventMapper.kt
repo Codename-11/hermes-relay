@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * Maps tui_gateway events for ONE chat turn onto [GatewayTurnCallbacks].
@@ -35,6 +36,8 @@ class GatewayEventMapper(
     private var sawTextDelta = false
     private var sawThinkingDelta = false
     private var syntheticToolCounter = 0
+    private var providerWaitStatusActive = false
+    private var compactionStatusActive = false
 
     /**
      * `tool.complete` events match their `tool.start` by `tool_id`; when a
@@ -54,11 +57,26 @@ class GatewayEventMapper(
     fun onEvent(type: String, payload: JsonObject?) {
         if (turnEnded) return
         when (type) {
-            "reasoning.delta", "thinking.delta" -> {
+            "reasoning.delta" -> {
                 val text = payload.string("text")
                 if (!text.isNullOrEmpty()) {
+                    clearActivityStatuses()
                     sawThinkingDelta = true
                     callbacks.onThinkingDelta(text)
+                }
+            }
+
+            "thinking.delta" -> {
+                val text = payload.string("text")
+                if (!text.isNullOrEmpty()) {
+                    if (isProviderWaitNotice(text)) {
+                        providerWaitStatusActive = true
+                        callbacks.onStatusUpdate(PROVIDER_WAIT_STATUS_KIND, text)
+                    } else {
+                        clearActivityStatuses()
+                        sawThinkingDelta = true
+                        callbacks.onThinkingDelta(text)
+                    }
                 }
             }
 
@@ -66,15 +84,19 @@ class GatewayEventMapper(
             // useful when nothing streamed live.
             "reasoning.available" -> {
                 val text = payload.string("text")
-                if (!text.isNullOrEmpty() && !sawThinkingDelta) {
-                    sawThinkingDelta = true
-                    callbacks.onThinkingDelta(text)
+                if (!text.isNullOrEmpty()) {
+                    clearActivityStatuses()
+                    if (!sawThinkingDelta) {
+                        sawThinkingDelta = true
+                        callbacks.onThinkingDelta(text)
+                    }
                 }
             }
 
             "message.delta" -> {
                 val text = payload.string("text")
                 if (!text.isNullOrEmpty()) {
+                    clearActivityStatuses()
                     sawTextDelta = true
                     callbacks.onTextDelta(text)
                 }
@@ -96,6 +118,7 @@ class GatewayEventMapper(
             }
 
             "tool.generating" -> {
+                clearActivityStatuses()
                 // `{name?}` with NO tool_id — the model is still streaming
                 // this tool's arguments.
                 val name = payload.string("name")
@@ -107,6 +130,7 @@ class GatewayEventMapper(
             }
 
             "tool.start" -> {
+                clearActivityStatuses()
                 val name = payload.string("name") ?: "unknown"
                 // A pending generating placeholder for this name is adopted
                 // (consumed FIFO) whether or not the server sent a real id.
@@ -123,6 +147,7 @@ class GatewayEventMapper(
             }
 
             "tool.complete" -> {
+                clearActivityStatuses()
                 val name = payload.string("name") ?: "unknown"
                 val toolId = payload.string("tool_id")
                     ?: openSyntheticIdsByName[name]?.removeFirstOrNull()
@@ -159,6 +184,7 @@ class GatewayEventMapper(
             "subagent.start", "subagent.thinking", "subagent.tool",
             "subagent.progress", "subagent.complete",
             -> {
+                clearActivityStatuses()
                 val phase = when (type) {
                     "subagent.start" -> GatewaySubagentEvent.Phase.START
                     "subagent.thinking" -> GatewaySubagentEvent.Phase.THINKING
@@ -204,9 +230,38 @@ class GatewayEventMapper(
                     text = listOfNotNull(payload.string("command"), payload.string("description"))
                         .joinToString(" — ")
                         .ifBlank { "a command approval" },
-                    timeoutSeconds = 0,
+                    choices = payload.approvalChoices(),
+                    smartDenied = payload.boolean("smart_denied") == true,
+                    // Current Hermes omits timeout metadata. Keep the legacy
+                    // no-countdown behavior unless a future contract exposes
+                    // the effective per-request timeout explicitly.
+                    timeoutSeconds = payload.int("timeout_seconds") ?: 0,
                 ),
             )
+
+            "tool.output_risk" -> {
+                val toolId = payload.string("tool_id")
+                val risk = payload.string("risk")?.lowercase() ?: return
+                if (!toolId.isNullOrBlank() && risk in OUTPUT_RISK_LEVELS && risk != "low") {
+                    callbacks.onToolOutputRisk(
+                        GatewayToolOutputRisk(
+                            toolCallId = toolId,
+                            toolName = payload.string("name").orEmpty(),
+                            risk = risk,
+                            findings = (payload?.get("findings") as? JsonArray)
+                                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }
+                                ?.filter { it.isNotEmpty() }
+                                ?.distinct()
+                                .orEmpty(),
+                            redacted = payload.boolean("redacted") == true,
+                        ),
+                    )
+                }
+            }
+
+            // MoA activity proves auto-compaction has resumed even though
+            // Android does not currently render these upstream events.
+            "moa.reference", "moa.aggregating", "tool.progress" -> clearActivityStatuses()
 
             "sudo.request" -> callbacks.onInteractionRequest(
                 GatewayAsk(
@@ -228,10 +283,36 @@ class GatewayEventMapper(
                 ),
             )
 
+            "sudo.expire" -> callbacks.onInteractionExpired(
+                GatewayAskExpiry(
+                    kind = GatewayAsk.Kind.SUDO,
+                    requestId = payload.string("request_id"),
+                ),
+            )
+
+            "secret.expire" -> callbacks.onInteractionExpired(
+                GatewayAskExpiry(
+                    kind = GatewayAsk.Kind.SECRET,
+                    requestId = payload.string("request_id"),
+                ),
+            )
+
+            // Forward-compatible consumer for the proposed upstream approval
+            // expiry event. Approvals correlate by session, never request id.
+            "approval.expire" -> callbacks.onInteractionExpired(
+                GatewayAskExpiry(
+                    kind = GatewayAsk.Kind.APPROVAL,
+                    requestId = null,
+                ),
+            )
+
             "status.update" -> {
                 val text = payload.string("text")
                 if (!text.isNullOrBlank()) {
-                    callbacks.onStatusUpdate(payload.string("kind"), text)
+                    providerWaitStatusActive = false
+                    val kind = payload.string("kind")
+                    compactionStatusActive = kind == COMPACTION_STATUS_KIND
+                    callbacks.onStatusUpdate(kind, text)
                 }
             }
 
@@ -248,7 +329,49 @@ class GatewayEventMapper(
         return id
     }
 
+    private fun clearProviderWaitStatus() {
+        if (!providerWaitStatusActive) return
+        providerWaitStatusActive = false
+        callbacks.onStatusClear(PROVIDER_WAIT_STATUS_KIND)
+    }
+
+    private fun clearActivityStatuses() {
+        clearProviderWaitStatus()
+        if (!compactionStatusActive) return
+        compactionStatusActive = false
+        callbacks.onStatusClear(COMPACTION_STATUS_KIND)
+    }
+
+    private fun JsonObject?.approvalChoices(): List<String>? =
+        (this?.get("choices") as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
+            ?.filter { it in APPROVAL_CHOICES }
+            ?.distinct()
+            ?.takeIf { it.isNotEmpty() }
+
+    private fun JsonObject?.boolean(key: String): Boolean? =
+        (this?.get(key) as? JsonPrimitive)?.booleanOrNull
+
     companion object {
+        const val PROVIDER_WAIT_STATUS_KIND = "provider_wait"
+        const val COMPACTION_STATUS_KIND = "compacting"
+        private val APPROVAL_CHOICES = setOf("once", "session", "always", "deny")
+        private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
+
+        /**
+         * Hermes 2026-07-15 emits these operational wait lines through the
+         * legacy `thinking.delta` display callback. Match the deliberately
+         * narrow canonical prefixes so genuine legacy model thinking still
+         * remains durable reasoning.
+         */
+        fun isProviderWaitNotice(text: String): Boolean {
+            val normalized = text.trimStart()
+            return normalized.startsWith("⏳ waiting on ") ||
+                normalized.startsWith("⚠ no response from provider in ") ||
+                normalized.startsWith("⚠ no output from provider for ") ||
+                normalized.startsWith("↻ model returned reasoning with no final answer — asking it to continue")
+        }
+
         /**
          * `message.complete.usage` uses tui_gateway's own key names
          * (`input`/`output`/`total`, with `prompt`/`completion` as the raw

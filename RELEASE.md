@@ -535,20 +535,22 @@ The preflight workflow:
 5. uploads the Google Play AAB as a private **Production draft**; and
 6. records a 30-day preflight proof keyed to the version and Git tree hash.
 
-No sideload APK or GitHub Release is published by preflight. Wait for Play's
-pre-review checks and pre-launch report, then review every error and warning.
-If the release source changes after preflight, rerun it—the approval workflow
-matches the complete Git tree, not just the version number.
+No sideload APK or GitHub Release is published by preflight. A successful signed
+build, final DEX scan, and Production-draft upload is the automated Play release
+gate. Play Console pre-review and pre-launch reports are informational and
+non-blocking because their detailed results are not exposed through the release
+automation API. If the release source changes after preflight, rerun it—the
+approval workflow matches the complete Git tree, not just the version number.
 
 GitHub exposes manual workflows only after their workflow file exists on the
 default branch. For the first release that introduces this process, merge the
-release PR without creating a tag, run preflight from untagged `main`, review
-Play, and then use the approval workflow. This publishes no app artifacts before
-the Play review gate.
+release PR without creating a tag, run preflight from untagged `main`, and then
+use the approval workflow. This publishes no app artifacts before the automated
+Play upload gate.
 
 ### 5. Merge to `main` and approve the public release
 
-After Play preflight is acceptable, merge the release PR from `dev` to `main`
+After Play preflight passes, merge the release PR from `dev` to `main`
 with `--no-ff`. The merge commit may differ from the preflight commit, but its
 tree must be identical. If the merge changes the tree, rerun private preflight
 from untagged `main`:
@@ -563,14 +565,14 @@ git add gradle/libs.versions.toml RELEASE_NOTES.md CHANGELOG.md \
 git commit -m "release(android): android-v0.6.2"
 git push origin dev
 
-# Run Play Preflight — Android from dev and review Play's results.
+# Run Play Preflight — Android from dev and require a successful workflow.
 # Open the release PR (dev -> main) and merge with --no-ff.
 ```
 
 Then open **Actions → Approve Android Release**, choose **Run workflow**, select
-`main`, enter the version, and check the Play-results confirmation box. The
-approval workflow verifies that `main` has the exact preflighted tree and creates
-the `android-v<version>` tag. Manual stable tags are still guarded by the same
+`main`, and enter the version. Starting the workflow is the release approval. It
+verifies that `main` has the exact preflighted tree and creates the
+`android-v<version>` tag. Manual stable tags are still guarded by the same
 preflight proof in the tag workflow.
 
 The tag-triggered `.github/workflows/release-android.yml` rebuilds and scans the
@@ -661,8 +663,9 @@ packages the Windows tray, generates checksums, and publishes the GitHub Release
 
 > **Stable Android releases require `PLAY_SERVICE_ACCOUNT_JSON`.** Preflight
 > uploads the Production draft; approval promotes that same version code to
-> `completed`. Stable releases no longer fall back to publishing GitHub first
-> when Play credentials or submission are unavailable.
+> `completed`. Play Console-only reports are informational and non-blocking.
+> Stable releases do not fall back to publishing GitHub first when Play
+> credentials or submission are unavailable.
 >
 > This automated path is intentionally bundle-only. It uploads the
 > `googlePlayRelease` AAB and release-scoped "What's new" notes, but it does

@@ -1,1 +1,1 @@
-Spanish is now available throughout Hermes-Relay from Settings > Appearance. Diagnostics can refresh Relay plugin, protocol, capability, and profile status, and What’s New now opens the full release history. Translation freshness checks make future language updates safer.
+Switch chats or profiles without stopping a running Gateway reply, then return and reattach to its live progress. Expired secret and sudo prompts no longer remain actionable, and provider wait or reconnect notices stay in the live status line instead of cluttering the conversation.

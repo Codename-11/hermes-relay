@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,7 +50,11 @@ fun CompactToolCall(
         String.format("%.1fs", seconds)
     } else null
     val durationDescription = duration?.let { stringResource(R.string.tool_duration_a11y, it) }.orEmpty()
-    val toolDescription = stringResource(R.string.tool_a11y, toolCall.name, statusText, durationDescription)
+    val riskDescription = toolCall.outputRisk?.let {
+        stringResource(R.string.tool_output_risk_a11y, it)
+    }.orEmpty()
+    val toolDescription = stringResource(R.string.tool_a11y, toolCall.name, statusText, durationDescription) +
+        riskDescription
 
     Row(
         modifier = modifier
@@ -132,6 +137,19 @@ fun CompactToolCall(
                 text = duration,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (toolCall.outputRisk != null) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = stringResource(
+                    R.string.tool_output_risk_badge,
+                    toolCall.outputRisk.uppercase(),
+                ),
+                modifier = Modifier.size(12.dp),
+                tint = MaterialTheme.colorScheme.error,
             )
         }
     }
