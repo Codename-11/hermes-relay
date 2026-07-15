@@ -22,5 +22,5 @@ This patch keeps Gateway chats running when you switch sessions, clears expired 
 
 ## Install / Verify
 
-- App version: **1.4.5** (versionCode **27**).
+- App version: **1.4.5** (versionCode **28**).
 - Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.
