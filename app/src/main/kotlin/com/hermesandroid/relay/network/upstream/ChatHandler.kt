@@ -1673,12 +1673,16 @@ class ChatHandler {
             val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
             val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
             val serverTitle = item.title?.takeIf { it.isNotBlank() }
+            val serverPreview = item.preview?.takeIf { it.isNotBlank() }
             // A user-chosen Thread name is authoritative (Discord-style): it
             // overrides the server's auto-title so the gateway's async auto-titler
-            // can't clobber the name the user set.
+            // can't clobber the name the user set. A known local preview remains
+            // ahead of the server's truncated first-message preview; the latter is
+            // the standard upstream/Desktop fallback for historical untitled rows.
             val resolvedTitle = userThreadNames[item.id]
                 ?: serverTitle
                 ?: existingById[item.id]?.title?.takeIf { it.isNotBlank() }
+                ?: serverPreview
             ChatSession(
                 sessionId = item.id,
                 title = resolvedTitle,
