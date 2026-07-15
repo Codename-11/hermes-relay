@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Android 1.4.5 release and automated Play gate
+
+Android 1.4.5 shipped as versionCode 28 after the signed release build, final
+DEX compatibility scan, and Production-draft upload passed for the exact Git
+tree later tagged `android-v1.4.5`. Release approval promoted that same Play
+artifact to Production review before publishing the GitHub sideload APK, AAB,
+and checksums.
+
+The release workflow now treats Play upload and promotion acceptance as its
+automated store gate. Play Console-only pre-review and pre-launch reports remain
+informational because their detailed results are not available to the release
+automation. The Play release display name is the final product version at every
+stage, without an internal preflight suffix.
+
 ## 2026-07-15 — Gateway safety and lifecycle parity
 
 Android gateway chat now clears only a live `compacting` status when model,
