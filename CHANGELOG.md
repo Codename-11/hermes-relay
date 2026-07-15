@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Profile display order and visibility are customizable per connection.** The profile manager can reorder every profile, including Server default, selectively hide inactive profiles, restore hidden active profiles, and reset the saved presentation without changing server configuration.
+- **Agent icons can be imported from their Hermes profile directory.** A paired Android client discovers conventional host files such as `avatar.png` or `profile.jpg`, validates them through the optional Relay, and stores a per-connection/profile copy on the phone.
 
 ### Fixed
 

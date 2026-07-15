@@ -2320,6 +2320,118 @@ def _resolve_profile_home(server: "RelayServer", name: str) -> Path | None:
     return home if home.is_dir() else None
 
 
+_PROFILE_AVATAR_STEMS = (
+    "avatar",
+    "profile",
+    "profile-image",
+    "profile_image",
+    "agent",
+    "icon",
+)
+_PROFILE_AVATAR_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+
+def _discover_profile_avatar(home: Path) -> Path | None:
+    """Return the highest-priority conventional image in ``home``.
+
+    Matching is case-insensitive and intentionally limited to direct children
+    of the profile directory. This keeps discovery predictable and avoids a
+    recursive walk through memories, skills, sessions, or generated media.
+    """
+    try:
+        files: dict[str, Path] = {}
+        for child in sorted(home.iterdir(), key=lambda path: path.name.lower()):
+            if child.is_file():
+                files.setdefault(child.name.lower(), child)
+    except OSError:
+        return None
+
+    for stem in _PROFILE_AVATAR_STEMS:
+        for suffix in _PROFILE_AVATAR_SUFFIXES:
+            candidate = files.get(f"{stem}{suffix}")
+            if candidate is not None:
+                return candidate
+    return None
+
+
+async def handle_profile_avatar(request: web.Request) -> web.StreamResponse:
+    """Serve a conventional profile/avatar image from a Hermes profile home.
+
+    ``GET /api/profiles/{name}/avatar`` searches the profile directory for a
+    direct-child image such as ``avatar.png`` or ``profile.jpg``. Remote callers
+    require the existing Relay session bearer; loopback callers may omit it,
+    matching the other profile read endpoints.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    if name == "default":
+        # The synthetic default row follows Hermes' sticky active_profile
+        # marker. Keep avatar discovery aligned with the identity advertised in
+        # auth.ok without changing the older profile inspector/write routes.
+        from .config import _effective_default_profile_home
+
+        home = _effective_default_profile_home(home)
+
+    avatar_path = _discover_profile_avatar(home)
+    if avatar_path is None:
+        return web.json_response(
+            {
+                "error": "profile_avatar_not_found",
+                "profile": name,
+                "expected_names": [
+                    f"{stem}{suffix}"
+                    for stem in ("avatar", "profile")
+                    for suffix in _PROFILE_AVATAR_SUFFIXES
+                ],
+            },
+            status=404,
+        )
+
+    # Resolve symlinks and enforce both the profile-home boundary and the
+    # relay's configured media-size cap before serving bytes to the phone.
+    try:
+        real_path, _size = validate_media_path(
+            str(avatar_path),
+            [str(home.resolve())],
+            server.media.max_size_bytes,
+        )
+    except MediaRegistrationError as exc:
+        logger.info("Profile avatar rejected for %r: %s", name, exc)
+        raise web.HTTPForbidden(text=str(exc))
+
+    content_type = _sniff_image_mime(real_path)
+    if content_type is None:
+        return web.json_response(
+            {
+                "error": "profile_avatar_invalid",
+                "profile": name,
+                "detail": "discovered file is not a supported image",
+            },
+            status=415,
+        )
+
+    safe_name = os.path.basename(real_path).replace('"', "")
+    return web.FileResponse(
+        real_path,
+        headers={
+            "Content-Type": content_type,
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+        },
+    )
+
+
 def _parse_skill_frontmatter(text: str) -> dict[str, Any]:
     """Best-effort parse of the leading ``---`` YAML frontmatter block.
 
@@ -4248,6 +4360,9 @@ def create_app(config: RelayConfig) -> web.Application:
     # Profile-scoped read-only config + skills (§22).
     app.router.add_get(
         "/api/profiles/{name}/config", handle_profile_config
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/avatar", handle_profile_avatar
     )
     app.router.add_get(
         "/api/profiles/{name}/skills", handle_profile_skills

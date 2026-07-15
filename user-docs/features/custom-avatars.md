@@ -13,6 +13,23 @@ Appearance is two stacked choices:
 
 So the flow is: choose an avatar, and if that avatar is the Sphere, optionally choose a skin.
 
+## Profile badge image
+
+The small face shown beside the active agent name is configured separately from
+the full animated avatar. Open the agent sheet from Chat and use **Agent icon**:
+
+- **Set image** chooses an image from your phone.
+- **Import from agent host** copies a conventional image from the active Hermes
+  profile on a paired Relay host. Put `avatar.png`, `avatar.jpg`, `profile.png`,
+  or `profile.jpg` directly in `~/.hermes/` for the root Server default, or in
+  `~/.hermes/profiles/<name>/` for a named profile. If Hermes' `active_profile`
+  marker selects a named profile as Server default, use that named profile's
+  directory. JPEG, PNG, WebP, and GIF are supported, including `.jpeg`.
+
+The imported copy stays on the phone and is scoped to that Connection and
+profile. Changing or removing the host file later does not silently change the
+phone icon; tap import again to refresh it.
+
 ## Choosing an avatar
 
 Open **Settings → Appearance → Agent avatar**. The Sphere is always the first chip; any valid pets you've installed appear beside it. Selecting a chip switches every surface — chat, clean mode, voice, onboarding, splash — at once.

@@ -38,6 +38,7 @@ import java.io.File
 @Composable
 fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
     val iconPath by connectionViewModel.profileIcon.collectAsState()
+    val hostImportState by connectionViewModel.hostProfileIconImportState.collectAsState()
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? -> uri?.let { connectionViewModel.setProfileIcon(it) } }
@@ -77,6 +78,25 @@ fun AgentIconRow(connectionViewModel: ConnectionViewModel) {
                     Text(stringResource(R.string.agent_icon_clear))
                 }
             }
+        }
+        OutlinedButton(
+            onClick = { connectionViewModel.importProfileIconFromHost() },
+            enabled = !hostImportState.loading,
+        ) {
+            Text(
+                if (hostImportState.loading) {
+                    stringResource(R.string.agent_icon_importing_host)
+                } else {
+                    stringResource(R.string.agent_icon_import_host)
+                }
+            )
+        }
+        hostImportState.error?.let { error ->
+            Text(
+                text = error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
         Text(
             text = stringResource(R.string.agent_icon_description),

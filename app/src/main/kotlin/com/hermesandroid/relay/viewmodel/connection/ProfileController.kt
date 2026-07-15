@@ -18,6 +18,7 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.relay.RelayHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -87,6 +88,8 @@ class ProfileController(
     private val legacyDefaultSessionId: suspend () -> String?,
     /** Rebuilds the per-profile chat API client. */
     private val rebuildChatApiClient: suspend () -> Unit,
+    /** Optional Relay client used only for importing an icon from the host. */
+    private val relayHttpClient: RelayHttpClient? = null,
 ) {
 
     // Server-advertised named agent configs, flattened to a StateFlow the
@@ -228,6 +231,15 @@ class ProfileController(
         }
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
+    data class HostIconImportState(
+        val loading: Boolean = false,
+        val error: String? = null,
+    )
+
+    private val _hostIconImportState = MutableStateFlow(HostIconImportState())
+    val hostIconImportState: StateFlow<HostIconImportState> =
+        _hostIconImportState.asStateFlow()
+
     /**
      * Load the host's agent profiles from the dashboard `/api/profiles` into
      * [agentProfiles] (merged in the combine above). Lets the chat agent sheet
@@ -289,6 +301,40 @@ class ProfileController(
         }
     }
 
+    /** Import the active profile's conventional avatar file from its host. */
+    fun importProfileIconFromHost() {
+        val connectionId = activeConnectionId.value ?: return
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        val client = relayHttpClient
+        if (client == null) {
+            _hostIconImportState.value = HostIconImportState(
+                error = "Relay is not available for host image import"
+            )
+            return
+        }
+        scope.launch {
+            _hostIconImportState.value = HostIconImportState(loading = true)
+            client.fetchProfileAvatar(profileName).fold(
+                onSuccess = { media ->
+                    val path = copyIconBytes(connectionId, profileName, media.bytes)
+                    if (path == null) {
+                        _hostIconImportState.value = HostIconImportState(
+                            error = "Could not save the imported profile image"
+                        )
+                    } else {
+                        profileIconStore.setIcon(connectionId, profileName, path)
+                        _hostIconImportState.value = HostIconImportState()
+                    }
+                },
+                onFailure = { failure ->
+                    _hostIconImportState.value = HostIconImportState(
+                        error = failure.message ?: "Host profile image import failed"
+                    )
+                },
+            )
+        }
+    }
+
     fun clearProfileIcon() {
         val connectionId = activeConnectionId.value ?: return
         val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
@@ -318,6 +364,23 @@ class ProfileController(
                 null
             }
         }
+
+    private suspend fun copyIconBytes(
+        connectionId: String,
+        profileName: String?,
+        bytes: ByteArray,
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val dir = File(context.filesDir, "profile-icons").apply { mkdirs() }
+            val key = AgentDisplay.profileSessionKey(profileName)
+            val safe = "${connectionId}_$key"
+                .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
+                .joinToString("")
+            File(dir, "$safe.png").also { it.writeBytes(bytes) }.absolutePath
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     /**
      * The stored lock-token for a (possibly null) profile. Server default —
