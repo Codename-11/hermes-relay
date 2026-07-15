@@ -1,0 +1,745 @@
+---
+interface Props {
+  variant?: 'ambient' | 'voice';
+}
+
+const { variant = 'ambient' } = Astro.props;
+---
+
+<div
+  class:list={['morphing-sphere', `morphing-sphere--${variant}`]}
+  data-morphing-sphere
+  data-variant={variant}
+  role={variant === 'voice' ? 'img' : undefined}
+  aria-label={variant === 'voice' ? 'Hermes voice mode cycling through listening, thinking, and speaking' : undefined}
+  aria-hidden={variant === 'ambient' ? 'true' : undefined}
+>
+  {variant === 'voice' && (
+    <header class="voice-demo-header">
+      <span><i class="ph ph-waveform" aria-hidden="true"></i> Voice</span>
+      <small>Realtime Agent / default profile</small>
+      <span class="voice-demo-header-actions" aria-hidden="true">
+        <i class="ph ph-caret-down"></i>
+        <i class="ph ph-x"></i>
+      </span>
+    </header>
+  )}
+  {variant === 'voice' ? (
+    <div class="voice-demo-stage">
+      <canvas class="sphere-canvas"></canvas>
+      <canvas class="waveform-canvas" aria-hidden="true"></canvas>
+      <div class="voice-transcript" aria-live="polite" aria-label="Live voice transcript">
+        <div class="voice-transcript-row">
+          <span class="voice-transcript-label voice-transcript-label--you">YOU</span>
+          <p data-voice-user></p>
+        </div>
+        <div class="voice-transcript-row" data-voice-agent-row>
+          <span class="voice-transcript-label voice-transcript-label--agent">AGENT</span>
+          <p><span data-voice-stream></span><i class="voice-stream-caret" aria-hidden="true"></i></p>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <canvas class="sphere-canvas"></canvas>
+  )}
+  {variant === 'voice' && (
+    <footer class="voice-demo-footer">
+      <span data-voice-instruction>Listening… tap to stop</span>
+      <span class="voice-mic voice-mic--active" aria-hidden="true">
+        <i class="ph ph-stop"></i>
+      </span>
+    </footer>
+  )}
+</div>
+
+<script>
+  import { SphereState, colorsFor, fbm, forEachSphereCell, paramsFor } from '../../../preview/web/sphere.js';
+
+  const COLS = 58;
+  const ROWS = 34;
+  const TAU = Math.PI * 2;
+  const WAVE_FREQUENCIES = [1.2, 2.1, 3.4];
+  const WAVE_SCALES = [1, 0.7, 0.4];
+  const WAVE_ALPHAS = [1, 0.8, 0.6];
+  const WAVE_DURATIONS = [2, 1.4, 0.95];
+
+  const voiceInstructions: Record<string, string> = {
+    [SphereState.Idle]: 'Tap the mic to speak',
+    [SphereState.Listening]: 'Listening… tap to stop',
+    [SphereState.Thinking]: 'Thinking… tap to cancel',
+    [SphereState.Speaking]: 'Speaking… tap to interrupt',
+  };
+
+  const voiceUserText = 'Give me a quick status update.';
+  const voiceAgentText = 'Everything is connected. Your relay is online and ready when you are.';
+
+  const voiceScene = (elapsed: number): { state: string; amplitude: number; cycleTime: number } => {
+    const t = elapsed % 14;
+    const speechEnvelope = (offset: number) => Math.min(
+      1,
+      0.12
+        + Math.abs(Math.sin(elapsed * 2.15 + offset)) * 0.34
+        + Math.abs(Math.sin(elapsed * 4.73 + offset * 0.7)) * 0.18
+        + Math.abs(Math.sin(elapsed * 7.31 + offset * 1.4)) * 0.08,
+    );
+    if (t < 4) return { state: SphereState.Listening, amplitude: speechEnvelope(0.8) * 0.72, cycleTime: t };
+    if (t < 6.2) return { state: SphereState.Thinking, amplitude: 0.04, cycleTime: t };
+    if (t < 11.4) return { state: SphereState.Speaking, amplitude: speechEnvelope(2.1) * 0.82, cycleTime: t };
+    return { state: SphereState.Idle, amplitude: 0.04, cycleTime: t };
+  };
+
+  const transcriptFrame = (cycleTime: number, reduceMotion: boolean) => {
+    if (reduceMotion) {
+      return { user: voiceUserText, agent: voiceAgentText, thinking: false };
+    }
+    if (cycleTime < 4) {
+      const count = Math.min(voiceUserText.length, Math.floor((cycleTime / 3.35) * voiceUserText.length));
+      return { user: voiceUserText.slice(0, count), agent: '', thinking: false };
+    }
+    if (cycleTime < 6.2) {
+      return { user: voiceUserText, agent: 'Thinking…', thinking: true };
+    }
+    if (cycleTime < 11.4) {
+      const count = Math.min(voiceAgentText.length, Math.floor(((cycleTime - 6.2) / 4.55) * voiceAgentText.length));
+      return { user: voiceUserText, agent: voiceAgentText.slice(0, count), thinking: false };
+    }
+    return { user: voiceUserText, agent: voiceAgentText, thinking: false };
+  };
+
+  class Tween {
+    current: number;
+    target: number;
+    start: number;
+    startTime: number;
+    duration: number;
+
+    constructor(value: number) {
+      this.current = value;
+      this.target = value;
+      this.start = value;
+      this.startTime = 0;
+      this.duration = 0.8;
+    }
+
+    setTarget(value: number, nowSec: number, duration = 0.8) {
+      if (value === this.target) return;
+      this.start = this.current;
+      this.target = value;
+      this.startTime = nowSec;
+      this.duration = duration;
+    }
+
+    update(nowSec: number) {
+      if (this.duration <= 0) {
+        this.current = this.target;
+        return;
+      }
+      const t = Math.min(1, Math.max(0, (nowSec - this.startTime) / this.duration));
+      const eased = fastOutSlowIn(t);
+      this.current = this.start + (this.target - this.start) * eased;
+    }
+  }
+
+  const fastOutSlowIn = (t: number): number => {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    const cx = 1.2;
+    const bx = -0.6 - cx;
+    const ax = 1 - cx - bx;
+    const cy = 0;
+    const by = 3 - cy;
+    const ay = 1 - cy - by;
+    let u = t;
+    for (let index = 0; index < 6; index += 1) {
+      const x = ((ax * u + bx) * u + cx) * u;
+      const dx = (3 * ax * u + 2 * bx) * u + cx;
+      if (Math.abs(dx) < 1e-6) break;
+      u -= (x - t) / dx;
+    }
+    return ((ay * u + by) * u + cy) * u;
+  };
+
+  const syncCanvas = (canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.max(1, Math.round(rect.width * dpr));
+    const height = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const context = canvas.getContext('2d');
+    context?.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { context, width: rect.width, height: rect.height };
+  };
+
+  const visualFor = (state: string): Record<string, number> => {
+    const params = paramsFor(state);
+    const colors = colorsFor(state);
+    return {
+      ...params,
+      cr1: colors.r1,
+      cg1: colors.g1,
+      cb1: colors.b1,
+      cr2: colors.r2,
+      cg2: colors.g2,
+      cb2: colors.b2,
+    };
+  };
+
+  const createSphereRig = (state: string): Record<string, Tween> => {
+    const rig: Record<string, Tween> = {};
+    Object.entries(visualFor(state)).forEach(([key, value]) => {
+      rig[key] = new Tween(value);
+    });
+    rig.intensity = new Tween(0);
+    return rig;
+  };
+
+  const retargetSphere = (rig: Record<string, Tween>, state: string, nowSec: number) => {
+    Object.entries(visualFor(state)).forEach(([key, value]) => rig[key]?.setTarget(value, nowSec));
+    rig.intensity?.setTarget(state === SphereState.Speaking ? 0.4 : 0, nowSec, 0.4);
+  };
+
+  const updateSphereRig = (rig: Record<string, Tween>, nowSec: number): Record<string, number> => {
+    const values: Record<string, number> = {};
+    Object.entries(rig).forEach(([key, tween]) => {
+      tween.update(nowSec);
+      values[key] = tween.current;
+    });
+    return values;
+  };
+
+  const drawSphere = (
+    canvas: HTMLCanvasElement,
+    state: string,
+    elapsed: number,
+    amplitude: number,
+    ambient: boolean,
+    visual: Record<string, number>,
+    gaze = { x: 0, y: 0, blend: 0 },
+  ) => {
+    const { context: ctx, width, height } = syncCanvas(canvas);
+    if (!ctx || !width || !height) return;
+    const cellW = width / COLS;
+    const cellH = height / ROWS;
+    const charSize = Math.min(cellW * 1.3, cellH * 1.1);
+    const colorPhase = (((elapsed * 1000) % 8000) / 8000) * TAU;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.font = `${charSize}px "Space Mono", ui-monospace, monospace`;
+    ctx.textBaseline = 'alphabetic';
+
+    const frame = {
+      cols: COLS,
+      rows: ROWS,
+      charAspect: cellW / cellH,
+      state,
+      time: elapsed,
+      colorPhase,
+      ...visual,
+      intensity: ambient ? 0.16 : visual.intensity,
+      toolCallBurst: 0,
+      voiceAmplitude: amplitude,
+      voiceMode: !ambient,
+      voiceRadiusScale: !ambient ? 1.34 : 1,
+      lightAngleBiasX: gaze.x,
+      lightAngleBiasY: gaze.y,
+      lightAngleBlend: gaze.blend,
+      shadowStrength: ambient ? 0.6 : 0,
+    };
+
+    forEachSphereCell(frame, (col: number, row: number, ch: string, r: number, g: number, b: number, a: number) => {
+      ctx.fillStyle = `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a.toFixed(3)})`;
+      ctx.fillText(ch, col * cellW, row * cellH + cellH * 0.8);
+    });
+  };
+
+  const waveformPalette = (state: string): [number[], number[]] => {
+    if (state === SphereState.Speaking) return [[64, 235, 140], [77, 217, 224]];
+    if (state === SphereState.Listening) return [[89, 126, 242], [165, 115, 242]];
+    return [[111, 113, 128], [150, 152, 168]];
+  };
+
+  interface WaveFrame {
+    phases: number[];
+    spinnerPhase: number;
+    unfold: number;
+    primary: number[];
+    secondary: number[];
+  }
+
+  const drawWaveform = (
+    canvas: HTMLCanvasElement,
+    amplitude: number,
+    wave: WaveFrame,
+  ) => {
+    const { context: ctx, width, height } = syncCanvas(canvas);
+    if (!ctx || !width || !height) return;
+    ctx.clearRect(0, 0, width, height);
+
+    const primary = `rgb(${wave.primary.map(Math.round).join(',')})`;
+    const secondary = `rgb(${wave.secondary.map(Math.round).join(',')})`;
+    const centerY = height / 2;
+    const peak = height * 0.55;
+    const spinnerAlpha = 1 - wave.unfold;
+
+    if (spinnerAlpha > 0.01) {
+      const radius = Math.min(width, height) * 0.24;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 3.4;
+      ctx.strokeStyle = primary;
+      ctx.globalAlpha = spinnerAlpha * 0.82;
+      ctx.beginPath();
+      ctx.arc(width / 2, centerY, radius, wave.spinnerPhase, wave.spinnerPhase + (82 + amplitude * 64) * Math.PI / 180);
+      ctx.stroke();
+      ctx.globalAlpha = spinnerAlpha * 0.58;
+      ctx.strokeStyle = secondary;
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.arc(width / 2, centerY, radius, wave.spinnerPhase + 152 * Math.PI / 180, wave.spinnerPhase + (194 + amplitude * 36) * Math.PI / 180);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    if (wave.unfold <= 0.01) return;
+
+    const gradient = ctx.createLinearGradient(0, 0, width, 0);
+    gradient.addColorStop(0, primary);
+    gradient.addColorStop(1, secondary);
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+
+    for (let layer = WAVE_FREQUENCIES.length - 1; layer >= 0; layer -= 1) {
+      const envelope = Math.max(amplitude * WAVE_SCALES[layer] * peak, 0.04 * peak * WAVE_SCALES[layer]) * wave.unfold;
+      ctx.globalAlpha = WAVE_ALPHAS[layer] * wave.unfold;
+      ctx.beginPath();
+      for (let x = 0; x <= width; x += 2) {
+        const unit = x / width;
+        const foldedX = width / 2 + (x - width / 2) * wave.unfold;
+        const taper = Math.sin(Math.PI * unit);
+        const y = centerY + Math.sin(unit * WAVE_FREQUENCIES[layer] * TAU + wave.phases[layer]) * envelope * taper;
+        if (x === 0) ctx.moveTo(foldedX, y);
+        else ctx.lineTo(foldedX, y);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.globalCompositeOperation = 'destination-in';
+    const mask = ctx.createLinearGradient(0, 0, width, 0);
+    mask.addColorStop(0, 'rgba(0,0,0,0)');
+    mask.addColorStop(0.12, '#000');
+    mask.addColorStop(0.88, '#000');
+    mask.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = mask;
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+  };
+
+  document.querySelectorAll('[data-morphing-sphere]').forEach((root) => {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === 'true') return;
+    root.dataset.ready = 'true';
+    const sphere = root.querySelector('.sphere-canvas');
+    const waveform = root.querySelector('.waveform-canvas');
+    const instruction = root.querySelector('[data-voice-instruction]');
+    const transcript = root.querySelector('.voice-transcript');
+    const userTranscript = root.querySelector('[data-voice-user]');
+    const agentTranscript = root.querySelector('[data-voice-stream]');
+    const agentRow = root.querySelector('[data-voice-agent-row]');
+    const mic = root.querySelector('.voice-mic');
+    const micIcon = mic?.querySelector('i');
+    const ambient = root.dataset.variant === 'ambient';
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!(sphere instanceof HTMLCanvasElement)) return;
+
+    let visible = true;
+    let listening = false;
+    let frameId = 0;
+    let lastFrame = performance.now();
+    let elapsed = 0;
+    let displayAmplitude = ambient ? 0 : 0.12;
+    let currentState: string = ambient ? SphereState.Idle : SphereState.Listening;
+    const pointer = { x: 0, y: 0, valid: false };
+    let smoothLookX = 0;
+    let smoothLookY = 0;
+    let smoothProximity = 0;
+    const sphereRig = createSphereRig(currentState);
+    const phases = [0, 0, 0];
+    let spinnerPhase = 0;
+    const unfold = new Tween(currentState === SphereState.Thinking ? 0 : 1);
+    const initialPalette = waveformPalette(currentState);
+    const paletteRig = {
+      primary: initialPalette[0].map((channel) => new Tween(channel)),
+      secondary: initialPalette[1].map((channel) => new Tween(channel)),
+    };
+
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = Boolean(entry?.isIntersecting);
+    });
+    observer.observe(root);
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!ambient || event.pointerType !== 'mouse') return;
+      pointer.x = event.clientX;
+      pointer.y = event.clientY;
+      pointer.valid = true;
+    };
+    const onPointerLeave = () => { pointer.valid = false; };
+    if (ambient) {
+      window.addEventListener('pointermove', onPointerMove, { passive: true });
+      document.addEventListener('pointerleave', onPointerLeave);
+    }
+
+    const render = (now: number) => {
+      frameId = requestAnimationFrame(render);
+      const deltaSeconds = Math.min(0.1, (now - lastFrame) / 1000);
+      lastFrame = now;
+      if (!visible || document.hidden) return;
+      if (!reduceMotion) elapsed += deltaSeconds;
+      let gaze = { x: 0, y: 0, blend: 0 };
+      if (ambient) {
+        const rect = root.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const focus = document.querySelector<HTMLElement>('#android');
+        const viewportHeight = window.innerHeight;
+        const focusGap = focus ? focus.getBoundingClientRect().top - viewportHeight : viewportHeight;
+        const scrollLookY = focusGap <= 0 ? 1 : Math.max(0, 1 - focusGap / Math.max(1, viewportHeight * 0.5));
+        let cursorWeight = 0;
+        let cursorX = 0;
+        let cursorY = 0;
+        if (pointer.valid) {
+          const deltaX = pointer.x - centerX;
+          const deltaY = pointer.y - centerY;
+          const halfBand = rect.height / 2;
+          const pastBand = Math.max(0, Math.abs(deltaY) - halfBand);
+          cursorWeight = Math.max(0, 1 - pastBand / Math.max(1, rect.height));
+          const scale = Math.max(1, rect.height / 2);
+          cursorX = Math.max(-1, Math.min(1, deltaX / scale));
+          cursorY = Math.max(-1, Math.min(1, deltaY / scale));
+        }
+        listening = cursorWeight > 0.5;
+        const rawX = cursorX * cursorWeight;
+        const rawY = cursorY * cursorWeight + scrollLookY * (1 - cursorWeight);
+        const rawProximity = 0.75 + 0.25 * cursorWeight;
+        const lookBlend = reduceMotion ? 1 : 1 - Math.exp(-deltaSeconds / 0.18);
+        const proximityBlend = reduceMotion ? 1 : 1 - Math.exp(-deltaSeconds / 0.28);
+        smoothLookX += (rawX - smoothLookX) * lookBlend;
+        smoothLookY += (rawY - smoothLookY) * lookBlend;
+        smoothProximity += (rawProximity - smoothProximity) * proximityBlend;
+        const engagement = Math.min(1, Math.max(0, (smoothProximity - 0.75) * 4));
+        const wander = 0.12 - 0.07 * engagement;
+        const gazeX = Math.max(-0.9, Math.min(0.9, smoothLookX + (fbm(elapsed * 0.05 + 2.1, 7.7, 2) * 2 - 1) * wander));
+        const gazeY = Math.max(-0.9, Math.min(0.9, smoothLookY + (fbm(3.3, elapsed * 0.06 + 11.1, 2) * 2 - 1) * wander));
+        gaze = { x: Math.asin(gazeX), y: Math.acos(gazeY), blend: reduceMotion ? 0 : 1 };
+        sphereRig.intensity?.setTarget(cursorWeight * 0.7, elapsed, 0.4);
+      }
+      const scene = ambient
+        ? { state: listening ? SphereState.Listening : SphereState.Idle, amplitude: listening ? 0.18 : 0, cycleTime: 0 }
+        : voiceScene(elapsed);
+
+      if (scene.state !== currentState) {
+        currentState = scene.state;
+        retargetSphere(sphereRig, currentState, elapsed);
+        const [primary, secondary] = waveformPalette(currentState);
+        primary.forEach((channel, index) => paletteRig.primary[index].setTarget(channel, elapsed, 0.4));
+        secondary.forEach((channel, index) => paletteRig.secondary[index].setTarget(channel, elapsed, 0.4));
+        unfold.setTarget(currentState === SphereState.Thinking ? 0 : 1, elapsed, 0.36);
+      }
+
+      const amplitudeTau = scene.amplitude > displayAmplitude ? 0.08 : 0.24;
+      const amplitudeBlend = reduceMotion ? 1 : 1 - Math.exp(-deltaSeconds / amplitudeTau);
+      displayAmplitude += (scene.amplitude - displayAmplitude) * amplitudeBlend;
+
+      const phaseBoost = 1 + displayAmplitude * 2.5;
+      phases.forEach((phase, index) => {
+        phases[index] = (phase + (TAU / WAVE_DURATIONS[index]) * deltaSeconds * phaseBoost) % TAU;
+      });
+      if (currentState === SphereState.Thinking) {
+        spinnerPhase = (spinnerPhase + deltaSeconds * 220 * Math.PI / 180) % TAU;
+      }
+
+      unfold.update(elapsed);
+      paletteRig.primary.forEach((tween) => tween.update(elapsed));
+      paletteRig.secondary.forEach((tween) => tween.update(elapsed));
+      const visual = updateSphereRig(sphereRig, elapsed);
+
+      drawSphere(sphere, currentState, elapsed, displayAmplitude, ambient, visual, gaze);
+      if (waveform instanceof HTMLCanvasElement) {
+        drawWaveform(waveform, displayAmplitude, {
+          phases,
+          spinnerPhase,
+          unfold: unfold.current,
+          primary: paletteRig.primary.map((tween) => tween.current),
+          secondary: paletteRig.secondary.map((tween) => tween.current),
+        });
+      }
+      if (instruction) instruction.textContent = voiceInstructions[currentState] || voiceInstructions[SphereState.Idle];
+      if (!ambient) {
+        const frame = transcriptFrame(scene.cycleTime, reduceMotion);
+        if (userTranscript && userTranscript.textContent !== frame.user) userTranscript.textContent = frame.user;
+        if (agentTranscript && agentTranscript.textContent !== frame.agent) agentTranscript.textContent = frame.agent;
+        if (agentRow instanceof HTMLElement) {
+          agentRow.dataset.thinking = String(frame.thinking);
+          agentRow.dataset.visible = String(frame.agent.length > 0);
+        }
+        root.dataset.voiceState = currentState.toLowerCase();
+        if (transcript instanceof HTMLElement) transcript.scrollTop = transcript.scrollHeight;
+      }
+      if (mic instanceof HTMLElement) mic.classList.toggle('voice-mic--active', currentState !== SphereState.Idle);
+      if (micIcon instanceof HTMLElement) {
+        micIcon.classList.toggle('ph-stop', currentState !== SphereState.Idle);
+        micIcon.classList.toggle('ph-microphone', currentState === SphereState.Idle);
+      }
+      if (reduceMotion) cancelAnimationFrame(frameId);
+    };
+
+    frameId = requestAnimationFrame(render);
+    window.addEventListener('beforeunload', () => {
+      cancelAnimationFrame(frameId);
+      observer.disconnect();
+      window.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerleave', onPointerLeave);
+    }, { once: true });
+  });
+</script>
+
+<style>
+  .morphing-sphere {
+    position: relative;
+  }
+
+  .sphere-canvas,
+  .waveform-canvas {
+    display: block;
+    width: 100%;
+  }
+
+  .morphing-sphere--ambient {
+    position: absolute;
+    z-index: 0;
+    top: 15%;
+    left: 29%;
+    width: clamp(300px, 25vw, 430px);
+    aspect-ratio: 1;
+    opacity: 0.62;
+    pointer-events: auto;
+    filter: saturate(1.16) brightness(1.08);
+  }
+
+  .morphing-sphere--ambient .sphere-canvas {
+    height: 100%;
+  }
+
+  .morphing-sphere--voice {
+    container-type: inline-size;
+    overflow: hidden;
+    width: 100%;
+    aspect-ratio: 1 / 2;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #07090d;
+  }
+
+  .voice-demo-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: clamp(28px, 15.5cqw, 37px);
+    margin: 3% 4% 0;
+    padding: 0 3.3%;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: #0d0f16;
+    box-shadow: 0 5px 14px -10px rgba(0, 0, 0, 0.9);
+    font-family: var(--mono);
+    line-height: 1;
+  }
+
+  .voice-demo-header span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #f4f1eb;
+    font-size: clamp(0.48rem, 0.7vw, 0.66rem);
+    font-weight: 700;
+  }
+
+  .voice-demo-header i {
+    color: #aebfff;
+  }
+
+  .voice-demo-header small {
+    flex: 1;
+    overflow: hidden;
+    color: #858391;
+    font-size: clamp(0.34rem, 0.48vw, 0.48rem);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .voice-demo-header-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: clamp(2px, 0.35vw, 5px);
+    color: #858391 !important;
+  }
+
+  .voice-demo-header-actions i {
+    color: inherit;
+    font-size: clamp(0.4rem, 0.54vw, 0.54rem);
+  }
+
+  .voice-demo-stage {
+    display: grid;
+    grid-template-rows: minmax(0, 46%) 12% minmax(0, 42%);
+    height: 71%;
+    padding: 2% 7% 0;
+  }
+
+  .morphing-sphere--voice .sphere-canvas {
+    height: 100%;
+  }
+
+  .waveform-canvas {
+    align-self: center;
+    height: 100%;
+  }
+
+  .voice-transcript {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(5px, 0.55vw, 9px);
+    min-height: 0;
+    padding: 5% 1% 1%;
+    overflow: hidden;
+    mask-image: linear-gradient(to bottom, transparent, #000 10%, #000 100%);
+  }
+
+  .voice-transcript-row {
+    width: 100%;
+    text-align: left;
+  }
+
+  .voice-transcript-row[data-visible='false'] {
+    opacity: 0;
+  }
+
+  .voice-transcript-label {
+    display: block;
+    margin-bottom: 2px;
+    font-family: var(--mono);
+    font-size: clamp(0.33rem, 0.43vw, 0.43rem);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+
+  .voice-transcript-label--you {
+    color: #859dff;
+  }
+
+  .voice-transcript-label--agent {
+    color: #58d9d2;
+  }
+
+  .voice-transcript-row p {
+    min-height: 1em;
+    margin: 0;
+    color: #aaa7bd;
+    font-size: clamp(0.4rem, 0.54vw, 0.54rem);
+    line-height: 1.42;
+  }
+
+  .voice-transcript-row[data-voice-agent-row] p {
+    color: #efedf5;
+  }
+
+  .voice-transcript-row[data-thinking='true'] p {
+    color: #aaa7bd;
+    font-family: var(--mono);
+  }
+
+  .voice-stream-caret {
+    display: inline-block;
+    width: 1px;
+    height: 0.8em;
+    margin-left: 2px;
+    background: currentColor;
+    vertical-align: -0.05em;
+    animation: voice-caret 760ms steps(1) infinite;
+  }
+
+  .morphing-sphere--voice[data-voice-state='idle'] .voice-stream-caret {
+    display: none;
+  }
+
+  @keyframes voice-caret {
+    50% { opacity: 0; }
+  }
+
+  .voice-demo-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    height: 18%;
+    padding: 2% 7% 5%;
+  }
+
+  .voice-demo-footer > span:first-child {
+    color: #aaa7bd;
+    font-family: var(--mono);
+    font-size: clamp(0.38rem, 0.52vw, 0.52rem);
+    letter-spacing: 0.01em;
+  }
+
+  .voice-mic {
+    display: grid;
+    place-items: center;
+    width: 20%;
+    min-width: 30px;
+    max-width: 48px;
+    aspect-ratio: 1;
+    margin-top: auto;
+    border-radius: 50%;
+    background: #aebfff;
+    color: #11131e;
+    box-shadow: 0 0 28px -12px rgba(174, 191, 255, 0.75);
+  }
+
+  .voice-mic--active {
+    background: #e84c4c;
+    color: #fff;
+    box-shadow: 0 0 28px -10px rgba(232, 76, 76, 0.54);
+  }
+
+  .voice-mic i {
+    font-size: clamp(0.72rem, 1.15vw, 1.05rem);
+    font-weight: 700;
+  }
+
+  @media (max-width: 680px) {
+    .morphing-sphere--ambient {
+      top: 4.5%;
+      right: -64px;
+      left: auto;
+      width: 220px;
+      opacity: 0.46;
+      pointer-events: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .morphing-sphere--ambient {
+      opacity: 0.46;
+    }
+
+    .voice-stream-caret {
+      display: none;
+      animation: none;
+    }
+  }
+</style>
