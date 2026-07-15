@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.
+- **Server-default chats use one profile session scope.** Android resolves the Server default row through Hermes' sticky active profile before Gateway create/resume and dashboard session operations, so the drawer, transcript, writes, and agent no longer split across different profile databases when the dashboard was launched under another profile.
 
 ## [1.4.5] - 2026-07-15
 

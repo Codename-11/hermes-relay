@@ -494,6 +494,23 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun getActiveProfileScope_distinguishesStickyDefaultFromDashboardProcess() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"active":"victor","current":"default"}"""),
+        )
+
+        val scope = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getActiveProfileScope()
+            .getOrThrow()
+
+        assertEquals("victor", scope.active)
+        assertEquals("default", scope.current)
+        assertEquals("/api/profiles/active", server.takeRequest().path)
+    }
+
+    @Test
     fun listProfiles_parsesArrayShapeIntoProfiles() = runTest {
         server.enqueue(
             MockResponse()

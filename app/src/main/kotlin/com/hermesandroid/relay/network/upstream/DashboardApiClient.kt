@@ -27,6 +27,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -78,6 +79,12 @@ data class DashboardAuthSession(
 data class DashboardWsTicket(
     val ticket: String,
     val ttlSeconds: Int? = null,
+)
+
+/** Sticky server default and the profile that owns the running dashboard process. */
+data class DashboardProfileScope(
+    val active: String,
+    val current: String,
 )
 
 data class DashboardChatDisplaySettings(
@@ -495,6 +502,21 @@ class DashboardApiClient(
             path = "/api/profiles/active",
             payload = buildJsonObject { put("name", name) },
         )
+
+    /**
+     * Read the upstream profile split used by app-global remote mode.
+     * `active` is the sticky default for new Hermes invocations; `current` is
+     * the already-running dashboard/gateway process scope. They can differ.
+     */
+    suspend fun getActiveProfileScope(): Result<DashboardProfileScope> =
+        getJsonObject("/api/profiles/active").mapCatching { root ->
+            DashboardProfileScope(
+                active = root["active"]?.jsonPrimitive?.contentOrNull
+                    ?.trim()?.takeIf { it.isNotEmpty() } ?: "default",
+                current = root["current"]?.jsonPrimitive?.contentOrNull
+                    ?.trim()?.takeIf { it.isNotEmpty() } ?: "default",
+            )
+        }
 
     suspend fun getProfileSoul(name: String): Result<JsonObject> =
         getJsonObject("/api/profiles/${pathSegment(name)}/soul")
