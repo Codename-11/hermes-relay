@@ -1,9 +1,9 @@
-v1.4.4 - Spanish and clearer diagnostics
+v1.4.5 - Chats that keep running
 
-Language
-* Use Spanish throughout the app from Settings > Appearance.
-* Translation freshness checks flag catalogs when English source text changes.
+Chat continuity
+* Switch chats or profiles without stopping a running Gateway reply.
+* Return to the session and reattach to its live progress.
 
-Diagnostics and release history
-* Refresh relay diagnostics to see plugin, protocol, capability, and profile status.
-* Open the complete release history directly from What’s New.
+Cleaner live state
+* Expired secret and sudo prompts no longer remain actionable.
+* Provider wait and reconnect notices stay in the live status line.

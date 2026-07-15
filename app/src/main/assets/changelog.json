@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.4.5",
+   "title": "Chats that keep running",
+   "date": "2026-07-15",
+   "sections": [
+    {
+     "header": "Keep moving between chats",
+     "bullets": [
+      "Switch to another chat, profile, draft, or Thread without stopping a running Gateway reply.",
+      "Return to the session and reattach to its live checkpoint and progress."
+     ]
+    },
+    {
+     "header": "Cleaner live state",
+     "bullets": [
+      "Expired secret and sudo prompts collapse when Hermes reports their expiry, so stale actions no longer look usable.",
+      "Provider wait, reconnect, and continuation notices stay in Chat's live status line instead of cluttering the conversation."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.4",
    "title": "Spanish and clearer diagnostics",
    "date": "2026-07-12",

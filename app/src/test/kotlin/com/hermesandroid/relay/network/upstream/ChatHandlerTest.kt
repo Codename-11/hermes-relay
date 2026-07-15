@@ -309,6 +309,29 @@ class ChatHandlerTest {
         assertEquals(true, call.success) // Still successful, not overwritten
     }
 
+    @Test
+    fun onToolOutputRisk_attachesOnlyToMatchingToolCall() {
+        handler.onToolCallStart("assist-1", "call-1", "browser")
+        handler.onToolCallStart("assist-1", "call-2", "read_file")
+
+        handler.onToolOutputRisk(
+            "assist-1",
+            GatewayToolOutputRisk(
+                toolCallId = "call-1",
+                toolName = "browser",
+                risk = "high",
+                findings = listOf("Prompt injection detected"),
+                redacted = true,
+            ),
+        )
+
+        val calls = handler.messages.value.single().toolCalls
+        assertEquals("high", calls[0].outputRisk)
+        assertEquals(listOf("Prompt injection detected"), calls[0].outputRiskFindings)
+        assertTrue(calls[0].outputRiskRedacted)
+        assertNull(calls[1].outputRisk)
+    }
+
     // --- onThinkingDelta ---
 
     @Test
@@ -382,6 +405,40 @@ class ChatHandlerTest {
         handler.updateSessions(listOf(SessionItem(id = "s1", title = "   ")))
 
         assertEquals("Fix the build", handler.sessions.value.single().title)
+    }
+
+    @Test
+    fun updateSessions_usesUpstreamPreview_whenPersistedTitleIsBlank() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "s1",
+                    title = null,
+                    preview = "Investigate the session drawer titles",
+                ),
+            ),
+        )
+
+        assertEquals(
+            "Investigate the session drawer titles",
+            handler.sessions.value.single().title,
+        )
+    }
+
+    @Test
+    fun updateSessions_keepsKnownLocalTitle_overUpstreamPreview() {
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = "Full local preview")))
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "s1",
+                    title = null,
+                    preview = "Truncated upstream preview...",
+                ),
+            ),
+        )
+
+        assertEquals("Full local preview", handler.sessions.value.single().title)
     }
 
     @Test

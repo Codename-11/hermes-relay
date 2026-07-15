@@ -22,9 +22,13 @@ class GatewayEventMapperTest {
         val toolStarts = mutableListOf<Pair<String, String>>()
         val toolDones = mutableListOf<Pair<String, String?>>()
         val toolFails = mutableListOf<Pair<String, String?>>()
+        val toolOutputRisks = mutableListOf<GatewayToolOutputRisk>()
         val toolGenerating = mutableListOf<String?>()
         val subagentEvents = mutableListOf<GatewaySubagentEvent>()
         val interactions = mutableListOf<GatewayAsk>()
+        val interactionExpiries = mutableListOf<GatewayAskExpiry>()
+        val statusUpdates = mutableListOf<Pair<String?, String>>()
+        val statusClears = mutableListOf<String>()
         val sessionIds = mutableListOf<String>()
         var starts = 0
         var turnCompletes = 0
@@ -41,6 +45,7 @@ class GatewayEventMapperTest {
             onToolCallStart = { id, name -> toolStarts += id to name },
             onToolCallDone = { id, preview -> toolDones += id to preview },
             onToolCallFailed = { id, err -> toolFails += id to err },
+            onToolOutputRisk = { toolOutputRisks += it },
             onTurnComplete = { turnCompletes++ },
             onComplete = { completes++ },
             onUsage = { usage = it; usageCalls++ },
@@ -48,6 +53,9 @@ class GatewayEventMapperTest {
             onToolGenerating = { toolGenerating += it },
             onSubagentEvent = { subagentEvents += it },
             onInteractionRequest = { interactions += it },
+            onInteractionExpired = { interactionExpiries += it },
+            onStatusUpdate = { kind, text -> statusUpdates += kind to text },
+            onStatusClear = { statusClears += it },
         )
     }
 
@@ -69,6 +77,63 @@ class GatewayEventMapperTest {
         mapper.onEvent("thinking.delta", obj("""{"text":" more"}"""))
         assertEquals(listOf("pondering", " more"), r.thinkingDeltas)
         assertFalse(mapper.turnEnded)
+    }
+
+    @Test
+    fun `canonical provider wait thinking is transient status not reasoning`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "thinking.delta",
+            obj("""{"text":"⏳ waiting on gpt-5 — 30s with no output yet (provider may be slow)"}"""),
+        )
+        mapper.onEvent(
+            "thinking.delta",
+            obj("""{"text":"⚠ no output from provider for 60s — reconnecting..."}"""),
+        )
+
+        assertTrue(r.thinkingDeltas.isEmpty())
+        assertEquals(2, r.statusUpdates.size)
+        assertEquals(GatewayEventMapper.PROVIDER_WAIT_STATUS_KIND, r.statusUpdates.last().first)
+        assertTrue(r.statusClears.isEmpty())
+
+        mapper.onEvent("message.delta", obj("""{"text":"Back now"}"""))
+        assertEquals(listOf(GatewayEventMapper.PROVIDER_WAIT_STATUS_KIND), r.statusClears)
+    }
+
+    @Test
+    fun `legacy model thinking remains durable reasoning`() {
+        val r = Recorder()
+        mapperWith(r).onEvent("thinking.delta", obj("""{"text":"considering the tradeoffs"}"""))
+        assertEquals(listOf("considering the tradeoffs"), r.thinkingDeltas)
+        assertTrue(r.statusUpdates.isEmpty())
+    }
+
+    @Test
+    fun `compaction status clears on resumed model tool and MoA activity only`() {
+        listOf(
+            "message.delta" to obj("""{"text":"resumed"}"""),
+            "reasoning.delta" to obj("""{"text":"resumed"}"""),
+            "thinking.delta" to obj("""{"text":"resumed"}"""),
+            "tool.start" to obj("""{"tool_id":"t1","name":"terminal"}"""),
+            "tool.progress" to obj("""{"tool_id":"t1","preview":"working"}"""),
+            "moa.aggregating" to obj("""{"aggregator":"main"}"""),
+        ).forEach { (type, payload) ->
+            val r = Recorder()
+            val mapper = mapperWith(r)
+            mapper.onEvent(
+                "status.update",
+                obj("""{"kind":"compacting","text":"Compacting context…"}"""),
+            )
+            mapper.onEvent(type, payload)
+            assertEquals(type, listOf(GatewayEventMapper.COMPACTION_STATUS_KIND), r.statusClears)
+        }
+
+        val unrelated = Recorder()
+        val mapper = mapperWith(unrelated)
+        mapper.onEvent("status.update", obj("""{"kind":"process","text":"Running terminal"}"""))
+        mapper.onEvent("message.delta", obj("""{"text":"still running"}"""))
+        assertTrue(unrelated.statusClears.isEmpty())
     }
 
     @Test
@@ -416,6 +481,54 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `approval request preserves safe choices and smart deny context`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"deploy","choices":["once","session","always","deny","view","once"],"smart_denied":true}""",
+            ),
+        )
+        val ask = r.interactions.single()
+        assertEquals(listOf("once", "session", "always", "deny"), ask.choices)
+        assertTrue(ask.smartDenied)
+    }
+
+    @Test
+    fun `tool output risk maps deterministic non-low metadata only`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "tool.output_risk",
+            obj(
+                """{"tool_id":"t1","name":"browser","risk":"HIGH","findings":["prompt injection","prompt injection"," sensitive data "],"redacted":true}""",
+            ),
+        )
+        mapper.onEvent(
+            "tool.output_risk",
+            obj("""{"tool_id":"t2","name":"read_file","risk":"low","findings":["safe"]}"""),
+        )
+        mapper.onEvent("tool.output_risk", obj("""{"name":"browser","risk":"critical"}"""))
+
+        val risk = r.toolOutputRisks.single()
+        assertEquals("t1", risk.toolCallId)
+        assertEquals("browser", risk.toolName)
+        assertEquals("high", risk.risk)
+        assertEquals(listOf("prompt injection", "sensitive data"), risk.findings)
+        assertTrue(risk.redacted)
+    }
+
+    @Test
+    fun `approval request honors future explicit timeout metadata`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj("""{"command":"ls","timeout_seconds":45}"""),
+        )
+        assertEquals(45, r.interactions.single().timeoutSeconds)
+    }
+
+    @Test
     fun `approval request ignores a stray request id`() {
         // Upstream approvals correlate per-session; even if some build sends
         // a request_id it must not be adopted (approval.respond has no slot for it).
@@ -448,6 +561,21 @@ class GatewayEventMapperTest {
         assertEquals(300, secret.timeoutSeconds)
     }
 
+    @Test
+    fun `sudo secret and approval expiry events preserve correlation contract`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("sudo.expire", obj("""{"request_id":"r2"}"""))
+        mapper.onEvent("secret.expire", obj("""{"request_id":"r3"}"""))
+        mapper.onEvent("approval.expire", obj("""{"request_id":"ignored"}"""))
+
+        assertEquals(
+            listOf(GatewayAsk.Kind.SUDO, GatewayAsk.Kind.SECRET, GatewayAsk.Kind.APPROVAL),
+            r.interactionExpiries.map { it.kind },
+        )
+        assertEquals(listOf("r2", "r3", null), r.interactionExpiries.map { it.requestId })
+    }
+
     // --- Forward compat ---
 
     @Test
@@ -474,8 +602,10 @@ class GatewayEventMapperTest {
             "reasoning.delta", "thinking.delta", "message.delta", "message.start",
             "message.complete", "error", "clarify.request", "approval.request",
             "sudo.request", "secret.request", "reasoning.available",
+            "sudo.expire", "secret.expire", "approval.expire",
             "tool.generating", "subagent.start", "subagent.thinking",
             "subagent.tool", "subagent.progress", "subagent.complete",
+            "tool.output_risk", "moa.reference", "moa.aggregating",
         ).forEach { type ->
             // message.complete/error end the turn; use a fresh mapper for each
             mapperWith(Recorder()).onEvent(type, null)

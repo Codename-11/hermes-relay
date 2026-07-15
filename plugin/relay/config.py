@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1179,6 +1180,55 @@ def _read_profile_entry(
     }
 
 
+_ACTIVE_PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _effective_default_profile_home(hermes_dir: Path) -> Path:
+    """Resolve the profile a bare Hermes invocation treats as default.
+
+    ``hermes profile use <name>`` writes the canonical profile id to the
+    root ``active_profile`` marker. Hermes reads that marker before importing
+    runtime modules and points ``HERMES_HOME`` at the named profile. Relay's
+    synthetic ``default`` row must therefore read from the same profile home,
+    not always from the root config.
+
+    The marker is local mutable state, so malformed, unreadable, or stale
+    values fail closed to the root profile rather than allowing path traversal
+    or dropping the default row entirely.
+    """
+    marker = hermes_dir / "active_profile"
+    try:
+        active_name = marker.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return hermes_dir
+    except (OSError, UnicodeDecodeError):
+        logger.warning(
+            "Failed to read Hermes active_profile marker at %s — using root default",
+            marker,
+            exc_info=True,
+        )
+        return hermes_dir
+
+    if not active_name or active_name == "default":
+        return hermes_dir
+    if not _ACTIVE_PROFILE_ID_RE.fullmatch(active_name):
+        logger.warning(
+            "Ignoring invalid Hermes active_profile value %r — using root default",
+            active_name,
+        )
+        return hermes_dir
+
+    profile_home = hermes_dir / "profiles" / active_name
+    if not profile_home.is_dir() or not (profile_home / "config.yaml").is_file():
+        logger.warning(
+            "Hermes active_profile %r is missing a usable profile directory — "
+            "using root default",
+            active_name,
+        )
+        return hermes_dir
+    return profile_home
+
+
 def _load_profiles(
     config_path: str,
     *,
@@ -1189,10 +1239,10 @@ def _load_profiles(
 
     Upstream Hermes stores profiles as isolated directories under
     ``~/.hermes/profiles/<name>/``, each with its own ``config.yaml``,
-    ``SOUL.md``, ``.env``, memory, and sessions. The root
-    ``~/.hermes/config.yaml`` is surfaced as a synthetic ``"default"``
-    profile so callers always see at least one entry when the host is
-    configured at all.
+    ``SOUL.md``, ``.env``, memory, and sessions. The synthetic
+    ``"default"`` entry describes the effective profile a bare Hermes runtime
+    will use: the named profile in the root ``active_profile`` marker when it
+    is valid, otherwise the root ``~/.hermes/config.yaml`` profile.
 
     Each returned dict has the keys ``name``, ``model``, ``description``,
     and ``system_message`` (snake_case — this is the wire shape consumed
@@ -1211,21 +1261,25 @@ def _load_profiles(
 
     results: list[dict[str, Any]] = []
 
-    # Synthetic "default" entry mapped to the root config.
-    if root_config.is_file():
+    # Synthetic "default" entry mapped to Hermes' effective default home.
+    # A valid active_profile marker means bare Hermes commands and gateways
+    # start from that named profile, so Relay must advertise matching metadata.
+    default_home = _effective_default_profile_home(hermes_dir)
+    default_config = default_home / "config.yaml"
+    if default_config.is_file():
         default_entry = _read_profile_entry(
             name="default",
-            config_yaml=root_config,
-            soul_md=hermes_dir / "SOUL.md",
-            profile_home=hermes_dir,
+            config_yaml=default_config,
+            soul_md=default_home / "SOUL.md",
+            profile_home=default_home,
             base_api_url=base_api_url,
         )
         if default_entry is not None:
             results.append(default_entry)
     else:
         logger.info(
-            "Root Hermes config not found at %s — skipping default profile",
-            root_config,
+            "Effective Hermes config not found at %s — skipping default profile",
+            default_config,
         )
 
     # Directory-based profiles.

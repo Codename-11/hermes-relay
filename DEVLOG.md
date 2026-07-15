@@ -1,5 +1,69 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Gateway safety and lifecycle parity
+
+Android gateway chat now clears only a live `compacting` status when model,
+tool, subagent, or MoA activity resumes, preserving unrelated lifecycle text.
+Approval cards consume the upstream capability-derived choice set, retain the
+legacy Approve/Deny fallback, and explain Smart DENY owner overrides while
+constraining their visible actions to one-operation approval or denial.
+
+Deterministic non-low `tool.output_risk` events now attach by `tool_id` to the
+matching tool card. Detailed and compact layouts expose the warning, detailed
+cards show the upstream findings and redaction state as untrusted plain text,
+and in-flight checkpoints preserve the metadata across reattachment.
+
+Verification: 139 focused Android JVM/Robolectric tests passed across gateway
+mapping, chat state, checkpoint recovery, and approval-card rendering. A
+separate 23-test upstream durability slice passed for completion deduplication,
+concurrent ownership, profile/session routing, compression continuation, and
+lineage export. Android lint and `git diff --check` passed after adding Spanish
+and Simplified Chinese strings for the new UI.
+
+## 2026-07-15 — Upstream Gateway interaction compatibility
+
+The July upstream-impact ledger's highest-priority Gateway gaps were reconciled
+without inventing client-side server policy. Android now consumes
+`secret.expire` and `sudo.expire` by exact request id, collapses late
+`{status:"expired"}` responses, and treats a zero-resolution approval response
+as expired. It also accepts optional approval timeout metadata and a future
+session-scoped `approval.expire` event; the corresponding upstream contract is
+documented in `docs/upstream-contributions.md`, while older Hermes builds keep
+the safe no-countdown behavior.
+
+Canonical upstream provider-wait, reconnect, and continuation strings emitted
+through `thinking.delta` now replace one transient `provider_wait` status line.
+Genuine model thinking still enters the durable reasoning transcript, and new
+text, reasoning, tool, or subagent activity clears only the matching transient
+status kind.
+
+Verification: the focused sideload JVM suites reran 93 tests across
+`GatewayEventMapperTest` and `GatewayChatClientTest` with zero failures, and
+`git diff --check` passed.
+
+## 2026-07-14 — Session drawer title parity with Hermes Desktop
+
+Android now decodes the upstream session-list `preview` field and uses it as the
+drawer label when a session has no persisted title. Explicit user names and
+server-generated titles remain authoritative, while a richer optimistic local
+label stays ahead of the server's truncated preview. This matches the standard
+Hermes Desktop fallback without changing or patching the upstream server.
+
+Live compatibility inspection confirmed that both the dashboard and native
+API-server session lists expose `preview`. Focused model/client and session
+mapping tests cover decoding, fallback behavior, and title precedence. The
+drawer audit also recorded two existing follow-ups in `TODO.md`: Pin/Archive
+state is currently ephemeral, and local-only search covers only the 200 most
+recent rows on large profiles.
+
+## 2026-07-14 — Dependency PR routing and Roborazzi alignment
+
+The paired Roborazzi screenshot-test libraries moved together from 1.66.0 to
+1.68.0. Dependabot now targets `dev` for Gradle and GitHub Actions updates,
+groups the coupled Roborazzi artifacts into one testing PR, and uses repository
+labels that exist. This keeps dependency work inside the normal release branch
+flow and avoids duplicate PRs carrying the same resolved Gradle patch.
+
 ## 2026-07-14 — Codex review and path-aware required CI
 
 GitHub pull-request review moved from repository-hosted Claude Actions to the
@@ -18,6 +82,14 @@ surface fails, while unaffected toolchains remain skipped.
 Verification: workflow syntax was checked with actionlint, changed-path selection
 was exercised against representative file sets, and repository documentation was
 scanned to ensure no removed Claude workflow, action, trigger, or secret remained.
+
+## 2026-07-14 — Hermes active-profile default alignment
+
+**Why.** Hermes resolves a bare CLI or gateway invocation through the root `active_profile` marker before importing runtime modules. Relay profile discovery ignored that marker and always populated its synthetic `default` row from the root config, so native clients could show the wrong default identity/model/SOUL and route profile API metadata incorrectly.
+
+- **Effective default resolution.** `plugin/relay/config.py` now validates and reads the canonical root `active_profile` marker, maps the synthetic `default` row to that named profile home, and retains the named profile row for explicit selection. Missing, unreadable, malformed, stale, or unusable markers safely fall back to the root profile.
+- **Regression coverage.** Profile discovery tests cover active model/description/SOUL/API metadata, named-row retention, malformed path-like values, and removed profile directories.
+- **Verification.** `PYTHONPATH=$PWD python -m unittest plugin.tests.test_profile_discovery plugin.tests.test_profiles_updated_broadcast plugin.tests.test_profile_voice_config plugin.tests.test_profile_soul_endpoint plugin.tests.test_profile_memory_endpoint plugin.tests.test_profile_write_endpoints` → 81 tests green (1 intentional platform skip). `python -m ruff check plugin/relay/config.py plugin/tests/test_profile_discovery.py`, `python -m py_compile ...`, and `git diff --check` green.
 
 ## 2026-07-13 — CLI/TUI and menu-only Windows systray
 

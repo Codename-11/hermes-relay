@@ -2,6 +2,7 @@ package com.hermesandroid.relay.viewmodel
 
 import android.os.Handler
 import android.os.Looper
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
@@ -211,6 +212,82 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun switchingBetweenTwoRunningChatsDetachesAndReattachesWithoutInterruptingEither() {
+        val secondSession = "stored-session-b"
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        gatewayHarness.resumeLiveSessionIds[secondSession] = "live-b"
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Run task A")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial A") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.messages.value.any { it.content == "Partial A" } }
+
+        viewModel.switchSession(secondSession)
+        gatewayHarness.awaitRpcCount("session.resume", 2)
+        awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+
+        viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("prompt.submit", 2)
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial B") },
+                "live-b",
+            ),
+        )
+        awaitCondition { handler.messages.value.any { it.content == "Partial B" } }
+
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Partial A"
+        viewModel.switchSession(STORED_SESSION_ID)
+        val firstActivation = gatewayHarness.awaitRpcCount("session.activate", 1).last()
+        assertEquals(JsonPrimitive("live-resumed"), firstActivation["session_id"])
+        awaitCondition {
+            handler.currentSessionId.value == STORED_SESSION_ID &&
+                handler.isStreaming.value &&
+                handler.messages.value.any { it.content == "Partial A" }
+        }
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task A complete") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value }
+
+        gatewayHarness.recoveryAssistant = "Partial B"
+        viewModel.switchSession(secondSession)
+        val secondActivation = gatewayHarness.awaitRpcCount("session.activate", 2).last()
+        assertEquals(JsonPrimitive("live-b"), secondActivation["session_id"])
+        awaitCondition {
+            handler.currentSessionId.value == secondSession &&
+                handler.isStreaming.value &&
+                handler.messages.value.any { it.content == "Partial B" }
+        }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task B complete") },
+                "live-b",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value && !gatewayClient.hasActiveTurn() }
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
     fun stopOnUnsolicitedTurnInterruptsTheGatewaySession() {
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
         serverWs.send(
@@ -274,6 +351,8 @@ class ChatViewModelGatewayInboundTurnTest {
                 pendingAsk = ChatTurnAskCheckpoint(
                     kind = "APPROVAL",
                     text = "Allow the command?",
+                    choices = listOf("once", "session", "always", "deny"),
+                    smartDenied = true,
                     timeoutSeconds = 0,
                     messageId = "ask-approval-1",
                     cardKey = "approval-1",
@@ -305,7 +384,13 @@ class ChatViewModelGatewayInboundTurnTest {
         assertFalse(restored.toolCalls.single().isComplete)
         assertEquals("Running terminal", handler.turnStatus.value)
         assertEquals("approval-1", viewModel.pendingAsk.value?.cardKey)
-        assertTrue(handler.messages.value.any { it.id == "ask-approval-1" && it.cards.isNotEmpty() })
+        val restoredApproval = handler.messages.value
+            .single { it.id == "ask-approval-1" }
+            .cards
+            .single()
+        assertEquals(listOf("once", "deny"), restoredApproval.actions.map { it.value })
+        assertTrue(restoredApproval.title?.contains("Smart DENY") == true)
+        assertTrue(restoredApproval.body?.contains("override it once") == true)
         assertTrue(
             handler.messages.value.indexOfFirst { it.id == "pending-assistant" } <
                 handler.messages.value.indexOfFirst { it.id == "ask-approval-1" },

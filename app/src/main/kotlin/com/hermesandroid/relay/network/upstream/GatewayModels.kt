@@ -108,6 +108,13 @@ data class GatewaySessionRecovery(
     val handle: ActiveTurnHandle?,
 )
 
+/** A detached sibling turn reached its terminal event on the shared Gateway socket. */
+data class GatewayBackgroundTurnCompletion(
+    val storedSessionId: String,
+    val profile: String?,
+    val expectedAssistantText: String?,
+)
+
 /**
  * One server-side interactive ask. The agent thread upstream is BLOCKED
  * until the matching respond RPC arrives, the ask times out (resolves to ""
@@ -126,8 +133,10 @@ data class GatewayAsk(
     val requestId: String?,
     /** Question / command / prompt — whatever the ask wants the user to read. */
     val text: String,
-    /** Clarify-only: server-suggested answers. */
+    /** Server-advertised answers for clarify and approval requests. */
     val choices: List<String>? = null,
+    /** Approval-only: the smart observer denied and the owner may override once. */
+    val smartDenied: Boolean = false,
     /** Secret-only: the env var the value will be stored under. */
     val envVar: String? = null,
     /**
@@ -138,6 +147,28 @@ data class GatewayAsk(
 ) {
     enum class Kind { CLARIFY, APPROVAL, SUDO, SECRET }
 }
+
+/**
+ * Server-side expiry of one blocking gateway interaction. Sudo/secret asks
+ * correlate by [requestId]; approvals remain session-scoped and therefore
+ * carry no request id.
+ */
+data class GatewayAskExpiry(
+    val kind: GatewayAsk.Kind,
+    val requestId: String?,
+)
+
+/** Outcome returned by the gateway's `*.respond` RPCs. */
+enum class GatewayAskResponse { ACCEPTED, EXPIRED }
+
+/** Deterministic, non-low risk metadata emitted after a tool returns output. */
+data class GatewayToolOutputRisk(
+    val toolCallId: String,
+    val toolName: String,
+    val risk: String,
+    val findings: List<String>,
+    val redacted: Boolean,
+)
 
 /**
  * One `subagent.*` lifecycle event, emitted on the PARENT session. Lifecycle
@@ -301,6 +332,8 @@ class GatewayTurnCallbacks(
     val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
     val onToolCallDone: (toolCallId: String, resultPreview: String?) -> Unit,
     val onToolCallFailed: (toolCallId: String, errorMsg: String?) -> Unit,
+    /** Attach deterministic output-risk metadata to the matching tool card. */
+    val onToolOutputRisk: (GatewayToolOutputRisk) -> Unit = { _ -> },
     val onTurnComplete: () -> Unit,
     val onComplete: () -> Unit,
     val onUsage: (UsageInfo?) -> Unit,
@@ -319,12 +352,16 @@ class GatewayTurnCallbacks(
      * cancelled.
      */
     val onInteractionRequest: (GatewayAsk) -> Unit,
+    /** Server declared a pending interaction expired; clear only the matching card. */
+    val onInteractionExpired: (GatewayAskExpiry) -> Unit,
     /**
      * Gateway `status.update` lifecycle line — model fallback, retries, and
      * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default
      * no-op so non-gateway/legacy constructors don't need to provide it.
      */
     val onStatusUpdate: (kind: String?, text: String) -> Unit = { _, _ -> },
+    /** Clear a transient status only when [kind] still owns the visible status slot. */
+    val onStatusClear: (kind: String) -> Unit = { _ -> },
 )
 
 /**

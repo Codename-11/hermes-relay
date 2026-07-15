@@ -85,14 +85,15 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.4 - Spanish and clearer diagnostics
+v1.4.5 - Chats that keep running
 
-Language
-* Use Spanish throughout the app from Settings > Appearance.
+Chat continuity
+* Switch chats or profiles without stopping a running Gateway reply.
+* Return to the session and reattach to its live progress.
 
-Diagnostics
-* Refresh Relay plugin, protocol, capability, and profile status.
-* Open the full release history from What's New.
+Cleaner live state
+* Expired approval prompts no longer remain actionable.
+* Provider wait notices stay in the live status line.
 ```
 
 ## Category

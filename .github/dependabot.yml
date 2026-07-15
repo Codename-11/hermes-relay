@@ -3,6 +3,7 @@ updates:
   # Gradle dependencies
   - package-ecosystem: "gradle"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -24,10 +25,12 @@ updates:
         patterns:
           - "junit*"
           - "androidx.compose.ui:ui-test*"
+          - "io.github.takahirom.roborazzi*"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     labels:

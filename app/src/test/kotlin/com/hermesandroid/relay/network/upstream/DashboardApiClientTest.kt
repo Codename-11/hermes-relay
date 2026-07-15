@@ -548,8 +548,8 @@ class DashboardApiClientTest {
                 .setBody(
                     """
                     {"sessions":[
-                      {"id":"sess-a","title":"Refactor","model":"claude-opus-4-8","message_count":4,"started_at":1234.5,"last_active":1250.5,"source":"tui","profile":"mizu"},
-                      {"id":"sess-b","title":"Notes","message_count":2,"started_at":1200.0,"source":"tui","profile":"mizu"}
+                      {"id":"sess-a","title":"Refactor","preview":"Refactor the session API","model":"claude-opus-4-8","message_count":4,"started_at":1234.5,"last_active":1250.5,"source":"tui","profile":"mizu"},
+                      {"id":"sess-b","title":null,"preview":"Review title fallbacks","message_count":2,"started_at":1200.0,"source":"tui","profile":"mizu"}
                     ],"total":2,"limit":50,"offset":0}
                     """.trimIndent(),
                 ),
@@ -571,6 +571,8 @@ class DashboardApiClientTest {
         assertEquals("claude-opus-4-8", sessions[0].model)
         assertEquals(4, sessions[0].messageCount)
         assertEquals(1250.5, sessions[0].lastActive!!, 0.001)
+        assertEquals("Refactor the session API", sessions[0].preview)
+        assertEquals("Review title fallbacks", sessions[1].preview)
     }
 
     @Test
