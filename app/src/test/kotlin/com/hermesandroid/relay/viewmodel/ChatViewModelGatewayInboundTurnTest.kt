@@ -2,6 +2,7 @@ package com.hermesandroid.relay.viewmodel
 
 import android.os.Handler
 import android.os.Looper
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
@@ -208,6 +209,82 @@ class ChatViewModelGatewayInboundTurnTest {
             }
         }
         awaitCondition { !handler.isStreaming.value }
+    }
+
+    @Test
+    fun switchingBetweenTwoRunningChatsDetachesAndReattachesWithoutInterruptingEither() {
+        val secondSession = "stored-session-b"
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        gatewayHarness.resumeLiveSessionIds[secondSession] = "live-b"
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Run task A")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial A") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.messages.value.any { it.content == "Partial A" } }
+
+        viewModel.switchSession(secondSession)
+        gatewayHarness.awaitRpcCount("session.resume", 2)
+        awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+
+        viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("prompt.submit", 2)
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial B") },
+                "live-b",
+            ),
+        )
+        awaitCondition { handler.messages.value.any { it.content == "Partial B" } }
+
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Partial A"
+        viewModel.switchSession(STORED_SESSION_ID)
+        val firstActivation = gatewayHarness.awaitRpcCount("session.activate", 1).last()
+        assertEquals(JsonPrimitive("live-resumed"), firstActivation["session_id"])
+        awaitCondition {
+            handler.currentSessionId.value == STORED_SESSION_ID &&
+                handler.isStreaming.value &&
+                handler.messages.value.any { it.content == "Partial A" }
+        }
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task A complete") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value }
+
+        gatewayHarness.recoveryAssistant = "Partial B"
+        viewModel.switchSession(secondSession)
+        val secondActivation = gatewayHarness.awaitRpcCount("session.activate", 2).last()
+        assertEquals(JsonPrimitive("live-b"), secondActivation["session_id"])
+        awaitCondition {
+            handler.currentSessionId.value == secondSession &&
+                handler.isStreaming.value &&
+                handler.messages.value.any { it.content == "Partial B" }
+        }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task B complete") },
+                "live-b",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value && !gatewayClient.hasActiveTurn() }
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
     }
 
     @Test

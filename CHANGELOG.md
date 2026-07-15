@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.
+- **Running Android chats survive session switching.** On the upstream Gateway path, opening another chat, profile, draft, or Thread now detaches the visible stream without interrupting Hermes. Each running session keeps its own durable UI checkpoint, reconnects the shared event socket across route loss, and reattaches through `session.activate`/`session.resume` when selected again. SSE fallback remains intentionally single-stream and cancels on navigation.
 
 ## [0.4.0-alpha.2] - 2026-07-13
 

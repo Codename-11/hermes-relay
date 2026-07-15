@@ -190,6 +190,19 @@ TTFT).
 Switching either shows a toast. The active personality name appears above
 assistant bubbles. You can also switch via `/personality <name>`.
 
+## Switching between running chats
+
+When Chat is using the upstream Gateway connection, you can open another chat,
+profile, new draft, or Thread while Hermes is still working. The previous turn
+continues on the server instead of being stopped. Reopening that conversation
+reattaches its live reply, reasoning, tool state, and pending interaction card;
+if it finished while detached, the saved transcript is loaded instead. Multiple
+running chats keep separate recovery state across an app restart.
+
+Tapping **Stop** still interrupts the visible turn. Servers using an SSE fallback
+cannot multiplex live chats, so switching there stops the current stream before
+opening the next conversation.
+
 ## Connection chip
 
 If you've paired more than one Hermes server, a **Connection chip** appears on
@@ -220,9 +233,10 @@ battery) default off and are only added when you opt in.
 ## Persistent connection
 
 By default the connection to Hermes is held open while Hermes-Relay is on screen
-and for a couple of minutes after you switch away, so a quick return is instant;
-on a longer absence it reconnects when you reopen the chat. Returning to a chat,
-the app pre-warms the connection in the background so your first message is fast.
+and for a couple of minutes after you switch away, so a quick return is instant.
+A running Gateway chat keeps its event connection attached; if that connection
+drops, the app reconnects while the server continues working. Idle chats pre-warm
+when reopened so the next message is fast.
 
 If you want the connection to stay fully open even when the app is in the
 background, turn on **Settings → Quick Controls → Persistent connection** (off by
