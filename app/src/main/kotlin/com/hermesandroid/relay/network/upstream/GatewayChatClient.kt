@@ -874,48 +874,48 @@ class GatewayChatClient(
     }
 
     /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
-    suspend fun respondClarify(requestId: String, answer: String): Result<Unit> =
+    suspend fun respondClarify(requestId: String, answer: String): Result<GatewayAskResponse> =
         rpc(
             "clarify.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("answer", answer)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
 
     /**
      * Answer a [GatewayAsk.Kind.SUDO] ask. The password must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSudo(requestId: String, password: String): Result<Unit> =
+    suspend fun respondSudo(requestId: String, password: String): Result<GatewayAskResponse> =
         rpc(
             "sudo.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("password", password)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
 
     /**
      * Answer a [GatewayAsk.Kind.SECRET] ask. Empty [value] = skip (upstream
      * returns `skipped: true` to the tool). The value must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSecret(requestId: String, value: String): Result<Unit> =
+    suspend fun respondSecret(requestId: String, value: String): Result<GatewayAskResponse> =
         rpc(
             "secret.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("value", value)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
 
     /**
      * Answer a [GatewayAsk.Kind.APPROVAL] ask — correlated by the live
      * session, not a request id. [choice] is "approve" or "deny"; [all]
      * resolves every pending approval on the session at once.
      */
-    suspend fun respondApproval(choice: String, all: Boolean = false): Result<Unit> {
+    suspend fun respondApproval(choice: String, all: Boolean = false): Result<GatewayAskResponse> {
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
         return rpc(
@@ -925,7 +925,7 @@ class GatewayChatClient(
                 put("choice", choice)
                 put("all", all)
             },
-        ).map { }
+        ).map { it.gatewayAskResponse() }
     }
 
     /**
@@ -2310,6 +2310,7 @@ class GatewayChatClient(
         onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
         onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
+        onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
         // onStatusUpdate a default no-op, so omitting it here silently swallows
         // EVERY gateway status line — the ❌ terminal-error lifecycle update
@@ -2317,6 +2318,7 @@ class GatewayChatClient(
         // "Error", and onComplete's history reload wipes the error bubble (the
         // "reply appears then vanishes" bug).
         onStatusUpdate = { kind, text -> callbackDispatcher { callbacks.onStatusUpdate(kind, text) } },
+        onStatusClear = { kind -> callbackDispatcher { callbacks.onStatusClear(kind) } },
     )
 }
 
@@ -2370,3 +2372,13 @@ private fun JsonObject.stringField(key: String): String? =
 
 private fun JsonObject.booleanField(key: String): Boolean? =
     (get(key) as? JsonPrimitive)?.booleanOrNull
+
+private fun JsonObject.gatewayAskResponse(): GatewayAskResponse {
+    val status = stringField("status")
+    val resolved = (get("resolved") as? JsonPrimitive)?.intOrNull
+    return if (status.equals("expired", ignoreCase = true) || resolved == 0) {
+        GatewayAskResponse.EXPIRED
+    } else {
+        GatewayAskResponse.ACCEPTED
+    }
+}

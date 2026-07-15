@@ -147,6 +147,19 @@ data class GatewayAsk(
 }
 
 /**
+ * Server-side expiry of one blocking gateway interaction. Sudo/secret asks
+ * correlate by [requestId]; approvals remain session-scoped and therefore
+ * carry no request id.
+ */
+data class GatewayAskExpiry(
+    val kind: GatewayAsk.Kind,
+    val requestId: String?,
+)
+
+/** Outcome returned by the gateway's `*.respond` RPCs. */
+enum class GatewayAskResponse { ACCEPTED, EXPIRED }
+
+/**
  * One `subagent.*` lifecycle event, emitted on the PARENT session. Lifecycle
  * per task: START → (THINKING | TOOL | PROGRESS)* → COMPLETE. Field
  * availability varies by phase — [toolName]/[preview] ride TOOL,
@@ -326,12 +339,16 @@ class GatewayTurnCallbacks(
      * cancelled.
      */
     val onInteractionRequest: (GatewayAsk) -> Unit,
+    /** Server declared a pending interaction expired; clear only the matching card. */
+    val onInteractionExpired: (GatewayAskExpiry) -> Unit,
     /**
      * Gateway `status.update` lifecycle line — model fallback, retries, and
      * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default
      * no-op so non-gateway/legacy constructors don't need to provide it.
      */
     val onStatusUpdate: (kind: String?, text: String) -> Unit = { _, _ -> },
+    /** Clear a transient status only when [kind] still owns the visible status slot. */
+    val onStatusClear: (kind: String) -> Unit = { _ -> },
 )
 
 /**

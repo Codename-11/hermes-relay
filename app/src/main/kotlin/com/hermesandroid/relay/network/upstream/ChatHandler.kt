@@ -216,9 +216,17 @@ class ChatHandler {
      */
     private val _turnStatus = MutableStateFlow<String?>(null)
     val turnStatus: StateFlow<String?> = _turnStatus.asStateFlow()
+    private var turnStatusKind: String? = null
 
-    fun setTurnStatus(text: String) {
+    fun setTurnStatus(text: String, kind: String? = null) {
+        turnStatusKind = kind
         _turnStatus.value = text
+    }
+
+    fun clearTurnStatus(kind: String? = null) {
+        if (kind != null && turnStatusKind != kind) return
+        turnStatusKind = null
+        _turnStatus.value = null
     }
 
     private val _isStreaming = MutableStateFlow(false)
@@ -237,7 +245,7 @@ class ChatHandler {
      */
     fun clearStreamingStatus() {
         _isStreaming.value = false
-        _turnStatus.value = null
+        clearTurnStatus()
     }
 
     private val _sessions = MutableStateFlow<List<ChatSession>>(emptyList())
@@ -1017,6 +1025,7 @@ class ChatHandler {
             }
         }
         _isStreaming.value = true
+        turnStatusKind = null
         _turnStatus.value = checkpoint.turnStatus ?: "Reconnecting to the active turn…"
     }
 
@@ -2823,7 +2832,7 @@ class ChatHandler {
      */
     fun onStreamComplete(messageId: String) {
         _isStreaming.value = false
-        _turnStatus.value = null
+        clearTurnStatus()
         insideThinkingBlock = false
 
         // Flush any remaining annotation text that didn't end with a newline
@@ -2869,7 +2878,7 @@ class ChatHandler {
         _isStreaming.value = false
         // The turn is over — a stale lifecycle/recovery caption must not
         // outlive it (onStreamComplete clears the same way).
-        _turnStatus.value = null
+        clearTurnStatus()
         _error.value = message
         // Clear streaming flag on any actively streaming message
         _messages.update { messages ->

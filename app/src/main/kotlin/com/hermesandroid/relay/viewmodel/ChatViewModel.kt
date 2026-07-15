@@ -34,6 +34,7 @@ import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
+import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.HermesCardField
 import com.hermesandroid.relay.data.HermesCardInput
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
@@ -41,6 +42,8 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.GatewayAsk
+import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
+import com.hermesandroid.relay.network.upstream.GatewayAskResponse
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
@@ -1302,11 +1305,17 @@ class ChatViewModel : ViewModel() {
             onInteractionRequest = { ask ->
                 if (acceptsEvent()) presentInteractionAsk(handler, ask)
             },
-            onStatusUpdate = { _, text ->
+            onInteractionExpired = { expiry ->
+                if (acceptsEvent()) expirePendingAsk(expiry)
+            },
+            onStatusUpdate = { kind, text ->
                 if (acceptsEvent()) {
-                    handler.setTurnStatus(text)
+                    handler.setTurnStatus(text, kind)
                     if (text.trimStart().startsWith("❌")) handler.markError(messageId)
                 }
+            },
+            onStatusClear = { kind ->
+                if (acceptsEvent()) handler.clearTurnStatus(kind)
             },
         )
         return GatewayInboundTurnRegistration(
@@ -3207,7 +3216,16 @@ class ChatViewModel : ViewModel() {
                         ?: Result.failure(GatewayRpcException("ask has no request id"))
             }
             result.fold(
-                onSuccess = {
+                onSuccess = { response ->
+                    if (response == GatewayAskResponse.EXPIRED) {
+                        expirePendingAsk(
+                            GatewayAskExpiry(
+                                kind = ask.kind,
+                                requestId = ask.requestId,
+                            ),
+                        )
+                        return@fold
+                    }
                     // Collapse only after the server confirms — a failed RPC
                     // must leave the card answerable for a retry.
                     handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
@@ -3222,6 +3240,29 @@ class ChatViewModel : ViewModel() {
                 },
             )
         }
+    }
+
+    /**
+     * Collapse only the server-expired interaction. Request-scoped asks must
+     * match exactly; approvals are session-scoped and match by kind. This also
+     * handles late `*.respond` RPCs that return `{status:"expired"}` or
+     * `{resolved:0}` before the expiry event reaches the socket.
+     */
+    private fun expirePendingAsk(expiry: GatewayAskExpiry) {
+        val pending = _pendingAsk.value ?: return
+        if (pending.ask.kind != expiry.kind) return
+        if (expiry.kind != GatewayAsk.Kind.APPROVAL) {
+            val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
+            if (pending.ask.requestId != requestId) return
+        }
+        _pendingAsk.value = null
+        answeredAskIds.remove(pending.cardKey)
+        scheduleCheckpointWrite(immediate = true)
+        chatHandler?.recordCardDispatch(
+            pending.messageId,
+            pending.cardKey,
+            HermesCardDispatch.EXPIRED_STAMP,
+        )
     }
 
     /**
@@ -3984,11 +4025,17 @@ class ChatViewModel : ViewModel() {
             onInteractionRequest = { ask ->
                 if (owns()) presentInteractionAsk(handler, ask)
             },
-            onStatusUpdate = { _, text ->
+            onInteractionExpired = { expiry ->
+                if (owns()) expirePendingAsk(expiry)
+            },
+            onStatusUpdate = { kind, text ->
                 if (owns()) {
-                    handler.setTurnStatus(text)
+                    handler.setTurnStatus(text, kind)
                     if (text.trimStart().startsWith("❌")) handler.markError(messageId)
                 }
+            },
+            onStatusClear = { kind ->
+                if (owns()) handler.clearTurnStatus(kind)
             },
         )
     }
@@ -5849,14 +5896,20 @@ class ChatViewModel : ViewModel() {
                         onInteractionRequest = { ask ->
                             presentInteractionAsk(handler, ask)
                         },
-                        onStatusUpdate = { _, text ->
-                            handler.setTurnStatus(text)
+                        onInteractionExpired = { expiry ->
+                            expirePendingAsk(expiry)
+                        },
+                        onStatusUpdate = { kind, text ->
+                            handler.setTurnStatus(text, kind)
                             // The server prefixes terminal failures with ❌ —
                             // stamp the turn so a failed reply doesn't read as
                             // a normal answer.
                             if (text.trimStart().startsWith("❌")) {
                                 handler.markError(currentMessageId)
                             }
+                        },
+                        onStatusClear = { kind ->
+                            handler.clearTurnStatus(kind)
                         },
                     ),
                     attachments = attachments.orEmpty()
