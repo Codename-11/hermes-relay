@@ -2410,7 +2410,9 @@
     <string name="agent_icon_set">Set image</string>
     <string name="agent_icon_change">Change</string>
     <string name="agent_icon_clear">Clear</string>
-    <string name="agent_icon_description">Shown beside a profile name in chat. Stays on this device -- never sent to Hermes.</string>
+    <string name="agent_icon_import_host">Import from agent host</string>
+    <string name="agent_icon_importing_host">Importing…</string>
+    <string name="agent_icon_description">Shown beside a profile name in chat. Choose a phone image, or import avatar.png/profile.jpg from the active profile directory on a paired agent host. The copied icon stays on this device.</string>
 
     <!-- ConnectionSecuritySheet -->
     <string name="conn_security_title">Connection security</string>

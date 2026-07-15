@@ -1,5 +1,21 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Host profile image import
+
+Android's existing per-profile agent icon picker can now import an image from
+the active agent's Hermes profile directory through the optional paired Relay.
+The new read route discovers conventional direct-child names such as
+`avatar.png` and `profile.jpg`, accepts common web image formats, resolves
+symlinks within the profile boundary, enforces the Relay media-size limit, and
+returns image bytes without exposing host paths as persistent client state.
+Android copies the result into its existing connection-and-profile-scoped icon
+store, so rendering remains available offline and the vanilla upstream chat
+path is unchanged.
+
+Verification: seven profile-avatar endpoint tests and the focused Android host
+avatar client plus profile-controller suites passed. Android lint and final diff
+checks are recorded with the completed work.
+
 ## 2026-07-15 — Android 1.4.5 release and automated Play gate
 
 Android 1.4.5 shipped as versionCode 28 after the signed release build, final

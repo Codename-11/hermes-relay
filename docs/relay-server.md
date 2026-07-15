@@ -29,6 +29,13 @@ Phone (WSS/HTTP) --> Relay Server (:8767)         [terminal, bridge, media, sess
 
 The relay runs alongside hermes-agent on the same machine. It reads `~/.hermes/config.yaml` and `~/.hermes/profiles/*/` for profile discovery metadata. Chat itself remains direct phone-to-Hermes-API traffic; the relay only advertises which base/profile API URL the phone should use.
 
+Profile badge images can also live beside that metadata. Put `avatar.png`,
+`avatar.jpg`, `profile.png`, or `profile.jpg` directly in a profile directory
+(`~/.hermes/` for the root default, or `~/.hermes/profiles/<name>/`; the
+synthetic default follows a valid sticky `active_profile` marker). A paired
+Android client can import the image through the read-only profile avatar route;
+the app stores a private copy on the phone rather than retaining a host path.
+
 ### Hermes Profile API Routing
 
 For proper Hermes profile isolation in Android chat, each profile must run its own Hermes API server. The relay discovers profile directories and advertises safe routing metadata only; it does not start profile gateways or expose API keys.

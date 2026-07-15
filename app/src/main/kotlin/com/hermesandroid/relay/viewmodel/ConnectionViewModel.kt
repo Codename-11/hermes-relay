@@ -516,6 +516,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             getApplication<Application>().relayDataStore.data.first()[KEY_LAST_SESSION_ID]
         },
         rebuildChatApiClient = { rebuildChatApiClient() },
+        relayHttpClient = relayHttpClient,
     )
 
     // --- Relay connection state ---
@@ -1228,7 +1229,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
 
+    val hostProfileIconImportState: StateFlow<ProfileController.HostIconImportState>
+        get() = profileController.hostIconImportState
+
     fun setProfileIcon(uri: Uri) = profileController.setProfileIcon(uri)
+
+    fun importProfileIconFromHost() = profileController.importProfileIconFromHost()
 
     fun clearProfileIcon() = profileController.clearProfileIcon()
 
