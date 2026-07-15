@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android adds German, Brazilian Portuguese, and Japanese.** Complete AI-assisted catalogs cover both product flavors, with language-picker integration and freshness validation against the canonical English resources.
+
 ### Fixed
 
 - **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.

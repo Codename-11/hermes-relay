@@ -1,8 +1,8 @@
 # Localization
 
-English is the canonical product language. Android ships Simplified Chinese and
-Spanish catalogs; additional languages can be added without changing the runtime
-architecture.
+English is the canonical product language. Android also ships Brazilian
+Portuguese, German, Japanese, Simplified Chinese, and Spanish catalogs;
+additional languages can be added without changing the runtime architecture.
 
 Translation coverage and linguistic verification are separate. Shipped locale
 status is recorded in `docs/localization-status.json` as `ai-translated`,
@@ -11,10 +11,10 @@ technical gates pass; the status must not imply human review that did not occur.
 See `docs/translation-playbook.md` for the required translation and critique
 workflow.
 
-Users can switch between System default, English, Spanish, and Simplified Chinese from
-Settings → Appearance → Language. The picker stays synchronized with Android's
-per-app language setting; Android 12 and lower use AppCompat's automatic locale
-storage.
+Users can switch between System default, English, Brazilian Portuguese, German,
+Japanese, Spanish, and Simplified Chinese from Settings → Appearance → Language.
+The picker stays synchronized with Android's per-app language setting; Android
+12 and lower use AppCompat's automatic locale storage.
 
 ## Android resource contract
 

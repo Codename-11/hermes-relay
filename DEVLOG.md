@@ -1,5 +1,21 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — German, Brazilian Portuguese, and Japanese localization
+
+Android now includes complete German, Brazilian Portuguese, and Japanese
+catalogs across the Google Play and sideload flavors. German and Brazilian
+Portuguese were recovered from unfinished translation drafts and refreshed
+against the current English resource contract; Japanese was generated through
+the same deterministic translation harness. The in-app picker, Android locale
+configuration, localization registry, contributor references, and user-facing
+language lists now describe the expanded set consistently.
+
+The catalogs remain marked as AI-translated until fluent review is recorded.
+Structural validation covers resource parity, placeholders, plurals, arrays,
+formatting flags, XML parsing, and canonical source hashes. The 10-catalog
+validator, five focused `AppLanguageTest` cases, both flavor Kotlin/resource
+compilations, sideload debug lint, and `git diff --check` passed.
+
 ## 2026-07-15 — Gateway safety and lifecycle parity
 
 Android gateway chat now clears only a live `compacting` status when model,

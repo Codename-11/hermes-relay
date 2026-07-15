@@ -2803,6 +2803,9 @@
     <string name="appearance_language_desc">Elige el idioma de Hermes-Relay. La opción predeterminada del sistema sigue la configuración del dispositivo.</string>
     <string name="appearance_language_system">Predeterminado del sistema</string>
     <string name="appearance_language_english">English</string>
+    <string name="appearance_language_german">Deutsch</string>
+    <string name="appearance_language_brazilian_portuguese">Português (Brasil)</string>
+    <string name="appearance_language_japanese">日本語</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
     <string name="appearance_language_spanish">Español</string>
     <string name="chat_profile_history_unavailable">No se pudo acceder al historial de conversaciones del perfil activo. Vuelve a conectarte e inténtalo de nuevo.</string>
