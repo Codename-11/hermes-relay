@@ -351,6 +351,8 @@ class ChatViewModelGatewayInboundTurnTest {
                 pendingAsk = ChatTurnAskCheckpoint(
                     kind = "APPROVAL",
                     text = "Allow the command?",
+                    choices = listOf("once", "session", "always", "deny"),
+                    smartDenied = true,
                     timeoutSeconds = 0,
                     messageId = "ask-approval-1",
                     cardKey = "approval-1",
@@ -382,7 +384,13 @@ class ChatViewModelGatewayInboundTurnTest {
         assertFalse(restored.toolCalls.single().isComplete)
         assertEquals("Running terminal", handler.turnStatus.value)
         assertEquals("approval-1", viewModel.pendingAsk.value?.cardKey)
-        assertTrue(handler.messages.value.any { it.id == "ask-approval-1" && it.cards.isNotEmpty() })
+        val restoredApproval = handler.messages.value
+            .single { it.id == "ask-approval-1" }
+            .cards
+            .single()
+        assertEquals(listOf("once", "deny"), restoredApproval.actions.map { it.value })
+        assertTrue(restoredApproval.title?.contains("Smart DENY") == true)
+        assertTrue(restoredApproval.body?.contains("override it once") == true)
         assertTrue(
             handler.messages.value.indexOfFirst { it.id == "pending-assistant" } <
                 handler.messages.value.indexOfFirst { it.id == "ask-approval-1" },

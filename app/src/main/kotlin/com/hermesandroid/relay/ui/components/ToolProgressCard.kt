@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -140,7 +141,11 @@ fun ToolProgressCard(
         String.format("%.1fs", seconds)
     } else null
     val durationDescription = duration?.let { stringResource(R.string.tool_duration_a11y, it) }.orEmpty()
-    val toolDescription = stringResource(R.string.tool_a11y, toolCall.name, statusText, durationDescription)
+    val riskDescription = toolCall.outputRisk?.let {
+        stringResource(R.string.tool_output_risk_a11y, it)
+    }.orEmpty()
+    val toolDescription = stringResource(R.string.tool_a11y, toolCall.name, statusText, durationDescription) +
+        riskDescription
 
     Card(
         modifier = modifier
@@ -212,6 +217,24 @@ fun ToolProgressCard(
                 )
             }
 
+            toolCall.outputRisk?.let { risk ->
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = stringResource(R.string.tool_output_risk_badge, risk.uppercase()),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
             // One-line faded mono args preview while preparing — partial
             // JSON grows per delta; no expand needed, the card stays folded.
             if (isPreparing && !toolCall.args.isNullOrBlank()) {
@@ -256,6 +279,29 @@ fun ToolProgressCard(
                             text = provenance,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    if (toolCall.outputRiskFindings.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.tool_output_risk_findings),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Text(
+                            text = toolCall.outputRiskFindings.joinToString(separator = "\n") { "• $it" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                    if (toolCall.outputRiskRedacted) {
+                        Text(
+                            text = stringResource(R.string.tool_output_risk_redacted),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
                         )
                     }
 

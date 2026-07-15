@@ -192,7 +192,12 @@
     <string name="voice_status_realtime_audio_stuck">El audio en tiempo real no comienza</string>
     <string name="chat_approval_title">Aprobación solicitada</string>
     <string name="chat_approval_approve">Aprobar</string>
+    <string name="chat_approval_once">Aprobar una vez</string>
+    <string name="chat_approval_session">Aprobar durante la sesión</string>
+    <string name="chat_approval_always">Aprobar siempre</string>
     <string name="chat_approval_deny">Denegar</string>
+    <string name="chat_approval_smart_denied_title">Smart DENY — anulación del propietario</string>
+    <string name="chat_approval_smart_denied_body">La revisión inteligente de seguridad denegó esta operación. Puedes anularla una vez.</string>
     <string name="chat_approval_clarify_title">Hermes necesita aclaración</string>
     <string name="chat_approval_sudo_title">Permiso elevado solicitado</string>
     <string name="chat_approval_secret_title">Secreto solicitado</string>
@@ -2790,6 +2795,10 @@
     <string name="tool_arguments">Argumentos:</string>
     <string name="tool_error">Error:</string>
     <string name="tool_result">Resultado:</string>
+    <string name="tool_output_risk_badge">Riesgo de salida %1$s</string>
+    <string name="tool_output_risk_a11y">, riesgo de salida %1$s</string>
+    <string name="tool_output_risk_findings">Hallazgos de riesgo en la salida</string>
+    <string name="tool_output_risk_redacted">Los fragmentos confidenciales se ocultaron en el servidor.</string>
     <string name="appearance_language">Idioma</string>
     <string name="appearance_language_desc">Elige el idioma de Hermes-Relay. La opción predeterminada del sistema sigue la configuración del dispositivo.</string>
     <string name="appearance_language_system">Predeterminado del sistema</string>

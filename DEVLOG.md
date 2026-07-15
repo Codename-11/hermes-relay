@@ -1,5 +1,25 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Gateway safety and lifecycle parity
+
+Android gateway chat now clears only a live `compacting` status when model,
+tool, subagent, or MoA activity resumes, preserving unrelated lifecycle text.
+Approval cards consume the upstream capability-derived choice set, retain the
+legacy Approve/Deny fallback, and explain Smart DENY owner overrides while
+constraining their visible actions to one-operation approval or denial.
+
+Deterministic non-low `tool.output_risk` events now attach by `tool_id` to the
+matching tool card. Detailed and compact layouts expose the warning, detailed
+cards show the upstream findings and redaction state as untrusted plain text,
+and in-flight checkpoints preserve the metadata across reattachment.
+
+Verification: 139 focused Android JVM/Robolectric tests passed across gateway
+mapping, chat state, checkpoint recovery, and approval-card rendering. A
+separate 23-test upstream durability slice passed for completion deduplication,
+concurrent ownership, profile/session routing, compression continuation, and
+lineage export. Android lint and `git diff --check` passed after adding Spanish
+and Simplified Chinese strings for the new UI.
+
 ## 2026-07-15 — Upstream Gateway interaction compatibility
 
 The July upstream-impact ledger's highest-priority Gateway gaps were reconciled

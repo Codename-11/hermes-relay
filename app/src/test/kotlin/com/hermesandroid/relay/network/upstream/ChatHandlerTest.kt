@@ -309,6 +309,29 @@ class ChatHandlerTest {
         assertEquals(true, call.success) // Still successful, not overwritten
     }
 
+    @Test
+    fun onToolOutputRisk_attachesOnlyToMatchingToolCall() {
+        handler.onToolCallStart("assist-1", "call-1", "browser")
+        handler.onToolCallStart("assist-1", "call-2", "read_file")
+
+        handler.onToolOutputRisk(
+            "assist-1",
+            GatewayToolOutputRisk(
+                toolCallId = "call-1",
+                toolName = "browser",
+                risk = "high",
+                findings = listOf("Prompt injection detected"),
+                redacted = true,
+            ),
+        )
+
+        val calls = handler.messages.value.single().toolCalls
+        assertEquals("high", calls[0].outputRisk)
+        assertEquals(listOf("Prompt injection detected"), calls[0].outputRiskFindings)
+        assertTrue(calls[0].outputRiskRedacted)
+        assertNull(calls[1].outputRisk)
+    }
+
     // --- onThinkingDelta ---
 
     @Test
