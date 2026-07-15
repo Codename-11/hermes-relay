@@ -851,6 +851,19 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 
 ## Session titles (#133) — follow-ups beyond the client fixes
 
+### Session drawer audit follow-ups
+
+- **Persist and server-back Pin/Archive behavior.** The drawer currently keeps
+  both sets in composable memory. They reset when the drawer/app is recreated,
+  and Archive does not call the existing upstream profile-scoped archive API or
+  load archived rows. Either wire Archive end to end and persist Pin locally,
+  or remove the misleading actions until those contracts are complete.
+- **Paginate large session stores.** Android requests only the 200 most-recent
+  rows and filters/searches them locally. Older sessions are therefore
+  undiscoverable on long-lived profiles even though upstream list APIs support
+  `offset`. Add incremental paging (and server search where capability-backed)
+  without regressing profile scoping or compression-tip projection.
+
 The client-side mitigations shipped (see DEVLOG 2026-06-27): the `updateSessions` clobber guard, the post-turn title reconcile (gateway), and the subtle "not auto-named here" drawer note on SSE. These two are the larger follow-ups:
 
 - **Upstream PR: auto-title on the api_server surface.** `APIServerAdapter._run_agent` (`gateway/platforms/api_server.py:3492`) calls `agent.run_conversation(...)` and returns without ever invoking `agent.title_generator.maybe_auto_title` — so `/api/sessions/*/chat[/stream]`, `/v1/runs`, and `/v1/chat/completions` never auto-name sessions (only the gateway/tui_gateway → cli.py path does). Mirror the gateway call site (`gateway/run.py:15493`): after a successful first exchange, fire `maybe_auto_title(self._ensure_session_db(), session_id, user_message, final_response, history, main_runtime={...})` in the existing thread-executor return path. Standard-path rule applies — it's an upstream contribution; our client degrades gracefully until it merges. This is the proper fix for the SSE-surface half of #133.

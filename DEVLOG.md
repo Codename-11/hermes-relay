@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-14 — Session drawer title parity with Hermes Desktop
+
+Android now decodes the upstream session-list `preview` field and uses it as the
+drawer label when a session has no persisted title. Explicit user names and
+server-generated titles remain authoritative, while a richer optimistic local
+label stays ahead of the server's truncated preview. This matches the standard
+Hermes Desktop fallback without changing or patching the upstream server.
+
+Live compatibility inspection confirmed that both the dashboard and native
+API-server session lists expose `preview`. Focused model/client and session
+mapping tests cover decoding, fallback behavior, and title precedence. The
+drawer audit also recorded two existing follow-ups in `TODO.md`: Pin/Archive
+state is currently ephemeral, and local-only search covers only the 200 most
+recent rows on large profiles.
+
 ## 2026-07-14 — Dependency PR routing and Roborazzi alignment
 
 The paired Roborazzi screenshot-test libraries moved together from 1.66.0 to

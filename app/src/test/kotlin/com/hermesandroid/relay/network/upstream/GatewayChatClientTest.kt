@@ -61,6 +61,9 @@ class GatewayClientHarness(
     @Volatile
     var recoveryAssistant = ""
 
+    /** Optional durable-id -> live-id mapping for multi-session switch tests. */
+    val resumeLiveSessionIds = ConcurrentHashMap<String, String>()
+
     @Volatile
     var steerStatus = "queued"
 
@@ -119,7 +122,10 @@ class GatewayClientHarness(
                 }
                 "session.resume" ->
                     if (resumeFails) null
-                    else recoveryPayload("live-resumed")
+                    else {
+                        val storedId = (params["session_id"] as? JsonPrimitive)?.contentOrNull
+                        recoveryPayload(resumeLiveSessionIds[storedId] ?: "live-resumed")
+                    }
                 "session.activate" -> recoveryPayload(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
                 )
@@ -1672,8 +1678,8 @@ class GatewayChatClientTest {
     fun `backgrounding active turn lets another profile bind while original completes`() {
         val foreground = Recorder()
         val reconciled = ConcurrentLinkedQueue<Pair<String, String?>>()
-        client.setUnmatchedTurnCompleteListener { storedId, text ->
-            reconciled.add(storedId to text)
+        client.setUnmatchedTurnCompleteListener { completion ->
+            reconciled.add(completion.storedSessionId to completion.expectedAssistantText)
         }
         client.sessionProfileProvider = { "coder" }
         client.sendTurn(null, "long task", null, foreground.callbacks) {
@@ -1706,6 +1712,81 @@ class GatewayChatClientTest {
         )
         assertFalse(client.hasActiveTurn())
         assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `recoverTurn reclaims a deliberately backgrounded live session`() {
+        val original = Recorder()
+        client.sendTurn(null, "long task", null, original.callbacks) {
+            original.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        assertTrue(client.backgroundActiveTurn())
+
+        harness.recoveryRunning = true
+        harness.recoveryAssistant = "partial answer"
+        val resumed = Recorder()
+        val recovery = runBlocking {
+            client.recoverTurn(
+                storedId = "20260612_120000_abc123",
+                preferredLiveId = "live-1",
+                callbacks = resumed.callbacks,
+            ).getOrThrow()
+        }
+
+        assertTrue(recovery.running)
+        assertNotNull(recovery.handle)
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", " finished") },
+                "live-1",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "partial answer finished") },
+                "live-1",
+            ),
+        )
+
+        assertTrue(resumed.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf(" finished"), resumed.textDeltas.toList())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `background turn reconnects shared socket and reports completion`() {
+        val original = Recorder()
+        val completions = ConcurrentLinkedQueue<GatewayBackgroundTurnCompletion>()
+        client.setUnmatchedTurnCompleteListener(completions::add)
+        client.sendTurn(null, "long task", null, original.callbacks) {
+            original.preflightFailures += it
+        }
+        val firstSocket = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        assertTrue(client.backgroundActiveTurn())
+
+        firstSocket.close(1012, "route changed")
+        val rejoinedSocket = harness.awaitServerSocket()
+        rejoinedSocket.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "finished offscreen") },
+                "live-1",
+            ),
+        )
+
+        repeat(100) {
+            if (completions.isNotEmpty()) return@repeat
+            Thread.sleep(20)
+        }
+        assertEquals("20260612_120000_abc123", completions.single().storedSessionId)
+        assertEquals("finished offscreen", completions.single().expectedAssistantText)
+        assertTrue(client.hasActiveTurn().not())
+        assertTrue(harness.ticketMints.get() >= 2)
     }
 
     @Test

@@ -1912,24 +1912,28 @@ after the turn settles and therefore cannot restore the in-between UI.
 
 **Decision.** Treat Chat recovery as session-centric instead of request-centric:
 
-1. Persist at most one active, session-backed turn in the shared Android
-   DataStore, scoped by connection/profile context and durable session id, with a
-   24-hour expiry. Store the visible assistant state and server-issued ask, but
+1. Persist active session-backed turns as a bounded set in the shared Android
+   DataStore, keyed by connection/profile context plus durable session id, with a
+   24-hour expiry. Store each visible assistant state and server-issued ask, but
    never an entered password/secret or approval response.
 2. On reopen, restore that UI immediately, then recover in this order: exact
    `session.activate` using the saved live id; `session.resume` using the durable
    id; bounded, positionally anchored history reconciliation.
-3. Separate **detach** from **cancel**. Lifecycle teardown releases local callbacks
-   without `session.interrupt`; explicit Stop and session/profile/connection
-   switches retain their interrupt-and-clear behavior.
+3. Separate **detach** from **cancel**. Lifecycle teardown and Gateway
+   session/profile/draft/Thread navigation release local callbacks without
+   `session.interrupt`; selecting a running sibling reclaims its exact live id.
+   Explicit Stop and connection switches still interrupt, and SSE navigation
+   remains exclusive because that transport cannot multiplex live sessions.
 4. Apply the same history fallback to sessions-SSE transport drops and route
    handoffs. A final persisted transcript replaces the checkpoint and clears it.
 
-**Consequences.** Reopening Chat can continue the same assistant bubble with its
-last-known reasoning and tool state instead of inventing a second prompt or empty
-spinner. Tool state that changed while no client was attached remains explicitly
-last-known until a new event or authoritative history reconcile arrives. Older
-Hermes builds without live activation degrade to durable history recovery.
+**Consequences.** Reopening Chat or moving between running Gateway chats can
+continue each assistant bubble with its last-known reasoning and tool state
+instead of inventing a second prompt or empty spinner. Detached siblings keep the
+shared Gateway event socket alive and reconnect it after route loss. Tool state
+that changed while no client was attached remains explicitly last-known until a
+new event or authoritative history reconcile arrives. Older Hermes builds without
+live activation degrade to durable history recovery.
 
 **Key files:**
 

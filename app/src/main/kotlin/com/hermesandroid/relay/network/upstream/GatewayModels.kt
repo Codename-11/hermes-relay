@@ -108,6 +108,13 @@ data class GatewaySessionRecovery(
     val handle: ActiveTurnHandle?,
 )
 
+/** A detached sibling turn reached its terminal event on the shared Gateway socket. */
+data class GatewayBackgroundTurnCompletion(
+    val storedSessionId: String,
+    val profile: String?,
+    val expectedAssistantText: String?,
+)
+
 /**
  * One server-side interactive ask. The agent thread upstream is BLOCKED
  * until the matching respond RPC arrives, the ask times out (resolves to ""

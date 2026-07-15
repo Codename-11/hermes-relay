@@ -385,6 +385,40 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun updateSessions_usesUpstreamPreview_whenPersistedTitleIsBlank() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "s1",
+                    title = null,
+                    preview = "Investigate the session drawer titles",
+                ),
+            ),
+        )
+
+        assertEquals(
+            "Investigate the session drawer titles",
+            handler.sessions.value.single().title,
+        )
+    }
+
+    @Test
+    fun updateSessions_keepsKnownLocalTitle_overUpstreamPreview() {
+        handler.updateSessions(listOf(SessionItem(id = "s1", title = "Full local preview")))
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "s1",
+                    title = null,
+                    preview = "Truncated upstream preview...",
+                ),
+            ),
+        )
+
+        assertEquals("Full local preview", handler.sessions.value.single().title)
+    }
+
+    @Test
     fun updateSessions_serverTitleWins_overLocalPreview() {
         // Once the server generates a real title it replaces the local preview.
         handler.updateSessions(listOf(SessionItem(id = "s1", title = "Fix the build")))
