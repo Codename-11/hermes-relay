@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-16 — Temporary redirect shim for pre-migration Android builds
+
+Restored GitHub Pages only as a redirect-only compatibility endpoint for app
+versions that still open `https://codename-11.github.io/hermes-relay/`. The
+shim preserves known paths, query strings, and fragments while forwarding to
+`https://hermes-relay.dev/docs/`; it does not publish the VitePress site.
+Removal criteria and the operator review date are tracked in `TODO.md`.
+
 ## 2026-07-15 — Retire GitHub Pages and move docs to hermes-relay.dev
 
 Disabled and removed the GitHub Pages deployment path, changed the repository

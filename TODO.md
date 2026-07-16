@@ -6,6 +6,36 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Active — Remove temporary GitHub Pages docs redirects
+
+PR #210 moved current source and production documentation to
+`https://hermes-relay.dev/docs/`, but Android 1.4.0 and earlier releases still
+contain hardcoded `https://codename-11.github.io/hermes-relay/` links. GitHub
+Pages therefore serves a redirect-only compatibility shim from
+`legacy-pages-redirect/`; it must never regain full documentation content.
+
+Retire the shim only after the first Android release containing merge commit
+`52df3adbf6d61d0ddbfb69671546f7c4953f956a` has been available for at least
+90 days **and** at least two Android releases containing the corrected links
+have shipped. If either condition is unmet at review time, retain it and set a
+new review date.
+
+Removal checklist:
+
+- Remove `.github/workflows/legacy-docs-redirect.yml` and
+  `legacy-pages-redirect/` through a reviewed PR.
+- Delete/disable the repository Pages site after that PR merges.
+- Verify `https://codename-11.github.io/hermes-relay/` no longer serves the
+  shim and `https://hermes-relay.dev/docs/` plus representative deep links
+  still return HTTP 200.
+- Update `DEVLOG.md` and the canonical Obsidian Hermes-Relay project note.
+
+A one-shot operator reminder is scheduled for **2026-10-15 at 09:00 ET** to
+review these gates; it is a review trigger, not authorization for automatic
+removal.
+
+---
+
 ## Multi-profile Phone/Threads routing — deferred (2026-07-12)
 
 Android profile hot-swap and concurrent Gateway turns are separate from proactive
