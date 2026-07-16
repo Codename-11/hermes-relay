@@ -882,8 +882,8 @@ private data class StandardConnectionDraft(
     val routeCandidates: List<EndpointCandidate>? = null,
 )
 
-private const val SetupGuideUrl = "https://codename-11.github.io/hermes-relay/guide/getting-started"
-private const val RelaySetupDocsUrl = "https://codename-11.github.io/hermes-relay/reference/relay-server"
+private const val SetupGuideUrl = "https://hermes-relay.dev/docs/guide/getting-started"
+private const val RelaySetupDocsUrl = "https://hermes-relay.dev/docs/reference/relay-server"
 private const val HermesApiDocsUrl = "https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server"
 
 private fun openExternalUrl(context: android.content.Context, url: String) {

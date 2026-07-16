@@ -191,7 +191,7 @@ For a still pack, each generated PNG becomes a one-frame clip. This manifest wir
 
 ```json
 {
-  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "$schema": "https://hermes-relay.dev/docs/pet.schema.json",
   "schemaVersion": 1,
   "id": "my-pet",
   "label": "My Pet",
@@ -216,7 +216,7 @@ For an animated pack, each generated sheet becomes one clip. For a **4×4 grid o
 
 ```json
 {
-  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "$schema": "https://hermes-relay.dev/docs/pet.schema.json",
   "schemaVersion": 1,
   "id": "my-pet",
   "label": "My Pet",
@@ -261,7 +261,7 @@ The helper validates `pet.json`, checks that every referenced image exists, excl
 <PetPackBuilder />
 
 ::: tip Validate as you author
-The example above starts with a `$schema` line pointing at the published [pet schema](https://codename-11.github.io/hermes-relay/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
+The example above starts with a `$schema` line pointing at the published [pet schema](https://hermes-relay.dev/docs/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
 :::
 
 ::: tip Safe box: leave room inside every cell

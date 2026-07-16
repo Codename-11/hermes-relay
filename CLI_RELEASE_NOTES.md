@@ -60,4 +60,4 @@ hermes-relay daemon status
 
 On Windows, open **Hermes Relay Systray** from the Start menu and right-click its notification-area icon. No separate desktop window is installed.
 
-See the [CLI and systray guide](https://codename-11.github.io/hermes-relay/desktop/) for installation, commands, desktop-use safety, and troubleshooting.
+See the [CLI and systray guide](https://hermes-relay.dev/docs/desktop/) for installation, commands, desktop-use safety, and troubleshooting.

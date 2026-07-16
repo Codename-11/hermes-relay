@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>简体中文</strong> · <a href="README.md">English</a><br>
-  <a href="https://codename-11.github.io/hermes-relay/zh-CN/">中文文档</a> ·
+  <a href="https://hermes-relay.dev/docs/zh-CN/">中文文档</a> ·
   <a href="https://github.com/Codename-11/hermes-relay/releases">版本下载</a> ·
   <a href="CHANGELOG.md">更新日志</a>
 </p>
@@ -76,7 +76,7 @@ hermes relay start --no-ssl
 hermes pair
 ```
 
-完整说明请阅读[中文快速开始](https://codename-11.github.io/hermes-relay/zh-CN/guide/quick-start)；远程访问、协议和高级配置暂时链接到英文参考文档。
+完整说明请阅读[中文快速开始](https://hermes-relay.dev/docs/zh-CN/guide/quick-start)；远程访问、协议和高级配置暂时链接到英文参考文档。
 
 ## 中文界面
 

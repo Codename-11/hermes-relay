@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "$id": "https://hermes-relay.dev/docs/pet.schema.json",
   "title": "Hermes-Relay pet manifest",
   "description": "Schema for pet.json — a side-loaded still or animated avatar ('pet') pack for Hermes-Relay. Encodes the loader's structural rules; on-disk checks (file existence, decodability) are enforced at load time. Visual QA rules such as PNG alpha, safe-box padding, and frame registration are documented in docs/pet-spec.md.",
   "type": "object",

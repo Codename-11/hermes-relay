@@ -8,7 +8,7 @@
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
-Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://codename-11.github.io/hermes-relay/guide/sideload) for installation help.
+Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://hermes-relay.dev/docs/guide/sideload) for installation help.
 
 ## Summary
 

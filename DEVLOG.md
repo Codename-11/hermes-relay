@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Retire GitHub Pages and move docs to hermes-relay.dev
+
+Disabled and removed the GitHub Pages deployment path, changed the repository
+homepage to `https://hermes-relay.dev`, and moved the existing VitePress guide
+to `https://hermes-relay.dev/docs/` inside the production Coolify image. Active
+README, website, Android, release-note, and pet-schema links now target the new
+docs origin while historical DEVLOG entries remain unchanged.
+
 ## 2026-07-15 — Coolify root-context website deployment hotfix
 
 Added a repository-owned multi-stage Dockerfile for the Astro marketing site
