@@ -1,0 +1,30 @@
+{
+  "name": "hermes-relay-website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "assets:sync": "node scripts/product-assets.mjs sync && node scripts/responsive-assets.mjs sync",
+    "assets:check": "node scripts/product-assets.mjs check && node scripts/responsive-assets.mjs check",
+    "dev": "npm run assets:check && astro dev",
+    "build": "npm run assets:check && astro check && astro build && node scripts/check-built-site.mjs",
+    "build:production": "node scripts/validate-production-env.mjs && npm run build",
+    "preview": "astro preview",
+    "check": "npm run assets:check && astro check",
+    "links:check": "node scripts/check-built-site.mjs"
+  },
+  "dependencies": {
+    "@fontsource/space-grotesk": "^5.2.10",
+    "@fontsource/space-mono": "^5.2.9",
+    "@phosphor-icons/web": "^2.1.2",
+    "astro": "^7.0.9"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "sharp": "0.35.3",
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,524 @@
+---
+import '@fontsource/space-grotesk/400.css';
+import '@fontsource/space-grotesk/500.css';
+import '@fontsource/space-grotesk/600.css';
+import '@fontsource/space-grotesk/700.css';
+import '@fontsource/space-mono/400.css';
+import '../styles/global.css';
+import MorphingSphere from '../components/MorphingSphere.astro';
+import versionCatalog from '../../../gradle/libs.versions.toml?raw';
+
+const docsUrl = 'https://codename-11.github.io/hermes-relay/';
+const githubUrl = 'https://github.com/Codename-11/hermes-relay';
+const playUrl = 'https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay';
+const cliUrl = `${docsUrl}desktop/`;
+const koFiUrl = 'https://ko-fi.com/L4L31Q8LJ1';
+const quickStartUrl = `${docsUrl}guide/quick-start`;
+const relayPluginUrl = `${docsUrl}guide/release-tracks#how-the-pieces-combine`;
+const currentVersion = versionCatalog.match(/^appVersionName\s*=\s*"([^"]+)"/m)?.[1] ?? '1.4.5';
+const currentReleaseUrl = `${githubUrl}/releases/tag/android-v${currentVersion}`;
+const pageTitle = 'Hermes-Relay — Your Hermes agent, wherever you are';
+const pageDescription =
+  'Hermes-Relay puts your self-hosted Hermes agent on Android and gives it consent-gated access to nearby machines.';
+const canonicalUrl = Astro.site ? new URL('/', Astro.site).href : undefined;
+const socialImageUrl = Astro.site ? new URL('/social-card.png', Astro.site).href : undefined;
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Hermes-Relay',
+  description: pageDescription,
+  url: canonicalUrl,
+  image: socialImageUrl,
+  applicationCategory: 'UtilitiesApplication',
+  operatingSystem: 'Android, Windows, macOS, Linux',
+  softwareVersion: currentVersion,
+  isAccessibleForFree: true,
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+  downloadUrl: playUrl,
+  codeRepository: githubUrl,
+  sameAs: [githubUrl, playUrl],
+  featureList: ['Streaming chat', 'Realtime voice', 'Hermes management', 'Desktop CLI', 'Sideload device control'],
+};
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#050609" />
+    <meta name="description" content={pageDescription} />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Hermes-Relay" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={pageDescription} />
+    {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
+    {socialImageUrl && <meta property="og:image" content={socialImageUrl} />}
+    {socialImageUrl && <meta property="og:image:secure_url" content={socialImageUrl} />}
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Hermes-Relay — your Hermes agent on Android and nearby machines" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={pageDescription} />
+    {socialImageUrl && <meta name="twitter:image" content={socialImageUrl} />}
+    <meta name="twitter:image:alt" content="Hermes-Relay — your Hermes agent on Android and nearby machines" />
+
+    <link rel="icon" type="image/svg+xml" href="/brand/logo.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <title>{pageTitle}</title>
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(structuredData)}></script>
+    <script is:inline>
+      (() => {
+        try {
+          const saved = localStorage.getItem('hermes-relay-theme');
+          const theme = saved === 'light' || saved === 'dark'
+            ? saved
+            : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+        } catch {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="site-header" data-header>
+      <div class="header-identity">
+        <a class="brand" href="#top" aria-label="Hermes-Relay home">
+          <img src="/brand/logo.svg" alt="" width="28" height="28" />
+          <span>Hermes-Relay</span>
+        </a>
+        <a class="version-badge" href={currentReleaseUrl} aria-label={`v${currentVersion}, current Android release`}>
+          v{currentVersion}
+        </a>
+        <span class="header-tagline">Android + CLI for Hermes</span>
+      </div>
+
+      <div class="header-actions">
+        <nav class="desktop-nav" aria-label="Main navigation">
+          <a href="#product">Product</a>
+          <a href="#android">Android</a>
+          <a href="#cli">CLI</a>
+          <a href={docsUrl}>Docs</a>
+          <a href={githubUrl}>GitHub <i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>
+        </nav>
+
+        <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+          <i class="ph ph-sun" aria-hidden="true"></i>
+        </button>
+
+        <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-nav">
+          <span class="sr-only">Open navigation</span>
+          <i class="ph ph-list" aria-hidden="true"></i>
+        </button>
+      </div>
+
+      <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile navigation" hidden>
+        <a href="#product">Product</a>
+        <a href="#android">Android</a>
+        <a href="#cli">CLI</a>
+        <a href={docsUrl}>Docs</a>
+        <a href={githubUrl}>GitHub <i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" id="product" aria-labelledby="hero-title">
+        <MorphingSphere variant="ambient" />
+        <div class="hero-copy reveal">
+          <p class="eyebrow"><span class="live-dot"></span> Connected to your Hermes</p>
+          <h1 id="hero-title">Your Hermes agent. <span>Wherever you are.</span></h1>
+          <p class="hero-lede">
+            Chat, speak, manage, and give your agent hands — from the devices already around you.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href={playUrl}>
+              <i class="ph ph-android-logo" aria-hidden="true"></i>
+              Get the Android app
+            </a>
+            <a class="button button-secondary" href={cliUrl}>
+              <i class="ph ph-terminal-window" aria-hidden="true"></i>
+              Explore the CLI
+            </a>
+          </div>
+          <p class="trust-line">Open source <span>·</span> Self-hosted <span>·</span> No cloud relay <i></i></p>
+        </div>
+
+        <div class="hero-product reveal" aria-label="Hermes-Relay Android chat screen">
+          <div class="phone phone-hero">
+            <span class="phone-speaker" aria-hidden="true"></span>
+            <img
+              src="/product/chat.png"
+              srcset="/product/chat-260.webp 260w, /product/chat-520.webp 520w, /product/chat.png 1040w"
+              sizes="(max-width: 720px) 250px, (max-width: 980px) 370px, 430px"
+              width="1040"
+              height="2160"
+              alt="Hermes-Relay chat running on Android"
+              fetchpriority="high"
+              decoding="async"
+            />
+          </div>
+          <p class="route-label"><span></span> gateway · LAN · direct</p>
+        </div>
+      </section>
+
+      <section class="surface-section" aria-labelledby="surface-title">
+        <header class="section-intro reveal">
+          <p class="section-kicker">Direct by design</p>
+          <h2 id="surface-title">One agent. Every surface.</h2>
+          <p>
+            Hermes-Relay extends your agent to your phone and nearby machines. Connections stay direct,
+            local-first, and under your control.
+          </p>
+        </header>
+
+        <div class="surface-grid">
+          <article class="surface surface-android reveal" id="android">
+            <p class="surface-label"><span></span> Android</p>
+            <h3>Chat, voice, and power features in your pocket.</h3>
+            <p class="surface-copy">Take conversations on the go, speak naturally, and manage the Hermes you already run.</p>
+
+            <div class="android-showcase">
+              <div class="phone phone-small">
+                <span class="phone-speaker" aria-hidden="true"></span>
+                <img
+                  src="/product/chat.png"
+                  srcset="/product/chat-260.webp 260w, /product/chat-520.webp 520w, /product/chat.png 1040w"
+                  sizes="(max-width: 720px) 200px, 250px"
+                  width="1040"
+                  height="2160"
+                  alt="Hermes-Relay Android chat"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <ul class="feature-list">
+                <li>
+                  <i class="ph ph-chats-circle" aria-hidden="true"></i>
+                  <span><strong>Chat</strong><small>Streaming conversations and live agent work.</small></span>
+                </li>
+                <li>
+                  <i class="ph ph-waveform" aria-hidden="true"></i>
+                  <span><strong>Voice</strong><small>Speak naturally, interrupt, and keep moving.</small></span>
+                </li>
+                <li>
+                  <i class="ph ph-sliders-horizontal" aria-hidden="true"></i>
+                  <span><strong>Manage</strong><small>Profiles, skills, models, and automations.</small></span>
+                </li>
+              </ul>
+            </div>
+
+            <div class="screen-strip" aria-label="Additional Android surfaces">
+              <figure>
+                <MorphingSphere variant="voice" />
+                <figcaption>Voice</figcaption>
+              </figure>
+              <figure>
+                <img
+                  src="/product/manage.png"
+                  srcset="/product/manage-360.webp 360w, /product/manage-720.webp 720w, /product/manage.png 1080w"
+                  sizes="(max-width: 720px) 45vw, (max-width: 980px) 38vw, 280px"
+                  width="1080"
+                  height="2160"
+                  alt="Hermes-Relay Manage screen"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <figcaption>Manage</figcaption>
+              </figure>
+            </div>
+          </article>
+
+          <article class="surface surface-cli reveal" id="cli">
+            <p class="surface-label surface-label-cli"><span></span> CLI</p>
+            <h3>Consent-gated access on your machine.</h3>
+            <p class="surface-copy">Give Hermes hands on the machine — only when you allow it.</p>
+
+            <div class="terminal" aria-label="Hermes-Relay command line preview">
+              <div class="terminal-bar">
+                <i class="ph ph-terminal-window" aria-hidden="true"></i>
+                <span>hermes@machine:~</span>
+              </div>
+              <div class="terminal-body">
+                <p><span class="prompt">$</span> hermes-relay</p>
+                <p class="terminal-muted">Connecting…</p>
+                <p><span class="terminal-ok">Connected via Tailscale (secure)</span><br />server 0.6.0</p>
+                <p>Attached · tmux session “default”<br /><span class="terminal-muted">re-attached with scrollback</span></p>
+                <p>Desktop tools · 23 handlers advertised</p>
+                <p class="terminal-ready">❯ <b></b></p>
+                <span class="terminal-live"><i></i> attached</span>
+              </div>
+            </div>
+
+            <div class="consent-note">
+              <i class="ph ph-shield-check" aria-hidden="true"></i>
+              <div>
+                <strong>Consent is explicit and local.</strong>
+                <p>You decide when Hermes can run commands, read files, or make changes.</p>
+              </div>
+            </div>
+
+            <div class="cli-capability-grid" aria-label="CLI capabilities">
+              <article class="cli-capability">
+                <div class="cli-capability-command">
+                  <i class="ph ph-arrow-counter-clockwise" aria-hidden="true"></i>
+                  <code>hermes-relay sessions</code>
+                </div>
+                <h4>Pick up where you left off.</h4>
+                <p>Reconnect to named tmux sessions with recent scrollback already in place.</p>
+              </article>
+              <article class="cli-capability">
+                <div class="cli-capability-command">
+                  <i class="ph ph-lightning" aria-hidden="true"></i>
+                  <code>hermes-relay daemon status</code>
+                </div>
+                <h4>Available in the background.</h4>
+                <p>Keep approved desktop tools ready through the headless daemon.</p>
+              </article>
+              <article class="cli-capability cli-capability--wide">
+                <div class="cli-capability-command">
+                  <i class="ph ph-list-checks" aria-hidden="true"></i>
+                  <code>hermes-relay audit</code>
+                </div>
+                <h4>See what ran on your machine.</h4>
+                <p>Review the local record of every desktop tool call—even while offline.</p>
+              </article>
+            </div>
+
+            <a class="text-link" href={cliUrl}>Meet the CLI <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+          </article>
+        </div>
+      </section>
+
+      <section id="device-control" class="device-control reveal" aria-labelledby="device-control-title">
+        <div class="device-control-copy">
+          <p class="eyebrow"><span class="live-dot"></span> Sideload + Relay plugin</p>
+          <h2 id="device-control-title">Give Hermes hands on your phone.</h2>
+          <p class="device-control-lede">
+            Let your agent read the screen, tap, type, scroll, and capture screenshots—while every action stays
+            visible and under your control.
+          </p>
+
+          <div class="device-control-capabilities" aria-label="Device Control capabilities">
+            <span><i class="ph ph-eye" aria-hidden="true"></i> Read the screen</span>
+            <span><i class="ph ph-hand-tap" aria-hidden="true"></i> Tap and scroll</span>
+            <span><i class="ph ph-keyboard" aria-hidden="true"></i> Type for you</span>
+          </div>
+
+          <div class="device-control-gate">
+            <i class="ph ph-shield-check" aria-hidden="true"></i>
+            <div>
+              <strong>Powerful by design. Gated on purpose.</strong>
+              <p>Requires the Sideload app and a paired Relay plugin. It is not included in the Google Play build.</p>
+            </div>
+          </div>
+
+          <a class="text-link" href={relayPluginUrl}>
+            See how Device Control works <i class="ph ph-arrow-right" aria-hidden="true"></i>
+          </a>
+        </div>
+
+        <div class="bridge-preview" role="img" aria-label="Recreation of the Hermes-Relay Device Control screen">
+          <div class="bridge-preview-bar">
+            <span><i class="ph ph-caret-left" aria-hidden="true"></i> Bridge</span>
+            <i class="ph ph-sliders-horizontal" aria-hidden="true"></i>
+          </div>
+
+          <div class="bridge-preview-body">
+            <div class="bridge-paired-card">
+              <div>
+                <span class="bridge-preview-kicker">PHONE BRIDGE</span>
+                <strong>Phone bridge is paired</strong>
+                <p>Advanced phone controls share this local grant.</p>
+              </div>
+              <div class="bridge-status-pills" aria-label="Relay and safety ready">
+                <span><i></i> relay</span>
+                <span><i></i> safety</span>
+              </div>
+            </div>
+
+            <div class="bridge-control-grid">
+              <div class="bridge-control-card">
+                <div class="bridge-control-heading">
+                  <div>
+                    <span>AGENT CONTROL</span>
+                    <strong>Agent Control</strong>
+                  </div>
+                  <div class="bridge-master-toggle" aria-label="Master control on">
+                    <span>MASTER</span><i></i>
+                  </div>
+                </div>
+                <p>Hermes can read the screen and act through the controls below.</p>
+                <dl class="bridge-device-status">
+                  <div><dt><i class="ph ph-device-mobile" aria-hidden="true"></i> Device</dt><dd>Pixel · ready</dd></div>
+                  <div><dt><i class="ph ph-battery-high" aria-hidden="true"></i> Battery</dt><dd>87%</dd></div>
+                  <div><dt><i class="ph ph-app-window" aria-hidden="true"></i> Current app</dt><dd>Messages</dd></div>
+                </dl>
+              </div>
+
+              <div class="bridge-safety-card">
+                <div class="bridge-card-title">
+                  <span><i class="ph ph-shield-check" aria-hidden="true"></i> Safety</span>
+                  <i class="ph ph-caret-right" aria-hidden="true"></i>
+                </div>
+                <dl>
+                  <div><dt>Apps the agent can't touch</dt><dd>6</dd></div>
+                  <div><dt>Words that always ask first</dt><dd>12</dd></div>
+                  <div><dt>Turns itself off when idle</dt><dd>30 min</dd></div>
+                </dl>
+              </div>
+            </div>
+
+            <div class="bridge-activity-card">
+              <div class="bridge-card-title">
+                <span><i class="ph ph-list-checks" aria-hidden="true"></i> Activity Log</span>
+                <span class="bridge-live-label"><i></i> LIVE</span>
+              </div>
+              <div class="bridge-activity-row">
+                <span class="bridge-activity-icon"><i class="ph ph-hand-tap" aria-hidden="true"></i></span>
+                <div><strong>Tap “Send”</strong><span>Messages · just now</span></div>
+                <span class="bridge-activity-result"><i class="ph ph-check" aria-hidden="true"></i> Allowed</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="setup-path reveal" aria-labelledby="setup-title">
+        <div class="setup-path-copy">
+          <p class="eyebrow">Quick setup · Additive by design</p>
+          <h2 id="setup-title">Start simple. Add the plugin when you want more.</h2>
+          <p>
+            Chat, Manage, and standard voice work with unmodified Hermes. The optional Relay plugin adds terminal,
+            enhanced voice, notifications, media handoff, desktop tools, and the path to Device Control.
+          </p>
+        </div>
+        <div class="setup-path-links" aria-label="Setup resources">
+          <a class="button button-primary" href={playUrl}>
+            <i class="ph ph-android-logo" aria-hidden="true"></i>
+            Get the Android app
+          </a>
+          <a class="button button-secondary" href={quickStartUrl}>
+            Quick start <i class="ph ph-arrow-right" aria-hidden="true"></i>
+          </a>
+          <a class="text-link" href={relayPluginUrl}>
+            Explore the Relay plugin <i class="ph ph-arrow-right" aria-hidden="true"></i>
+          </a>
+        </div>
+      </section>
+
+      <section class="privacy-band reveal" aria-label="Privacy and open source">
+        <i class="ph ph-lock-key-open" aria-hidden="true"></i>
+        <div>
+          <h2>Built for privacy. Powered by open source.</h2>
+          <p>No cloud relay. No lock-in. Run everything on your terms.</p>
+        </div>
+        <div class="privacy-actions">
+          <a href={docsUrl}>See how it works <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+          <a href={koFiUrl}>Support the project <i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-brand">
+        <a class="brand" href="#top">
+          <img src="/brand/logo.svg" alt="" width="26" height="26" />
+          <span>Hermes-Relay</span>
+        </a>
+        <p>Runs on your machine. Lives on your devices.</p>
+      </div>
+      <div class="footer-column">
+        <h2>Product</h2>
+        <a href={playUrl}>Android app</a>
+        <a href={cliUrl}>CLI</a>
+        <a href="#android">Features</a>
+      </div>
+      <div class="footer-column">
+        <h2>Resources</h2>
+        <a href={quickStartUrl}>Quick start</a>
+        <a href={relayPluginUrl}>Relay plugin</a>
+        <a href={docsUrl}>Docs</a>
+      </div>
+      <div class="footer-column">
+        <h2>Project</h2>
+        <a href={githubUrl}>GitHub</a>
+        <a href={`${githubUrl}/releases`}>Releases</a>
+        <a href={`${githubUrl}/blob/main/CONTRIBUTING.md`}>Contributing</a>
+        <a href={`${docsUrl}architecture/security.html`}>Security</a>
+      </div>
+      <div class="footer-bottom">
+        <span>
+          Built for <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> by{' '}
+          <a href="https://codename-11.dev">Axiom-Labs</a>
+        </span>
+        <a href={`${githubUrl}/blob/main/LICENSE`}>MIT License</a>
+      </div>
+    </footer>
+
+    <script>
+      const button = document.querySelector('.menu-button');
+      const menu = document.querySelector('#mobile-nav');
+      const menuIcon = button?.querySelector('i');
+      const themeButton = document.querySelector('.theme-toggle');
+      const themeIcon = themeButton?.querySelector('i');
+      const themeColor = document.querySelector('meta[name="theme-color"]');
+
+      const applyTheme = (theme: string | undefined) => {
+        const nextTheme = theme === 'light' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = nextTheme;
+        document.documentElement.style.colorScheme = nextTheme;
+        const nextLabel = nextTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+        themeButton?.setAttribute('aria-label', nextLabel);
+        themeButton?.setAttribute('title', nextLabel);
+        themeIcon?.classList.toggle('ph-sun', nextTheme === 'dark');
+        themeIcon?.classList.toggle('ph-moon', nextTheme === 'light');
+        themeColor?.setAttribute('content', nextTheme === 'dark' ? '#050609' : '#f4f4f1');
+      };
+
+      applyTheme(document.documentElement.dataset.theme);
+
+      themeButton?.addEventListener('click', () => {
+        const nextTheme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+        applyTheme(nextTheme);
+        try {
+          localStorage.setItem('hermes-relay-theme', nextTheme);
+        } catch {
+          // Theme still applies for this page view when storage is unavailable.
+        }
+      });
+
+      const closeMenu = () => {
+        if (!(button instanceof HTMLButtonElement) || !(menu instanceof HTMLElement)) return;
+        button.setAttribute('aria-expanded', 'false');
+        menu.hidden = true;
+        menuIcon?.classList.remove('ph-x');
+        menuIcon?.classList.add('ph-list');
+      };
+
+      button?.addEventListener('click', () => {
+        if (!(button instanceof HTMLButtonElement) || !(menu instanceof HTMLElement)) return;
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', String(!open));
+        menu.hidden = open;
+        menuIcon?.classList.toggle('ph-list', open);
+        menuIcon?.classList.toggle('ph-x', !open);
+      });
+
+      menu?.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeMenu));
+    </script>
+  </body>
+</html>
