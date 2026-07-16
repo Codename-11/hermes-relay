@@ -1,10 +1,10 @@
-# Hermes-Relay-Android v1.4.5
+# Hermes-Relay-Android v1.4.6
 
 **Release Date:** July 15, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.4.5-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.4.6-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,15 +12,19 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://c
 
 ## Summary
 
-This patch keeps Gateway chats running when you switch sessions, clears expired approval prompts, and keeps provider wait messages out of the conversation transcript.
+This patch keeps Server default aligned with Hermes' active profile, adds per-profile icon import and organization controls, and prevents the session drawer from mixing profile databases.
+
+## Added
+
+- Reorder or hide profiles per connection without changing server configuration.
+- Choose a profile icon from the Android file picker or import `avatar.png`/`profile.jpg` from a paired Relay host.
 
 ## Fixed
 
-- Switching to another chat, profile, draft, or Thread no longer interrupts a running Gateway reply. Returning to the session restores its live checkpoint and reattaches to Hermes.
-- Expired secret and sudo prompts collapse when Hermes reports their expiry, so stale actions no longer look usable.
-- Provider wait, reconnect, and continuation notices stay in Chat's live status line instead of accumulating as assistant reasoning.
+- Server default resolves Hermes' sticky active profile before Gateway session create/resume and dashboard session operations, keeping the agent, drawer, transcript, and writes in one profile database.
+- Host image import distinguishes an outdated Relay from a genuinely missing avatar and presents **Choose file** as a reliable fallback.
 
 ## Install / Verify
 
-- App version: **1.4.5** (versionCode **28**).
+- App version: **1.4.6** (versionCode **29**).
 - Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.
