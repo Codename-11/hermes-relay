@@ -88,7 +88,7 @@ Connection lifecycle, auth, keepalive.
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name, device_id }` — `ttl_seconds` / `grants` come from the phone's TTL picker dialog; host metadata wins over phone metadata when both are present |
+| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name, device_id }` — `ttl_seconds` / `grants` remain in the wire shape for client compatibility, but only policy attached by a loopback-only host flow is authoritative; missing host metadata uses bounded server defaults |
 | `auth` (session mode) | App → Server | `{ session_token, device_name, device_id }` — ttl/grants are not re-sent; server keeps the grant table keyed on the original pair |
 | `auth.ok` | Server → App | `{ session_token, server_version, profiles[], expires_at, grants, transport_hint }` — see below |
 | `auth.fail` | Server → App | `{ reason }` |
@@ -432,7 +432,6 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 |-------|--------|---------|
 | `/ws`, `/` | GET (upgrade) | WebSocket handler — main multiplexed channel |
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
-| `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
 | `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard and CLI/tray pair/repair flows. Optional request field `dashboard_url` is copied into the QR payload for custom dashboard routes. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |

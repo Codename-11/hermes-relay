@@ -186,16 +186,6 @@ async def handle_health(request: web.Request) -> web.Response:
     )
 
 
-async def handle_pairing(request: web.Request) -> web.Response:
-    """Generate a new pairing code (for use by the Hermes agent/CLI).
-
-    POST /pairing → {"code": "ABC123"}
-    """
-    server: RelayServer = request.app["server"]
-    code = server.pairing.generate_code()
-    return web.json_response({"code": code})
-
-
 async def handle_pairing_register(request: web.Request) -> web.Response:
     """Pre-register an externally-provided pairing code.
 
@@ -3764,14 +3754,10 @@ async def _authenticate(
     client_surface = str(payload.get("client_surface", "unknown") or "unknown")
     device_form_factor = str(payload.get("device_form_factor", "unknown") or "unknown")
 
-    # The phone MAY send ttl_seconds / grants in its auth envelope, but
-    # if the operator pre-registered the code with metadata on the host
-    # side, those host-provided values win — the host has the authority
-    # to decide "how long and for which channels". Only fall back to the
-    # phone-sent fields when the code had no attached metadata (e.g. old
-    # phones predating the v2 auth envelope).
-    phone_ttl = payload.get("ttl_seconds")
-    phone_grants = payload.get("grants")
+    # Pairing policy is attached by a loopback-only operator flow. Clients
+    # may still send ttl_seconds / grants for wire compatibility, but those
+    # fields are not an authority boundary and must not influence sessions.
+    # Missing host metadata therefore resolves to SessionManager defaults.
     detected_transport = _detect_transport_hint(request)
 
     # Try session token first (reconnection)
@@ -3815,23 +3801,12 @@ async def _authenticate(
     if pairing_code:
         metadata = server.pairing.consume_code(pairing_code)
         if metadata is not None:
-            # Thread host-side metadata (from /pairing/register) through
-            # to the session. Fall back to phone-sent values, then to
-            # library defaults.
+            # Thread host-side metadata (from a loopback-only pairing flow)
+            # through to the session. Missing metadata uses bounded library
+            # defaults; the network client cannot author session policy.
             ttl_seconds: float | None = metadata.ttl_seconds
             grants: dict[str, float] | None = metadata.grants
             transport_hint = metadata.transport_hint or detected_transport
-
-            if ttl_seconds is None and isinstance(phone_ttl, (int, float)) and not isinstance(phone_ttl, bool):
-                if phone_ttl >= 0:
-                    ttl_seconds = float(phone_ttl)
-            if grants is None and isinstance(phone_grants, dict):
-                cleaned: dict[str, float] = {}
-                for channel, value in phone_grants.items():
-                    if isinstance(channel, str) and isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
-                        cleaned[channel] = float(value)
-                if cleaned:
-                    grants = cleaned
 
             session = server.sessions.create_session(
                 device_name,
@@ -4110,7 +4085,6 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/ws", handle_ws)
     app.router.add_get("/", handle_ws)
     app.router.add_get("/health", handle_health)
-    app.router.add_post("/pairing", handle_pairing)
     app.router.add_post("/pairing/register", handle_pairing_register)
     app.router.add_post("/pairing/mint", handle_pairing_mint)
     app.router.add_post("/pairing/approve", handle_pairing_approve)
