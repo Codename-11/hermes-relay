@@ -7,6 +7,9 @@ import java.util.Locale
 enum class AppLanguage(val languageTag: String) {
     SYSTEM_DEFAULT(""),
     ENGLISH("en"),
+    GERMAN("de"),
+    BRAZILIAN_PORTUGUESE("pt-BR"),
+    JAPANESE("ja"),
     SIMPLIFIED_CHINESE("zh-Hans"),
     SPANISH("es"),
     ;
@@ -27,8 +30,11 @@ enum class AppLanguage(val languageTag: String) {
             val locale = Locale.forLanguageTag(primaryTag)
 
             return when (locale.language.lowercase(Locale.ROOT)) {
+                "de" -> GERMAN
                 "en" -> ENGLISH
                 "es" -> SPANISH
+                "ja" -> JAPANESE
+                "pt" -> BRAZILIAN_PORTUGUESE
                 "zh" -> {
                     val simplified = locale.script.equals("Hans", ignoreCase = true) ||
                         locale.script.isEmpty() ||

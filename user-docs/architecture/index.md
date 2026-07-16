@@ -1,10 +1,10 @@
-<script setup>
-import { withBase } from 'vitepress'
-</script>
-
 # Architecture
 
-<img :src="withBase('/architecture-homepage.svg')" alt="How Hermes-Relay connects: Vanilla Hermes runs chat, Manage and voice with no plugin; the optional Relay plugin adds terminal, bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build." style="width:100%;margin:0.5rem 0 1.75rem;" />
+<ExpandableImage
+  src="/architecture-homepage.svg"
+  alt="How Hermes-Relay connects: Vanilla Hermes runs chat, Manage and voice with no plugin; the optional Relay plugin adds terminal, bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build."
+  caption="Select the diagram to inspect it at full size."
+/>
 
 ## Connection Model
 
@@ -77,7 +77,7 @@ The Hermes API Server streams events using Server-Sent Events. Each event type m
 
 The relay connection (bridge/terminal) uses a pairing code for initial setup, then session tokens for persistence.
 
-<HermesFlow diagram="auth-flow" height="200px" />
+<HermesFlow diagram="auth-flow" height="220px" />
 
 Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim) on the Hermes host mints the code and pre-registers it with the relay via a loopback-only `/pairing/register` endpoint before embedding it in the QR — so the phone never types a code by hand. Session tokens are stored in EncryptedSharedPreferences backed by Android Keystore.
 

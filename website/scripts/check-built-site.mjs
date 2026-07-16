@@ -4,6 +4,14 @@ import { extname, join, resolve } from 'node:path';
 const distRoot = resolve('dist');
 const failures = [];
 const htmlFiles = [];
+const localeByRelativePath = new Map([
+  ['index.html', 'en'],
+  [join('de', 'index.html'), 'de'],
+  [join('es', 'index.html'), 'es'],
+  [join('ja', 'index.html'), 'ja'],
+  [join('pt-BR', 'index.html'), 'pt-BR'],
+  [join('zh-CN', 'index.html'), 'zh-CN'],
+]);
 
 async function walk(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -34,6 +42,8 @@ await walk(distRoot);
 
 for (const htmlPath of htmlFiles) {
   const html = await readFile(htmlPath, 'utf8');
+  const relativePath = htmlPath.slice(distRoot.length + 1);
+  const expectedLocale = localeByRelativePath.get(relativePath);
   const ids = new Set([...html.matchAll(/\sid=["']([^"']+)["']/g)].map((match) => match[1]));
   const references = [...html.matchAll(/\s(?:href|src)=["']([^"']+)["']/g)].map((match) => match[1]);
 
@@ -68,6 +78,20 @@ for (const htmlPath of htmlFiles) {
   for (const required of ['rel="canonical"', 'property="og:url"', 'property="og:image"']) {
     if (!html.includes(required)) failures.push(`${htmlPath}: missing URL-bound metadata ${required}`);
   }
+
+  if (expectedLocale) {
+    if (!html.includes(`<html lang="${expectedLocale}"`)) failures.push(`${htmlPath}: expected html lang ${expectedLocale}`);
+    if (!html.includes(`property="og:locale"`)) failures.push(`${htmlPath}: missing Open Graph locale`);
+    if ((html.match(/rel="alternate"/g) ?? []).length !== 7) failures.push(`${htmlPath}: expected 7 alternate-language links`);
+    const expectedLocalePath = `/${expectedLocale === 'en' ? '' : `${expectedLocale}/`}`;
+    if (!html.includes(`href="${expectedLocalePath}" lang="${expectedLocale}" aria-current="page"`)) {
+      failures.push(`${htmlPath}: language menu does not select ${expectedLocale}`);
+    }
+  }
+}
+
+if (htmlFiles.length !== localeByRelativePath.size) {
+  failures.push(`expected ${localeByRelativePath.size} localized HTML pages, found ${htmlFiles.length}`);
 }
 
 if (failures.length) {

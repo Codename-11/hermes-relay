@@ -2,6 +2,11 @@
 
 The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media, sessions, and voice routes in Hermes-Relay. Chat never touches the relay — it rides your vanilla Hermes surfaces, preferring the dashboard gateway (`/api/ws`, live thinking) when Manage auth is ready and falling back to the API server's SSE routes otherwise.
 
+This page covers deployment and operation. Start with the
+[Relay API contract](./relay-api.html) for route ownership, authentication
+classes and build-flavor gates; the route tables below provide exact operational
+detail.
+
 ## Do I Need It?
 
 | Feature | Relay required? | Auth path |

@@ -1,6 +1,11 @@
 # Troubleshooting
 
-## Can't connect to API server
+Start with the symptom you can see. Each path begins with the smallest check
+that separates an Android problem from a server or network problem.
+
+<TroubleshootingNavigator />
+
+## Can't connect to API server {#cannot-connect}
 
 - **Red dot in chat header**: API server is unreachable
 - Check that Hermes is running: `hermes gateway`
@@ -33,7 +38,7 @@ server machine. Use the server's LAN IP (e.g. `http://192.168.1.100:8642`) or
 its Tailscale address instead.
 :::
 
-### Tailscale checklist
+### Tailscale checklist {#tailscale-checklist}
 
 If a Tailscale route fails its probe:
 
@@ -67,7 +72,7 @@ If `adb connect` is refused, the pairing succeeded but the wrong port was used,
 or Wireless debugging rotated ports. Reopen **Developer options -> Wireless
 debugging** on the phone and copy the current main port.
 
-## Messages not streaming
+## Messages not streaming {#messages-not-streaming}
 
 - Check your API key is correct
 - Look for error banners in the chat — tap **Retry** to resend
@@ -88,18 +93,18 @@ To reduce drops in the first place:
 - Enable the gateway keep-alive option in Settings if you background the app
   during long turns.
 
-## "No internet connection" banner
+## "No internet connection" banner {#no-internet}
 
 - The app detected network loss via Android's ConnectivityManager
 - Check your WiFi/mobile data connection
 - The banner disappears automatically when connectivity returns
 
-## Session history not loading
+## Session history not loading {#session-history}
 
 - The server must be reachable when switching sessions
 - Large sessions may take a moment to load — watch for the loading indicator
 
-## App crashes on startup
+## App crashes on startup {#app-crashes}
 
 - Clear app data: Settings > Apps > Hermes-Relay > Clear Data
 - Re-enter your API server URL and key during onboarding

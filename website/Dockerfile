@@ -16,6 +16,8 @@ COPY user-docs/package.json user-docs/package-lock.json user-docs/
 RUN cd user-docs && npm ci
 
 COPY user-docs user-docs
+COPY assets/screenshots/02_chat.png assets/screenshots/02_chat.png
+COPY plugin/relay/server.py plugin/relay/server.py
 COPY gradle gradle
 COPY preview preview
 RUN cd user-docs && npm run build

@@ -93,3 +93,5 @@ keystore.properties
 
 # Legacy generated desktop tray assets may remain after upgrading a worktree.
 desktop/tray/ui/vendor/
+# Generated from assets/screenshots/02_chat.png before docs dev/build.
+/user-docs/public/chat-demo.png
