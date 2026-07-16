@@ -1,5 +1,6 @@
 FROM node:22-alpine AS website-build
 WORKDIR /src
+RUN apk add --no-cache python3
 
 COPY website/package.json website/package-lock.json website/
 RUN cd website && npm ci
@@ -11,15 +12,12 @@ RUN cd website && npm run build:production
 
 FROM node:24-alpine AS docs-build
 WORKDIR /src
+RUN apk add --no-cache python3
 
 COPY user-docs/package.json user-docs/package-lock.json user-docs/
 RUN cd user-docs && npm ci
 
-COPY user-docs user-docs
-COPY assets/screenshots/02_chat.png assets/screenshots/02_chat.png
-COPY plugin/relay/server.py plugin/relay/server.py
-COPY gradle gradle
-COPY preview preview
+COPY . .
 RUN cd user-docs && npm run build
 
 FROM nginx:1.28-alpine
