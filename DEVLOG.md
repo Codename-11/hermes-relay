@@ -17,6 +17,8 @@ import in `server.py`, and `git diff --check` passed. The broad plugin
 discovery run progressed through unrelated suites but was interrupted by the
 existing Windows async-suite `KeyboardInterrupt` behavior, so the focused
 security and neighboring route suites remain the authoritative local result.
+The required-check path classifier now retries transient GitHub API failures
+so a temporary PR-files endpoint outage does not skip every surface check.
 
 ## 2026-07-16 — Localized marketing site
 

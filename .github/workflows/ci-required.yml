@@ -41,6 +41,7 @@ jobs:
         id: filter
         uses: actions/github-script@v8
         with:
+          retries: 3
           script: |
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
