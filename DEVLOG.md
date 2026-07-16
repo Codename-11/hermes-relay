@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Coolify root-context website deployment hotfix
+
+Added a repository-owned multi-stage Dockerfile for the Astro marketing site
+and corrected its Coolify instructions. Production builds now keep the
+repository root as Docker context, run the existing `build:production` gate
+from `website/`, and serve the generated static output with Nginx. This keeps
+the site's canonical screenshot comparison against `docs/media/` intact while
+avoiding Nixpacks' incorrect Android/Gradle provider selection at monorepo root.
+
+Verification: local website checks, production build, link validation, Docker
+image build, and Nginx-served smoke checks passed before deployment.
+
 ## 2026-07-15 — Android 1.4.6 and Plugin 1.4.2 release preparation
 
 The profile-continuity and profile-image work was prepared as a two-surface
