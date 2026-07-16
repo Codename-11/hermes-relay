@@ -300,6 +300,7 @@ Implementation references:
 | Tailscale helper (first-class) | `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI (ADR 25). Publishes the loopback relay over the tailnet via `tailscale serve --bg --https=<port>`; managed TLS + tailnet ACL identity. Optional, graceful-absent when the binary isn't installed. Auto-retires when upstream PR #9295 lands. See [`docs/remote-access.md`](remote-access.md). |
 | Multi-endpoint pairing | Single QR carries an ordered list of `role: lan/tailscale/public/...` candidates with strict-priority selection (ADR 24). Phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog. |
 | Device revocation | Paired Devices screen → `GET /sessions` (tokens masked to 8-char prefix) / `DELETE /sessions/{token_prefix}` (self-revoke allowed, wipes local state + redirects to pair flow). Any paired device can revoke any other — trade-off documented in ADR 15. |
+| Session policy updates | `PATCH /sessions/{token_prefix}` is self-targeted and reduction-only for normal Relay bearers. Extending a lifetime, adding or lengthening grants, or changing another session requires a fresh operator-approved pairing flow. |
 | Terminal gate | Biometric/PIN required before terminal access (planned). |
 
 ---
@@ -772,7 +773,7 @@ The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"par
 - [x] Android Keystore session token storage (`SessionTokenStore` — `KeystoreTokenStore` with StrongBox-preferred via `setRequestStrongBoxBacked`, `LegacyEncryptedPrefsTokenStore` TEE-backed fallback, one-shot lossless migration on first launch)
 - [x] User-chosen session TTL at pair time (`SessionTtlPickerDialog` — 1d / 7d / 30d / 90d / 1y / Never)
 - [x] Per-channel grants on one session token (`Session.grants` — chat / terminal / bridge / TUI / split voice grants (`voice:config`, `voice:stt`, `voice:tts`), clamped to session lifetime)
-- [x] Paired Devices screen (`PairedDevicesScreen` + `GET /sessions` + `DELETE /sessions/{prefix}` + `PATCH /sessions/{prefix}` for extend)
+- [x] Paired Devices screen (`PairedDevicesScreen` + `GET /sessions` + `DELETE /sessions/{prefix}`; bearer-authenticated `PATCH /sessions/{prefix}` is self-targeted and reduction-only)
 - [x] Transport security badge (`TransportSecurityBadge` — three states: secure / insecure-with-reason / insecure-unknown)
 - [x] First-time insecure-mode ack dialog with reason picker (`InsecureConnectionAckDialog`)
 - [x] Tailscale detection (`TailscaleDetector` — informational only)

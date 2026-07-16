@@ -27,6 +27,7 @@ import logging
 import math
 import mimetypes
 import os
+import secrets
 import signal
 import ssl
 import stat
@@ -800,22 +801,22 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
 
 
 async def handle_sessions_extend(request: web.Request) -> web.Response:
-    """Update a paired device's session TTL and/or per-channel grants.
+    """Reduce the calling device's session TTL and/or channel grants.
 
-    This is the "extend" action exposed on the phone's Paired Devices
-    screen, but also handles arbitrary TTL updates — passing
-    ``ttl_seconds`` shorter than the current expiry clips the session
-    (equivalent to shortening, though the button is labeled "Extend"
-    for the common case). ``ttl_seconds == 0`` maps to never-expire.
+    A normal Relay bearer is session identity, not session-management
+    authority.  It may reduce only its own live policy.  Extending a
+    lifetime, adding or lengthening a grant, or changing another session
+    requires a fresh operator-approved pairing flow.
 
     PATCH /sessions/{token_prefix}
-      Body: {"ttl_seconds": 2592000}              # extend only
-           | {"grants": {"terminal": 604800}}     # grants only
-           | {"ttl_seconds": 0, "grants": {...}}  # both
+      Body: {"ttl_seconds": 300}                  # shorten only
+           | {"grants": {"terminal": 60}}         # reduce grants
+           | {"ttl_seconds": 300, "grants": {...}}  # both
       → 200 {"ok": true, "expires_at": ..., "grants": {...}}
       → 400 missing/invalid body or no fields provided
       → 401 missing/invalid bearer
       → 404 prefix doesn't match any active session
+      → 403 cross-session target or policy expansion
       → 409 prefix matches multiple sessions
     """
     server, current_session = _require_bearer_session(request)
@@ -863,7 +864,12 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
                 {"ok": False, "error": "'grants' must be an object"}, status=400
             )
         for k, v in grants.items():
-            if not isinstance(k, str) or not isinstance(v, (int, float)) or v < 0:
+            if (
+                not isinstance(k, str)
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+                or v < 0
+            ):
                 return web.json_response(
                     {
                         "ok": False,
@@ -891,20 +897,27 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
         )
 
     target = matches[0]
-    updated = server.sessions.update_session(
-        target.token,
-        ttl_seconds=ttl_seconds,
-        grants=grants,
-    )
+    if not secrets.compare_digest(target.token, current_session.token):
+        raise web.HTTPForbidden(text="cannot modify another session")
+
+    try:
+        updated = server.sessions.reduce_session_policy(
+            target.token,
+            ttl_seconds=ttl_seconds,
+            grants=grants,
+        )
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    except PermissionError as exc:
+        raise web.HTTPForbidden(text=str(exc)) from exc
     if updated is None:
         # Raced with expiry or revocation between find_by_prefix and update.
         raise web.HTTPNotFound(text="session vanished mid-update, retry")
 
     logger.info(
-        "Extended session %s... (%s)%s",
+        "Reduced session policy %s... (%s) [self]",
         target.token[:8],
         target.device_name,
-        " [self]" if target.token == current_session.token else "",
     )
     return web.json_response(
         {
