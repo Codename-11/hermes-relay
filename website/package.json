@@ -9,11 +9,12 @@
   "scripts": {
     "assets:sync": "node scripts/product-assets.mjs sync && node scripts/responsive-assets.mjs sync",
     "assets:check": "node scripts/product-assets.mjs check && node scripts/responsive-assets.mjs check",
-    "dev": "npm run assets:check && astro dev",
-    "build": "npm run assets:check && astro check && astro build && node scripts/check-built-site.mjs",
+    "locales:validate": "python ../scripts/check-website-locales.py",
+    "dev": "npm run assets:check && npm run locales:validate && astro dev",
+    "build": "npm run assets:check && npm run locales:validate && astro check && astro build && node scripts/check-built-site.mjs",
     "build:production": "node scripts/validate-production-env.mjs && npm run build",
     "preview": "astro preview",
-    "check": "npm run assets:check && astro check",
+    "check": "npm run assets:check && npm run locales:validate && astro check",
     "links:check": "node scripts/check-built-site.mjs"
   },
   "dependencies": {

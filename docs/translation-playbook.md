@@ -53,6 +53,20 @@ After review:
 - add recurring terminology corrections to this glossary;
 - preserve translator credit and stale-PR lineage under `CONTRIBUTING.md`.
 
+## Public documentation
+
+Translate the first-run documentation as complete pages, preserving frontmatter,
+internal links, component tags, command names, route paths, configuration keys,
+and code samples exactly. Fast-moving API, relay-route, configuration, and
+architecture reference remains canonical English until a locale has a durable
+maintenance owner. Localized core pages should link to that reference rather
+than copying it.
+
+Run `python scripts/check-user-docs-locales.py` before previewing or building the
+documentation. When a canonical English core page changes intentionally, review
+every localized counterpart, then refresh its recorded source hash with
+`python scripts/check-user-docs-locales.py --refresh`.
+
 ## Technical release gate
 
 Run:

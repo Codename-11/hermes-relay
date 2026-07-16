@@ -1,5 +1,37 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-16 — Localized marketing site
+
+The Astro product site now publishes German, Spanish, Japanese, Brazilian
+Portuguese, and Simplified Chinese routes from one typed copy contract. Each
+route localizes marketing copy, navigation, accessibility labels, metadata, and
+links into the matching first-run documentation while retaining canonical
+screenshots, command examples, and UI recreations as shipped-product evidence.
+
+Locale-aware canonical URLs, alternate-language links, Open Graph locale data,
+structured-data language, sitemap entries, and a responsive language selector
+were added. The localization registry records English-source freshness, and the
+website development and build commands reject missing or stale translations.
+Astro diagnostics, deterministic asset checks, the six-page production build,
+built-site validation, desktop/mobile browser checks, and `git diff --check`
+passed.
+
+## 2026-07-15 — German, Brazilian Portuguese, and Japanese localization
+
+Android now includes complete German, Brazilian Portuguese, and Japanese
+catalogs across the Google Play and sideload flavors. German and Brazilian
+Portuguese were recovered from unfinished translation drafts and refreshed
+against the current English resource contract; Japanese was generated through
+the same deterministic translation harness. The in-app picker, Android locale
+configuration, localization registry, contributor references, and user-facing
+language lists now describe the expanded set consistently.
+
+The catalogs remain marked as AI-translated until fluent review is recorded.
+Structural validation covers resource parity, placeholders, plurals, arrays,
+formatting flags, XML parsing, and canonical source hashes. The 10-catalog
+validator, five focused `AppLanguageTest` cases, both flavor Kotlin/resource
+compilations, sideload debug lint, and `git diff --check` passed.
+
 ## 2026-07-15 — Retire GitHub Pages and move docs to hermes-relay.dev
 
 Disabled and removed the GitHub Pages deployment path, changed the repository

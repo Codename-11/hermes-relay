@@ -6,21 +6,27 @@ import '@fontsource/space-grotesk/700.css';
 import '@fontsource/space-mono/400.css';
 import '../styles/global.css';
 import MorphingSphere from '../components/MorphingSphere.astro';
+import { localeInfo, locales, translations, type Locale } from '../i18n';
 import versionCatalog from '../../../gradle/libs.versions.toml?raw';
 
-const docsUrl = 'https://hermes-relay.dev/docs/';
+type Props = { locale?: Locale };
+
+const locale = (Astro.props as Props).locale ?? 'en';
+const copy = translations[locale];
+const route = localeInfo[locale];
+const docsUrl = `https://hermes-relay.dev${route.docsPath}`;
+const canonicalDocsUrl = 'https://hermes-relay.dev/docs/';
 const githubUrl = 'https://github.com/Codename-11/hermes-relay';
 const playUrl = 'https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay';
-const cliUrl = `${docsUrl}desktop/`;
+const cliUrl = `${canonicalDocsUrl}desktop/`;
 const koFiUrl = 'https://ko-fi.com/L4L31Q8LJ1';
 const quickStartUrl = `${docsUrl}guide/quick-start`;
-const relayPluginUrl = `${docsUrl}guide/release-tracks#how-the-pieces-combine`;
+const relayPluginUrl = `${docsUrl}guide/release-tracks`;
 const currentVersion = versionCatalog.match(/^appVersionName\s*=\s*"([^"]+)"/m)?.[1] ?? '1.4.5';
 const currentReleaseUrl = `${githubUrl}/releases/tag/android-v${currentVersion}`;
-const pageTitle = 'Hermes-Relay — Your Hermes agent, wherever you are';
-const pageDescription =
-  'Hermes-Relay puts your self-hosted Hermes agent on Android and gives it consent-gated access to nearby machines.';
-const canonicalUrl = Astro.site ? new URL('/', Astro.site).href : undefined;
+const pageTitle = copy.metadata.title;
+const pageDescription = copy.metadata.description;
+const canonicalUrl = Astro.site ? new URL(route.path, Astro.site).href : undefined;
 const socialImageUrl = Astro.site ? new URL('/social-card.png', Astro.site).href : undefined;
 const structuredData = {
   '@context': 'https://schema.org',
@@ -41,12 +47,13 @@ const structuredData = {
   downloadUrl: playUrl,
   codeRepository: githubUrl,
   sameAs: [githubUrl, playUrl],
-  featureList: ['Streaming chat', 'Realtime voice', 'Hermes management', 'Desktop CLI', 'Sideload device control'],
+  inLanguage: locale,
+  featureList: copy.metadata.features,
 };
 ---
 
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang={locale} data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -56,6 +63,10 @@ const structuredData = {
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+    {locales.map((alternate) => (
+      <link rel="alternate" hreflang={alternate} href={Astro.site ? new URL(localeInfo[alternate].path, Astro.site).href : localeInfo[alternate].path} />
+    ))}
+    <link rel="alternate" hreflang="x-default" href={Astro.site ? new URL('/', Astro.site).href : '/'} />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Hermes-Relay" />
@@ -67,13 +78,14 @@ const structuredData = {
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Hermes-Relay — your Hermes agent on Android and nearby machines" />
+    <meta property="og:image:alt" content={copy.metadata.imageAlt} />
+    <meta property="og:locale" content={route.ogLocale} />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={pageTitle} />
     <meta name="twitter:description" content={pageDescription} />
     {socialImageUrl && <meta name="twitter:image" content={socialImageUrl} />}
-    <meta name="twitter:image:alt" content="Hermes-Relay — your Hermes agent on Android and nearby machines" />
+    <meta name="twitter:image:alt" content={copy.metadata.imageAlt} />
 
     <link rel="icon" type="image/svg+xml" href="/brand/logo.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
@@ -97,40 +109,72 @@ const structuredData = {
   <body>
     <header class="site-header" data-header>
       <div class="header-identity">
-        <a class="brand" href="#top" aria-label="Hermes-Relay home">
+        <a class="brand" href="#top" aria-label={copy.header.home}>
           <img src="/brand/logo.svg" alt="" width="28" height="28" />
           <span>Hermes-Relay</span>
         </a>
-        <a class="version-badge" href={currentReleaseUrl} aria-label={`v${currentVersion}, current Android release`}>
+        <a class="version-badge" href={currentReleaseUrl} aria-label={`v${currentVersion}, ${copy.header.release}`}>
           v{currentVersion}
         </a>
-        <span class="header-tagline">Android + CLI for Hermes</span>
+        <span class="header-tagline">{copy.header.tagline}</span>
       </div>
 
       <div class="header-actions">
-        <nav class="desktop-nav" aria-label="Main navigation">
-          <a href="#product">Product</a>
-          <a href="#android">Android</a>
+        <nav class="desktop-nav" aria-label={copy.header.mainNav}>
+          <a href="#product">{copy.header.product}</a>
+          <a href="#android">{copy.header.android}</a>
           <a href="#cli">CLI</a>
-          <a href={docsUrl}>Docs</a>
+          <a href={docsUrl}>{copy.header.docs}</a>
           <a href={githubUrl}>GitHub <i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>
         </nav>
 
-        <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+        <div class="language-picker" data-language-picker>
+          <button
+            class="language-trigger"
+            type="button"
+            aria-label={`${copy.header.language}: ${localeInfo[locale].label}`}
+            aria-expanded="false"
+            aria-controls="language-menu"
+            data-language-trigger
+          >
+            <i class="ph ph-translate" aria-hidden="true"></i>
+            <span>{localeInfo[locale].label}</span>
+            <i class="ph ph-caret-down language-caret" aria-hidden="true"></i>
+          </button>
+          <nav class="language-menu" id="language-menu" aria-label={copy.header.language} data-language-menu hidden>
+            <span class="language-menu-label">{copy.header.language}</span>
+            {locales.map((option) => (
+              <a href={localeInfo[option].path} lang={option} aria-current={option === locale ? 'page' : undefined}>
+                <span class="language-code">{option === 'pt-BR' ? 'PT' : option === 'zh-CN' ? 'ZH' : option.toUpperCase()}</span>
+                <strong>{localeInfo[option].label}</strong>
+                {option === locale && <i class="ph ph-check" aria-hidden="true"></i>}
+              </a>
+            ))}
+          </nav>
+        </div>
+
+        <button
+          class="theme-toggle"
+          type="button"
+          aria-label={copy.header.lightTheme}
+          title={copy.header.lightTheme}
+          data-light-label={copy.header.lightTheme}
+          data-dark-label={copy.header.darkTheme}
+        >
           <i class="ph ph-sun" aria-hidden="true"></i>
         </button>
 
         <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-nav">
-          <span class="sr-only">Open navigation</span>
+          <span class="sr-only">{copy.header.openNav}</span>
           <i class="ph ph-list" aria-hidden="true"></i>
         </button>
       </div>
 
-      <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile navigation" hidden>
-        <a href="#product">Product</a>
-        <a href="#android">Android</a>
+      <nav class="mobile-nav" id="mobile-nav" aria-label={copy.header.mobileNav} hidden>
+        <a href="#product">{copy.header.product}</a>
+        <a href="#android">{copy.header.android}</a>
         <a href="#cli">CLI</a>
-        <a href={docsUrl}>Docs</a>
+        <a href={docsUrl}>{copy.header.docs}</a>
         <a href={githubUrl}>GitHub <i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>
       </nav>
     </header>
@@ -139,25 +183,23 @@ const structuredData = {
       <section class="hero" id="product" aria-labelledby="hero-title">
         <MorphingSphere variant="ambient" />
         <div class="hero-copy reveal">
-          <p class="eyebrow"><span class="live-dot"></span> Connected to your Hermes</p>
-          <h1 id="hero-title">Your Hermes agent. <span>Wherever you are.</span></h1>
-          <p class="hero-lede">
-            Chat, speak, manage, and give your agent hands — from the devices already around you.
-          </p>
+          <p class="eyebrow"><span class="live-dot"></span> {copy.hero.eyebrow}</p>
+          <h1 id="hero-title">{copy.hero.title} <span>{copy.hero.accent}</span></h1>
+          <p class="hero-lede">{copy.hero.lede}</p>
           <div class="hero-actions">
             <a class="button button-primary" href={playUrl}>
               <i class="ph ph-android-logo" aria-hidden="true"></i>
-              Get the Android app
+              {copy.hero.androidCta}
             </a>
             <a class="button button-secondary" href={cliUrl}>
               <i class="ph ph-terminal-window" aria-hidden="true"></i>
-              Explore the CLI
+              {copy.hero.cliCta}
             </a>
           </div>
-          <p class="trust-line">Open source <span>·</span> Self-hosted <span>·</span> No cloud relay <i></i></p>
+          <p class="trust-line">{copy.hero.openSource} <span>·</span> {copy.hero.selfHosted} <span>·</span> {copy.hero.noCloud} <i></i></p>
         </div>
 
-        <div class="hero-product reveal" aria-label="Hermes-Relay Android chat screen">
+        <div class="hero-product reveal" aria-label={copy.hero.preview}>
           <div class="phone phone-hero">
             <span class="phone-speaker" aria-hidden="true"></span>
             <img
@@ -166,30 +208,27 @@ const structuredData = {
               sizes="(max-width: 720px) 250px, (max-width: 980px) 370px, 430px"
               width="1040"
               height="2160"
-              alt="Hermes-Relay chat running on Android"
+              alt={copy.hero.imageAlt}
               fetchpriority="high"
               decoding="async"
             />
           </div>
-          <p class="route-label"><span></span> gateway · LAN · direct</p>
+          <p class="route-label"><span></span> {copy.hero.route}</p>
         </div>
       </section>
 
       <section class="surface-section" aria-labelledby="surface-title">
         <header class="section-intro reveal">
-          <p class="section-kicker">Direct by design</p>
-          <h2 id="surface-title">One agent. Every surface.</h2>
-          <p>
-            Hermes-Relay extends your agent to your phone and nearby machines. Connections stay direct,
-            local-first, and under your control.
-          </p>
+          <p class="section-kicker">{copy.surfaces.kicker}</p>
+          <h2 id="surface-title">{copy.surfaces.title}</h2>
+          <p>{copy.surfaces.lede}</p>
         </header>
 
         <div class="surface-grid">
           <article class="surface surface-android reveal" id="android">
             <p class="surface-label"><span></span> Android</p>
-            <h3>Chat, voice, and power features in your pocket.</h3>
-            <p class="surface-copy">Take conversations on the go, speak naturally, and manage the Hermes you already run.</p>
+            <h3>{copy.surfaces.androidTitle}</h3>
+            <p class="surface-copy">{copy.surfaces.androidLede}</p>
 
             <div class="android-showcase">
               <div class="phone phone-small">
@@ -200,7 +239,7 @@ const structuredData = {
                   sizes="(max-width: 720px) 200px, 250px"
                   width="1040"
                   height="2160"
-                  alt="Hermes-Relay Android chat"
+                  alt={copy.hero.imageAlt}
                   loading="lazy"
                   decoding="async"
                 />
@@ -208,20 +247,20 @@ const structuredData = {
               <ul class="feature-list">
                 <li>
                   <i class="ph ph-chats-circle" aria-hidden="true"></i>
-                  <span><strong>Chat</strong><small>Streaming conversations and live agent work.</small></span>
+                  <span><strong>Chat</strong><small>{copy.surfaces.chatDescription}</small></span>
                 </li>
                 <li>
                   <i class="ph ph-waveform" aria-hidden="true"></i>
-                  <span><strong>Voice</strong><small>Speak naturally, interrupt, and keep moving.</small></span>
+                  <span><strong>Voice</strong><small>{copy.surfaces.voiceDescription}</small></span>
                 </li>
                 <li>
                   <i class="ph ph-sliders-horizontal" aria-hidden="true"></i>
-                  <span><strong>Manage</strong><small>Profiles, skills, models, and automations.</small></span>
+                  <span><strong>Manage</strong><small>{copy.surfaces.manageDescription}</small></span>
                 </li>
               </ul>
             </div>
 
-            <div class="screen-strip" aria-label="Additional Android surfaces">
+            <div class="screen-strip" aria-label={copy.surfaces.additional}>
               <figure>
                 <MorphingSphere variant="voice" />
                 <figcaption>Voice</figcaption>
@@ -244,10 +283,10 @@ const structuredData = {
 
           <article class="surface surface-cli reveal" id="cli">
             <p class="surface-label surface-label-cli"><span></span> CLI</p>
-            <h3>Consent-gated access on your machine.</h3>
-            <p class="surface-copy">Give Hermes hands on the machine — only when you allow it.</p>
+            <h3>{copy.surfaces.cliTitle}</h3>
+            <p class="surface-copy">{copy.surfaces.cliLede}</p>
 
-            <div class="terminal" aria-label="Hermes-Relay command line preview">
+            <div class="terminal" aria-label={copy.surfaces.terminal}>
               <div class="terminal-bar">
                 <i class="ph ph-terminal-window" aria-hidden="true"></i>
                 <span>hermes@machine:~</span>
@@ -266,72 +305,69 @@ const structuredData = {
             <div class="consent-note">
               <i class="ph ph-shield-check" aria-hidden="true"></i>
               <div>
-                <strong>Consent is explicit and local.</strong>
-                <p>You decide when Hermes can run commands, read files, or make changes.</p>
+                <strong>{copy.surfaces.consentTitle}</strong>
+                <p>{copy.surfaces.consentBody}</p>
               </div>
             </div>
 
-            <div class="cli-capability-grid" aria-label="CLI capabilities">
+            <div class="cli-capability-grid" aria-label={copy.surfaces.capabilities}>
               <article class="cli-capability">
                 <div class="cli-capability-command">
                   <i class="ph ph-arrow-counter-clockwise" aria-hidden="true"></i>
                   <code>hermes-relay sessions</code>
                 </div>
-                <h4>Pick up where you left off.</h4>
-                <p>Reconnect to named tmux sessions with recent scrollback already in place.</p>
+                <h4>{copy.surfaces.sessionsTitle}</h4>
+                <p>{copy.surfaces.sessionsBody}</p>
               </article>
               <article class="cli-capability">
                 <div class="cli-capability-command">
                   <i class="ph ph-lightning" aria-hidden="true"></i>
                   <code>hermes-relay daemon status</code>
                 </div>
-                <h4>Available in the background.</h4>
-                <p>Keep approved desktop tools ready through the headless daemon.</p>
+                <h4>{copy.surfaces.daemonTitle}</h4>
+                <p>{copy.surfaces.daemonBody}</p>
               </article>
               <article class="cli-capability cli-capability--wide">
                 <div class="cli-capability-command">
                   <i class="ph ph-list-checks" aria-hidden="true"></i>
                   <code>hermes-relay audit</code>
                 </div>
-                <h4>See what ran on your machine.</h4>
-                <p>Review the local record of every desktop tool call—even while offline.</p>
+                <h4>{copy.surfaces.auditTitle}</h4>
+                <p>{copy.surfaces.auditBody}</p>
               </article>
             </div>
 
-            <a class="text-link" href={cliUrl}>Meet the CLI <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+            <a class="text-link" href={cliUrl}>{copy.surfaces.meetCli} <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
           </article>
         </div>
       </section>
 
       <section id="device-control" class="device-control reveal" aria-labelledby="device-control-title">
         <div class="device-control-copy">
-          <p class="eyebrow"><span class="live-dot"></span> Sideload + Relay plugin</p>
-          <h2 id="device-control-title">Give Hermes hands on your phone.</h2>
-          <p class="device-control-lede">
-            Let your agent read the screen, tap, type, scroll, and capture screenshots—while every action stays
-            visible and under your control.
-          </p>
+          <p class="eyebrow"><span class="live-dot"></span> {copy.device.eyebrow}</p>
+          <h2 id="device-control-title">{copy.device.title}</h2>
+          <p class="device-control-lede">{copy.device.lede}</p>
 
-          <div class="device-control-capabilities" aria-label="Device Control capabilities">
-            <span><i class="ph ph-eye" aria-hidden="true"></i> Read the screen</span>
-            <span><i class="ph ph-hand-tap" aria-hidden="true"></i> Tap and scroll</span>
-            <span><i class="ph ph-keyboard" aria-hidden="true"></i> Type for you</span>
+          <div class="device-control-capabilities" aria-label={copy.device.capabilities}>
+            <span><i class="ph ph-eye" aria-hidden="true"></i> {copy.device.read}</span>
+            <span><i class="ph ph-hand-tap" aria-hidden="true"></i> {copy.device.tap}</span>
+            <span><i class="ph ph-keyboard" aria-hidden="true"></i> {copy.device.type}</span>
           </div>
 
           <div class="device-control-gate">
             <i class="ph ph-shield-check" aria-hidden="true"></i>
             <div>
-              <strong>Powerful by design. Gated on purpose.</strong>
-              <p>Requires the Sideload app and a paired Relay plugin. It is not included in the Google Play build.</p>
+              <strong>{copy.device.gateTitle}</strong>
+              <p>{copy.device.gateBody}</p>
             </div>
           </div>
 
           <a class="text-link" href={relayPluginUrl}>
-            See how Device Control works <i class="ph ph-arrow-right" aria-hidden="true"></i>
+            {copy.device.link} <i class="ph ph-arrow-right" aria-hidden="true"></i>
           </a>
         </div>
 
-        <div class="bridge-preview" role="img" aria-label="Recreation of the Hermes-Relay Device Control screen">
+        <div class="bridge-preview" role="img" aria-label={copy.device.preview}>
           <div class="bridge-preview-bar">
             <span><i class="ph ph-caret-left" aria-hidden="true"></i> Bridge</span>
             <i class="ph ph-sliders-horizontal" aria-hidden="true"></i>
@@ -399,36 +435,33 @@ const structuredData = {
 
       <section class="setup-path reveal" aria-labelledby="setup-title">
         <div class="setup-path-copy">
-          <p class="eyebrow">Quick setup · Additive by design</p>
-          <h2 id="setup-title">Start simple. Add the plugin when you want more.</h2>
-          <p>
-            Chat, Manage, and standard voice work with unmodified Hermes. The optional Relay plugin adds terminal,
-            enhanced voice, notifications, media handoff, desktop tools, and the path to Device Control.
-          </p>
+          <p class="eyebrow">{copy.setup.eyebrow}</p>
+          <h2 id="setup-title">{copy.setup.title}</h2>
+          <p>{copy.setup.body}</p>
         </div>
-        <div class="setup-path-links" aria-label="Setup resources">
+        <div class="setup-path-links" aria-label={copy.setup.resources}>
           <a class="button button-primary" href={playUrl}>
             <i class="ph ph-android-logo" aria-hidden="true"></i>
-            Get the Android app
+            {copy.setup.androidCta}
           </a>
           <a class="button button-secondary" href={quickStartUrl}>
-            Quick start <i class="ph ph-arrow-right" aria-hidden="true"></i>
+            {copy.setup.quickStart} <i class="ph ph-arrow-right" aria-hidden="true"></i>
           </a>
           <a class="text-link" href={relayPluginUrl}>
-            Explore the Relay plugin <i class="ph ph-arrow-right" aria-hidden="true"></i>
+            {copy.setup.plugin} <i class="ph ph-arrow-right" aria-hidden="true"></i>
           </a>
         </div>
       </section>
 
-      <section class="privacy-band reveal" aria-label="Privacy and open source">
+      <section class="privacy-band reveal" aria-label={copy.privacy.aria}>
         <i class="ph ph-lock-key-open" aria-hidden="true"></i>
         <div>
-          <h2>Built for privacy. Powered by open source.</h2>
-          <p>No cloud relay. No lock-in. Run everything on your terms.</p>
+          <h2>{copy.privacy.title}</h2>
+          <p>{copy.privacy.body}</p>
         </div>
         <div class="privacy-actions">
-          <a href={docsUrl}>See how it works <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
-          <a href={koFiUrl}>Support the project <i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>
+          <a href={docsUrl}>{copy.privacy.learn} <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+          <a href={koFiUrl}>{copy.privacy.support} <i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>
         </div>
       </section>
     </main>
@@ -439,33 +472,33 @@ const structuredData = {
           <img src="/brand/logo.svg" alt="" width="26" height="26" />
           <span>Hermes-Relay</span>
         </a>
-        <p>Runs on your machine. Lives on your devices.</p>
+        <p>{copy.footer.tagline}</p>
       </div>
       <div class="footer-column">
-        <h2>Product</h2>
-        <a href={playUrl}>Android app</a>
+        <h2>{copy.footer.product}</h2>
+        <a href={playUrl}>{copy.footer.android}</a>
         <a href={cliUrl}>CLI</a>
-        <a href="#android">Features</a>
+        <a href="#android">{copy.footer.features}</a>
       </div>
       <div class="footer-column">
-        <h2>Resources</h2>
-        <a href={quickStartUrl}>Quick start</a>
-        <a href={relayPluginUrl}>Relay plugin</a>
-        <a href={docsUrl}>Docs</a>
+        <h2>{copy.footer.resources}</h2>
+        <a href={quickStartUrl}>{copy.footer.quickStart}</a>
+        <a href={relayPluginUrl}>{copy.footer.plugin}</a>
+        <a href={docsUrl}>{copy.footer.docs}</a>
       </div>
       <div class="footer-column">
-        <h2>Project</h2>
+        <h2>{copy.footer.project}</h2>
         <a href={githubUrl}>GitHub</a>
-        <a href={`${githubUrl}/releases`}>Releases</a>
-        <a href={`${githubUrl}/blob/main/CONTRIBUTING.md`}>Contributing</a>
-        <a href={`${docsUrl}architecture/security.html`}>Security</a>
+        <a href={`${githubUrl}/releases`}>{copy.footer.releases}</a>
+        <a href={`${githubUrl}/blob/main/CONTRIBUTING.md`}>{copy.footer.contributing}</a>
+        <a href={`${canonicalDocsUrl}architecture/security.html`}>{copy.footer.security}</a>
       </div>
       <div class="footer-bottom">
         <span>
-          Built for <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> by{' '}
+          {copy.footer.builtFor} <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> {copy.footer.by}{' '}
           <a href="https://codename-11.dev">Axiom-Labs</a>
         </span>
-        <a href={`${githubUrl}/blob/main/LICENSE`}>MIT License</a>
+        <a href={`${githubUrl}/blob/main/LICENSE`}>{copy.footer.license}</a>
       </div>
     </footer>
 
@@ -476,12 +509,18 @@ const structuredData = {
       const themeButton = document.querySelector('.theme-toggle');
       const themeIcon = themeButton?.querySelector('i');
       const themeColor = document.querySelector('meta[name="theme-color"]');
+      const languagePicker = document.querySelector('[data-language-picker]');
+      const languageTrigger = document.querySelector('[data-language-trigger]');
+      const languageMenu = document.querySelector('[data-language-menu]');
 
       const applyTheme = (theme: string | undefined) => {
         const nextTheme = theme === 'light' ? 'light' : 'dark';
         document.documentElement.dataset.theme = nextTheme;
         document.documentElement.style.colorScheme = nextTheme;
-        const nextLabel = nextTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+        const nextLabel = nextTheme === 'dark'
+          ? themeButton?.getAttribute('data-light-label')
+          : themeButton?.getAttribute('data-dark-label');
+        if (!nextLabel) return;
         themeButton?.setAttribute('aria-label', nextLabel);
         themeButton?.setAttribute('title', nextLabel);
         themeIcon?.classList.toggle('ph-sun', nextTheme === 'dark');
@@ -499,6 +538,30 @@ const structuredData = {
         } catch {
           // Theme still applies for this page view when storage is unavailable.
         }
+      });
+
+      const closeLanguageMenu = () => {
+        if (!(languageTrigger instanceof HTMLButtonElement) || !(languageMenu instanceof HTMLElement)) return;
+        languageTrigger.setAttribute('aria-expanded', 'false');
+        languageMenu.hidden = true;
+      };
+
+      languageTrigger?.addEventListener('click', () => {
+        if (!(languageTrigger instanceof HTMLButtonElement) || !(languageMenu instanceof HTMLElement)) return;
+        const open = languageTrigger.getAttribute('aria-expanded') === 'true';
+        languageTrigger.setAttribute('aria-expanded', String(!open));
+        languageMenu.hidden = open;
+      });
+
+      document.addEventListener('click', (event) => {
+        if (!(event.target instanceof Node) || languagePicker?.contains(event.target)) return;
+        closeLanguageMenu();
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || languageMenu?.hasAttribute('hidden')) return;
+        closeLanguageMenu();
+        if (languageTrigger instanceof HTMLButtonElement) languageTrigger.focus();
       });
 
       const closeMenu = () => {

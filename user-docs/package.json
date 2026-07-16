@@ -3,7 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "assets:sync": "node scripts/sync-assets.mjs",
+    "locales:validate": "python ../scripts/check-user-docs-locales.py",
+    "routes:validate": "node scripts/validate-route-contract.mjs",
+    "predev": "npm run assets:sync && npm run routes:validate && npm run locales:validate",
     "dev": "vitepress dev",
+    "prebuild": "npm run assets:sync && npm run routes:validate && npm run locales:validate",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },

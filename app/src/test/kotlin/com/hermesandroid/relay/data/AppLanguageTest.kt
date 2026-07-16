@@ -26,6 +26,10 @@ class AppLanguageTest {
 
     @Test
     fun addedLocaleTagsResolveToTheirPickerOptions() {
+        assertEquals(AppLanguage.GERMAN, AppLanguage.fromLanguageTags("de-DE"))
+        assertEquals(AppLanguage.BRAZILIAN_PORTUGUESE, AppLanguage.fromLanguageTags("pt-BR"))
+        assertEquals(AppLanguage.BRAZILIAN_PORTUGUESE, AppLanguage.fromLanguageTags("pt-PT"))
+        assertEquals(AppLanguage.JAPANESE, AppLanguage.fromLanguageTags("ja-JP"))
         assertEquals(AppLanguage.SPANISH, AppLanguage.fromLanguageTags("es-MX"))
     }
 
@@ -33,6 +37,9 @@ class AppLanguageTest {
     fun languageOptionsProduceExpectedLocaleLists() {
         assertTrue(AppLanguage.SYSTEM_DEFAULT.toLocaleList().isEmpty)
         assertEquals("en", AppLanguage.ENGLISH.toLocaleList().toLanguageTags())
+        assertEquals("de", AppLanguage.GERMAN.toLocaleList().toLanguageTags())
+        assertEquals("pt-BR", AppLanguage.BRAZILIAN_PORTUGUESE.toLocaleList().toLanguageTags())
+        assertEquals("ja", AppLanguage.JAPANESE.toLocaleList().toLanguageTags())
         assertEquals("zh-Hans", AppLanguage.SIMPLIFIED_CHINESE.languageTag)
         assertEquals("es", AppLanguage.SPANISH.toLocaleList().toLanguageTags())
         assertEquals(

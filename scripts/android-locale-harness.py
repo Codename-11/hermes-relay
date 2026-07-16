@@ -25,7 +25,8 @@ def qualifier(tag: str) -> str:
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    normalized = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def placeholders(value: str) -> list[tuple[int, str]]:
@@ -115,6 +116,10 @@ def install(args: argparse.Namespace) -> None:
         "native_name": manifest["native_name"],
         "verification": "ai-translated",
         "review_refs": [],
+        "source_sha256": {
+            source_set: digest(APP_SRC / source_set / "res" / "values" / "strings.xml")
+            for source_set in SOURCE_SETS
+        },
         "surfaces": {
             "android": "complete",
             "readme": "english-fallback",
