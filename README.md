@@ -22,7 +22,7 @@
 
 <p align="center">
   <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a><br>
-  <a href="https://codename-11.github.io/hermes-relay/">Documentation</a> ·
+  <a href="https://hermes-relay.dev/docs/">Documentation</a> ·
   <a href="https://github.com/Codename-11/hermes-relay/releases">Releases</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a>
@@ -50,13 +50,13 @@ Install → connect → talk, in about two minutes.
 ### 1 · Install the app
 
 - **Google Play** *(easiest — auto-updates)* — [**install from Google Play**](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay). Chat, voice, Manage, terminal/TUI, media, notifications, and relay sessions.
-- **APK** *(full phone-control feature set)* — download the file ending in **`-sideload-release.apk`** from the newest `android-v*` release on [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases) and open it (allow your browser to install unknown apps the first time). Integrity verification, signing fingerprint, and per-build details are in the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk).
+- **APK** *(full phone-control feature set)* — download the file ending in **`-sideload-release.apk`** from the newest `android-v*` release on [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases) and open it (allow your browser to install unknown apps the first time). Integrity verification, signing fingerprint, and per-build details are in the [Sideload guide](https://hermes-relay.dev/docs/guide/getting-started.html#sideload-apk).
 
-Sideload builds check GitHub for updates and show a one-tap banner when you're behind; Play builds update through the Store. See [Release tracks](https://codename-11.github.io/hermes-relay/guide/release-tracks) for the capability matrix.
+Sideload builds check GitHub for updates and show a one-tap banner when you're behind; Play builds update through the Store. See [Release tracks](https://hermes-relay.dev/docs/guide/release-tracks) for the capability matrix.
 
 ### 2 · Have Hermes running
 
-The app needs your Hermes **API server enabled and reachable from your phone**, plus an **API key** — the token the app sends to authenticate Chat (pick any value you like). Installing Hermes and choosing a provider is vanilla Hermes setup; the [full walkthrough](https://codename-11.github.io/hermes-relay/guide/getting-started) covers Windows, the dashboard for **Manage**, LAN scan, and QR setup.
+The app needs your Hermes **API server enabled and reachable from your phone**, plus an **API key** — the token the app sends to authenticate Chat (pick any value you like). Installing Hermes and choosing a provider is vanilla Hermes setup; the [full walkthrough](https://hermes-relay.dev/docs/guide/getting-started) covers Windows, the dashboard for **Manage**, LAN scan, and QR setup.
 
 ```bash
 hermes setup --portal                      # install / log in / pick a provider — skip if already done
@@ -77,7 +77,7 @@ hermes gateway
 
 `API_SERVER_ENABLED` turns the API server on; `API_SERVER_HOST=0.0.0.0` makes it reachable on your LAN (the default is localhost-only); `API_SERVER_KEY` is the bearer token the app sends — **your choice of value**.
 
-> **Heads up on `0.0.0.0`:** that exposes the API to every device on your network — fine on a trusted home LAN, but off it keep the key set and front it with Tailscale or an HTTPS reverse proxy ([Remote access](https://codename-11.github.io/hermes-relay/guide/remote-access)) rather than exposing it directly. You don't have to type the key on your phone — **Scan for Hermes on LAN**, or have your agent make a setup QR (below). For **Manage** (skills, models, keys), also run the Hermes dashboard — see [Getting Started](https://codename-11.github.io/hermes-relay/guide/getting-started).
+> **Heads up on `0.0.0.0`:** that exposes the API to every device on your network — fine on a trusted home LAN, but off it keep the key set and front it with Tailscale or an HTTPS reverse proxy ([Remote access](https://hermes-relay.dev/docs/guide/remote-access)) rather than exposing it directly. You don't have to type the key on your phone — **Scan for Hermes on LAN**, or have your agent make a setup QR (below). For **Manage** (skills, models, keys), also run the Hermes dashboard — see [Getting Started](https://hermes-relay.dev/docs/guide/getting-started).
 
 ### 3 · Connect and talk
 
@@ -99,7 +99,7 @@ The wizard probes everything and finishes with a capability card:
 
 If your dashboard requires sign-in, do it once under the **Manage** tab — the same session unlocks voice. That's the whole Vanilla Hermes setup.
 
-> **Going places?** Put your server's Tailscale URL in the setup form's *Remote access* field (or add a route any time under **Settings → Connections → Routes**). The app uses LAN at home and switches routes automatically when you leave. See [Remote access](https://codename-11.github.io/hermes-relay/guide/remote-access).
+> **Going places?** Put your server's Tailscale URL in the setup form's *Remote access* field (or add a route any time under **Settings → Connections → Routes**). The app uses LAN at home and switches routes automatically when you leave. See [Remote access](https://hermes-relay.dev/docs/guide/remote-access).
 
 ### 4 · Optional: install Relay for power tools
 
@@ -162,12 +162,12 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
   </tr>
 </table>
 
-The Android app also ships a complete AI-assisted Spanish catalog. Choose
-**Español** from **Settings → Appearance → Language**; translation status and
-fluent review are tracked independently so community corrections remain easy
-to contribute.
+The Android app ships complete AI-assisted catalogs for **Deutsch**, **Español**,
+**日本語**, **Português (Brasil)**, and **简体中文**. Choose a language from
+**Settings → Appearance → Language**; translation status and fluent review are
+tracked independently so community corrections remain easy to contribute.
 
-<p align="center"><sub>▶ <a href="https://codename-11.github.io/hermes-relay/guide/getting-started.html#see-it-working">Watch the demo</a> on the docs site</sub></p>
+<p align="center"><sub>▶ <a href="https://hermes-relay.dev/docs/guide/getting-started.html#see-it-working">Watch the demo</a> on the docs site</sub></p>
 
 ## Features
 
@@ -183,7 +183,7 @@ to contribute.
 - **Security & pairing** — QR pairing, Android Keystore session storage (StrongBox-preferred), TOFU cert pinning, per-channel time-bound grants, user-chosen session TTL.
 - **Stats for Nerds** — local-only analytics: TTFT, token usage, stream health, peak-time charts.
 
-> Sideload builds add direct SMS, contact search, one-tap dialing, and location awareness — handy for fully hands-free intents like *"text Sam I'll be 10 minutes late."* See [Release tracks](https://codename-11.github.io/hermes-relay/guide/release-tracks).
+> Sideload builds add direct SMS, contact search, one-tap dialing, and location awareness — handy for fully hands-free intents like *"text Sam I'll be 10 minutes late."* See [Release tracks](https://hermes-relay.dev/docs/guide/release-tracks).
 
 ## Hands on any machine — the Hermes-Relay CLI&nbsp;<sub>(alpha)</sub>
 
@@ -205,7 +205,7 @@ It pairs against the **same relay and credential store** as the Android app — 
 
 On Windows, the default installer adds the optional right-click-only systray: no dashboard or app window, just TUI launch, User/Administrator-aware daemon controls, pairing, local grant review, audit, diagnostics, logs, desktop-use status/cancellation, sign-in startup, and emergency stop.
 
-- **Docs:** [CLI guide](https://codename-11.github.io/hermes-relay/desktop/) · [`desktop/README.md`](desktop/README.md)
+- **Docs:** [CLI guide](https://hermes-relay.dev/docs/desktop/) · [`desktop/README.md`](desktop/README.md)
 - **AI-agent setup recipe:** `/hermes-relay-desktop-setup`
 
 ## How It Works
@@ -229,11 +229,11 @@ configure API, dashboard, and relay routes without merging their auth models.
 
 | | |
 |---|---|
-| **[User Guide](https://codename-11.github.io/hermes-relay/)** | **Quick start, features, configuration — start here** |
-| [Android](https://codename-11.github.io/hermes-relay/guide/) | Android install + setup + features |
-| [Hermes-Relay CLI](https://codename-11.github.io/hermes-relay/desktop/) | Pairing, subcommands, local tool routing |
-| [Architecture](https://codename-11.github.io/hermes-relay/architecture/) | How the system works under the hood |
-| [API Reference](https://codename-11.github.io/hermes-relay/reference/api.html) | Hermes API endpoints used by both surfaces |
+| **[User Guide](https://hermes-relay.dev/docs/)** | **Quick start, features, configuration — start here** |
+| [Android](https://hermes-relay.dev/docs/guide/) | Android install + setup + features |
+| [Hermes-Relay CLI](https://hermes-relay.dev/docs/desktop/) | Pairing, subcommands, local tool routing |
+| [Architecture](https://hermes-relay.dev/docs/architecture/) | How the system works under the hood |
+| [API Reference](https://hermes-relay.dev/docs/reference/api.html) | Hermes API endpoints used by both surfaces |
 | [Specification](docs/spec.md) | Full spec — protocol, UI, phases, dependencies |
 | [Architecture Decisions](docs/decisions.md) | ADRs — framework, channels, auth, terminal |
 | [Changelog](CHANGELOG.md) | Release history (`android-v*`, `plugin-v*`, `cli-v*`) |

@@ -59,19 +59,26 @@ canonical fallback; do not hand-edit the WebP variants.
 
 ## Coolify
 
-Deploy this directory as a static Nixpacks application:
+Deploy the website and VitePress guide with their repository-owned Dockerfile.
+The build context must remain the repository root because the production asset
+check compares website copies against canonical screenshot files under
+`docs/media/`. The final Nginx image serves the Astro landing page at `/` and
+the VitePress guide at `/docs/`; GitHub Pages is not used.
 
-- Base directory: `/website`
-- Build command: detected from `nixpacks.toml` (`npm run build:production`)
-- Publish directory: `/dist`
-- Static site: enabled
+- Build pack: `Dockerfile`
+- Base directory: `/`
+- Dockerfile location: `/website/Dockerfile`
+- Exposed port: `80`
+- Health check: `GET /` expecting `200`
 - Domain: `https://hermes-relay.dev`
 - Optional environment override: `PUBLIC_SITE_URL=https://<preview-domain>`
-- Node: pinned to the supported Node 22 line through `package.json`
 - Force HTTPS: enabled
 
-The environment value is consumed at build time; the output remains a static
-Nginx-served site. No custom Dockerfile or Node runtime is required.
+The Dockerfile builds the Astro site with Node 22 and the VitePress guide with
+Node 24, runs both production builds from repository-root context, and serves
+the resulting static trees with Nginx. Do not isolate `/website` as the Coolify
+base directory: doing so omits the canonical screenshot sources and correctly
+causes the asset-integrity gate to fail.
 
 Assign `https://hermes-relay.dev` in Coolify and redeploy. If
 `PUBLIC_SITE_URL` is supplied for a preview environment, the production build

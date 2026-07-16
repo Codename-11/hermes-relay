@@ -1,50 +1,26 @@
-<script setup>
-import { withBase } from 'vitepress'
-</script>
-
 # Installation & Setup
 
 Three steps — install the app, point it at your Hermes, say hello. If your
 Hermes agent is already running, this takes about two minutes and needs nothing
 installed on the server.
 
-<div class="gs-steps">
-  <span>1 · Install the app</span>
-  <span>2 · Point it at Hermes</span>
-  <span>3 · Connect &amp; chat</span>
-</div>
+<ol class="gs-steps" aria-label="Setup progress">
+  <li><strong>01</strong><span>Install the app</span></li>
+  <li><strong>02</strong><span>Point it at Hermes</span></li>
+  <li><strong>03</strong><span>Connect &amp; chat</span></li>
+</ol>
 
 ## 1. Install the app
 
-The easiest way — install from Google Play and get automatic updates:
+Choose the build by one question: do you want Hermes to operate the phone, or
+only be available from it? Both builds come from the same codebase and can live
+side-by-side.
 
-<div class="gs-install-cta">
-  <StoreBadge />
-</div>
+<ReleaseTrackChooser />
 
-That's the **Google Play** build: chat, profiles, voice, terminal/TUI relay,
-media, the notification companion, relay sessions, and diagnostics. It's what
-most people want.
-
-Prefer to install the APK by hand, or want the full phone-control feature set?
-That's the **Sideload** build — same app, plus the agent can read your screen,
-tap, type, and navigate apps for you.
-
-::: details Google Play vs. Sideload — which build is right for me?
-Both flavors are built from the same codebase and install with **different
-application IDs**, so you can run them side-by-side and try both.
-
-| | Google Play | Sideload |
-|---|---|---|
-| Install | One tap, auto-updates | Manual APK from GitHub Releases |
-| Chat, voice, Manage | ✅ | ✅ |
-| Terminal / TUI relay, media, notifications | ✅ | ✅ |
-| Device Control (screen reading, taps, typing, vision navigation) | — | ✅ |
-
-Most users want **Google Play**. Pick **Sideload** if you want the agent to
-operate your phone for you. The [Release tracks](/guide/release-tracks) page has
-the full feature comparison and a decision guide.
-:::
+The [Release tracks](/guide/release-tracks) page explains the full capability
+and safety differences. Building from source is an advanced alternative under
+the Sideload instructions below.
 
 ### Sideload APK {#sideload-apk}
 
@@ -297,22 +273,13 @@ using the highest-priority reachable one. Chat and Manage move together — LAN 
 home, Tailscale when you leave.
 :::
 
-### See it working
+### What you’ll see
 
-Once you're connected, chat streams like this — responses, tool cards, markdown,
-and the personality picker, all live:
+The documentation uses deterministic renders from the real Android components,
+so these screens update with the canonical screenshot set instead of drifting
+like a hand-recorded demo.
 
-<div class="demo-video-wrap">
-  <video
-    :src="withBase('/chat_demo.mp4')"
-    :poster="withBase('/chat_demo_poster.jpg')"
-    controls
-    muted
-    loop
-    playsinline
-    preload="metadata"
-  />
-</div>
+<FirstRunPreview />
 
 The chat header shows the agent name with a green pulse on the avatar when the
 API server is reachable. If the dot is red:
@@ -494,37 +461,41 @@ shared with other Hermes tools. Flags: `--dry-run`, `--keep-clone`,
 
 <style scoped>
 .gs-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
   margin: 1.25rem 0 2rem;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-divider);
+  list-style: none;
+}
+.gs-steps li {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  padding: 11px 12px;
+  background: var(--vp-c-bg-alt);
+  color: var(--vp-c-text-2);
+}
+.gs-steps strong {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.66rem;
+  color: var(--vp-c-brand-1);
 }
 .gs-steps span {
   font-family: var(--vp-font-family-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: var(--vp-c-text-2);
-  background: var(--vp-c-bg-alt);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  padding: 0.35rem 0.85rem;
 }
-.gs-install-cta {
-  margin: 1.25rem 0 1.5rem;
-}
-.demo-video-wrap {
-  display: flex;
-  justify-content: center;
-  margin: 1.5rem 0 2rem;
-}
-.demo-video-wrap video {
-  max-width: 320px;
-  width: 100%;
-  height: auto;
-  border-radius: 16px;
-  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5),
-              0 0 0 1px var(--vp-c-divider);
-  background: #000;
+@media (max-width: 640px) {
+  .gs-steps {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

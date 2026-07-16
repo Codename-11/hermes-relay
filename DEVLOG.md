@@ -1,5 +1,67 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-16 — Localized marketing site
+
+The Astro product site now publishes German, Spanish, Japanese, Brazilian
+Portuguese, and Simplified Chinese routes from one typed copy contract. Each
+route localizes marketing copy, navigation, accessibility labels, metadata, and
+links into the matching first-run documentation while retaining canonical
+screenshots, command examples, and UI recreations as shipped-product evidence.
+
+Locale-aware canonical URLs, alternate-language links, Open Graph locale data,
+structured-data language, sitemap entries, and a responsive language selector
+were added. The localization registry records English-source freshness, and the
+website development and build commands reject missing or stale translations.
+Astro diagnostics, deterministic asset checks, the six-page production build,
+built-site validation, desktop/mobile browser checks, and `git diff --check`
+passed.
+
+## 2026-07-16 — Temporary redirect shim for pre-migration Android builds
+
+Restored GitHub Pages only as a redirect-only compatibility endpoint for app
+versions that still open `https://codename-11.github.io/hermes-relay/`. The
+shim preserves known paths, query strings, and fragments while forwarding to
+`https://hermes-relay.dev/docs/`; it does not publish the VitePress site.
+The production Nginx configuration resolves VitePress clean URLs to their
+`.html` artifacts so both legacy and corrected in-app links reach real pages.
+Removal criteria and the operator review date are tracked in `TODO.md`.
+
+## 2026-07-15 — German, Brazilian Portuguese, and Japanese localization
+
+Android now includes complete German, Brazilian Portuguese, and Japanese
+catalogs across the Google Play and sideload flavors. German and Brazilian
+Portuguese were recovered from unfinished translation drafts and refreshed
+against the current English resource contract; Japanese was generated through
+the same deterministic translation harness. The in-app picker, Android locale
+configuration, localization registry, contributor references, and user-facing
+language lists now describe the expanded set consistently.
+
+The catalogs remain marked as AI-translated until fluent review is recorded.
+Structural validation covers resource parity, placeholders, plurals, arrays,
+formatting flags, XML parsing, and canonical source hashes. The 10-catalog
+validator, five focused `AppLanguageTest` cases, both flavor Kotlin/resource
+compilations, sideload debug lint, and `git diff --check` passed.
+
+## 2026-07-15 — Retire GitHub Pages and move docs to hermes-relay.dev
+
+Disabled and removed the GitHub Pages deployment path, changed the repository
+homepage to `https://hermes-relay.dev`, and moved the existing VitePress guide
+to `https://hermes-relay.dev/docs/` inside the production Coolify image. Active
+README, website, Android, release-note, and pet-schema links now target the new
+docs origin while historical DEVLOG entries remain unchanged.
+
+## 2026-07-15 — Coolify root-context website deployment hotfix
+
+Added a repository-owned multi-stage Dockerfile for the Astro marketing site
+and corrected its Coolify instructions. Production builds now keep the
+repository root as Docker context, run the existing `build:production` gate
+from `website/`, and serve the generated static output with Nginx. This keeps
+the site's canonical screenshot comparison against `docs/media/` intact while
+avoiding Nixpacks' incorrect Android/Gradle provider selection at monorepo root.
+
+Verification: local website checks, production build, link validation, Docker
+image build, and Nginx-served smoke checks passed before deployment.
+
 ## 2026-07-15 — Android 1.4.6 and Plugin 1.4.2 release preparation
 
 The profile-continuity and profile-image work was prepared as a two-surface

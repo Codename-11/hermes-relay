@@ -2,11 +2,13 @@
 
 Hermes-Relay ships in **two flavors** built from the same codebase. Most users want the Google Play one. Power users who want the agent to drive their phone hands-free want the sideload one. This page explains what's different, why, and how to choose.
 
-## TL;DR
+## Choose your build
 
-- **Google Play** — easy install, automatic updates, every chat/profile/voice feature, terminal/TUI relay, media handoff, notification companion, relay sessions, and diagnostics. The relay-backed ones (terminal, media, notifications) need the [Relay plugin](#how-the-pieces-combine) paired to your Hermes host. It has **no AccessibilityService** and cannot read the screen, tap, type, swipe, capture screenshots, send SMS, make calls, access contacts/location, or perform unattended phone control.
-- **Sideload** — manual install from GitHub Releases, all of the above plus AccessibilityService-backed Device Control: screen reading, taps, typing, gestures, screenshots, voice-routed bridge intents ("text Sam I'll be late", "open Chrome"), direct SMS/call dispatch, file sharing/MMS attachment handoff, vision-driven navigation, and the full `android_*` bridge toolset. The toggle is labeled "Agent Control."
-- They coexist on a device — you can install both side-by-side and try them both.
+Start with Google Play unless you specifically want Device Control. The two
+builds use different application IDs, so they can coexist on one phone while
+you decide.
+
+<ReleaseTrackChooser explain-relay />
 
 ## How the pieces combine
 
