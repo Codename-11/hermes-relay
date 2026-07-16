@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta http-equiv="refresh" content="2;url=https://hermes-relay.dev/docs/" />
+    <link rel="canonical" href="https://hermes-relay.dev/docs/" />
+    <title>Hermes Relay documentation moved</title>
+  </head>
+  <body>
+    <main>
+      <h1>Hermes Relay documentation moved</h1>
+      <p>
+        Redirecting to
+        <a id="destination" href="https://hermes-relay.dev/docs/">hermes-relay.dev/docs</a>.
+      </p>
+    </main>
+    <script>
+      (() => {
+        const legacyBase = "/hermes-relay";
+        const pathname = window.location.pathname;
+        const suffix = pathname === legacyBase || pathname === `${legacyBase}/`
+          ? "/"
+          : pathname.startsWith(`${legacyBase}/`)
+            ? pathname.slice(legacyBase.length)
+            : "/";
+        const destination = new URL("https://hermes-relay.dev/docs/");
+        destination.pathname = `/docs/${suffix.replace(/^\/+/, "")}`;
+        destination.search = window.location.search;
+        destination.hash = window.location.hash;
+        document.getElementById("destination").href = destination.href;
+        window.location.replace(destination.href);
+      })();
+    </script>
+  </body>
+</html>

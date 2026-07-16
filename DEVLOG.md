@@ -16,6 +16,16 @@ Astro diagnostics, deterministic asset checks, the six-page production build,
 built-site validation, desktop/mobile browser checks, and `git diff --check`
 passed.
 
+## 2026-07-16 — Temporary redirect shim for pre-migration Android builds
+
+Restored GitHub Pages only as a redirect-only compatibility endpoint for app
+versions that still open `https://codename-11.github.io/hermes-relay/`. The
+shim preserves known paths, query strings, and fragments while forwarding to
+`https://hermes-relay.dev/docs/`; it does not publish the VitePress site.
+The production Nginx configuration resolves VitePress clean URLs to their
+`.html` artifacts so both legacy and corrected in-app links reach real pages.
+Removal criteria and the operator review date are tracked in `TODO.md`.
+
 ## 2026-07-15 — German, Brazilian Portuguese, and Japanese localization
 
 Android now includes complete German, Brazilian Portuguese, and Japanese

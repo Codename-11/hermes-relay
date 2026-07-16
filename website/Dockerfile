@@ -23,6 +23,7 @@ COPY preview preview
 RUN cd user-docs && npm run build
 
 FROM nginx:1.28-alpine
+COPY website/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=website-build /src/website/dist/ /usr/share/nginx/html/
 COPY --from=docs-build /src/user-docs/.vitepress/dist/ /usr/share/nginx/html/docs/
 EXPOSE 80
