@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9fa8ff"/>
+      <stop offset="1" stop-color="#756cff"/>
+    </linearGradient>
+    <radialGradient id="orb" cx="42%" cy="40%" r="60%">
+      <stop offset="0" stop-color="#67d5ff" stop-opacity=".75"/>
+      <stop offset=".48" stop-color="#756cff" stop-opacity=".3"/>
+      <stop offset="1" stop-color="#050609" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="24"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="#050609"/>
+  <path d="M0 1h1200M0 629h1200" stroke="#292d37"/>
+
+  <g transform="translate(72 66)">
+    <rect width="54" height="54" rx="12" fill="#1a1a2e"/>
+    <g transform="translate(9 7) scale(.071)" fill="none" stroke="url(#mark)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M256 192 320 256 256 320 192 256Z"/>
+      <path d="M128 192 256 64 384 192M128 320 256 448 384 320"/>
+    </g>
+    <text x="72" y="35" fill="#f4f1eb" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" letter-spacing="3">HERMES-RELAY</text>
+  </g>
+
+  <g transform="translate(72 196)">
+    <text fill="#f4f1eb" font-family="Arial, Helvetica, sans-serif" font-size="74" font-weight="700" letter-spacing="-3">
+      <tspan x="0" y="0">Your Hermes agent.</tspan>
+      <tspan x="0" y="82" fill="#8178ff">Wherever you are.</tspan>
+    </text>
+    <text x="2" y="146" fill="#aaa7b8" font-family="Arial, Helvetica, sans-serif" font-size="25">
+      Android + CLI for your self-hosted Hermes.
+    </text>
+    <g transform="translate(2 198)" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" letter-spacing="2">
+      <circle cx="5" cy="-5" r="5" fill="#47d86a"/>
+      <text x="22" fill="#9fa8ff">CHAT · VOICE · MANAGE · DEVICE CONTROL</text>
+    </g>
+  </g>
+
+  <g transform="translate(858 42)">
+    <circle cx="134" cy="236" r="210" fill="url(#orb)" filter="url(#shadow)" opacity=".8"/>
+    <rect x="10" y="24" width="268" height="526" rx="44" fill="#090b11" stroke="#3b3f49" stroke-width="5"/>
+    <rect x="25" y="39" width="238" height="496" rx="32" fill="#0d0f16" stroke="#292d37"/>
+    <rect x="102" y="51" width="84" height="8" rx="4" fill="#292d37"/>
+    <g transform="translate(48 91)">
+      <text fill="#f4f1eb" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">Hermes</text>
+      <text x="0" y="26" fill="#737181" font-family="monospace" font-size="11">gpt-5.5 · connected</text>
+      <rect x="0" y="60" width="184" height="68" rx="12" fill="#9fa8ff"/>
+      <text x="14" y="84" fill="#111522" font-family="Arial, Helvetica, sans-serif" font-size="13">Give me a focused plan</text>
+      <text x="14" y="102" fill="#111522" font-family="Arial, Helvetica, sans-serif" font-size="13">for the morning.</text>
+      <rect x="0" y="146" width="184" height="158" rx="12" fill="#1b2040"/>
+      <text x="14" y="172" fill="#f4f1eb" font-family="Arial, Helvetica, sans-serif" font-size="12">1. Pick one real win.</text>
+      <text x="14" y="197" fill="#f4f1eb" font-family="Arial, Helvetica, sans-serif" font-size="12">2. Protect the first hour.</text>
+      <text x="14" y="222" fill="#f4f1eb" font-family="Arial, Helvetica, sans-serif" font-size="12">3. Start with a ritual.</text>
+      <rect x="0" y="330" width="184" height="76" rx="14" fill="#181b32" stroke="#3b3f49"/>
+      <text x="14" y="358" fill="#737181" font-family="Arial, Helvetica, sans-serif" font-size="13">Message…</text>
+      <circle cx="165" cy="381" r="5" fill="#47d86a"/>
+    </g>
+  </g>
+</svg>
