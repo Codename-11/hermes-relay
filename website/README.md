@@ -59,19 +59,24 @@ canonical fallback; do not hand-edit the WebP variants.
 
 ## Coolify
 
-Deploy this directory as a static Nixpacks application:
+Deploy the website with its repository-owned Dockerfile. The build context must
+remain the repository root because the production asset check compares website
+copies against canonical screenshots under `docs/media/`.
 
-- Base directory: `/website`
-- Build command: detected from `nixpacks.toml` (`npm run build:production`)
-- Publish directory: `/dist`
-- Static site: enabled
+- Build pack: Dockerfile
+- Base directory: `/`
+- Dockerfile location: `/website/Dockerfile`
+- Exposed port: `80`
+- Health check: `GET /` expecting `200`
 - Domain: `https://hermes-relay.dev`
 - Optional environment override: `PUBLIC_SITE_URL=https://<preview-domain>`
-- Node: pinned to the supported Node 22 line through `package.json`
 - Force HTTPS: enabled
 
-The environment value is consumed at build time; the output remains a static
-Nginx-served site. No custom Dockerfile or Node runtime is required.
+The Dockerfile builds with Node 22, runs `npm run build:production` from the
+website workspace, and serves the resulting static `/website/dist` tree with
+Nginx. Do not isolate `/website` as the Coolify base directory: doing so omits
+the canonical screenshot sources and correctly causes the asset-integrity gate
+to fail.
 
 Assign `https://hermes-relay.dev` in Coolify and redeploy. If
 `PUBLIC_SITE_URL` is supplied for a preview environment, the production build
