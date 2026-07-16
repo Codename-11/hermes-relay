@@ -6,6 +6,8 @@ Restored GitHub Pages only as a redirect-only compatibility endpoint for app
 versions that still open `https://codename-11.github.io/hermes-relay/`. The
 shim preserves known paths, query strings, and fragments while forwarding to
 `https://hermes-relay.dev/docs/`; it does not publish the VitePress site.
+The production Nginx configuration resolves VitePress clean URLs to their
+`.html` artifacts so both legacy and corrected in-app links reach real pages.
 Removal criteria and the operator review date are tracked in `TODO.md`.
 
 ## 2026-07-15 — Retire GitHub Pages and move docs to hermes-relay.dev
