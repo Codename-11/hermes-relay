@@ -1,5 +1,23 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-16 — Critical Relay authorization hardening
+
+Relay privileged interfaces now enforce host-authorized policy at every shared
+dispatch boundary. Anonymous pairing-code minting was removed; pairing clients
+can no longer choose session lifetime or grants; Android bridge HTTP routes and
+terminal messages require live sessions with active route grants; ordinary
+session bearers can only reduce their own lifetime and existing grants; remote
+profile config reads expose an explicit public schema without host paths; and
+voice requests cannot override credential-bearing provider origins.
+
+Six bounded exploit harnesses stopped at the restored boundaries. The combined
+security regression set passed 96 tests, Python compilation passed, Ruff passed
+for changed modules and tests apart from the pre-existing unused `signal`
+import in `server.py`, and `git diff --check` passed. The broad plugin
+discovery run progressed through unrelated suites but was interrupted by the
+existing Windows async-suite `KeyboardInterrupt` behavior, so the focused
+security and neighboring route suites remain the authoritative local result.
+
 ## 2026-07-16 — Localized marketing site
 
 The Astro product site now publishes German, Spanish, Japanese, Brazilian
