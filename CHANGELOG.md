@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android adds German, Brazilian Portuguese, and Japanese.** Complete AI-assisted catalogs cover both product flavors, with language-picker integration and freshness validation against the canonical English resources.
+
 ## [Android 1.4.6] - 2026-07-15
 
 ### Added

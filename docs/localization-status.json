@@ -8,6 +8,20 @@
     "verified": "Comprehensively reviewed in context by a fluent contributor across the shipped surface."
   },
   "locales": {
+    "de": {
+      "native_name": "Deutsch",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "english-fallback"
+      }
+    },
     "en": {
       "native_name": "English",
       "verification": "canonical",
@@ -23,7 +37,35 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "fe2f099227cc377e298aac67ae402099e252e5474eeab230ecde119e117149ae",
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "english-fallback"
+      }
+    },
+    "ja": {
+      "native_name": "日本語",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "english-fallback"
+      }
+    },
+    "pt-BR": {
+      "native_name": "Português (Brasil)",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -37,7 +79,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "fe2f099227cc377e298aac67ae402099e252e5474eeab230ecde119e117149ae",
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Hermes Dev</string>
+    <string name="a11y_service_label">Hermes-Bridge Dev</string>
+    <string name="notification_companion_label">assistente de notificações do Hermes Dev</string>
+    <string name="a11y_description_sideload">O Hermes Bridge concede ao agente acesso completo de leitura e gravação no celular para controle sem usar as mãos por voz e visão. Todas as ações são registradas no Registro de atividades, e as ações destrutivas exigem sua confirmação.</string>
+</resources>
