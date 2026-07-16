@@ -506,7 +506,9 @@ def _extract_voice_overrides(payload: dict[str, Any]) -> dict[str, Any]:
     nested = payload.get("enhanced") or payload.get("gemini")
     source = nested if isinstance(nested, dict) else payload
     overrides: dict[str, Any] = {}
-    for key in ("provider", "voice", "model", "base_url", "language"):
+    # Network destinations remain operator-controlled because provider
+    # adapters attach host-owned credentials to their configured endpoints.
+    for key in ("provider", "voice", "model", "language"):
         value = source.get(key)
         if isinstance(value, str) and value.strip():
             overrides[key] = value.strip()
