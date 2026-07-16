@@ -32,7 +32,7 @@ import com.hermesandroid.relay.data.ConnectionSecurityLevel
 import com.hermesandroid.relay.data.SurfaceSecurity
 
 private const val LEARN_MORE_URL =
-    "https://codename-11.github.io/hermes-relay/architecture/connection-security.html"
+    "https://hermes-relay.dev/docs/architecture/connection-security.html"
 
 /**
  * Per-surface "Connection security" detail sheet — the tap target for the

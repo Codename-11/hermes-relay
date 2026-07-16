@@ -146,7 +146,7 @@ STEP 3 — pet.json   (save beside the PNGs in a folder, e.g. my-pet/)
 STATIC PER-STATE MANIFEST:
 
 {
-  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "$schema": "https://hermes-relay.dev/docs/pet.schema.json",
   "schemaVersion": 1,
   "id": "my-pet",
   "label": "My Pet",
@@ -172,7 +172,7 @@ about 1.8 seconds before returning to the current sustained state.
 ANIMATED SPRITE-SHEET MANIFEST:
 
 {
-  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "$schema": "https://hermes-relay.dev/docs/pet.schema.json",
   "schemaVersion": 1,
   "id": "my-pet",
   "label": "My Pet",

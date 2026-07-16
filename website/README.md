@@ -59,11 +59,13 @@ canonical fallback; do not hand-edit the WebP variants.
 
 ## Coolify
 
-Deploy the website with its repository-owned Dockerfile. The build context must
-remain the repository root because the production asset check compares website
-copies against canonical screenshots under `docs/media/`.
+Deploy the website and VitePress guide with their repository-owned Dockerfile.
+The build context must remain the repository root because the production asset
+check compares website copies against canonical screenshot files under
+`docs/media/`. The final Nginx image serves the Astro landing page at `/` and
+the VitePress guide at `/docs/`; GitHub Pages is not used.
 
-- Build pack: Dockerfile
+- Build pack: `Dockerfile`
 - Base directory: `/`
 - Dockerfile location: `/website/Dockerfile`
 - Exposed port: `80`
@@ -72,11 +74,11 @@ copies against canonical screenshots under `docs/media/`.
 - Optional environment override: `PUBLIC_SITE_URL=https://<preview-domain>`
 - Force HTTPS: enabled
 
-The Dockerfile builds with Node 22, runs `npm run build:production` from the
-website workspace, and serves the resulting static `/website/dist` tree with
-Nginx. Do not isolate `/website` as the Coolify base directory: doing so omits
-the canonical screenshot sources and correctly causes the asset-integrity gate
-to fail.
+The Dockerfile builds the Astro site with Node 22 and the VitePress guide with
+Node 24, runs both production builds from repository-root context, and serves
+the resulting static trees with Nginx. Do not isolate `/website` as the Coolify
+base directory: doing so omits the canonical screenshot sources and correctly
+causes the asset-integrity gate to fail.
 
 Assign `https://hermes-relay.dev` in Coolify and redeploy. If
 `PUBLIC_SITE_URL` is supplied for a preview environment, the production build

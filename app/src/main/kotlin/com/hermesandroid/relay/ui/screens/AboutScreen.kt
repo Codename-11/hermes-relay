@@ -394,7 +394,7 @@ fun AboutScreen(
                         }
                         OutlinedButton(
                             onClick = {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://codename-11.github.io/hermes-relay/"))
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-relay.dev/docs/"))
                                 context.startActivity(intent)
                             },
                             modifier = Modifier.weight(1f)

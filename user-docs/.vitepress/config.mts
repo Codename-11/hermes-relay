@@ -19,7 +19,7 @@ function resolveAppVersion(): string {
 const appVersion = resolveAppVersion()
 
 export default defineConfig({
-  base: '/hermes-relay/',
+  base: '/docs/',
   title: 'Hermes-Relay',
   description: 'Hermes-Relay — the Android companion and remote-hands CLI for your Hermes agent. Runs on your machine; lives on your devices.',
 
@@ -30,21 +30,21 @@ export default defineConfig({
 
   head: [
     // Favicon — base path is NOT auto-applied to head entries in VitePress,
-    // so hard-prefix with /hermes-relay/ to match the GitHub Pages deploy.
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/hermes-relay/logo.svg' }],
-    ['link', { rel: 'apple-touch-icon', href: '/hermes-relay/logo.svg' }],
+    // so hard-prefix with /docs/ to match the production deployment.
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/docs/logo.svg' }],
+    ['link', { rel: 'apple-touch-icon', href: '/docs/logo.svg' }],
 
     // Canonical
-    ['link', { rel: 'canonical', href: 'https://codename-11.github.io/hermes-relay/' }],
+    ['link', { rel: 'canonical', href: 'https://hermes-relay.dev/docs/' }],
 
     // Open Graph — crawlers (Facebook, Messenger, Slack, Discord, LinkedIn) need absolute URLs
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Hermes-Relay' }],
     ['meta', { property: 'og:title', content: 'Hermes-Relay — give your Hermes agent hands' }],
     ['meta', { property: 'og:description', content: 'Runs on your machine. Lives on your devices. A native Android companion for chat, voice, and phone control — plus a single-binary CLI the agent uses to work on any machine you pair.' }],
-    ['meta', { property: 'og:url', content: 'https://codename-11.github.io/hermes-relay/' }],
-    ['meta', { property: 'og:image', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
-    ['meta', { property: 'og:image:secure_url', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
+    ['meta', { property: 'og:url', content: 'https://hermes-relay.dev/docs/' }],
+    ['meta', { property: 'og:image', content: 'https://hermes-relay.dev/docs/og-image.png' }],
+    ['meta', { property: 'og:image:secure_url', content: 'https://hermes-relay.dev/docs/og-image.png' }],
     ['meta', { property: 'og:image:type', content: 'image/png' }],
     ['meta', { property: 'og:image:width', content: '1024' }],
     ['meta', { property: 'og:image:height', content: '500' }],
@@ -54,7 +54,7 @@ export default defineConfig({
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
     ['meta', { name: 'twitter:title', content: 'Hermes-Relay — give your Hermes agent hands' }],
     ['meta', { name: 'twitter:description', content: 'Android companion for chat, voice, and phone control + a single-binary CLI that gives your Hermes agent hands on any machine. One pair, every device.' }],
-    ['meta', { name: 'twitter:image', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
+    ['meta', { name: 'twitter:image', content: 'https://hermes-relay.dev/docs/og-image.png' }],
     ['meta', { name: 'twitter:image:alt', content: 'Hermes-Relay — give your Hermes agent hands.' }],
 
     // Theme — RelayRefresh.Background

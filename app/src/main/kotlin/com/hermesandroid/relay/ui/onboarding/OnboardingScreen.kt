@@ -359,7 +359,7 @@ private fun WelcomePage() {
             OutlinedButton(
                 onClick = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://codename-11.github.io/hermes-relay/guide/getting-started"))
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-relay.dev/docs/guide/getting-started"))
                     )
                 },
                 modifier = Modifier.weight(1f)
