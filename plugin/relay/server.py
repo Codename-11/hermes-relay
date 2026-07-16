@@ -3923,6 +3923,20 @@ async def _on_message(
         )
         _track_task(server, ws, task)
     elif channel == "terminal":
+        token = server._clients.get(ws)
+        session = server.sessions.get_session(token) if token else None
+        if session is None or session.channel_is_expired("terminal"):
+            logger.warning(
+                "Rejected terminal message from device=%s: terminal grant expired",
+                session.device_id if session is not None else "unknown",
+            )
+            await _send_system(
+                ws,
+                "error",
+                {"message": "Terminal grant expired for this device"},
+                msg_id=msg_id,
+            )
+            return
         task = asyncio.create_task(server.terminal.handle(ws, envelope))
         _track_task(server, ws, task)
     elif channel == "bridge":
