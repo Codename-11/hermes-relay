@@ -1694,17 +1694,10 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
 # channel to the connected phone.
 #
 # Auth model:
-#   * These routes are **unauthenticated** at the HTTP layer on purpose —
-#     the legacy relay was unauthenticated too, and the trust boundary
-#     is the same: only tools running on the same host as the relay can
-#     reach localhost:8767. The relay's default bind is 0.0.0.0 for the
-#     WebSocket side, but tools should always point at ``localhost``, so
-#     an attacker reaching port 8767 from the LAN would need the phone
-#     to also have auth'd with a valid pairing code — without a paired
-#     phone, every bridge HTTP call just returns 503.
-#   * If tightening is needed later, wrap these handlers with the same
-#     ``_require_bearer_session`` pattern used by ``/media/*`` — the
-#     bridge grant is already tracked per-session in ``Session.grants``.
+#   * Every route requires a live Relay bearer with an active ``bridge``
+#     grant. The same listener accepts external WebSocket connections, so
+#     callers are never trusted merely because host tools normally use
+#     ``localhost``.
 #
 # A paired but disconnected phone still drops bridge calls with 503 —
 # the tool caller should retry or tell the user to reconnect the app.
@@ -1736,7 +1729,9 @@ async def _bridge_dispatch(
     path: str,
 ) -> web.Response:
     """Forward an HTTP request to an Android bridge device."""
-    server: RelayServer = request.app["server"]
+    server, session = _require_bearer_session(request)
+    if session.channel_is_expired("bridge"):
+        raise web.HTTPForbidden(text="active bridge grant required")
     method = request.method  # GET or POST
 
     params: dict[str, Any] = dict(request.query)

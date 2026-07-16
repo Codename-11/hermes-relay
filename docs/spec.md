@@ -628,7 +628,7 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 
 #### 6.4.1 `android_*` tool surface
 
-Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side Device Control tools issue HTTP requests to the relay on loopback; the relay forwards them to the phone over WSS; the sideload phone executes them via the accessibility service and returns structured responses. Google Play phones report `bridge.device_control_supported=false` from `/bridge/status`, so these tools are hidden from the agent and direct command probes fail closed with `error_code: device_control_sideload_only`.
+Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side Device Control tools issue bearer-authenticated HTTP requests to the relay on loopback using `ANDROID_BRIDGE_TOKEN`; the relay requires that session's active `bridge` grant before forwarding to the phone over WSS. The sideload phone executes commands via the accessibility service and returns structured responses. Google Play phones report `bridge.device_control_supported=false` from `/bridge/status`, so these tools are hidden from the agent and direct command probes fail closed with `error_code: device_control_sideload_only`.
 
 **Baseline (pre-v0.4 — shipped in Phase 3 Wave 1):**
 
