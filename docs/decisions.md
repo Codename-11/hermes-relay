@@ -846,9 +846,9 @@ First attempt parsed a top-level `profiles:` / `agents:` list from one YAML. Tha
 
 The hermes-agent dashboard exposes `/api/config` and `/api/skills` via `hermes_cli/web_server.py` — a separate loopback-only web server from the chat API at `:8642`. Two problems if we proxied through the dashboard:
 1. **No profile scoping.** The dashboard's `/api/config` operates on the active profile only; there's no way to read another profile's config without switching first. Our relay already has the layout knowledge (`_load_profiles` scans the tree); duplicating that as "switch profile, read, switch back" is fragile and racy.
-2. **Secrets leakage risk.** `config.yaml` never holds credentials (those live in `~/.hermes/.env` + `~/.hermes/auth.json`), but proxying a general-purpose config endpoint invites future callers to pick up sensitive fields. A purpose-built read route keeps the attack surface small and the shape explicit — the response is `{profile, path, config, readonly: true}`, with the `readonly` flag part of the contract so clients can't silently assume write support.
+2. **Secrets leakage risk.** Credentials normally live in `~/.hermes/.env` or `~/.hermes/auth.json`, but Hermes also supports some credentials in `config.yaml` and extensions may add their own sensitive fields. A purpose-built read route therefore keeps the remote shape explicit: paired remote clients receive only `description` and `model.default`, while loopback operator callers can inspect the complete parsed file. The response remains `{profile, path, config, readonly: true}`, with `path: "config.yaml"` remotely so host layout is not disclosed.
 
-Both endpoints trust the same boundary as every other phone-facing relay route: bearer-auth for remote callers, loopback for in-process dashboard proxy calls. `.env` and `auth.json` are **never** read or returned by these routes.
+Both endpoints trust the same boundary as every other phone-facing relay route: bearer-auth for remote callers, loopback for in-process dashboard proxy calls. The config endpoint additionally enforces an explicit remote response schema rather than key-name redaction, so new or nested extension sections cannot silently become public. `.env` and `auth.json` are **never** read or returned by these routes.
 
 **Why read-only in v0.7:**
 

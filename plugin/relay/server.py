@@ -2440,8 +2440,33 @@ def _parse_skill_frontmatter(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _public_profile_config(parsed: object) -> dict[str, Any]:
+    """Build the explicitly public subset of a Hermes profile config.
+
+    Remote profile inspection must not serialize arbitrary configuration
+    sections: provider and extension fields may contain reusable credentials.
+    Keep this schema deliberately small and add fields only after classifying
+    them as safe for every paired Relay client.
+    """
+    if not isinstance(parsed, dict):
+        return {}
+
+    public: dict[str, Any] = {}
+    description = parsed.get("description")
+    if isinstance(description, str):
+        public["description"] = description
+
+    model = parsed.get("model")
+    if isinstance(model, dict):
+        default_model = model.get("default")
+        if isinstance(default_model, str):
+            public["model"] = {"default": default_model}
+
+    return public
+
+
 async def handle_profile_config(request: web.Request) -> web.Response:
-    """Return the parsed ``config.yaml`` for a named profile.
+    """Return a safe view of ``config.yaml`` for a named profile.
 
     GET /api/profiles/{name}/config
       → 200 {"profile", "path", "config": {...}, "readonly": true}
@@ -2449,9 +2474,10 @@ async def handle_profile_config(request: web.Request) -> web.Response:
       → 404 profile dir missing or no config.yaml
       → 500 yaml parse error
 
-    Loopback callers may skip bearer auth (matches
-    ``/notifications/recent``); remote callers must present a valid
-    relay session token.
+    Loopback callers may skip bearer auth and receive the complete parsed file.
+    Remote callers must present a valid relay session token and receive only
+    the explicitly public profile schema, never arbitrary config sections or
+    the host filesystem path.
     """
     is_loopback = request.remote in ("127.0.0.1", "::1")
     if is_loopback:
@@ -2506,11 +2532,14 @@ async def handle_profile_config(request: web.Request) -> web.Response:
     if parsed is None:
         parsed = {}
 
+    response_config = parsed if is_loopback else _public_profile_config(parsed)
+    response_path = str(config_path) if is_loopback else config_path.name
+
     return web.json_response(
         {
             "profile": name,
-            "path": str(config_path),
-            "config": parsed,
+            "path": response_path,
+            "config": response_config,
             "readonly": True,
         }
     )
