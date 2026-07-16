@@ -1,5 +1,71 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Android 1.4.6 and Plugin 1.4.2 release preparation
+
+The profile-continuity and profile-image work was prepared as a two-surface
+patch train. Android advanced to 1.4.6 with versionCode 29; the Relay plugin and
+dashboard metadata advanced to 1.4.2. The changelog was split into explicit
+Android and Plugin blocks, and the Android GitHub, in-app, and Play notes plus
+the Plugin GitHub notes were refreshed for public distribution.
+
+## 2026-07-15 — Profile image import compatibility and picker clarity
+
+Android profile image import now distinguishes the Relay avatar endpoint's
+structured `profile_avatar_not_found` response from a generic route-level 404.
+Older Relay installations therefore prompt for a Relay update or local file
+selection instead of incorrectly claiming that a known host image is absent.
+The existing Android system document picker is labeled consistently as
+**Choose file** before and after an icon has been set.
+
+## 2026-07-15 — Server-default profile session reconciliation
+
+Android now keeps the Server default UI sentinel separate from its effective
+session namespace. The upstream dashboard's `/api/profiles/active` response is
+read as two distinct values: `active` is the sticky default selected for new
+Hermes invocations, while `current` describes the already-running dashboard
+process. An explicit named profile still wins; otherwise Android sends the
+resolved sticky name, including literal `default`, to Gateway session
+create/resume and the dashboard session list, history, rename, and delete
+routes. Per-profile last-session persistence and chat context keys use the same
+resolved namespace, preventing a named active agent from writing into or
+displaying the dashboard launch profile's database. Older dashboards without
+the endpoint retain the launch-profile fallback.
+
+Focused regression coverage exercises the upstream active/current response, a
+dashboard launched as default with another sticky active profile, explicit
+profile precedence, profile-scoped drawer reads, and ChatViewModel's Gateway
+binding.
+
+## 2026-07-15 — Host profile image import
+
+Android's existing per-profile agent icon picker can now import an image from
+the active agent's Hermes profile directory through the optional paired Relay.
+The new read route discovers conventional direct-child names such as
+`avatar.png` and `profile.jpg`, accepts common web image formats, resolves
+symlinks within the profile boundary, enforces the Relay media-size limit, and
+returns image bytes without exposing host paths as persistent client state.
+Android copies the result into its existing connection-and-profile-scoped icon
+store, so rendering remains available offline and the vanilla upstream chat
+path is unchanged.
+
+Verification: seven profile-avatar endpoint tests and the focused Android host
+avatar client plus profile-controller suites passed. Android lint and final diff
+checks are recorded with the completed work.
+
+## 2026-07-15 — Android 1.4.5 release and automated Play gate
+
+Android 1.4.5 shipped as versionCode 28 after the signed release build, final
+DEX compatibility scan, and Production-draft upload passed for the exact Git
+tree later tagged `android-v1.4.5`. Release approval promoted that same Play
+artifact to Production review before publishing the GitHub sideload APK, AAB,
+and checksums.
+
+The release workflow now treats Play upload and promotion acceptance as its
+automated store gate. Play Console-only pre-review and pre-launch reports remain
+informational because their detailed results are not available to the release
+automation. The Play release display name is the final product version at every
+stage, without an internal preflight suffix.
+
 ## 2026-07-15 — Gateway safety and lifecycle parity
 
 Android gateway chat now clears only a live `compacting` status when model,
@@ -40,6 +106,22 @@ status kind.
 Verification: the focused sideload JVM suites reran 93 tests across
 `GatewayEventMapperTest` and `GatewayChatClientTest` with zero failures, and
 `git diff --check` passed.
+
+## 2026-07-14 — Per-connection profile display management
+
+Android now stores profile presentation preferences independently for each
+connection. The Agent sheet applies one user-defined order to the Server default
+alias and named profiles, lets inactive rows be hidden without losing the active
+selection, keeps a previously hidden active profile visible and recoverable, and
+provides a reset action. Newly discovered profiles append in server order, stale
+profile keys are ignored, and connection/app-data cleanup removes the matching
+presentation state.
+
+The management dialog exposes accessible move and visibility actions and ships
+matching English, Spanish, and Simplified Chinese resources. Verification covers
+persistence isolation, ordering, hidden-profile filtering, active-profile
+visibility, connection cleanup, locale parity, both product-flavor Kotlin
+compilations, and focused profile-selection regressions.
 
 ## 2026-07-14 — Session drawer title parity with Hermes Desktop
 

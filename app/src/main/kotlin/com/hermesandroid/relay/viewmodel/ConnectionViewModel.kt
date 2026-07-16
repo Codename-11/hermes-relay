@@ -37,6 +37,7 @@ import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.computeConnectionSecurity
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.data.proactiveEnabledFlow
@@ -515,6 +516,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             getApplication<Application>().relayDataStore.data.first()[KEY_LAST_SESSION_ID]
         },
         rebuildChatApiClient = { rebuildChatApiClient() },
+        relayHttpClient = relayHttpClient,
     )
 
     // --- Relay connection state ---
@@ -1156,6 +1158,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     val agentProfiles: StateFlow<List<Profile>> get() = profileController.agentProfiles
 
+    /**
+     * Session namespace after resolving the Server-default UI sentinel through
+     * upstream `/api/profiles/active`. Explicit named selections are unchanged.
+     */
+    val effectiveSessionProfileName: StateFlow<String?>
+        get() = profileController.effectiveSessionProfileName
+
     fun refreshDashboardProfiles() = profileController.refreshDashboardProfiles()
 
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
@@ -1175,12 +1184,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * back to the shared api_server delete.
      */
     suspend fun deleteProfileScopedSession(sessionId: String): Boolean {
-        val connectionId = activeConnectionId.value ?: return false
-        val dashboardUrl = activeDashboardUrl() ?: return false
-        val profileName = AgentDisplay.profileRequestName(profileController.selectedProfile.value?.name)
-        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
-            .deleteSession(sessionId, profileName)
-            .isSuccess
+        return profileController.deleteProfileScopedSession(sessionId)
     }
 
     /**
@@ -1193,15 +1197,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * api_server rename.
      */
     suspend fun renameProfileScopedSession(sessionId: String, title: String): Boolean {
-        val connectionId = activeConnectionId.value ?: return false
-        val dashboardUrl = activeDashboardUrl() ?: return false
-        val profileName = AgentDisplay.profileRequestName(profileController.selectedProfile.value?.name)
-        return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
-            .renameSession(sessionId, title, profileName)
-            .isSuccess
+        return profileController.renameProfileScopedSession(sessionId, title)
     }
 
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
+
+    val profilePresentation: StateFlow<ProfilePresentation> get() = profileController.profilePresentation
+
+    fun moveProfile(profileName: String?, delta: Int) = profileController.moveProfile(profileName, delta)
+
+    fun setProfileHidden(profileName: String?, hidden: Boolean) =
+        profileController.setProfileHidden(profileName, hidden)
+
+    fun resetProfilePresentation() = profileController.resetProfilePresentation()
 
     /**
      * True once the active connection's persisted profile selection has settled,
@@ -1218,7 +1226,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
 
+    val hostProfileIconImportState: StateFlow<ProfileController.HostIconImportState>
+        get() = profileController.hostIconImportState
+
     fun setProfileIcon(uri: Uri) = profileController.setProfileIcon(uri)
+
+    fun importProfileIconFromHost() = profileController.importProfileIconFromHost()
 
     fun clearProfileIcon() = profileController.clearProfileIcon()
 
@@ -2815,6 +2828,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ConnectionStore's EncryptedSharedPrefs.
         profileController.profileSelectionStore.clear(connectionId)
         profileController.profileLockStore.clear(connectionId)
+        profileController.profilePresentationStore.clear(connectionId)
         profileController.profileSessionStore.clearConnection(connectionId)
         profileController.profileDisplayAliasStore.clearConnection(connectionId)
         profileController.profileIconStore.clearConnection(connectionId)
@@ -3329,6 +3343,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         connectionStore.removeConnection(duplicate.id)
                         profileController.profileSelectionStore.clear(duplicate.id)
                         profileController.profileLockStore.clear(duplicate.id)
+                        profileController.profilePresentationStore.clear(duplicate.id)
                         profileController.profileSessionStore.clearConnection(duplicate.id)
                     }
 
@@ -5628,7 +5643,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun saveLastSessionId(sessionId: String?) {
         _lastSessionId.value = sessionId
         val connectionId = activeConnectionId.value
-        val profileName = profileController.selectedProfile.value?.name
+        val profileName = profileController.resolveSessionProfileName()
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {
@@ -5660,7 +5675,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
             }
-            if (profileName == null) {
+            if (profileName == null || AgentDisplay.isServerDefaultAlias(profileName)) {
                 getApplication<Application>().relayDataStore.edit { preferences ->
                     if (sessionId != null) {
                         preferences[KEY_LAST_SESSION_ID] = sessionId
@@ -5804,6 +5819,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             dataManager.resetAppData()
             profileController.profileSelectionStore.clearAll()
             profileController.profileLockStore.clearAll()
+            profileController.profilePresentationStore.clearAll()
             profileController.profileSessionStore.clearAll()
             _apiServerUrl.value = ""
             _relayUrl.value = ""

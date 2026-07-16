@@ -6,9 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.4.6] - 2026-07-15
+
+### Added
+
+- **Profile display order and visibility are customizable per connection.** The profile manager can reorder every profile, including Server default, selectively hide inactive profiles, restore hidden active profiles, and reset the saved presentation without changing server configuration.
+- **Agent icons can come from the phone or paired host.** The profile manager offers the Android document picker and can import conventional host files such as `avatar.png` or `profile.jpg`, storing a per-connection/profile copy on the phone.
+
 ### Fixed
 
-- **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, and profile API metadata now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.
+- **Profile image import reports host compatibility accurately.** Android now distinguishes an older Relay without the optional avatar endpoint from a profile that genuinely has no conventional image, and presents the system file picker as a clear fallback.
+- **Server-default chats use one profile session scope.** Android resolves the Server default row through Hermes' sticky active profile before Gateway create/resume and dashboard session operations, so the drawer, transcript, writes, and agent no longer split across different profile databases when the dashboard was launched under another profile.
+
+## [Plugin 1.4.2] - 2026-07-15
+
+### Added
+
+- **Profile avatars are available to paired clients.** Relay discovers conventional direct-child profile images such as `avatar.png` and `profile.jpg`, validates their type, size, and profile boundary, and serves them through an authenticated profile route.
+
+### Fixed
+
+- **Relay follows Hermes' sticky active profile.** The advertised Server default identity, model, SOUL, profile metadata, and avatar now come from the profile selected by Hermes' `active_profile` marker instead of always describing the root profile.
 
 ## [1.4.5] - 2026-07-15
 

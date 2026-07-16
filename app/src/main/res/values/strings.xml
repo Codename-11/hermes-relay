@@ -2191,6 +2191,13 @@
     <string name="conn_info_local_display_name">Local display name</string>
     <string name="conn_info_locked_to">Locked to %1$s</string>
     <string name="conn_info_manage_connections">Manage connections</string>
+    <string name="conn_info_manage_profiles">Manage profile display</string>
+    <string name="conn_info_manage_profiles_hint">Reorder profiles or hide ones you do not use. The active profile stays visible.</string>
+    <string name="conn_info_move_profile_up">Move %1$s up</string>
+    <string name="conn_info_move_profile_down">Move %1$s down</string>
+    <string name="conn_info_hide_profile">Hide %1$s</string>
+    <string name="conn_info_show_profile">Show %1$s</string>
+    <string name="conn_info_reset_profile_display">Reset</string>
     <string name="conn_info_manage_lock_hint">Change the lock target in Settings.</string>
     <string name="conn_info_messages">Messages</string>
     <string name="conn_info_model">%1$s</string>
@@ -2400,10 +2407,12 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agent icon</string>
-    <string name="agent_icon_set">Set image</string>
-    <string name="agent_icon_change">Change</string>
+    <string name="agent_icon_set">Choose file</string>
+    <string name="agent_icon_change">Choose file</string>
     <string name="agent_icon_clear">Clear</string>
-    <string name="agent_icon_description">Shown beside a profile name in chat. Stays on this device -- never sent to Hermes.</string>
+    <string name="agent_icon_import_host">Import from agent host</string>
+    <string name="agent_icon_importing_host">Importing…</string>
+    <string name="agent_icon_description">Shown beside a profile name in chat. Choose a phone image, or import avatar.png/profile.jpg from the active profile directory on a paired agent host. The copied icon stays on this device.</string>
 
     <!-- ConnectionSecuritySheet -->
     <string name="conn_security_title">Connection security</string>

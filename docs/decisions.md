@@ -882,6 +882,16 @@ Those fields (added in the same commit series — see `auth.ok` profile shape) a
 
 **Scope addendum (2026-04-18):** Followed up with two more profile-scoped read routes — `GET /api/profiles/{name}/soul` and `GET /api/profiles/{name}/memory` — to feed the phone Profile Inspector's four-section layout (config / SOUL / memory / skills). Both reuse `_resolve_profile_home`, the loopback-or-bearer gate, and the `profile_not_found` 404 shape from the original two endpoints. Content is capped inline at **200KB for SOUL.md** and **50KB per memory file**; larger bodies flag `truncated: true` and clients see the on-disk `size_bytes` so they know real dimensions without fetching the full body. The caps exist because the Inspector is a viewer, not a diff or edit tool — phone-safe wire sizes matter more than lossless fidelity, and anyone who needs a full dump has the dashboard. Memory listing is intentionally non-recursive (one `iterdir` pass, no `rglob`) so subdirectories under `memories/` — used by some users for archival snapshots — don't spam the response. `MEMORY.md` and `USER.md` (per upstream `hermes_cli/profiles.py`) sort first; the rest are alphabetical, so the ordering is stable across filesystems. Absent SOUL.md returns 200 with `exists: false`; absent `memories/` returns 200 with an empty `entries` array — both let the Inspector render the section rather than mask "no content yet" as a transport failure.
 
+**Scope addendum (2026-07-15):** Added `GET /api/profiles/{name}/avatar`
+for an explicit user action that imports an agent badge image from the Hermes
+host. Discovery is deliberately shallow and deterministic: direct-child files
+with conventional `avatar`/`profile` names win, followed by compatible aliases,
+across PNG, JPEG, WebP, and GIF. The resolved path must stay inside the profile
+home after symlink resolution and satisfy the Relay media-size cap. Android then
+copies the bytes into its existing connection-and-profile-scoped icon store.
+This keeps the host filesystem read behind Relay pairing and avoids coupling the
+vanilla upstream chat path or live UI rendering to host availability.
+
 ---
 
 ## Voice Mode — Architecture

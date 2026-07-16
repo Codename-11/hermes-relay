@@ -13,7 +13,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -324,6 +326,111 @@ class RelayHttpClient(
             Result.failure(e)
         }
     }
+
+    /**
+     * Fetch the conventional avatar image stored in a Hermes profile home.
+     *
+     * The optional Relay endpoint searches the selected profile directory for
+     * names such as `avatar.png` and `profile.jpg`. The bytes are returned to
+     * the caller so Android can copy them into its existing local per-profile
+     * icon store; the host path is never persisted on the phone.
+     */
+    suspend fun fetchProfileAvatar(profileName: String?): Result<FetchedMedia> =
+        withContext(Dispatchers.IO) {
+            val relayUrl = relayUrlProvider()?.trim().orEmpty()
+            if (relayUrl.isEmpty()) {
+                return@withContext Result.failure(
+                    IllegalStateException("Relay URL not configured")
+                )
+            }
+
+            val sessionToken = sessionTokenProvider()
+            if (sessionToken.isNullOrBlank()) {
+                return@withContext Result.failure(
+                    IllegalStateException("Relay not paired — session token missing")
+                )
+            }
+
+            val httpBase = relayUrl
+                .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+                .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+                .trimEnd('/')
+            val profile = profileName?.trim()?.ifBlank { null } ?: "default"
+            val url = try {
+                "$httpBase/api/profiles".toHttpUrl().newBuilder()
+                    .addPathSegment(profile)
+                    .addPathSegment("avatar")
+                    .build()
+            } catch (e: IllegalArgumentException) {
+                return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+            }
+
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("Authorization", "Bearer $sessionToken")
+                .header("Accept", "image/*")
+                .build()
+
+            try {
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val errorCode = runCatching {
+                            sessionsJson.parseToJsonElement(response.body.string())
+                                .jsonObject["error"]
+                                ?.jsonPrimitive
+                                ?.contentOrNull
+                        }.getOrNull()
+                        val reason = when (response.code) {
+                            401 -> "Unauthorized — re-pair with the relay"
+                            403 -> "The host profile image is blocked by Relay file policy"
+                            404 -> when (errorCode) {
+                                "profile_avatar_not_found" ->
+                                    "No host profile image found — add avatar.png or profile.jpg to the profile directory"
+                                "profile_not_found" ->
+                                    "The selected profile directory was not found on the Relay host"
+                                else ->
+                                    "This Relay host does not support profile image import yet — update Relay or choose a file"
+                            }
+                            415 -> "The host profile image format is not supported"
+                            in 500..599 -> "Relay error (HTTP ${response.code})"
+                            else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                        }
+                        return@withContext Result.failure(IOException(reason))
+                    }
+
+                    val contentType = response.header("Content-Type")
+                        ?.substringBefore(';')
+                        ?.trim()
+                        ?.ifBlank { null }
+                        ?: "application/octet-stream"
+                    if (!contentType.startsWith("image/")) {
+                        return@withContext Result.failure(
+                            IOException("Relay returned a non-image profile file")
+                        )
+                    }
+                    val bytes = response.body.bytes()
+                    if (bytes.isEmpty()) {
+                        return@withContext Result.failure(IOException("Host profile image is empty"))
+                    }
+                    Result.success(
+                        FetchedMedia(
+                            contentType = contentType,
+                            bytes = bytes,
+                            fileName = parseContentDispositionFilename(
+                                response.header("Content-Disposition")
+                            ),
+                        )
+                    )
+                }
+            } catch (e: IOException) {
+                Log.w(TAG, "fetchProfileAvatar failed for $profile: ${e.message}")
+                Result.failure(e)
+            } catch (e: Exception) {
+                Log.w(TAG, "fetchProfileAvatar unexpected error for $profile: ${e.message}")
+                Result.failure(e)
+            }
+        }
 
     /**
      * Fetch the relay's server-side injected-context audit. This endpoint is

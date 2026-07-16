@@ -1,23 +1,20 @@
 # Hermes-Relay-Plugin v__VERSION__
 
-**Release Date:** July 11, 2026
+**Release Date:** July 15, 2026
 
-**Since v1.4.0:** Realtime Agent result delivery is more dependable when a provider closes, stalls, or overlaps a newer response. Completed Hermes work stays authoritative through provider-native delivery where available and a single relay-TTS fallback otherwise.
+This patch aligns Server default with Hermes' sticky active profile and lets paired clients import conventional profile avatar files without exposing host paths.
 
-Pairs with Hermes-Relay-Android v1.4.1 for the matching background-task, voice-command, and result-delivery behavior. Standard chat and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
+Pairs with Hermes-Relay-Android v1.4.6 for profile image import. Standard chat and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## What's changed
 
-### Changed
+### Added
 
-- **Provider-native delivery carries an explicit mode.** Realtime responses consistently identify forced-summary and fallback delivery so the Android client can present one authoritative result.
-- **Exact delivery is more direct.** Non-structured verbatim results can use provider-native exact text while natural summaries retain delivery guidance.
+- **Paired clients can import profile avatars.** Relay discovers conventional direct-child images such as `avatar.png` and `profile.jpg`, validates their media type, size, and profile boundary, and serves the bytes through an authenticated route.
 
 ### Fixed
 
-- **A completed result survives provider failure.** If tool-result submission or a follow-up provider response fails, the relay speaks the authoritative Hermes answer through its fallback path before reporting the provider error.
-- **Delivery confirmation ignores stale work.** A generation token prevents an older confirmation alarm from emitting a duplicate answer after a newer delivery or preemption.
-- **Fallback completion is unambiguous.** The fallback path emits one complete result event even when the provider's audio render cannot finish.
+- **Server default follows Hermes' active profile.** Advertised identity, model, SOUL, profile metadata, and avatar resolve through the sticky `active_profile` marker instead of always using the root profile.
 
 ## Install / update
 

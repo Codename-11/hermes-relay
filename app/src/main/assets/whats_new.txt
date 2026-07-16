@@ -1,9 +1,8 @@
-v1.4.5 - Chats that keep running
+v1.4.6 - Profiles stay together
 
-Chat continuity
-* Switch chats or profiles without stopping a running Gateway reply.
-* Return to the session and reattach to its live progress.
+Profile continuity
+* Server default now keeps its agent, chats, drawer, and transcript in the active Hermes profile.
+* Reorder or hide profiles per connection without changing the server.
 
-Cleaner live state
-* Expired secret and sudo prompts no longer remain actionable.
-* Provider wait and reconnect notices stay in the live status line.
+Profile icons
+* Choose an image file on your phone or import avatar.png/profile.jpg from an updated paired Relay.
