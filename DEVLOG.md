@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-15 — Android 1.4.6 and Plugin 1.4.2 release preparation
+
+The profile-continuity and profile-image work was prepared as a two-surface
+patch train. Android advanced to 1.4.6 with versionCode 29; the Relay plugin and
+dashboard metadata advanced to 1.4.2. The changelog was split into explicit
+Android and Plugin blocks, and the Android GitHub, in-app, and Play notes plus
+the Plugin GitHub notes were refreshed for public distribution.
+
 ## 2026-07-15 — Profile image import compatibility and picker clarity
 
 Android profile image import now distinguishes the Relay avatar endpoint's
