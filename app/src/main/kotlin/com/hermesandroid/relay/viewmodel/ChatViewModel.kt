@@ -147,6 +147,9 @@ class ChatViewModel : ViewModel() {
      */
     private var activeStream: ActiveTurnHandle? = null
 
+    /** Token bursts awaiting their next UI-sized publication window. */
+    private var activeStreamDeltas: StreamDeltaCoalescer? = null
+
     /**
      * True when [activeStream] is a GATEWAY turn (vs an SSE EventSource). A
      * gateway turn runs on the gateway client, which survives a same-connection
@@ -2273,6 +2276,10 @@ class ChatViewModel : ViewModel() {
         // same-connection route blip and reconnects its own socket, keeping the
         // live session), so cancelling here would needlessly kill a recoverable
         // turn. Leave it running; it completes on the gateway client.
+        if (!activeStreamIsGateway) {
+            activeStreamDeltas?.flushNow()
+            activeStreamDeltas = null
+        }
         val droppedSseCheckpoint = if (!activeStreamIsGateway) buildTurnCheckpoint() else null
         if (!activeStreamIsGateway) {
             activeStream?.cancel()
@@ -2311,6 +2318,8 @@ class ChatViewModel : ViewModel() {
                 historyLoadGeneration.incrementAndGet()
                 sessionRefreshGeneration.incrementAndGet()
                 intentionallyCancelled = true
+                activeStreamDeltas?.discard()
+                activeStreamDeltas = null
                 activeStream?.cancel()
                 activeStream = null
                 cancelAnswerRecovery(settleUi = false)
@@ -3846,6 +3855,8 @@ class ChatViewModel : ViewModel() {
         val gateway = gatewayClient
         val canBackground = streamingEndpoint == "gateway" &&
             activeStreamIsGateway && activeStream != null && gateway != null
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
         val checkpoint = if (canBackground) buildTurnCheckpoint() else null
         if (canBackground && gateway.backgroundActiveTurn()) {
             if (checkpoint != null) {
@@ -5415,6 +5426,8 @@ class ChatViewModel : ViewModel() {
         // finalizes the previous turn's leftover streaming placeholder so it
         // can't pulse forever next to this turn's fresh one.
         cancelAnswerRecovery()
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
 
         // A new turn is starting: clear any leftover cancellation flag so a
         // stale `true` from a PRIOR cancelled turn (the flag is sticky — a
@@ -5467,8 +5480,21 @@ class ChatViewModel : ViewModel() {
             )
         )
 
+        val streamDeltas = StreamDeltaCoalescer(
+            scope = viewModelScope,
+            onTextDelta = { delta -> handler.onTextDelta(currentMessageId, delta) },
+            onThinkingDelta = { delta -> handler.onThinkingDelta(currentMessageId, delta) },
+        )
+        activeStreamDeltas = streamDeltas
+
+        fun flushAndReleaseStreamDeltas() {
+            streamDeltas.flushNow()
+            if (activeStreamDeltas === streamDeltas) activeStreamDeltas = null
+        }
+
         // Shared callbacks for both endpoints
         val onMessageStartedCb = { serverMsgId: String ->
+            streamDeltas.flushNow()
             // Replace the placeholder's ID so subsequent deltas/tool calls attach
             // to it instead of creating a duplicate orphan bubble with streaming dots.
             // Only replaces empty+streaming messages (the placeholder), not completed turns.
@@ -5481,29 +5507,34 @@ class ChatViewModel : ViewModel() {
                 firstTokenNotified = true
                 AppAnalytics.onFirstTokenReceived()
             }
-            handler.onTextDelta(currentMessageId, delta)
+            streamDeltas.appendText(delta)
         }
         val onThinkingDeltaCb = { delta: String ->
-            handler.onThinkingDelta(currentMessageId, delta)
+            streamDeltas.appendThinking(delta)
         }
         val onToolCallStartCb = { toolCallId: String, toolName: String ->
+            streamDeltas.flushNow()
             handler.onToolCallStart(currentMessageId, toolCallId, toolName)
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
+            streamDeltas.flushNow()
             handler.onToolCallComplete(currentMessageId, toolCallId, resultPreview)
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallFailedCb = { toolCallId: String, errorMsg: String? ->
+            streamDeltas.flushNow()
             handler.onToolCallFailed(currentMessageId, toolCallId, errorMsg)
             scheduleCheckpointWrite(immediate = true)
         }
         // Turn complete — one assistant message finished, but the run may continue
         val onTurnCompleteCb = {
+            streamDeltas.flushNow()
             handler.onTurnComplete(currentMessageId)
             scheduleCheckpointWrite(immediate = true)
         }
         val onCompleteCb = {
+            flushAndReleaseStreamDeltas()
             // Double-finalize guard: if a straggler completion arrives while
             // the answer-recovery poller is running, the normal completion
             // wins — stop the poller before finalizing so the turn can't
@@ -5613,6 +5644,7 @@ class ChatViewModel : ViewModel() {
             }
         }
         val onErrorCb = { errorMsg: String ->
+            flushAndReleaseStreamDeltas()
             val errorSessionId = handler.currentSessionId.value
             if (intentionallyCancelled) {
                 intentionallyCancelled = false
@@ -5969,6 +6001,7 @@ class ChatViewModel : ViewModel() {
                         onToolCallDone = onToolCallDoneCb,
                         onToolCallFailed = onToolCallFailedCb,
                         onToolOutputRisk = { risk ->
+                            streamDeltas.flushNow()
                             handler.onToolOutputRisk(currentMessageId, risk)
                             scheduleCheckpointWrite(immediate = true)
                         },
@@ -5980,10 +6013,12 @@ class ChatViewModel : ViewModel() {
                         onUsage = onUsageCb,
                         onError = onErrorCb,
                         onToolGenerating = { name ->
+                            streamDeltas.flushNow()
                             handler.onToolGenerating(currentMessageId, name)
                             scheduleCheckpointWrite(immediate = true)
                         },
                         onSubagentEvent = { event ->
+                            streamDeltas.flushNow()
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
                         },
@@ -6105,6 +6140,8 @@ class ChatViewModel : ViewModel() {
         // false: the Stopped-badge block below finalizes the placeholder
         // itself (completing it here first would hide it from findLast).
         cancelAnswerRecovery(settleUi = false)
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
         activeStream?.cancel()
         activeStream = null
         _queuedMessages.value = emptyList()
@@ -6639,6 +6676,8 @@ class ChatViewModel : ViewModel() {
     }
 
     override fun onCleared() {
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
         flushTurnCheckpointForTeardown()
         gatewayClient?.setUnsolicitedTurnProvider(null)
         gatewayClient?.setColdPrewarmSessionReadyListener(null)

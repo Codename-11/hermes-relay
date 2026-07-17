@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **Long streamed replies finish without a visible transcript reload.** Uninterrupted Gateway turns keep their live transcript, while reconnect gaps still reconcile missed events; bottom-following is anchored in the final Markdown remeasure without disturbing readers who intentionally scrolled up.
+- **Long streamed replies grow smoothly and remain at the latest text.** Android frame-paces bursty token delivery, expands the active bubble within clipped bounds, preserves bottom-following through completion, and avoids replacing the visible live transcript while readers who intentionally scroll up remain undisturbed.
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
 
 ## [Android 1.4.6] - 2026-07-15

@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -83,6 +85,12 @@ fun MessageBubble(
     showThinking: Boolean = true,
     isFirstInGroup: Boolean = true,
     isLastInGroup: Boolean = true,
+    /**
+     * Keeps a just-completed live tail on its stable Text layout. The owning
+     * list releases this once another row becomes the tail, allowing full
+     * Markdown to render without disturbing the visible bottom anchor.
+     */
+    retainStreamingLayout: Boolean = false,
     onCopyMessage: (String) -> Unit = {},
     /**
      * Quote this message into the input field. Null hides the Quote entry in
@@ -362,6 +370,26 @@ fun MessageBubble(
             color = backgroundColor,
             modifier = Modifier
                 .then(
+                    if (!isUser && !isSystem &&
+                        (message.isStreaming || retainStreamingLayout)
+                    ) {
+                        // The frame-paced text node is already measured at its
+                        // new size. Animate and clip the owning surface so a
+                        // newly wrapped line is revealed inside the expanding
+                        // bubble instead of drawing below the previous bounds
+                        // for one frame. TopStart keeps existing prose fixed.
+                        Modifier.animateContentSize(
+                            animationSpec = tween(
+                                durationMillis = 72,
+                                easing = LinearOutSlowInEasing,
+                            ),
+                            alignment = Alignment.TopStart,
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .then(
                     if (!isUser && !isSystem && isDarkTheme) {
                         Modifier.leftEdgeGlow(
                             alpha = 0.12f,
@@ -396,15 +424,16 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Settled blocks keep the real Markdown renderer while
-                        // only the structurally incomplete tail stays raw. The
-                        // same composable settles the final tail so retained
-                        // parser state survives the streaming -> final handoff.
+                        // Keep one plain Text node stable while content grows
+                        // and while this completed response remains the visible
+                        // tail. Full Markdown renders once another row becomes
+                        // the tail (or the session is revisited), where its
+                        // remeasure cannot reset the active viewport.
                         if (markdownBody.isNotEmpty()) {
                             StreamingMarkdownContent(
                                 content = markdownBody,
                                 textColor = textColor,
-                                isStreaming = message.isStreaming,
+                                isStreaming = message.isStreaming || retainStreamingLayout,
                             )
                         }
                     }
@@ -538,7 +567,11 @@ fun MessageBubble(
                 // burst of fragments doesn't stack three near-touching time labels.
                 // Grouping breaks on a >5min gap (ChatScreen), so every pause still
                 // surfaces its own time. Alpha floored at 0.6 for 11sp contrast.
-                if (isLastInGroup) {
+                // Keep the live bubble's footer structurally quiet. Showing a
+                // timestamp while text is still growing makes it chase every
+                // token and exaggerates any single-frame layout lag. Reveal it
+                // once the message settles into its final layout.
+                if (isLastInGroup && !message.isStreaming) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = timeFormat.format(Date(message.timestamp)),
