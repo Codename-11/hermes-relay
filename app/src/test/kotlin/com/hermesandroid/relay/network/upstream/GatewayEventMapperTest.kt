@@ -32,6 +32,7 @@ class GatewayEventMapperTest {
         val sessionIds = mutableListOf<String>()
         var starts = 0
         var turnCompletes = 0
+        var reconcileRequests = 0
         var completes = 0
         var usage: UsageInfo? = null
         var usageCalls = 0
@@ -47,6 +48,7 @@ class GatewayEventMapperTest {
             onToolCallFailed = { id, err -> toolFails += id to err },
             onToolOutputRisk = { toolOutputRisks += it },
             onTurnComplete = { turnCompletes++ },
+            onReconcileRequired = { reconcileRequests++ },
             onComplete = { completes++ },
             onUsage = { usage = it; usageCalls++ },
             onError = { errors += it },
