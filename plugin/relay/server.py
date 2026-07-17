@@ -27,6 +27,7 @@ import logging
 import math
 import mimetypes
 import os
+import secrets
 import signal
 import ssl
 import stat
@@ -184,16 +185,6 @@ async def handle_health(request: web.Request) -> web.Response:
             "sessions": server.sessions.active_count(),
         }
     )
-
-
-async def handle_pairing(request: web.Request) -> web.Response:
-    """Generate a new pairing code (for use by the Hermes agent/CLI).
-
-    POST /pairing → {"code": "ABC123"}
-    """
-    server: RelayServer = request.app["server"]
-    code = server.pairing.generate_code()
-    return web.json_response({"code": code})
 
 
 async def handle_pairing_register(request: web.Request) -> web.Response:
@@ -810,22 +801,22 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
 
 
 async def handle_sessions_extend(request: web.Request) -> web.Response:
-    """Update a paired device's session TTL and/or per-channel grants.
+    """Reduce the calling device's session TTL and/or channel grants.
 
-    This is the "extend" action exposed on the phone's Paired Devices
-    screen, but also handles arbitrary TTL updates — passing
-    ``ttl_seconds`` shorter than the current expiry clips the session
-    (equivalent to shortening, though the button is labeled "Extend"
-    for the common case). ``ttl_seconds == 0`` maps to never-expire.
+    A normal Relay bearer is session identity, not session-management
+    authority.  It may reduce only its own live policy.  Extending a
+    lifetime, adding or lengthening a grant, or changing another session
+    requires a fresh operator-approved pairing flow.
 
     PATCH /sessions/{token_prefix}
-      Body: {"ttl_seconds": 2592000}              # extend only
-           | {"grants": {"terminal": 604800}}     # grants only
-           | {"ttl_seconds": 0, "grants": {...}}  # both
+      Body: {"ttl_seconds": 300}                  # shorten only
+           | {"grants": {"terminal": 60}}         # reduce grants
+           | {"ttl_seconds": 300, "grants": {...}}  # both
       → 200 {"ok": true, "expires_at": ..., "grants": {...}}
       → 400 missing/invalid body or no fields provided
       → 401 missing/invalid bearer
       → 404 prefix doesn't match any active session
+      → 403 cross-session target or policy expansion
       → 409 prefix matches multiple sessions
     """
     server, current_session = _require_bearer_session(request)
@@ -873,7 +864,12 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
                 {"ok": False, "error": "'grants' must be an object"}, status=400
             )
         for k, v in grants.items():
-            if not isinstance(k, str) or not isinstance(v, (int, float)) or v < 0:
+            if (
+                not isinstance(k, str)
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+                or v < 0
+            ):
                 return web.json_response(
                     {
                         "ok": False,
@@ -901,20 +897,27 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
         )
 
     target = matches[0]
-    updated = server.sessions.update_session(
-        target.token,
-        ttl_seconds=ttl_seconds,
-        grants=grants,
-    )
+    if not secrets.compare_digest(target.token, current_session.token):
+        raise web.HTTPForbidden(text="cannot modify another session")
+
+    try:
+        updated = server.sessions.reduce_session_policy(
+            target.token,
+            ttl_seconds=ttl_seconds,
+            grants=grants,
+        )
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    except PermissionError as exc:
+        raise web.HTTPForbidden(text=str(exc)) from exc
     if updated is None:
         # Raced with expiry or revocation between find_by_prefix and update.
         raise web.HTTPNotFound(text="session vanished mid-update, retry")
 
     logger.info(
-        "Extended session %s... (%s)%s",
+        "Reduced session policy %s... (%s) [self]",
         target.token[:8],
         target.device_name,
-        " [self]" if target.token == current_session.token else "",
     )
     return web.json_response(
         {
@@ -1704,17 +1707,10 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
 # channel to the connected phone.
 #
 # Auth model:
-#   * These routes are **unauthenticated** at the HTTP layer on purpose —
-#     the legacy relay was unauthenticated too, and the trust boundary
-#     is the same: only tools running on the same host as the relay can
-#     reach localhost:8767. The relay's default bind is 0.0.0.0 for the
-#     WebSocket side, but tools should always point at ``localhost``, so
-#     an attacker reaching port 8767 from the LAN would need the phone
-#     to also have auth'd with a valid pairing code — without a paired
-#     phone, every bridge HTTP call just returns 503.
-#   * If tightening is needed later, wrap these handlers with the same
-#     ``_require_bearer_session`` pattern used by ``/media/*`` — the
-#     bridge grant is already tracked per-session in ``Session.grants``.
+#   * Every route requires a live Relay bearer with an active ``bridge``
+#     grant. The same listener accepts external WebSocket connections, so
+#     callers are never trusted merely because host tools normally use
+#     ``localhost``.
 #
 # A paired but disconnected phone still drops bridge calls with 503 —
 # the tool caller should retry or tell the user to reconnect the app.
@@ -1746,7 +1742,9 @@ async def _bridge_dispatch(
     path: str,
 ) -> web.Response:
     """Forward an HTTP request to an Android bridge device."""
-    server: RelayServer = request.app["server"]
+    server, session = _require_bearer_session(request)
+    if session.channel_is_expired("bridge"):
+        raise web.HTTPForbidden(text="active bridge grant required")
     method = request.method  # GET or POST
 
     params: dict[str, Any] = dict(request.query)
@@ -2455,8 +2453,33 @@ def _parse_skill_frontmatter(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _public_profile_config(parsed: object) -> dict[str, Any]:
+    """Build the explicitly public subset of a Hermes profile config.
+
+    Remote profile inspection must not serialize arbitrary configuration
+    sections: provider and extension fields may contain reusable credentials.
+    Keep this schema deliberately small and add fields only after classifying
+    them as safe for every paired Relay client.
+    """
+    if not isinstance(parsed, dict):
+        return {}
+
+    public: dict[str, Any] = {}
+    description = parsed.get("description")
+    if isinstance(description, str):
+        public["description"] = description
+
+    model = parsed.get("model")
+    if isinstance(model, dict):
+        default_model = model.get("default")
+        if isinstance(default_model, str):
+            public["model"] = {"default": default_model}
+
+    return public
+
+
 async def handle_profile_config(request: web.Request) -> web.Response:
-    """Return the parsed ``config.yaml`` for a named profile.
+    """Return a safe view of ``config.yaml`` for a named profile.
 
     GET /api/profiles/{name}/config
       → 200 {"profile", "path", "config": {...}, "readonly": true}
@@ -2464,9 +2487,10 @@ async def handle_profile_config(request: web.Request) -> web.Response:
       → 404 profile dir missing or no config.yaml
       → 500 yaml parse error
 
-    Loopback callers may skip bearer auth (matches
-    ``/notifications/recent``); remote callers must present a valid
-    relay session token.
+    Loopback callers may skip bearer auth and receive the complete parsed file.
+    Remote callers must present a valid relay session token and receive only
+    the explicitly public profile schema, never arbitrary config sections or
+    the host filesystem path.
     """
     is_loopback = request.remote in ("127.0.0.1", "::1")
     if is_loopback:
@@ -2521,11 +2545,14 @@ async def handle_profile_config(request: web.Request) -> web.Response:
     if parsed is None:
         parsed = {}
 
+    response_config = parsed if is_loopback else _public_profile_config(parsed)
+    response_path = str(config_path) if is_loopback else config_path.name
+
     return web.json_response(
         {
             "profile": name,
-            "path": str(config_path),
-            "config": parsed,
+            "path": response_path,
+            "config": response_config,
             "readonly": True,
         }
     )
@@ -3764,14 +3791,10 @@ async def _authenticate(
     client_surface = str(payload.get("client_surface", "unknown") or "unknown")
     device_form_factor = str(payload.get("device_form_factor", "unknown") or "unknown")
 
-    # The phone MAY send ttl_seconds / grants in its auth envelope, but
-    # if the operator pre-registered the code with metadata on the host
-    # side, those host-provided values win — the host has the authority
-    # to decide "how long and for which channels". Only fall back to the
-    # phone-sent fields when the code had no attached metadata (e.g. old
-    # phones predating the v2 auth envelope).
-    phone_ttl = payload.get("ttl_seconds")
-    phone_grants = payload.get("grants")
+    # Pairing policy is attached by a loopback-only operator flow. Clients
+    # may still send ttl_seconds / grants for wire compatibility, but those
+    # fields are not an authority boundary and must not influence sessions.
+    # Missing host metadata therefore resolves to SessionManager defaults.
     detected_transport = _detect_transport_hint(request)
 
     # Try session token first (reconnection)
@@ -3815,23 +3838,12 @@ async def _authenticate(
     if pairing_code:
         metadata = server.pairing.consume_code(pairing_code)
         if metadata is not None:
-            # Thread host-side metadata (from /pairing/register) through
-            # to the session. Fall back to phone-sent values, then to
-            # library defaults.
+            # Thread host-side metadata (from a loopback-only pairing flow)
+            # through to the session. Missing metadata uses bounded library
+            # defaults; the network client cannot author session policy.
             ttl_seconds: float | None = metadata.ttl_seconds
             grants: dict[str, float] | None = metadata.grants
             transport_hint = metadata.transport_hint or detected_transport
-
-            if ttl_seconds is None and isinstance(phone_ttl, (int, float)) and not isinstance(phone_ttl, bool):
-                if phone_ttl >= 0:
-                    ttl_seconds = float(phone_ttl)
-            if grants is None and isinstance(phone_grants, dict):
-                cleaned: dict[str, float] = {}
-                for channel, value in phone_grants.items():
-                    if isinstance(channel, str) and isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
-                        cleaned[channel] = float(value)
-                if cleaned:
-                    grants = cleaned
 
             session = server.sessions.create_session(
                 device_name,
@@ -3924,6 +3936,20 @@ async def _on_message(
         )
         _track_task(server, ws, task)
     elif channel == "terminal":
+        token = server._clients.get(ws)
+        session = server.sessions.get_session(token) if token else None
+        if session is None or session.channel_is_expired("terminal"):
+            logger.warning(
+                "Rejected terminal message from device=%s: terminal grant expired",
+                session.device_id if session is not None else "unknown",
+            )
+            await _send_system(
+                ws,
+                "error",
+                {"message": "Terminal grant expired for this device"},
+                msg_id=msg_id,
+            )
+            return
         task = asyncio.create_task(server.terminal.handle(ws, envelope))
         _track_task(server, ws, task)
     elif channel == "bridge":
@@ -4110,7 +4136,6 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/ws", handle_ws)
     app.router.add_get("/", handle_ws)
     app.router.add_get("/health", handle_health)
-    app.router.add_post("/pairing", handle_pairing)
     app.router.add_post("/pairing/register", handle_pairing_register)
     app.router.add_post("/pairing/mint", handle_pairing_mint)
     app.router.add_post("/pairing/approve", handle_pairing_approve)

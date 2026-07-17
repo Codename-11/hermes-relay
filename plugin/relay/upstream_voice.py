@@ -121,7 +121,9 @@ def _synthesize_gemini(
 
     raw = config.get("gemini")
     gemini = dict(raw) if isinstance(raw, dict) else {}
-    for key in ("model", "voice", "base_url"):
+    # Never merge a request-supplied endpoint into credential-bearing host
+    # configuration. ``base_url`` is deliberately operator-controlled.
+    for key in ("model", "voice"):
         value = overrides.get(key)
         if isinstance(value, str) and value.strip():
             gemini[key] = value.strip()

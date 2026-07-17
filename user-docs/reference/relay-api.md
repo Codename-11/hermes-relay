@@ -109,8 +109,9 @@ Prefer upstream Dashboard routes for standard profile and Manage behavior.
 ## Device Control
 
 Device Control HTTP routes proxy through the connected phone's bridge channel.
-They require a paired sideload phone reporting
-`bridge.device_control_supported=true`.
+Every request requires a Relay session bearer with an active `bridge` grant
+(host tools read it from `ANDROID_BRIDGE_TOKEN`), plus a paired sideload phone
+reporting `bridge.device_control_supported=true`.
 
 | Group | Representative routes | Gate |
 |---|---|---|

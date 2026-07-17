@@ -1204,6 +1204,71 @@ class SessionManager:
         self._save_to_disk()
         return session
 
+    def reduce_session_policy(
+        self,
+        token: str,
+        ttl_seconds: int | None = None,
+        grants: dict[str, float] | None = None,
+    ) -> Session | None:
+        """Atomically reduce a live session's lifetime and grant ceilings.
+
+        Unlike :meth:`update_session`, this operation never rebuilds omitted
+        grants from defaults and never permits a policy expansion.  It is the
+        safe self-service primitive for an ordinary session bearer; broader
+        updates require a separately authorized operator flow.
+
+        Raises :class:`ValueError` for unknown or malformed grants and
+        :class:`PermissionError` for any requested policy expansion.
+        """
+        self._cleanup()
+        session = self._sessions.get(token)
+        if session is None or session.is_expired:
+            return None
+
+        now = time.time()
+        requested_session_expiry = session.expires_at
+        if ttl_seconds is not None:
+            requested_session_expiry = (
+                math.inf if ttl_seconds == 0 else now + float(ttl_seconds)
+            )
+            if requested_session_expiry > session.expires_at:
+                raise PermissionError(
+                    "operator approval required to extend session"
+                )
+
+        requested_grant_expiries: dict[str, float] = {}
+        for channel, seconds in (grants or {}).items():
+            if channel not in session.grants:
+                raise ValueError(f"unknown grant {channel!r}")
+            if not isinstance(seconds, (int, float)) or not math.isfinite(
+                seconds
+            ):
+                raise ValueError(f"invalid grant duration for {channel!r}")
+            if seconds < 0:
+                raise ValueError(f"invalid grant duration for {channel!r}")
+            requested_expiry = (
+                math.inf if seconds == 0 else now + float(seconds)
+            )
+            if requested_expiry > session.grants[channel]:
+                raise PermissionError(
+                    f"operator approval required to expand grant {channel!r}"
+                )
+            requested_grant_expiries[channel] = requested_expiry
+
+        session.expires_at = requested_session_expiry
+        for channel, current_expiry in tuple(session.grants.items()):
+            requested_expiry = requested_grant_expiries.get(
+                channel,
+                current_expiry,
+            )
+            session.grants[channel] = _clamp_grant_to_session(
+                requested_expiry,
+                session.expires_at,
+            )
+        session.last_seen = now
+        self._save_to_disk()
+        return session
+
     def active_count(self) -> int:
         """Return the number of non-expired sessions."""
         self._cleanup()

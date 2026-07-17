@@ -88,7 +88,7 @@ Connection lifecycle, auth, keepalive.
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name, device_id }` — `ttl_seconds` / `grants` come from the phone's TTL picker dialog; host metadata wins over phone metadata when both are present |
+| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name, device_id }` — `ttl_seconds` / `grants` remain in the wire shape for client compatibility, but only policy attached by a loopback-only host flow is authoritative; missing host metadata uses bounded server defaults |
 | `auth` (session mode) | App → Server | `{ session_token, device_name, device_id }` — ttl/grants are not re-sent; server keeps the grant table keyed on the original pair |
 | `auth.ok` | Server → App | `{ session_token, server_version, profiles[], expires_at, grants, transport_hint }` — see below |
 | `auth.fail` | Server → App | `{ reason }` |
@@ -300,6 +300,7 @@ Implementation references:
 | Tailscale helper (first-class) | `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI (ADR 25). Publishes the loopback relay over the tailnet via `tailscale serve --bg --https=<port>`; managed TLS + tailnet ACL identity. Optional, graceful-absent when the binary isn't installed. Auto-retires when upstream PR #9295 lands. See [`docs/remote-access.md`](remote-access.md). |
 | Multi-endpoint pairing | Single QR carries an ordered list of `role: lan/tailscale/public/...` candidates with strict-priority selection (ADR 24). Phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog. |
 | Device revocation | Paired Devices screen → `GET /sessions` (tokens masked to 8-char prefix) / `DELETE /sessions/{token_prefix}` (self-revoke allowed, wipes local state + redirects to pair flow). Any paired device can revoke any other — trade-off documented in ADR 15. |
+| Session policy updates | `PATCH /sessions/{token_prefix}` is self-targeted and reduction-only for normal Relay bearers. Extending a lifetime, adding or lengthening grants, or changing another session requires a fresh operator-approved pairing flow. |
 | Terminal gate | Biometric/PIN required before terminal access (planned). |
 
 ---
@@ -432,10 +433,9 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 |-------|--------|---------|
 | `/ws`, `/` | GET (upgrade) | WebSocket handler — main multiplexed channel |
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
-| `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
 | `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard and CLI/tray pair/repair flows. Optional request field `dashboard_url` is copied into the QR payload for custom dashboard routes. |
-| `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
+| `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}`. Loopback callers receive the parsed `config.yaml` and absolute path. Remote callers require a relay session bearer and receive only the explicitly public `description` and `model.default` fields with `path: "config.yaml"`; arbitrary provider, platform, integration, and extension sections never cross the remote boundary. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
 | `/api/profiles/{name}/avatar` | GET | Profile-scoped avatar discovery and image delivery. Searches direct children of the profile home for conventional names, preferring `avatar.*` then `profile.*` (`png`, `jpg`, `jpeg`, `webp`, `gif`; additional `profile-image`, `agent`, and `icon` stems are accepted). Synthetic `default` follows a valid sticky `active_profile` marker, matching its advertised identity. The resolved file must remain inside the profile home and satisfy the Relay media-size policy. Same loopback-or-session-bearer auth as the other profile reads. 404 when the profile or an image is absent. Android copies returned bytes into its existing device-local per-profile icon store. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
@@ -629,7 +629,7 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 
 #### 6.4.1 `android_*` tool surface
 
-Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side Device Control tools issue HTTP requests to the relay on loopback; the relay forwards them to the phone over WSS; the sideload phone executes them via the accessibility service and returns structured responses. Google Play phones report `bridge.device_control_supported=false` from `/bridge/status`, so these tools are hidden from the agent and direct command probes fail closed with `error_code: device_control_sideload_only`.
+Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side Device Control tools issue bearer-authenticated HTTP requests to the relay on loopback using `ANDROID_BRIDGE_TOKEN`; the relay requires that session's active `bridge` grant before forwarding to the phone over WSS. The sideload phone executes commands via the accessibility service and returns structured responses. Google Play phones report `bridge.device_control_supported=false` from `/bridge/status`, so these tools are hidden from the agent and direct command probes fail closed with `error_code: device_control_sideload_only`.
 
 **Baseline (pre-v0.4 — shipped in Phase 3 Wave 1):**
 
@@ -773,7 +773,7 @@ The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"par
 - [x] Android Keystore session token storage (`SessionTokenStore` — `KeystoreTokenStore` with StrongBox-preferred via `setRequestStrongBoxBacked`, `LegacyEncryptedPrefsTokenStore` TEE-backed fallback, one-shot lossless migration on first launch)
 - [x] User-chosen session TTL at pair time (`SessionTtlPickerDialog` — 1d / 7d / 30d / 90d / 1y / Never)
 - [x] Per-channel grants on one session token (`Session.grants` — chat / terminal / bridge / TUI / split voice grants (`voice:config`, `voice:stt`, `voice:tts`), clamped to session lifetime)
-- [x] Paired Devices screen (`PairedDevicesScreen` + `GET /sessions` + `DELETE /sessions/{prefix}` + `PATCH /sessions/{prefix}` for extend)
+- [x] Paired Devices screen (`PairedDevicesScreen` + `GET /sessions` + `DELETE /sessions/{prefix}`; bearer-authenticated `PATCH /sessions/{prefix}` is self-targeted and reduction-only)
 - [x] Transport security badge (`TransportSecurityBadge` — three states: secure / insecure-with-reason / insecure-unknown)
 - [x] First-time insecure-mode ack dialog with reason picker (`InsecureConnectionAckDialog`)
 - [x] Tailscale detection (`TailscaleDetector` — informational only)
