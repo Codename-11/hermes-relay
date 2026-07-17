@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-16 — Stable chat position after stream completion
+
+Android chat now observes the assistant message identity and the streaming-to-final
+transition as conversation-tail changes. When a reader is already following the
+response, completion performs an instant multi-frame bottom settle after the
+streaming renderer is replaced by the final Markdown layout. The existing
+user-scroll gate remains authoritative, so reading older messages is not
+interrupted.
+
+Focused snapshot regression coverage verifies completion detection, ordinary
+stream growth, stream startup, and server message-ID reconciliation.
+
 ## 2026-07-16 — Critical Relay authorization hardening
 
 Relay privileged interfaces now enforce host-authorized policy at every shared
