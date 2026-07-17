@@ -2120,7 +2120,11 @@ fun ChatScreen(
                     ) {
                         item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
 
-                        items(messages.size, key = { messages[it].id }) { index ->
+                        // `id` can legitimately change once after a Gateway turn:
+                        // the history reconcile adopts the persisted server id.
+                        // Keep Compose identity stable across that data update so
+                        // LazyColumn retains the visible row and its scroll anchor.
+                        items(messages.size, key = { messages[it].uiKey }) { index ->
                             val message = messages[index]
                             val processNotification = message.hermesProcessNotificationOrNull()
 

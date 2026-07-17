@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **Long streamed replies stay anchored when final rendering completes.** Android now follows the final Markdown re-layout and server message reconciliation when the reader is already at the conversation bottom, without pulling readers away from history they intentionally scrolled up to view.
+- **Long streamed replies stay anchored through final rendering and history reconciliation.** Android follows the final Markdown re-layout and preserves stable visible-row identity when persisted server message IDs replace live IDs, without pulling readers away from history they intentionally scrolled up to view.
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
 
 ## [Android 1.4.6] - 2026-07-15
