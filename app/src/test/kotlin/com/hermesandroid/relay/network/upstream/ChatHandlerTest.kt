@@ -1046,6 +1046,11 @@ class ChatHandlerTest {
         // Server ids adopted onto the live rows.
         assertEquals("srv-1", user.id)
         assertEquals("srv-2", assistant.id)
+        // Compose identity stays on the live rows. A same-count post-turn
+        // reload must not remove/reinsert the two bubbles just because their
+        // authoritative ids arrived.
+        assertEquals("uuid-user", user.uiKey)
+        assertEquals("uuid-assistant", assistant.uiKey)
         // State carried by id, in place.
         assertEquals(1, user.attachments.size)
         assertEquals("outb64", user.attachments[0].content)
@@ -1054,6 +1059,39 @@ class ChatHandlerTest {
         assertEquals(14, assistant.totalTokens)
         assertEquals(0.003, assistant.estimatedCost!!, 0.0001)
         assertFalse(assistant.isStreaming)
+    }
+
+    @Test
+    fun loadMessageHistory_listRebuildPreservesMatchedTailUiKey() {
+        // Some persisted turns rebuild one live streaming bubble into several
+        // server rows (for example, restored message boundaries/tool output).
+        // The reconciled tail must retain its UI identity even while new rows
+        // are inserted around it, otherwise LazyColumn loses the viewport
+        // anchor on a long answer.
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "uuid-live-tail",
+                role = MessageRole.ASSISTANT,
+                content = "final chunk",
+                timestamp = 3L,
+                isStreaming = false,
+            )
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "srv-user", role = "user", content = JsonPrimitive("question"), timestamp = 1.0),
+                MessageItem(id = "srv-prefix", role = "assistant", content = JsonPrimitive("earlier chunk"), timestamp = 2.0),
+                MessageItem(id = "srv-tail", role = "assistant", content = JsonPrimitive("final chunk"), timestamp = 3.0),
+            )
+        )
+
+        val messages = handler.messages.value
+        assertEquals(3, messages.size)
+        assertEquals("uuid-live-tail", messages.single { it.id == "srv-tail" }.uiKey)
+        assertEquals("srv-user", messages.single { it.id == "srv-user" }.uiKey)
+        assertEquals("srv-prefix", messages.single { it.id == "srv-prefix" }.uiKey)
+        assertEquals(messages.size, messages.map { it.uiKey }.distinct().size)
     }
 
     @Test

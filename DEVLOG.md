@@ -1,5 +1,16 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-17 — Stable chat rows across post-turn history reconciliation
+
+Android chat now separates the stable Compose identity of a visible message row
+from its authoritative server message ID. The post-turn history reconcile can
+adopt persisted IDs and rebuild message boundaries without making LazyColumn
+remove and reinsert the long answer currently anchoring the viewport.
+
+Regression coverage exercises both the same-count user/assistant ID adoption
+and a list-expansion reconcile that inserts persisted rows around a matched live
+tail. The focused ChatHandler and scroll-snapshot unit tests passed.
+
 ## 2026-07-16 — Stable chat position after stream completion
 
 Android chat now observes the assistant message identity and the streaming-to-final

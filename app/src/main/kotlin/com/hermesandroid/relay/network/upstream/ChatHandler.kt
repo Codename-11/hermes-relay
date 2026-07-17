@@ -1315,7 +1315,9 @@ class ChatHandler {
                 // `id = messageId` adopts the server id: for an id-matched (SSE)
                 // row it's a no-op, but for a positionally reconciled (gateway /
                 // user) row whose `prior` still carries a client UUID it swaps in
-                // the server id so EVERY future reload matches by id.
+                // the server id so EVERY future reload matches by id. `uiKey` is
+                // deliberately not overwritten: Compose must continue treating
+                // this as the same visible row across the post-turn reload.
                 prior.copy(
                     id = messageId,
                     role = role,
