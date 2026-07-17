@@ -1,5 +1,27 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-17 — Smooth streamed-reply finalization
+
+Uninterrupted Gateway turns now treat their structured live assistant, reasoning,
+and tool events as the authoritative completion state instead of immediately
+republishing the transcript through a full history read. A turn that successfully
+rejoins after a socket gap carries an explicit reconciliation signal because events
+emitted while disconnected cannot be replayed. Successful Sessions SSE turns and
+all detached-turn, profile-aware resume, error, and missing-data recovery paths
+retain their authoritative history reconciliation.
+
+The final renderer remains one full CommonMark document so document-global
+references, indentation, and nested containers retain exact semantics.
+Bottom-following readers are instead anchored to the trailing spacer in the same
+Compose remeasure through `requestScrollToItem`; message-count and stable-row-key
+guards prevent a session or tail replacement from being treated as an ordinary
+stream completion. Readers who intentionally scrolled up remain under the existing
+user-scroll gate.
+
+Focused Gateway reconnect, completion-policy, and scroll-snapshot regressions
+passed. Full Android lint and the sideload debug assembly also completed
+successfully; existing unrelated compiler and packaging warnings remain unchanged.
+
 ## 2026-07-17 — Stable chat rows across post-turn history reconciliation
 
 Android chat now separates the stable Compose identity of a visible message row

@@ -120,6 +120,21 @@ data class ContextWindowUsage(
         get() = if (maxTokens > 0) (usedTokens.toFloat() / maxTokens).coerceIn(0f, 1f) else 0f
 }
 
+/**
+ * A successful Sessions SSE turn still needs the server-authoritative transcript
+ * because that transport does not stream every persisted message boundary.
+ * Gateway turns already deliver the assistant, reasoning, and tool lifecycle
+ * directly; reloading their full transcript only republishes a healthy live turn.
+ * A successful socket rejoin is the exception because events emitted during the
+ * gap cannot be replayed.
+ */
+internal fun shouldReloadHistoryAfterSuccessfulTurn(
+    actualTransport: String,
+    gatewayReconcileRequired: Boolean,
+): Boolean =
+    actualTransport == "sessions" ||
+        (actualTransport == "gateway" && gatewayReconcileRequired)
+
 class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
@@ -1254,6 +1269,9 @@ class ChatViewModel : ViewModel() {
             onTurnComplete = {
                 if (acceptsEvent()) handler.onTurnComplete(messageId)
             },
+            // Server-initiated turns already take the bounded durable-history
+            // reconcile below on every completion.
+            onReconcileRequired = { },
             onComplete = {
                 val canWriteTranscript = acceptsEvent()
                 val expectedText = handler.messages.value
@@ -3339,7 +3357,8 @@ class ChatViewModel : ViewModel() {
      * message among role==USER messages (excluding phone-local traces the
      * server never saw), truncates the local list from it, and dispatches a
      * gateway turn carrying `truncate_before_user_ordinal`. Local/server
-     * divergence self-heals via the post-turn history reload.
+     * divergence self-heals through the gateway's authoritative truncate and
+     * live turn events; recovery paths still perform a full history reconcile.
      *
      * @return false when the edit could not be dispatched (turn in flight,
      *   non-gateway endpoint, missing client, ordinal failure) — the caller
@@ -4036,6 +4055,8 @@ class ChatViewModel : ViewModel() {
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
+            // Recovered turns already reload their authoritative history below.
+            onReconcileRequired = { },
             onComplete = {
                 if (owns()) {
                     finalizeTurnSideEffects(handler, messageId)
@@ -5414,6 +5435,7 @@ class ChatViewModel : ViewModel() {
         // stream answer recovery (issue #166) on "sessions": the other
         // endpoints keep their existing error behavior.
         var dispatchedSseEndpoint: String? = null
+        var gatewayHistoryReconcileRequired = false
 
         val assistantTimestamp = System.currentTimeMillis()
         beginTurnCheckpoint(
@@ -5440,7 +5462,7 @@ class ChatViewModel : ViewModel() {
                 // interfaceContextPrompt today, so it marks this turn as spoken.
                 // Tag the reply with a "Voice" chip (parity with "Realtime
                 // Agent"); ChatHandler.loadMessageHistory preserves it across
-                // the post-turn history reload.
+                // history and recovery reconciliation.
                 badges = if (interfaceContextPrompt != null) listOf("Voice") else emptyList(),
             )
         )
@@ -5487,6 +5509,8 @@ class ChatViewModel : ViewModel() {
             // wins — stop the poller before finalizing so the turn can't
             // finish twice.
             cancelAnswerRecovery(settleUi = false)
+            val completedTransport = dispatchedSseEndpoint
+                ?: if (activeStreamIsGateway) "gateway" else streamingEndpoint
             finalizeTurnSideEffects(handler, currentMessageId)
             AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
 
@@ -5504,15 +5528,13 @@ class ChatViewModel : ViewModel() {
                 refreshReasoningSettings()
             }
 
-            // Sessions endpoint doesn't emit structured tool events during streaming —
-            // tool calls are only available as JSON on the stored messages. Reload the
-            // server-authoritative history to get proper message boundaries + tool_calls.
-            // Gateway turns reconcile the same way: live tool events are gated by the
-            // server's display.tool_progress config, so a turn that ran tools silently
-            // (config off, or events lost in a mid-turn rejoin gap) still gets its tool
-            // cards + persisted reasoning right after the turn — not on the next app
-            // restart. By message.complete the server has persisted the turn, so the
-            // REST read is authoritative.
+            // Sessions SSE does not stream every persisted message boundary, so it
+            // still needs the server-authoritative transcript after success. A healthy
+            // Gateway turn is already authoritative in memory through its structured
+            // assistant/reasoning/tool events; reloading the full transcript here would
+            // republish the entire visible list and cause a completion flash. A Gateway
+            // socket rejoin explicitly flags this completion for the same profile-aware
+            // history reconcile because events emitted during the gap may be missing.
             val sid = handler.currentSessionId.value
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
@@ -5523,9 +5545,13 @@ class ChatViewModel : ViewModel() {
             val turnErrored = handler.messages.value
                 .lastOrNull { it.id == currentMessageId }
                 ?.badges?.contains("Error") == true
-            if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
+            if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
                 viewModelScope.launch {
-                    if (!turnErrored) {
+                    if (!turnErrored && shouldReloadHistoryAfterSuccessfulTurn(
+                            completedTransport,
+                            gatewayHistoryReconcileRequired,
+                        )
+                    ) {
                         // Profile-aware read: a gateway turn on a non-default profile
                         // persists into THAT profile's own state.db, so the bare
                         // api_server `/api/sessions/{id}/messages` 404s → emptyList()
@@ -5947,6 +5973,9 @@ class ChatViewModel : ViewModel() {
                             scheduleCheckpointWrite(immediate = true)
                         },
                         onTurnComplete = onTurnCompleteCb,
+                        onReconcileRequired = {
+                            gatewayHistoryReconcileRequired = true
+                        },
                         onComplete = onCompleteCb,
                         onUsage = onUsageCb,
                         onError = onErrorCb,

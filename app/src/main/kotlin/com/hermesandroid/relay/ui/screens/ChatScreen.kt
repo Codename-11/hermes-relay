@@ -242,6 +242,7 @@ private const val GROUP_GAP_MS = 5 * 60_000L
 internal data class ChatScrollSnapshot(
     val messageCount: Int,
     val lastMessageId: String?,
+    val lastMessageUiKey: String?,
     val lastContentLength: Int,
     val lastThinkingLength: Int,
     val lastToolCallCount: Int,
@@ -249,7 +250,10 @@ internal data class ChatScrollSnapshot(
 )
 
 internal fun ChatScrollSnapshot.isCompletionAfter(previous: ChatScrollSnapshot?): Boolean =
-    previous?.isStreaming == true && !isStreaming
+    previous?.isStreaming == true &&
+        !isStreaming &&
+        previous.messageCount == messageCount &&
+        previous.lastMessageUiKey == lastMessageUiKey
 
 private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
     val layout = layoutInfo
@@ -1216,11 +1220,12 @@ fun ChatScreen(
     //      pins the bottom of the item to the bottom of the viewport.
     //   3. There was no userScrolledAway gate, so any delta would yank a
     //      user reading history back to the bottom.
-    //   4. The stream-complete transition needs an INSTANT multi-frame settle:
-    //      the renderer replaces its lightweight streaming tail with the final
-    //      Markdown tree, which can remeasure a long bubble substantially.
-    //      Animating that settle produces a visible jiggle; skipping it leaves
-    //      the viewport anchored far above the new bottom.
+    //   4. The stream-complete transition must anchor the SAME remeasure that
+    //      replaces streaming blocks with the final full-document CommonMark
+    //      tree. Waiting a frame and then scrolling exposes one bad top-anchored
+    //      frame before the correction. Completion therefore uses
+    //      requestScrollToItem(), which applies on the next remeasure instead of
+    //      launching the deferred settle helper.
     //   5. Sessions endpoint reloads the entire message list on stream
     //      complete via loadMessageHistory(), and the resulting animateItem()
     //      placement animations on every bubble fought with our concurrent
@@ -1247,6 +1252,7 @@ fun ChatScreen(
             ChatScrollSnapshot(
                 messageCount = messages.size,
                 lastMessageId = last?.id,
+                lastMessageUiKey = last?.uiKey,
                 lastContentLength = last?.content?.length ?: 0,
                 lastThinkingLength = last?.thinkingContent?.length ?: 0,
                 lastToolCallCount = last?.toolCalls?.size ?: 0,
@@ -1261,14 +1267,16 @@ fun ChatScreen(
                 if (messages.isEmpty()) return@collectLatest
                 if (userScrolledAway) return@collectLatest
 
-                // Finalization swaps StreamingMarkdownContent from its stable
-                // prefix + lightweight active-tail tree to one full Markdown
-                // tree. A long reply can therefore remeasure substantially even
-                // though no text changed. LazyColumn preserves the tall item's
-                // top-relative offset, which moves the viewport away from the
-                // bottom unless we settle again after that re-layout.
+                // Finalization swaps the streaming partitions for one complete
+                // CommonMark document (required for global references and nested
+                // containers), which can change height. Request the trailing
+                // spacer at the bottom for the SAME next remeasure so no
+                // incorrect top-anchored frame is displayed before a follow-up
+                // scroll.
+                // The uiKey/count guard in isCompletionAfter prevents a session
+                // or tail replacement from masquerading as this transition.
                 if (snapshot.isCompletionAfter(prev)) {
-                    scrollConversationToBottom(animated = false)
+                    listState.requestScrollToItem(snapshot.messageCount + 1, Int.MAX_VALUE)
                     return@collectLatest
                 }
 
