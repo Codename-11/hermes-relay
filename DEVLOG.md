@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-18 — Android 1.4.7 release preparation
+
+Android advanced to 1.4.7 with versionCode 30 after the localization, streaming,
+release-history, and branch-contract reconciliation landed on `dev`. The public
+changelog, GitHub release body, in-app What's New surfaces, Play metadata, and
+store-listing copy now describe the Android-only patch while the unreleased Relay
+security work remains assigned to its independent server release track.
+
 ## 2026-07-17 — Smooth streamed-reply rendering and finalization
 
 Uninterrupted Gateway turns treat their structured live assistant, reasoning, and

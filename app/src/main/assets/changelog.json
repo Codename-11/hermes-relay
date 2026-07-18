@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.4.7",
+   "title": "Smoother replies, more languages",
+   "date": "2026-07-18",
+   "sections": [
+    {
+     "header": "Smooth streaming",
+     "bullets": [
+      "Long replies grow at a display-paced cadence and stay anchored at the newest text through completion.",
+      "Scrolling into history preserves your reading position instead of forcing the conversation back to the bottom."
+     ]
+    },
+    {
+     "header": "More languages",
+     "bullets": [
+      "Use German, Brazilian Portuguese, or Japanese throughout both Android product flavors.",
+      "Catalog freshness validation keeps every shipped translation aligned with the canonical English resources."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.6",
    "title": "Profiles stay together",
    "date": "2026-07-15",
