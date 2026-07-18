@@ -1,10 +1,10 @@
-# Hermes-Relay-Android v1.4.6
+# Hermes-Relay-Android v1.4.7
 
-**Release Date:** July 15, 2026
+**Release Date:** July 18, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.4.6-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.4.7-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,19 +12,19 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This patch keeps Server default aligned with Hermes' active profile, adds per-profile icon import and organization controls, and prevents the session drawer from mixing profile databases.
+This patch adds German, Brazilian Portuguese, and Japanese and makes long streamed replies grow smoothly while staying anchored at the latest text.
 
 ## Added
 
-- Reorder or hide profiles per connection without changing server configuration.
-- Choose a profile icon from the Android file picker or import `avatar.png`/`profile.jpg` from a paired Relay host.
+- Use German, Brazilian Portuguese, or Japanese throughout both Android product flavors.
+- Language-picker and catalog freshness checks keep every shipped locale aligned with the canonical English resources.
 
 ## Fixed
 
-- Server default resolves Hermes' sticky active profile before Gateway session create/resume and dashboard session operations, keeping the agent, drawer, transcript, and writes in one profile database.
-- Host image import distinguishes an outdated Relay from a genuinely missing avatar and presents **Choose file** as a reliable fallback.
+- Long streamed replies insert text at a display-paced cadence instead of visibly rebuilding the conversation.
+- The active response remains anchored at the latest text through growth and completion while readers who scroll into history remain undisturbed.
 
 ## Install / Verify
 
-- App version: **1.4.6** (versionCode **29**).
+- App version: **1.4.7** (versionCode **30**).
 - Standard Chat and Vanilla Hermes voice continue to work against unmodified upstream Hermes.

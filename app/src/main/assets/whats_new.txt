@@ -1,8 +1,8 @@
-v1.4.6 - Profiles stay together
+v1.4.7 - Smoother replies, more languages
 
-Profile continuity
-* Server default now keeps its agent, chats, drawer, and transcript in the active Hermes profile.
-* Reorder or hide profiles per connection without changing the server.
+Smooth streaming
+* Long replies grow steadily and stay anchored at the newest text through completion.
+* Scrolling into history still leaves your reading position alone.
 
-Profile icons
-* Choose an image file on your phone or import avatar.png/profile.jpg from an updated paired Relay.
+More languages
+* Use German, Brazilian Portuguese, or Japanese throughout the app.

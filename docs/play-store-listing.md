@@ -85,14 +85,14 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.6 - Profiles stay together
+v1.4.7 - Smoother replies, more languages
 
-Profile continuity
-* Server default keeps its agent, chats, drawer, and transcript in the active Hermes profile.
-* Reorder or hide profiles per connection.
+Smooth streaming
+* Long replies grow steadily and stay anchored at the newest text through completion.
+* Scrolling into history preserves your reading position.
 
-Profile icons
-* Choose a phone image or import avatar.png/profile.jpg from an updated paired Relay.
+More languages
+* Use German, Brazilian Portuguese, or Japanese throughout the app.
 ```
 
 ## Category
