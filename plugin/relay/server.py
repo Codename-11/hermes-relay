@@ -27,6 +27,7 @@ import logging
 import math
 import mimetypes
 import os
+import secrets
 import signal
 import ssl
 import stat
@@ -184,16 +185,6 @@ async def handle_health(request: web.Request) -> web.Response:
             "sessions": server.sessions.active_count(),
         }
     )
-
-
-async def handle_pairing(request: web.Request) -> web.Response:
-    """Generate a new pairing code (for use by the Hermes agent/CLI).
-
-    POST /pairing → {"code": "ABC123"}
-    """
-    server: RelayServer = request.app["server"]
-    code = server.pairing.generate_code()
-    return web.json_response({"code": code})
 
 
 async def handle_pairing_register(request: web.Request) -> web.Response:
@@ -810,22 +801,22 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
 
 
 async def handle_sessions_extend(request: web.Request) -> web.Response:
-    """Update a paired device's session TTL and/or per-channel grants.
+    """Reduce the calling device's session TTL and/or channel grants.
 
-    This is the "extend" action exposed on the phone's Paired Devices
-    screen, but also handles arbitrary TTL updates — passing
-    ``ttl_seconds`` shorter than the current expiry clips the session
-    (equivalent to shortening, though the button is labeled "Extend"
-    for the common case). ``ttl_seconds == 0`` maps to never-expire.
+    A normal Relay bearer is session identity, not session-management
+    authority.  It may reduce only its own live policy.  Extending a
+    lifetime, adding or lengthening a grant, or changing another session
+    requires a fresh operator-approved pairing flow.
 
     PATCH /sessions/{token_prefix}
-      Body: {"ttl_seconds": 2592000}              # extend only
-           | {"grants": {"terminal": 604800}}     # grants only
-           | {"ttl_seconds": 0, "grants": {...}}  # both
+      Body: {"ttl_seconds": 300}                  # shorten only
+           | {"grants": {"terminal": 60}}         # reduce grants
+           | {"ttl_seconds": 300, "grants": {...}}  # both
       → 200 {"ok": true, "expires_at": ..., "grants": {...}}
       → 400 missing/invalid body or no fields provided
       → 401 missing/invalid bearer
       → 404 prefix doesn't match any active session
+      → 403 cross-session target or policy expansion
       → 409 prefix matches multiple sessions
     """
     server, current_session = _require_bearer_session(request)
@@ -873,7 +864,12 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
                 {"ok": False, "error": "'grants' must be an object"}, status=400
             )
         for k, v in grants.items():
-            if not isinstance(k, str) or not isinstance(v, (int, float)) or v < 0:
+            if (
+                not isinstance(k, str)
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+                or v < 0
+            ):
                 return web.json_response(
                     {
                         "ok": False,
@@ -901,20 +897,27 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
         )
 
     target = matches[0]
-    updated = server.sessions.update_session(
-        target.token,
-        ttl_seconds=ttl_seconds,
-        grants=grants,
-    )
+    if not secrets.compare_digest(target.token, current_session.token):
+        raise web.HTTPForbidden(text="cannot modify another session")
+
+    try:
+        updated = server.sessions.reduce_session_policy(
+            target.token,
+            ttl_seconds=ttl_seconds,
+            grants=grants,
+        )
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    except PermissionError as exc:
+        raise web.HTTPForbidden(text=str(exc)) from exc
     if updated is None:
         # Raced with expiry or revocation between find_by_prefix and update.
         raise web.HTTPNotFound(text="session vanished mid-update, retry")
 
     logger.info(
-        "Extended session %s... (%s)%s",
+        "Reduced session policy %s... (%s) [self]",
         target.token[:8],
         target.device_name,
-        " [self]" if target.token == current_session.token else "",
     )
     return web.json_response(
         {
@@ -1704,17 +1707,10 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
 # channel to the connected phone.
 #
 # Auth model:
-#   * These routes are **unauthenticated** at the HTTP layer on purpose —
-#     the legacy relay was unauthenticated too, and the trust boundary
-#     is the same: only tools running on the same host as the relay can
-#     reach localhost:8767. The relay's default bind is 0.0.0.0 for the
-#     WebSocket side, but tools should always point at ``localhost``, so
-#     an attacker reaching port 8767 from the LAN would need the phone
-#     to also have auth'd with a valid pairing code — without a paired
-#     phone, every bridge HTTP call just returns 503.
-#   * If tightening is needed later, wrap these handlers with the same
-#     ``_require_bearer_session`` pattern used by ``/media/*`` — the
-#     bridge grant is already tracked per-session in ``Session.grants``.
+#   * Every route requires a live Relay bearer with an active ``bridge``
+#     grant. The same listener accepts external WebSocket connections, so
+#     callers are never trusted merely because host tools normally use
+#     ``localhost``.
 #
 # A paired but disconnected phone still drops bridge calls with 503 —
 # the tool caller should retry or tell the user to reconnect the app.
@@ -1746,7 +1742,9 @@ async def _bridge_dispatch(
     path: str,
 ) -> web.Response:
     """Forward an HTTP request to an Android bridge device."""
-    server: RelayServer = request.app["server"]
+    server, session = _require_bearer_session(request)
+    if session.channel_is_expired("bridge"):
+        raise web.HTTPForbidden(text="active bridge grant required")
     method = request.method  # GET or POST
 
     params: dict[str, Any] = dict(request.query)
@@ -2320,6 +2318,118 @@ def _resolve_profile_home(server: "RelayServer", name: str) -> Path | None:
     return home if home.is_dir() else None
 
 
+_PROFILE_AVATAR_STEMS = (
+    "avatar",
+    "profile",
+    "profile-image",
+    "profile_image",
+    "agent",
+    "icon",
+)
+_PROFILE_AVATAR_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+
+def _discover_profile_avatar(home: Path) -> Path | None:
+    """Return the highest-priority conventional image in ``home``.
+
+    Matching is case-insensitive and intentionally limited to direct children
+    of the profile directory. This keeps discovery predictable and avoids a
+    recursive walk through memories, skills, sessions, or generated media.
+    """
+    try:
+        files: dict[str, Path] = {}
+        for child in sorted(home.iterdir(), key=lambda path: path.name.lower()):
+            if child.is_file():
+                files.setdefault(child.name.lower(), child)
+    except OSError:
+        return None
+
+    for stem in _PROFILE_AVATAR_STEMS:
+        for suffix in _PROFILE_AVATAR_SUFFIXES:
+            candidate = files.get(f"{stem}{suffix}")
+            if candidate is not None:
+                return candidate
+    return None
+
+
+async def handle_profile_avatar(request: web.Request) -> web.StreamResponse:
+    """Serve a conventional profile/avatar image from a Hermes profile home.
+
+    ``GET /api/profiles/{name}/avatar`` searches the profile directory for a
+    direct-child image such as ``avatar.png`` or ``profile.jpg``. Remote callers
+    require the existing Relay session bearer; loopback callers may omit it,
+    matching the other profile read endpoints.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    if name == "default":
+        # The synthetic default row follows Hermes' sticky active_profile
+        # marker. Keep avatar discovery aligned with the identity advertised in
+        # auth.ok without changing the older profile inspector/write routes.
+        from .config import _effective_default_profile_home
+
+        home = _effective_default_profile_home(home)
+
+    avatar_path = _discover_profile_avatar(home)
+    if avatar_path is None:
+        return web.json_response(
+            {
+                "error": "profile_avatar_not_found",
+                "profile": name,
+                "expected_names": [
+                    f"{stem}{suffix}"
+                    for stem in ("avatar", "profile")
+                    for suffix in _PROFILE_AVATAR_SUFFIXES
+                ],
+            },
+            status=404,
+        )
+
+    # Resolve symlinks and enforce both the profile-home boundary and the
+    # relay's configured media-size cap before serving bytes to the phone.
+    try:
+        real_path, _size = validate_media_path(
+            str(avatar_path),
+            [str(home.resolve())],
+            server.media.max_size_bytes,
+        )
+    except MediaRegistrationError as exc:
+        logger.info("Profile avatar rejected for %r: %s", name, exc)
+        raise web.HTTPForbidden(text=str(exc))
+
+    content_type = _sniff_image_mime(real_path)
+    if content_type is None:
+        return web.json_response(
+            {
+                "error": "profile_avatar_invalid",
+                "profile": name,
+                "detail": "discovered file is not a supported image",
+            },
+            status=415,
+        )
+
+    safe_name = os.path.basename(real_path).replace('"', "")
+    return web.FileResponse(
+        real_path,
+        headers={
+            "Content-Type": content_type,
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+        },
+    )
+
+
 def _parse_skill_frontmatter(text: str) -> dict[str, Any]:
     """Best-effort parse of the leading ``---`` YAML frontmatter block.
 
@@ -2343,8 +2453,33 @@ def _parse_skill_frontmatter(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _public_profile_config(parsed: object) -> dict[str, Any]:
+    """Build the explicitly public subset of a Hermes profile config.
+
+    Remote profile inspection must not serialize arbitrary configuration
+    sections: provider and extension fields may contain reusable credentials.
+    Keep this schema deliberately small and add fields only after classifying
+    them as safe for every paired Relay client.
+    """
+    if not isinstance(parsed, dict):
+        return {}
+
+    public: dict[str, Any] = {}
+    description = parsed.get("description")
+    if isinstance(description, str):
+        public["description"] = description
+
+    model = parsed.get("model")
+    if isinstance(model, dict):
+        default_model = model.get("default")
+        if isinstance(default_model, str):
+            public["model"] = {"default": default_model}
+
+    return public
+
+
 async def handle_profile_config(request: web.Request) -> web.Response:
-    """Return the parsed ``config.yaml`` for a named profile.
+    """Return a safe view of ``config.yaml`` for a named profile.
 
     GET /api/profiles/{name}/config
       → 200 {"profile", "path", "config": {...}, "readonly": true}
@@ -2352,9 +2487,10 @@ async def handle_profile_config(request: web.Request) -> web.Response:
       → 404 profile dir missing or no config.yaml
       → 500 yaml parse error
 
-    Loopback callers may skip bearer auth (matches
-    ``/notifications/recent``); remote callers must present a valid
-    relay session token.
+    Loopback callers may skip bearer auth and receive the complete parsed file.
+    Remote callers must present a valid relay session token and receive only
+    the explicitly public profile schema, never arbitrary config sections or
+    the host filesystem path.
     """
     is_loopback = request.remote in ("127.0.0.1", "::1")
     if is_loopback:
@@ -2409,11 +2545,14 @@ async def handle_profile_config(request: web.Request) -> web.Response:
     if parsed is None:
         parsed = {}
 
+    response_config = parsed if is_loopback else _public_profile_config(parsed)
+    response_path = str(config_path) if is_loopback else config_path.name
+
     return web.json_response(
         {
             "profile": name,
-            "path": str(config_path),
-            "config": parsed,
+            "path": response_path,
+            "config": response_config,
             "readonly": True,
         }
     )
@@ -3652,14 +3791,10 @@ async def _authenticate(
     client_surface = str(payload.get("client_surface", "unknown") or "unknown")
     device_form_factor = str(payload.get("device_form_factor", "unknown") or "unknown")
 
-    # The phone MAY send ttl_seconds / grants in its auth envelope, but
-    # if the operator pre-registered the code with metadata on the host
-    # side, those host-provided values win — the host has the authority
-    # to decide "how long and for which channels". Only fall back to the
-    # phone-sent fields when the code had no attached metadata (e.g. old
-    # phones predating the v2 auth envelope).
-    phone_ttl = payload.get("ttl_seconds")
-    phone_grants = payload.get("grants")
+    # Pairing policy is attached by a loopback-only operator flow. Clients
+    # may still send ttl_seconds / grants for wire compatibility, but those
+    # fields are not an authority boundary and must not influence sessions.
+    # Missing host metadata therefore resolves to SessionManager defaults.
     detected_transport = _detect_transport_hint(request)
 
     # Try session token first (reconnection)
@@ -3703,23 +3838,12 @@ async def _authenticate(
     if pairing_code:
         metadata = server.pairing.consume_code(pairing_code)
         if metadata is not None:
-            # Thread host-side metadata (from /pairing/register) through
-            # to the session. Fall back to phone-sent values, then to
-            # library defaults.
+            # Thread host-side metadata (from a loopback-only pairing flow)
+            # through to the session. Missing metadata uses bounded library
+            # defaults; the network client cannot author session policy.
             ttl_seconds: float | None = metadata.ttl_seconds
             grants: dict[str, float] | None = metadata.grants
             transport_hint = metadata.transport_hint or detected_transport
-
-            if ttl_seconds is None and isinstance(phone_ttl, (int, float)) and not isinstance(phone_ttl, bool):
-                if phone_ttl >= 0:
-                    ttl_seconds = float(phone_ttl)
-            if grants is None and isinstance(phone_grants, dict):
-                cleaned: dict[str, float] = {}
-                for channel, value in phone_grants.items():
-                    if isinstance(channel, str) and isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
-                        cleaned[channel] = float(value)
-                if cleaned:
-                    grants = cleaned
 
             session = server.sessions.create_session(
                 device_name,
@@ -3812,6 +3936,20 @@ async def _on_message(
         )
         _track_task(server, ws, task)
     elif channel == "terminal":
+        token = server._clients.get(ws)
+        session = server.sessions.get_session(token) if token else None
+        if session is None or session.channel_is_expired("terminal"):
+            logger.warning(
+                "Rejected terminal message from device=%s: terminal grant expired",
+                session.device_id if session is not None else "unknown",
+            )
+            await _send_system(
+                ws,
+                "error",
+                {"message": "Terminal grant expired for this device"},
+                msg_id=msg_id,
+            )
+            return
         task = asyncio.create_task(server.terminal.handle(ws, envelope))
         _track_task(server, ws, task)
     elif channel == "bridge":
@@ -3998,7 +4136,6 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/ws", handle_ws)
     app.router.add_get("/", handle_ws)
     app.router.add_get("/health", handle_health)
-    app.router.add_post("/pairing", handle_pairing)
     app.router.add_post("/pairing/register", handle_pairing_register)
     app.router.add_post("/pairing/mint", handle_pairing_mint)
     app.router.add_post("/pairing/approve", handle_pairing_approve)
@@ -4248,6 +4385,9 @@ def create_app(config: RelayConfig) -> web.Application:
     # Profile-scoped read-only config + skills (§22).
     app.router.add_get(
         "/api/profiles/{name}/config", handle_profile_config
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/avatar", handle_profile_avatar
     )
     app.router.add_get(
         "/api/profiles/{name}/skills", handle_profile_skills

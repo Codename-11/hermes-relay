@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.4.6",
+   "title": "Profiles stay together",
+   "date": "2026-07-15",
+   "sections": [
+    {
+     "header": "One Server-default profile",
+     "bullets": [
+      "Server default now keeps the selected agent, session drawer, transcript, and new messages in Hermes' sticky active profile.",
+      "Reorder or hide profiles per connection without changing server configuration."
+     ]
+    },
+    {
+     "header": "Profile icons",
+     "bullets": [
+      "Choose an image through Android's file picker or import avatar.png/profile.jpg from an updated paired Relay.",
+      "Host import now distinguishes an outdated Relay from a genuinely missing profile image."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.5",
    "title": "Chats that keep running",
    "date": "2026-07-15",

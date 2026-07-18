@@ -2,6 +2,11 @@
 
 The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media, sessions, and voice routes in Hermes-Relay. Chat never touches the relay — it rides your vanilla Hermes surfaces, preferring the dashboard gateway (`/api/ws`, live thinking) when Manage auth is ready and falling back to the API server's SSE routes otherwise.
 
+This page covers deployment and operation. Start with the
+[Relay API contract](./relay-api.html) for route ownership, authentication
+classes and build-flavor gates; the route tables below provide exact operational
+detail.
+
 ## Do I Need It?
 
 | Feature | Relay required? | Auth path |
@@ -198,13 +203,12 @@ hermes relay compat [status|install|remove]
 |-------|--------|---------|
 | `/ws`, `/` | GET (upgrade) | WebSocket endpoint — phone connects here |
 | `/health` | GET | `{status, version, clients, sessions}` JSON |
-| `/pairing` | POST | Generate a new relay-side pairing code |
-| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Optional body fields `ttl_seconds` / `grants` / `transport_hint` attach pairing metadata that applies to the session when the phone consumes the code — operator policy wins over phone-sent values. Also **clears all rate-limit blocks on success** so legitimate re-pair after a relay restart works immediately. Used by `hermes pair` / `/hermes-relay-pair` on the same host; `hermes-pair` remains a compatibility shim. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Optional body fields `ttl_seconds` / `grants` / `transport_hint` attach host-authorized pairing metadata that applies to the session when the phone consumes the code; when omitted, the relay uses bounded server defaults rather than client-supplied policy. Also **clears all rate-limit blocks on success** so legitimate re-pair after a relay restart works immediately. Used by `hermes pair` / `/hermes-relay-pair` on the same host; `hermes-pair` remains a compatibility shim. Rejects non-loopback peers with HTTP 403. |
 | `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and return the signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) used by dashboard and CLI/tray pair/repair flows. Reads the API key from the same host-local config chain as `hermes pair` when not supplied explicitly. Optional request field `dashboard_url` is mirrored into the QR payload and response. |
 | `/pairing/approve` | POST | **Loopback only, reserved for future use.** Same wire shape as `/pairing/register`. Placeholder for a future phone-generates-code / host-approves flow that would complement the existing QR pairing direction. |
 | `/sessions` | GET | Bearer-auth'd (same token the WSS channel uses). Returns all active paired devices with metadata — device name, token prefix (first 8 chars, full token never exposed), created/last-seen timestamps, session expiry, per-channel grants, transport hint, and `is_current` for the device matching the bearer. `math.inf` expiries serialize as `null` (never expire). |
 | `/sessions/{token_prefix}` | DELETE | Bearer-auth'd. Revoke a paired device by token-prefix (≥ 4 chars). 200 on exact match, 404 on zero, 409 on ambiguous matches. Self-revoke is allowed and flagged via `revoked_self: true`. |
-| `/sessions/{token_prefix}` | PATCH | Bearer-auth'd. Update a paired device's session TTL and/or per-channel grants in place. Body `{ttl_seconds?, grants?}`. TTL restarts the clock from now; grants re-clamp automatically. Powers the phone's Relay sessions "Extend" button. |
+| `/sessions/{token_prefix}` | PATCH | Bearer-auth'd, self-targeted, and reduction-only. Body `{ttl_seconds?, grants?}` may shorten the caller's current lifetime or existing grants. Extending policy, adding grants, switching to never-expire, or changing another session requires a fresh operator-approved pairing flow. |
 | `/clipboard/inbox` | POST | Bearer-auth'd clipboard rendezvous used by remote clients before native platform clipboard fallback. |
 | `/media/register` | POST | **Loopback only.** Register a host-local file with the `MediaRegistry` and receive an opaque token. Body: `{"path": "/abs/path", "content_type": "image/jpeg", "file_name": "screenshot.jpg"}`. Used by tools like `android_screenshot` so the agent can emit `MEDIA:hermes-relay://<token>` in chat and have the phone fetch bytes out-of-band. Path is sandboxed to `tempfile.gettempdir()` + `HERMES_WORKSPACE` + any `RELAY_MEDIA_ALLOWED_ROOTS`; symlink escape is rejected via `realpath`. Returns 400 on validation failure. See ADR 14. |
 | `/media/upload` | POST | Bearer-auth'd small upload endpoint for phone-originated media. Accepts JSON `{file_name, content_type, content}` where `content` is base64 and registers the decoded bytes with the media registry. |

@@ -120,6 +120,21 @@ data class ContextWindowUsage(
         get() = if (maxTokens > 0) (usedTokens.toFloat() / maxTokens).coerceIn(0f, 1f) else 0f
 }
 
+/**
+ * A successful Sessions SSE turn still needs the server-authoritative transcript
+ * because that transport does not stream every persisted message boundary.
+ * Gateway turns already deliver the assistant, reasoning, and tool lifecycle
+ * directly; reloading their full transcript only republishes a healthy live turn.
+ * A successful socket rejoin is the exception because events emitted during the
+ * gap cannot be replayed.
+ */
+internal fun shouldReloadHistoryAfterSuccessfulTurn(
+    actualTransport: String,
+    gatewayReconcileRequired: Boolean,
+): Boolean =
+    actualTransport == "sessions" ||
+        (actualTransport == "gateway" && gatewayReconcileRequired)
+
 class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
@@ -131,6 +146,9 @@ class ChatViewModel : ViewModel() {
      * All cancel/teardown sites operate on this handle.
      */
     private var activeStream: ActiveTurnHandle? = null
+
+    /** Token bursts awaiting their next UI-sized publication window. */
+    private var activeStreamDeltas: StreamDeltaCoalescer? = null
 
     /**
      * True when [activeStream] is a GATEWAY turn (vs an SSE EventSource). A
@@ -1045,7 +1063,7 @@ class ChatViewModel : ViewModel() {
         }
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
-        client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
+        client?.sessionProfileProvider = { sessionProfileNameProvider() }
         // Bind the in-chat picks onto each fresh session.create so a brand-new
         // chat actually runs on the picked model/provider AND the chosen
         // reasoning effort / fast tier (not the global default) — and so setting
@@ -1254,6 +1272,9 @@ class ChatViewModel : ViewModel() {
             onTurnComplete = {
                 if (acceptsEvent()) handler.onTurnComplete(messageId)
             },
+            // Server-initiated turns already take the bounded durable-history
+            // reconcile below on every completion.
+            onReconcileRequired = { },
             onComplete = {
                 val canWriteTranscript = acceptsEvent()
                 val expectedText = handler.messages.value
@@ -1648,6 +1669,9 @@ class ChatViewModel : ViewModel() {
     }
 
     private var selectedProfileProvider: () -> Profile? = { null }
+    private var sessionProfileNameProvider: () -> String? = {
+        AgentDisplay.profileRequestName(selectedProfileProvider()?.name)
+    }
     private var effectiveProfileProvider: () -> Profile? = { selectedProfileProvider() }
     private var displayProfileProvider: () -> Profile? = {
         effectiveProfileProvider() ?: selectedProfileProvider()
@@ -1674,6 +1698,16 @@ class ChatViewModel : ViewModel() {
     fun setSelectedProfileProvider(provider: () -> Profile?) {
         selectedProfileProvider = provider
         refreshActiveAgentName()
+    }
+
+    /**
+     * Supplies the single effective namespace for Gateway session.create/resume.
+     * This is separate from [selectedProfileProvider] because a null selection
+     * means the Server-default UI row, whose sticky upstream target may be a
+     * named profile even when the dashboard process was launched as default.
+     */
+    fun setSessionProfileNameProvider(provider: () -> String?) {
+        sessionProfileNameProvider = provider
     }
 
     fun setEffectiveProfileProvider(provider: () -> Profile?) {
@@ -2242,6 +2276,10 @@ class ChatViewModel : ViewModel() {
         // same-connection route blip and reconnects its own socket, keeping the
         // live session), so cancelling here would needlessly kill a recoverable
         // turn. Leave it running; it completes on the gateway client.
+        if (!activeStreamIsGateway) {
+            activeStreamDeltas?.flushNow()
+            activeStreamDeltas = null
+        }
         val droppedSseCheckpoint = if (!activeStreamIsGateway) buildTurnCheckpoint() else null
         if (!activeStreamIsGateway) {
             activeStream?.cancel()
@@ -2280,6 +2318,8 @@ class ChatViewModel : ViewModel() {
                 historyLoadGeneration.incrementAndGet()
                 sessionRefreshGeneration.incrementAndGet()
                 intentionallyCancelled = true
+                activeStreamDeltas?.discard()
+                activeStreamDeltas = null
                 activeStream?.cancel()
                 activeStream = null
                 cancelAnswerRecovery(settleUi = false)
@@ -3326,7 +3366,8 @@ class ChatViewModel : ViewModel() {
      * message among role==USER messages (excluding phone-local traces the
      * server never saw), truncates the local list from it, and dispatches a
      * gateway turn carrying `truncate_before_user_ordinal`. Local/server
-     * divergence self-heals via the post-turn history reload.
+     * divergence self-heals through the gateway's authoritative truncate and
+     * live turn events; recovery paths still perform a full history reconcile.
      *
      * @return false when the edit could not be dispatched (turn in flight,
      *   non-gateway endpoint, missing client, ordinal failure) — the caller
@@ -3814,6 +3855,8 @@ class ChatViewModel : ViewModel() {
         val gateway = gatewayClient
         val canBackground = streamingEndpoint == "gateway" &&
             activeStreamIsGateway && activeStream != null && gateway != null
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
         val checkpoint = if (canBackground) buildTurnCheckpoint() else null
         if (canBackground && gateway.backgroundActiveTurn()) {
             if (checkpoint != null) {
@@ -4023,6 +4066,8 @@ class ChatViewModel : ViewModel() {
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
+            // Recovered turns already reload their authoritative history below.
+            onReconcileRequired = { },
             onComplete = {
                 if (owns()) {
                     finalizeTurnSideEffects(handler, messageId)
@@ -5381,6 +5426,8 @@ class ChatViewModel : ViewModel() {
         // finalizes the previous turn's leftover streaming placeholder so it
         // can't pulse forever next to this turn's fresh one.
         cancelAnswerRecovery()
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
 
         // A new turn is starting: clear any leftover cancellation flag so a
         // stale `true` from a PRIOR cancelled turn (the flag is sticky — a
@@ -5401,6 +5448,7 @@ class ChatViewModel : ViewModel() {
         // stream answer recovery (issue #166) on "sessions": the other
         // endpoints keep their existing error behavior.
         var dispatchedSseEndpoint: String? = null
+        var gatewayHistoryReconcileRequired = false
 
         val assistantTimestamp = System.currentTimeMillis()
         beginTurnCheckpoint(
@@ -5427,13 +5475,26 @@ class ChatViewModel : ViewModel() {
                 // interfaceContextPrompt today, so it marks this turn as spoken.
                 // Tag the reply with a "Voice" chip (parity with "Realtime
                 // Agent"); ChatHandler.loadMessageHistory preserves it across
-                // the post-turn history reload.
+                // history and recovery reconciliation.
                 badges = if (interfaceContextPrompt != null) listOf("Voice") else emptyList(),
             )
         )
 
+        val streamDeltas = StreamDeltaCoalescer(
+            scope = viewModelScope,
+            onTextDelta = { delta -> handler.onTextDelta(currentMessageId, delta) },
+            onThinkingDelta = { delta -> handler.onThinkingDelta(currentMessageId, delta) },
+        )
+        activeStreamDeltas = streamDeltas
+
+        fun flushAndReleaseStreamDeltas() {
+            streamDeltas.flushNow()
+            if (activeStreamDeltas === streamDeltas) activeStreamDeltas = null
+        }
+
         // Shared callbacks for both endpoints
         val onMessageStartedCb = { serverMsgId: String ->
+            streamDeltas.flushNow()
             // Replace the placeholder's ID so subsequent deltas/tool calls attach
             // to it instead of creating a duplicate orphan bubble with streaming dots.
             // Only replaces empty+streaming messages (the placeholder), not completed turns.
@@ -5446,34 +5507,41 @@ class ChatViewModel : ViewModel() {
                 firstTokenNotified = true
                 AppAnalytics.onFirstTokenReceived()
             }
-            handler.onTextDelta(currentMessageId, delta)
+            streamDeltas.appendText(delta)
         }
         val onThinkingDeltaCb = { delta: String ->
-            handler.onThinkingDelta(currentMessageId, delta)
+            streamDeltas.appendThinking(delta)
         }
         val onToolCallStartCb = { toolCallId: String, toolName: String ->
+            streamDeltas.flushNow()
             handler.onToolCallStart(currentMessageId, toolCallId, toolName)
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
+            streamDeltas.flushNow()
             handler.onToolCallComplete(currentMessageId, toolCallId, resultPreview)
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallFailedCb = { toolCallId: String, errorMsg: String? ->
+            streamDeltas.flushNow()
             handler.onToolCallFailed(currentMessageId, toolCallId, errorMsg)
             scheduleCheckpointWrite(immediate = true)
         }
         // Turn complete — one assistant message finished, but the run may continue
         val onTurnCompleteCb = {
+            streamDeltas.flushNow()
             handler.onTurnComplete(currentMessageId)
             scheduleCheckpointWrite(immediate = true)
         }
         val onCompleteCb = {
+            flushAndReleaseStreamDeltas()
             // Double-finalize guard: if a straggler completion arrives while
             // the answer-recovery poller is running, the normal completion
             // wins — stop the poller before finalizing so the turn can't
             // finish twice.
             cancelAnswerRecovery(settleUi = false)
+            val completedTransport = dispatchedSseEndpoint
+                ?: if (activeStreamIsGateway) "gateway" else streamingEndpoint
             finalizeTurnSideEffects(handler, currentMessageId)
             AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
 
@@ -5491,15 +5559,13 @@ class ChatViewModel : ViewModel() {
                 refreshReasoningSettings()
             }
 
-            // Sessions endpoint doesn't emit structured tool events during streaming —
-            // tool calls are only available as JSON on the stored messages. Reload the
-            // server-authoritative history to get proper message boundaries + tool_calls.
-            // Gateway turns reconcile the same way: live tool events are gated by the
-            // server's display.tool_progress config, so a turn that ran tools silently
-            // (config off, or events lost in a mid-turn rejoin gap) still gets its tool
-            // cards + persisted reasoning right after the turn — not on the next app
-            // restart. By message.complete the server has persisted the turn, so the
-            // REST read is authoritative.
+            // Sessions SSE does not stream every persisted message boundary, so it
+            // still needs the server-authoritative transcript after success. A healthy
+            // Gateway turn is already authoritative in memory through its structured
+            // assistant/reasoning/tool events; reloading the full transcript here would
+            // republish the entire visible list and cause a completion flash. A Gateway
+            // socket rejoin explicitly flags this completion for the same profile-aware
+            // history reconcile because events emitted during the gap may be missing.
             val sid = handler.currentSessionId.value
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
@@ -5510,9 +5576,13 @@ class ChatViewModel : ViewModel() {
             val turnErrored = handler.messages.value
                 .lastOrNull { it.id == currentMessageId }
                 ?.badges?.contains("Error") == true
-            if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
+            if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
                 viewModelScope.launch {
-                    if (!turnErrored) {
+                    if (!turnErrored && shouldReloadHistoryAfterSuccessfulTurn(
+                            completedTransport,
+                            gatewayHistoryReconcileRequired,
+                        )
+                    ) {
                         // Profile-aware read: a gateway turn on a non-default profile
                         // persists into THAT profile's own state.db, so the bare
                         // api_server `/api/sessions/{id}/messages` 404s → emptyList()
@@ -5574,6 +5644,7 @@ class ChatViewModel : ViewModel() {
             }
         }
         val onErrorCb = { errorMsg: String ->
+            flushAndReleaseStreamDeltas()
             val errorSessionId = handler.currentSessionId.value
             if (intentionallyCancelled) {
                 intentionallyCancelled = false
@@ -5930,18 +6001,24 @@ class ChatViewModel : ViewModel() {
                         onToolCallDone = onToolCallDoneCb,
                         onToolCallFailed = onToolCallFailedCb,
                         onToolOutputRisk = { risk ->
+                            streamDeltas.flushNow()
                             handler.onToolOutputRisk(currentMessageId, risk)
                             scheduleCheckpointWrite(immediate = true)
                         },
                         onTurnComplete = onTurnCompleteCb,
+                        onReconcileRequired = {
+                            gatewayHistoryReconcileRequired = true
+                        },
                         onComplete = onCompleteCb,
                         onUsage = onUsageCb,
                         onError = onErrorCb,
                         onToolGenerating = { name ->
+                            streamDeltas.flushNow()
                             handler.onToolGenerating(currentMessageId, name)
                             scheduleCheckpointWrite(immediate = true)
                         },
                         onSubagentEvent = { event ->
+                            streamDeltas.flushNow()
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
                         },
@@ -6063,6 +6140,8 @@ class ChatViewModel : ViewModel() {
         // false: the Stopped-badge block below finalizes the placeholder
         // itself (completing it here first would hide it from findLast).
         cancelAnswerRecovery(settleUi = false)
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
         activeStream?.cancel()
         activeStream = null
         _queuedMessages.value = emptyList()
@@ -6597,6 +6676,8 @@ class ChatViewModel : ViewModel() {
     }
 
     override fun onCleared() {
+        activeStreamDeltas?.flushNow()
+        activeStreamDeltas = null
         flushTurnCheckpointForTeardown()
         gatewayClient?.setUnsolicitedTurnProvider(null)
         gatewayClient?.setColdPrewarmSessionReadyListener(null)

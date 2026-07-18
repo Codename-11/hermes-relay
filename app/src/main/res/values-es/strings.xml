@@ -2193,10 +2193,12 @@
     <string name="tool_progress_cd_collapse">Colapsar</string>
     <string name="tool_progress_cd_expand">Expandir</string>
     <string name="agent_icon_title">Icono de agente</string>
-    <string name="agent_icon_set">Establecer imagen</string>
-    <string name="agent_icon_change">Cambiar</string>
+    <string name="agent_icon_set">Elegir archivo</string>
+    <string name="agent_icon_change">Elegir archivo</string>
     <string name="agent_icon_clear">Claro</string>
-    <string name="agent_icon_description">Se muestra junto al nombre de un perfil en el chat. Permanece en este dispositivo; nunca se envía a Hermes.</string>
+    <string name="agent_icon_import_host">Importar desde el host del agente</string>
+    <string name="agent_icon_importing_host">Importando…</string>
+    <string name="agent_icon_description">Se muestra junto al nombre de un perfil en el chat. Elige una imagen del teléfono o importa avatar.png/profile.jpg del directorio del perfil activo en un host de agente emparejado. El icono copiado permanece en este dispositivo.</string>
     <string name="conn_security_title">Seguridad de la conexión</string>
     <string name="conn_security_empty">Aún no hay ruta activa. Conéctese a un servidor para ver cómo está protegida cada parte de la conexión.</string>
     <string name="conn_security_learn_more">Más información sobre la seguridad de la conexión →</string>
@@ -2810,6 +2812,9 @@
     <string name="appearance_language_desc">Elige el idioma de Hermes-Relay. La opción predeterminada del sistema sigue la configuración del dispositivo.</string>
     <string name="appearance_language_system">Predeterminado del sistema</string>
     <string name="appearance_language_english">English</string>
+    <string name="appearance_language_german">Deutsch</string>
+    <string name="appearance_language_brazilian_portuguese">Português (Brasil)</string>
+    <string name="appearance_language_japanese">日本語</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
     <string name="appearance_language_spanish">Español</string>
     <string name="chat_profile_history_unavailable">No se pudo acceder al historial de conversaciones del perfil activo. Vuelve a conectarte e inténtalo de nuevo.</string>

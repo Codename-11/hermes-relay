@@ -18,33 +18,145 @@ function resolveAppVersion(): string {
 
 const appVersion = resolveAppVersion()
 
+type LocalizedThemeCopy = {
+  label: string
+  selectText: string
+  quickStart: string
+  installation: string
+  releaseTracks: string
+  troubleshooting: string
+  englishReference: string
+  overview: string
+  coreGuides: string
+  canonicalReference: string
+  fullGuide: string
+  remoteAccess: string
+  apiReference: string
+  outlineTitle: string
+  previous: string
+  next: string
+  returnToTop: string
+  menu: string
+  appearance: string
+  lastUpdated: string
+}
+
+function localizedTheme(prefix: string, copy: LocalizedThemeCopy) {
+  return {
+    label: copy.label,
+    selectText: copy.selectText,
+    nav: [
+      { text: copy.quickStart, link: `/${prefix}/guide/quick-start` },
+      { text: copy.installation, link: `/${prefix}/guide/getting-started` },
+      { text: copy.troubleshooting, link: `/${prefix}/guide/troubleshooting` },
+      { text: copy.englishReference, link: '/reference/api' },
+      { text: 'GitHub', link: 'https://github.com/Codename-11/hermes-relay' },
+    ],
+    sidebar: {
+      [`/${prefix}/`]: [
+        {
+          text: copy.coreGuides,
+          items: [
+            { text: copy.overview, link: `/${prefix}/` },
+            { text: copy.quickStart, link: `/${prefix}/guide/quick-start` },
+            { text: copy.installation, link: `/${prefix}/guide/getting-started` },
+            { text: copy.releaseTracks, link: `/${prefix}/guide/release-tracks` },
+            { text: copy.troubleshooting, link: `/${prefix}/guide/troubleshooting` },
+          ],
+        },
+        {
+          text: copy.canonicalReference,
+          items: [
+            { text: copy.fullGuide, link: '/guide/' },
+            { text: copy.remoteAccess, link: '/guide/remote-access' },
+            { text: copy.apiReference, link: '/reference/api' },
+          ],
+        },
+      ],
+    },
+    outlineTitle: copy.outlineTitle,
+    docFooter: { prev: copy.previous, next: copy.next },
+    returnToTopLabel: copy.returnToTop,
+    sidebarMenuLabel: copy.menu,
+    darkModeSwitchLabel: copy.appearance,
+    lastUpdatedText: copy.lastUpdated,
+  }
+}
+
+const localizedThemes = {
+  de: localizedTheme('de', {
+    label: 'Deutsch', selectText: 'Sprachen', quickStart: 'Schnellstart',
+    installation: 'Installation', releaseTracks: 'App-Versionen', troubleshooting: 'Fehlerbehebung',
+    englishReference: 'Englische Referenz', overview: 'Übersicht', coreGuides: 'Erste Schritte',
+    canonicalReference: 'Englische Referenz', fullGuide: 'Vollständige Anleitung', remoteAccess: 'Fernzugriff',
+    apiReference: 'API-Referenz', outlineTitle: 'Auf dieser Seite', previous: 'Zurück', next: 'Weiter',
+    returnToTop: 'Nach oben', menu: 'Menü', appearance: 'Darstellung', lastUpdated: 'Zuletzt aktualisiert',
+  }),
+  es: localizedTheme('es', {
+    label: 'Español', selectText: 'Idiomas', quickStart: 'Inicio rápido',
+    installation: 'Instalación', releaseTracks: 'Versiones de la app', troubleshooting: 'Solución de problemas',
+    englishReference: 'Referencia en inglés', overview: 'Descripción general', coreGuides: 'Primeros pasos',
+    canonicalReference: 'Referencia en inglés', fullGuide: 'Guía completa', remoteAccess: 'Acceso remoto',
+    apiReference: 'Referencia de API', outlineTitle: 'En esta página', previous: 'Anterior', next: 'Siguiente',
+    returnToTop: 'Volver arriba', menu: 'Menú', appearance: 'Apariencia', lastUpdated: 'Última actualización',
+  }),
+  ja: localizedTheme('ja', {
+    label: '日本語', selectText: '言語', quickStart: 'クイックスタート',
+    installation: 'インストール', releaseTracks: 'アプリの種類', troubleshooting: 'トラブルシューティング',
+    englishReference: '英語リファレンス', overview: '概要', coreGuides: 'はじめに',
+    canonicalReference: '英語リファレンス', fullGuide: '完全なガイド', remoteAccess: 'リモートアクセス',
+    apiReference: 'API リファレンス', outlineTitle: 'このページの内容', previous: '前へ', next: '次へ',
+    returnToTop: 'ページ上部へ', menu: 'メニュー', appearance: '外観', lastUpdated: '最終更新',
+  }),
+  'pt-BR': localizedTheme('pt-BR', {
+    label: 'Português (Brasil)', selectText: 'Idiomas', quickStart: 'Início rápido',
+    installation: 'Instalação', releaseTracks: 'Versões do app', troubleshooting: 'Solução de problemas',
+    englishReference: 'Referência em inglês', overview: 'Visão geral', coreGuides: 'Primeiros passos',
+    canonicalReference: 'Referência em inglês', fullGuide: 'Guia completo', remoteAccess: 'Acesso remoto',
+    apiReference: 'Referência da API', outlineTitle: 'Nesta página', previous: 'Anterior', next: 'Próxima',
+    returnToTop: 'Voltar ao topo', menu: 'Menu', appearance: 'Aparência', lastUpdated: 'Última atualização',
+  }),
+  'zh-CN': localizedTheme('zh-CN', {
+    label: '简体中文', selectText: '语言', quickStart: '快速开始',
+    installation: '安装与设置', releaseTracks: '应用版本', troubleshooting: '故障排除',
+    englishReference: '英文参考', overview: '概览', coreGuides: '入门指南',
+    canonicalReference: '英文参考', fullGuide: '完整用户指南', remoteAccess: '远程访问',
+    apiReference: 'API 参考', outlineTitle: '本页内容', previous: '上一页', next: '下一页',
+    returnToTop: '返回顶部', menu: '菜单', appearance: '外观', lastUpdated: '最后更新',
+  }),
+}
+
 export default defineConfig({
-  base: '/hermes-relay/',
+  base: '/docs/',
   title: 'Hermes-Relay',
   description: 'Hermes-Relay — the Android companion and remote-hands CLI for your Hermes agent. Runs on your machine; lives on your devices.',
 
   locales: {
     root: { label: 'English', lang: 'en' },
-    'zh-CN': { label: '简体中文', lang: 'zh-CN', link: '/zh-CN/' },
+    de: { label: 'Deutsch', lang: 'de', link: '/de/', themeConfig: localizedThemes.de },
+    es: { label: 'Español', lang: 'es', link: '/es/', themeConfig: localizedThemes.es },
+    ja: { label: '日本語', lang: 'ja', link: '/ja/', themeConfig: localizedThemes.ja },
+    'pt-BR': { label: 'Português (Brasil)', lang: 'pt-BR', link: '/pt-BR/', themeConfig: localizedThemes['pt-BR'] },
+    'zh-CN': { label: '简体中文', lang: 'zh-CN', link: '/zh-CN/', themeConfig: localizedThemes['zh-CN'] },
   },
 
   head: [
     // Favicon — base path is NOT auto-applied to head entries in VitePress,
-    // so hard-prefix with /hermes-relay/ to match the GitHub Pages deploy.
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/hermes-relay/logo.svg' }],
-    ['link', { rel: 'apple-touch-icon', href: '/hermes-relay/logo.svg' }],
+    // so hard-prefix with /docs/ to match the production deployment.
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/docs/logo.svg' }],
+    ['link', { rel: 'apple-touch-icon', href: '/docs/logo.svg' }],
 
     // Canonical
-    ['link', { rel: 'canonical', href: 'https://codename-11.github.io/hermes-relay/' }],
+    ['link', { rel: 'canonical', href: 'https://hermes-relay.dev/docs/' }],
 
     // Open Graph — crawlers (Facebook, Messenger, Slack, Discord, LinkedIn) need absolute URLs
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Hermes-Relay' }],
     ['meta', { property: 'og:title', content: 'Hermes-Relay — give your Hermes agent hands' }],
     ['meta', { property: 'og:description', content: 'Runs on your machine. Lives on your devices. A native Android companion for chat, voice, and phone control — plus a single-binary CLI the agent uses to work on any machine you pair.' }],
-    ['meta', { property: 'og:url', content: 'https://codename-11.github.io/hermes-relay/' }],
-    ['meta', { property: 'og:image', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
-    ['meta', { property: 'og:image:secure_url', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
+    ['meta', { property: 'og:url', content: 'https://hermes-relay.dev/docs/' }],
+    ['meta', { property: 'og:image', content: 'https://hermes-relay.dev/docs/og-image.png' }],
+    ['meta', { property: 'og:image:secure_url', content: 'https://hermes-relay.dev/docs/og-image.png' }],
     ['meta', { property: 'og:image:type', content: 'image/png' }],
     ['meta', { property: 'og:image:width', content: '1024' }],
     ['meta', { property: 'og:image:height', content: '500' }],
@@ -54,7 +166,7 @@ export default defineConfig({
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
     ['meta', { name: 'twitter:title', content: 'Hermes-Relay — give your Hermes agent hands' }],
     ['meta', { name: 'twitter:description', content: 'Android companion for chat, voice, and phone control + a single-binary CLI that gives your Hermes agent hands on any machine. One pair, every device.' }],
-    ['meta', { name: 'twitter:image', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
+    ['meta', { name: 'twitter:image', content: 'https://hermes-relay.dev/docs/og-image.png' }],
     ['meta', { name: 'twitter:image:alt', content: 'Hermes-Relay — give your Hermes agent hands.' }],
 
     // Theme — RelayRefresh.Background
@@ -74,43 +186,7 @@ export default defineConfig({
         label: 'English',
         selectText: 'Languages',
       },
-      'zh-CN': {
-        label: '简体中文',
-        selectText: '语言',
-        nav: [
-          { text: '快速开始', link: '/zh-CN/guide/quick-start' },
-          { text: '功能', link: '/zh-CN/features/' },
-          { text: '英文参考', link: '/reference/api' },
-          { text: 'GitHub', link: 'https://github.com/Codename-11/hermes-relay' },
-        ],
-        sidebar: {
-          '/zh-CN/': [
-            {
-              text: 'Hermes-Relay',
-              items: [
-                { text: '概览', link: '/zh-CN/' },
-                { text: '快速开始', link: '/zh-CN/guide/quick-start' },
-                { text: '功能概览', link: '/zh-CN/features/' },
-              ],
-            },
-            {
-              text: '英文参考',
-              items: [
-                { text: '完整用户指南', link: '/guide/' },
-                { text: '远程访问', link: '/guide/remote-access' },
-                { text: '故障排除', link: '/guide/troubleshooting' },
-                { text: 'API 参考', link: '/reference/api' },
-              ],
-            },
-          ],
-        },
-        outlineTitle: '本页内容',
-        docFooter: { prev: '上一页', next: '下一页' },
-        returnToTopLabel: '返回顶部',
-        sidebarMenuLabel: '菜单',
-        darkModeSwitchLabel: '外观',
-        lastUpdatedText: '最后更新',
-      },
+      ...localizedThemes,
     },
 
     nav: [
@@ -195,9 +271,12 @@ export default defineConfig({
         {
           text: 'Reference',
           items: [
-            { text: 'Hermes API', link: '/reference/api' },
+            { text: 'API & Route Contract', link: '/reference/api' },
+            { text: 'Upstream Hermes', link: '/reference/upstream-hermes' },
+            { text: 'Relay API', link: '/reference/relay-api' },
+            { text: 'Compatibility', link: '/reference/compatibility' },
             { text: 'Configuration', link: '/reference/configuration' },
-            { text: 'Relay Server', link: '/reference/relay-server' },
+            { text: 'Relay Server Operations', link: '/reference/relay-server' },
             { text: 'Agent Cleanup Prompt', link: '/reference/agent-cleanup-prompt' },
           ],
         },

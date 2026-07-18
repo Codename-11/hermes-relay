@@ -13,6 +13,23 @@ Appearance is two stacked choices:
 
 So the flow is: choose an avatar, and if that avatar is the Sphere, optionally choose a skin.
 
+## Profile badge image
+
+The small face shown beside the active agent name is configured separately from
+the full animated avatar. Open the agent sheet from Chat and use **Agent icon**:
+
+- **Set image** chooses an image from your phone.
+- **Import from agent host** copies a conventional image from the active Hermes
+  profile on a paired Relay host. Put `avatar.png`, `avatar.jpg`, `profile.png`,
+  or `profile.jpg` directly in `~/.hermes/` for the root Server default, or in
+  `~/.hermes/profiles/<name>/` for a named profile. If Hermes' `active_profile`
+  marker selects a named profile as Server default, use that named profile's
+  directory. JPEG, PNG, WebP, and GIF are supported, including `.jpeg`.
+
+The imported copy stays on the phone and is scoped to that Connection and
+profile. Changing or removing the host file later does not silently change the
+phone icon; tap import again to refresh it.
+
 ## Choosing an avatar
 
 Open **Settings → Appearance → Agent avatar**. The Sphere is always the first chip; any valid pets you've installed appear beside it. Selecting a chip switches every surface — chat, clean mode, voice, onboarding, splash — at once.
@@ -174,7 +191,7 @@ For a still pack, each generated PNG becomes a one-frame clip. This manifest wir
 
 ```json
 {
-  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "$schema": "https://hermes-relay.dev/docs/pet.schema.json",
   "schemaVersion": 1,
   "id": "my-pet",
   "label": "My Pet",
@@ -199,7 +216,7 @@ For an animated pack, each generated sheet becomes one clip. For a **4×4 grid o
 
 ```json
 {
-  "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json",
+  "$schema": "https://hermes-relay.dev/docs/pet.schema.json",
   "schemaVersion": 1,
   "id": "my-pet",
   "label": "My Pet",
@@ -244,7 +261,7 @@ The helper validates `pet.json`, checks that every referenced image exists, excl
 <PetPackBuilder />
 
 ::: tip Validate as you author
-The example above starts with a `$schema` line pointing at the published [pet schema](https://codename-11.github.io/hermes-relay/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
+The example above starts with a `$schema` line pointing at the published [pet schema](https://hermes-relay.dev/docs/pet.schema.json). Keep it and editors like VS Code will autocomplete the fields and flag mistakes — a missing `idle`, a bad frame count, a typo'd state key — before you ever push. The app ignores the `$schema` key, and an AI agent can lint its output against the same file.
 :::
 
 ::: tip Safe box: leave room inside every cell

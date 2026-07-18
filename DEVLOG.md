@@ -1,5 +1,199 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-17 — Smooth streamed-reply rendering and finalization
+
+Uninterrupted Gateway turns treat their structured live assistant, reasoning, and
+tool events as authoritative instead of immediately republishing the transcript
+through a full history read. Rejoined sockets, Sessions SSE, detached turns,
+profile-aware resume, errors, and missing-data recovery retain their required
+authoritative reconciliation paths.
+
+Bursty provider deltas now enter a main-thread frame pacer that publishes adaptive
+UTF-16-safe slices at a display-sized cadence. The visible live tail uses one stable
+plain-text node, ignores leading blank transport lines, and expands inside a short
+clipped size animation. Tool, thinking, completion, cancellation, and error
+boundaries still flush buffered content immediately and preserve event order.
+
+Bottom-following is driven by stable row identity, real drag interactions, measured
+positive tail growth, and structural anchors. The active response retains its live
+renderer through completion, settles the exact footer for two frames, and releases
+to full Markdown after another row becomes the tail or the session is revisited.
+This prevents both the completion-time top snap and the transient scroll-to-bottom
+button without interrupting readers who intentionally move into history.
+
+Focused stream-pacing, Unicode-boundary, leading-whitespace, Gateway reconnect,
+completion-policy, and scroll regressions passed. Repeated sideload builds and live
+phone tests verified smooth following, stable completion, exact-bottom settling,
+frame-paced text insertion, and clipped bubble growth.
+
+## 2026-07-17 — Stable chat rows across post-turn history reconciliation
+
+Android chat now separates the stable Compose identity of a visible message row
+from its authoritative server message ID. The post-turn history reconcile can
+adopt persisted IDs and rebuild message boundaries without making LazyColumn
+remove and reinsert the long answer currently anchoring the viewport.
+
+Regression coverage exercises both the same-count user/assistant ID adoption
+and a list-expansion reconcile that inserts persisted rows around a matched live
+tail. The focused ChatHandler and scroll-snapshot unit tests passed.
+
+## 2026-07-16 — Stable chat position after stream completion
+
+Android chat now observes the assistant message identity and the streaming-to-final
+transition as conversation-tail changes. When a reader is already following the
+response, completion performs an instant multi-frame bottom settle after the
+streaming renderer is replaced by the final Markdown layout. The existing
+user-scroll gate remains authoritative, so reading older messages is not
+interrupted.
+
+Focused snapshot regression coverage verifies completion detection, ordinary
+stream growth, stream startup, and server message-ID reconciliation.
+
+## 2026-07-16 — Critical Relay authorization hardening
+
+Relay privileged interfaces now enforce host-authorized policy at every shared
+dispatch boundary. Anonymous pairing-code minting was removed; pairing clients
+can no longer choose session lifetime or grants; Android bridge HTTP routes and
+terminal messages require live sessions with active route grants; ordinary
+session bearers can only reduce their own lifetime and existing grants; remote
+profile config reads expose an explicit public schema without host paths; and
+voice requests cannot override credential-bearing provider origins.
+
+Six bounded exploit harnesses stopped at the restored boundaries. The combined
+security regression set passed 96 tests, Python compilation passed, Ruff passed
+for changed modules and tests apart from the pre-existing unused `signal`
+import in `server.py`, and `git diff --check` passed. The broad plugin
+discovery run progressed through unrelated suites but was interrupted by the
+existing Windows async-suite `KeyboardInterrupt` behavior, so the focused
+security and neighboring route suites remain the authoritative local result.
+The required-check path classifier now reads changed paths from the checked-out
+PR merge commit instead of GitHub's PR-files API, so an API outage cannot skip
+every surface check.
+
+## 2026-07-16 — Fix production docs asset context
+
+Updated the production docs Docker stage to build from the same full repository
+checkout used by CI rather than a hand-maintained file allowlist. This supplies
+the canonical screenshot manifest, localization registry and validators, route
+contract source, version metadata, and preview renderer without creating
+Docker-only `ENOENT` failures when those build inputs grow. Both Node build
+stages now install Python 3 so the localized website and docs validators run
+inside the production image build as they do in CI.
+
+## 2026-07-16 — Localized marketing site
+
+The Astro product site now publishes German, Spanish, Japanese, Brazilian
+Portuguese, and Simplified Chinese routes from one typed copy contract. Each
+route localizes marketing copy, navigation, accessibility labels, metadata, and
+links into the matching first-run documentation while retaining canonical
+screenshots, command examples, and UI recreations as shipped-product evidence.
+
+Locale-aware canonical URLs, alternate-language links, Open Graph locale data,
+structured-data language, sitemap entries, and a responsive language selector
+were added. The localization registry records English-source freshness, and the
+website development and build commands reject missing or stale translations.
+Astro diagnostics, deterministic asset checks, the six-page production build,
+built-site validation, desktop/mobile browser checks, and `git diff --check`
+passed.
+
+## 2026-07-16 — Temporary redirect shim for pre-migration Android builds
+
+Restored GitHub Pages only as a redirect-only compatibility endpoint for app
+versions that still open `https://codename-11.github.io/hermes-relay/`. The
+shim preserves known paths, query strings, and fragments while forwarding to
+`https://hermes-relay.dev/docs/`; it does not publish the VitePress site.
+The production Nginx configuration resolves VitePress clean URLs to their
+`.html` artifacts so both legacy and corrected in-app links reach real pages.
+Removal criteria and the operator review date are tracked in `TODO.md`.
+
+## 2026-07-15 — German, Brazilian Portuguese, and Japanese localization
+
+Android now includes complete German, Brazilian Portuguese, and Japanese
+catalogs across the Google Play and sideload flavors. German and Brazilian
+Portuguese were recovered from unfinished translation drafts and refreshed
+against the current English resource contract; Japanese was generated through
+the same deterministic translation harness. The in-app picker, Android locale
+configuration, localization registry, contributor references, and user-facing
+language lists now describe the expanded set consistently.
+
+The catalogs remain marked as AI-translated until fluent review is recorded.
+Structural validation covers resource parity, placeholders, plurals, arrays,
+formatting flags, XML parsing, and canonical source hashes. The 10-catalog
+validator, five focused `AppLanguageTest` cases, both flavor Kotlin/resource
+compilations, sideload debug lint, and `git diff --check` passed.
+
+## 2026-07-15 — Retire GitHub Pages and move docs to hermes-relay.dev
+
+Disabled and removed the GitHub Pages deployment path, changed the repository
+homepage to `https://hermes-relay.dev`, and moved the existing VitePress guide
+to `https://hermes-relay.dev/docs/` inside the production Coolify image. Active
+README, website, Android, release-note, and pet-schema links now target the new
+docs origin while historical DEVLOG entries remain unchanged.
+
+## 2026-07-15 — Coolify root-context website deployment hotfix
+
+Added a repository-owned multi-stage Dockerfile for the Astro marketing site
+and corrected its Coolify instructions. Production builds now keep the
+repository root as Docker context, run the existing `build:production` gate
+from `website/`, and serve the generated static output with Nginx. This keeps
+the site's canonical screenshot comparison against `docs/media/` intact while
+avoiding Nixpacks' incorrect Android/Gradle provider selection at monorepo root.
+
+Verification: local website checks, production build, link validation, Docker
+image build, and Nginx-served smoke checks passed before deployment.
+
+## 2026-07-15 — Android 1.4.6 and Plugin 1.4.2 release preparation
+
+The profile-continuity and profile-image work was prepared as a two-surface
+patch train. Android advanced to 1.4.6 with versionCode 29; the Relay plugin and
+dashboard metadata advanced to 1.4.2. The changelog was split into explicit
+Android and Plugin blocks, and the Android GitHub, in-app, and Play notes plus
+the Plugin GitHub notes were refreshed for public distribution.
+
+## 2026-07-15 — Profile image import compatibility and picker clarity
+
+Android profile image import now distinguishes the Relay avatar endpoint's
+structured `profile_avatar_not_found` response from a generic route-level 404.
+Older Relay installations therefore prompt for a Relay update or local file
+selection instead of incorrectly claiming that a known host image is absent.
+The existing Android system document picker is labeled consistently as
+**Choose file** before and after an icon has been set.
+
+## 2026-07-15 — Server-default profile session reconciliation
+
+Android now keeps the Server default UI sentinel separate from its effective
+session namespace. The upstream dashboard's `/api/profiles/active` response is
+read as two distinct values: `active` is the sticky default selected for new
+Hermes invocations, while `current` describes the already-running dashboard
+process. An explicit named profile still wins; otherwise Android sends the
+resolved sticky name, including literal `default`, to Gateway session
+create/resume and the dashboard session list, history, rename, and delete
+routes. Per-profile last-session persistence and chat context keys use the same
+resolved namespace, preventing a named active agent from writing into or
+displaying the dashboard launch profile's database. Older dashboards without
+the endpoint retain the launch-profile fallback.
+
+Focused regression coverage exercises the upstream active/current response, a
+dashboard launched as default with another sticky active profile, explicit
+profile precedence, profile-scoped drawer reads, and ChatViewModel's Gateway
+binding.
+
+## 2026-07-15 — Host profile image import
+
+Android's existing per-profile agent icon picker can now import an image from
+the active agent's Hermes profile directory through the optional paired Relay.
+The new read route discovers conventional direct-child names such as
+`avatar.png` and `profile.jpg`, accepts common web image formats, resolves
+symlinks within the profile boundary, enforces the Relay media-size limit, and
+returns image bytes without exposing host paths as persistent client state.
+Android copies the result into its existing connection-and-profile-scoped icon
+store, so rendering remains available offline and the vanilla upstream chat
+path is unchanged.
+
+Verification: seven profile-avatar endpoint tests and the focused Android host
+avatar client plus profile-controller suites passed. Android lint and final diff
+checks are recorded with the completed work.
+
 ## 2026-07-15 — Repository branch, release, and hotfix contract reconciliation
 
 Repository guidance now has one provider-neutral branch contract in `AGENTS.md`:

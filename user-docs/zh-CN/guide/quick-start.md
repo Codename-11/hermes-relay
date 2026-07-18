@@ -1,57 +1,52 @@
+---
+translation_status: ai-translated
+canonical_source: /guide/quick-start
+---
+
 # 快速开始
 
-Hermes-Relay 的标准路径只需要正常运行的 Hermes Agent。聊天、管理和标准语音都不需要额外插件。
+安装 → 连接 → 对话，大约两分钟即可完成。此标准流程只需要正常运行的
+Hermes Agent，不要求安装 Relay 插件。
+
+::: tip 翻译状态
+本页由 AI 辅助翻译并通过技术检查。产品含义和安全要求仍以英文版为准。
+:::
 
 ## 1. 安装应用
 
-- **Google Play**：适合大多数用户，自动更新。
-- **Sideload APK**：从 [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases) 下载最新 `android-v*` 版本中以 `-sideload-release.apk` 结尾的文件。该版本包含完整手机控制功能。
+对大多数用户，**Google Play** 是最快的方式：一键安装并自动更新。
 
-## 2. 启用 Hermes API
+<StoreBadge />
 
-在运行 Hermes 的电脑上：
+如果希望 Hermes 读取屏幕、点击、输入或操作手机，请安装签名的
+**Sideload APK**。两个版本可以同时安装。
 
-```bash
-hermes setup --portal
+## 2. 启动 Hermes
 
-mkdir -p ~/.hermes
-API_SERVER_KEY="$(openssl rand -hex 32)"
-cat >> ~/.hermes/.env <<EOF
-API_SERVER_ENABLED=true
-API_SERVER_HOST=0.0.0.0
-API_SERVER_PORT=8642
-API_SERVER_KEY=$API_SERVER_KEY
-EOF
-chmod 600 ~/.hermes/.env
+Hermes API 服务器必须运行，并且手机可以访问。如有需要，在主机上运行
+`hermes gateway`。服务器准备步骤见[安装与设置](/zh-CN/guide/getting-started)。
 
-hermes gateway
-```
+## 3. 连接
 
-`API_SERVER_HOST=0.0.0.0` 允许手机从局域网访问。必须保留强 API 密钥。远程使用请配置 [Tailscale 或 HTTPS](/guide/remote-access)，不要直接向互联网开放未加密端口。
+打开应用并进入 **Connect**，然后选择一种方式：
 
-## 3. 连接手机
+1. 使用 **Scan for Hermes on LAN** 搜索局域网服务器。
+2. 输入类似 `http://<host>:8642` 的地址和已配置的 API 密钥。
+3. 扫描包含 URL 和密钥的设置二维码。
 
-在应用中选择以下任一方式：
+如果主机有意不设置 `API_SERVER_KEY`，请将密钥字段留空。
 
-1. 点击 **扫描局域网中的 Hermes**；
-2. 手动填写 `http://<电脑IP>:8642` 和 API 密钥；
-3. 扫描 Hermes 生成的设置二维码。
+## 4. 检查状态
 
-连接向导会分别检查聊天、管理、语音、远程路由和可选 Relay。Relay 显示未配对不会阻止标准功能。
+- **Chat · Ready** 表示可以发送消息。
+- **Manage** 可能仍要求登录 Dashboard。
+- **Voice** 通过同一个 Dashboard 会话启用。
+- **Relay** 可以保持未配对，不会阻止标准功能。
 
-## 4. 登录管理页面
+## 5. 发送第一条消息
 
-如果需要从手机管理模型、密钥、技能或配置文件，请确保 Hermes Dashboard 正在运行，并在应用的 **管理** 页面登录一次。同一会话也会启用标准语音。
+打开 Chat 并发送消息。标题栏中的绿色连接指示表示当前 Hermes 连接可用。
 
-## 5. 可选：安装 Relay
-
-仅在需要终端、手机控制、Relay 会话、媒体、实时语音或电脑工具时安装：
-
-```bash
-hermes plugins install Codename-11/hermes-relay/plugin --enable
-hermes relay doctor
-hermes relay start --no-ssl
-hermes pair
-```
-
-扫描配对二维码后，应用会自动启用可用的 Relay 功能。完整服务器、TLS 和故障排除信息见[英文安装指南](/guide/getting-started)。
+[详细安装 →](/zh-CN/guide/getting-started) ·
+[故障排除 →](/zh-CN/guide/troubleshooting) ·
+[英文规范指南 →](/guide/quick-start)

@@ -137,6 +137,24 @@ object AgentDisplay {
             ?.trim()
             ?.takeIf { it.isNotEmpty() && !isServerDefaultAlias(it) }
 
+    /**
+     * The profile name that owns chat sessions for the current UI selection.
+     *
+     * [selectedProfileName] is null (or the synthetic `default` alias) for the
+     * "Server default" row. That UI sentinel must remain distinct from the
+     * server's sticky active profile: a dashboard launched under the root home
+     * may still report `active=victor`, in which case upstream Gateway and
+     * dashboard session calls must explicitly target `victor`. The resolved
+     * server value deliberately keeps the literal `default` name so a dashboard
+     * launched under another profile can still address the root profile.
+     */
+    fun effectiveSessionProfileName(
+        selectedProfileName: String?,
+        serverDefaultProfileName: String?,
+    ): String? =
+        profileRequestName(selectedProfileName)
+            ?: serverDefaultProfileName?.trim()?.takeIf { it.isNotEmpty() }
+
     fun profileSessionKey(profileName: String?): String =
         profileRequestName(profileName) ?: SERVER_DEFAULT_PROFILE_KEY
 

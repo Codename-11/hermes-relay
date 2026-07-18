@@ -127,13 +127,13 @@ cell "identical").
 ### Editor validation (JSON Schema)
 
 A JSON Schema for this manifest is published at
-`https://codename-11.github.io/hermes-relay/pet.schema.json` (source of truth:
+`https://hermes-relay.dev/docs/pet.schema.json` (source of truth:
 `user-docs/public/pet.schema.json`). Add it as the first key of a `pet.json` for
 editor autocomplete and inline validation — and for an AI agent to lint its own
 output against:
 
 ```json
-{ "$schema": "https://codename-11.github.io/hermes-relay/pet.schema.json", "id": "blob", "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }
+{ "$schema": "https://hermes-relay.dev/docs/pet.schema.json", "id": "blob", "states": { "idle": { "frames": ["idle.png"], "fps": 6 } } }
 ```
 
 The `$schema` key is an unknown field to the loader and is silently ignored

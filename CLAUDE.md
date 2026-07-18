@@ -124,6 +124,7 @@ hermes-android/
 │   │   ├── transport/       # RelayTransport (reconnect state machine + TLS probe TOFU)
 │   │   └── lib/             # gracefulExit, rpc, circularBuffer (vendored)
 │   └── scripts/             # install.sh + install.ps1 curl/iwr one-liners
+├── website/                 ← Astro product/marketing site (static Coolify/Nixpacks deployment)
 ├── plugin/                  ← Hermes agent plugin
 │   ├── android_tool.py      # 18 android_* tool handlers
 │   ├── pair.py              # QR pairing implementation

@@ -52,7 +52,7 @@ the Hermes API Server's SSE routes. The relay server handles Bridge Core,
 terminal, TUI, media, notification companion, relay sessions, and relay-backed
 voice routes. Sideload builds additionally expose Android Device Control routes.
 
-## Current Status — v1.0.0
+## Feature status
 
 | Feature | Status |
 |---------|--------|

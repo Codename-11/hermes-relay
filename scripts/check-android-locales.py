@@ -189,8 +189,8 @@ def validate_status_registry(errors: list[str]) -> None:
         fail(f"{STATUS_PATH.relative_to(REPO_ROOT)}: cannot read status registry: {exc}", errors)
         return
 
-    if data.get("schema_version") != 2:
-        fail("localization status schema_version must be 2", errors)
+    if data.get("schema_version") != 3:
+        fail("localization status schema_version must be 3", errors)
     if data.get("canonical_locale") != "en":
         fail("localization status canonical_locale must be 'en'", errors)
 

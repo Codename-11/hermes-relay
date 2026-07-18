@@ -382,6 +382,7 @@ class GatewayChatClientTest {
         val toolGenerating = ConcurrentLinkedQueue<String>()
         val subagentEvents = ConcurrentLinkedQueue<GatewaySubagentEvent>()
         val usages = ConcurrentLinkedQueue<UsageInfo>()
+        val reconcileRequests = AtomicInteger(0)
         val completeLatch = CountDownLatch(1)
         val preflightFailures = ConcurrentLinkedQueue<String>()
 
@@ -394,6 +395,7 @@ class GatewayChatClientTest {
             onToolCallDone = { id, result -> toolDone += id to result },
             onToolCallFailed = { _, _ -> },
             onTurnComplete = { },
+            onReconcileRequired = { reconcileRequests.incrementAndGet() },
             onComplete = { completeLatch.countDown() },
             onUsage = { it?.let(usages::add) },
             onError = { errors += it; completeLatch.countDown() },
@@ -503,6 +505,7 @@ class GatewayChatClientTest {
         assertEquals(listOf("Hi!"), r.textDeltas.toList())
         assertEquals(listOf("20260612_120000_abc123"), r.sessionIds.toList())
         assertEquals(5, r.usages.firstOrNull()?.resolvedInputTokens)
+        assertEquals(0, r.reconcileRequests.get())
         assertTrue(r.errors.isEmpty())
         assertTrue(r.preflightFailures.isEmpty())
     }
@@ -978,6 +981,7 @@ class GatewayChatClientTest {
 
         assertTrue("turn never completed after rejoin", r.completeLatch.await(10, TimeUnit.SECONDS))
         assertEquals(listOf("after rejoin"), r.textDeltas.toList())
+        assertEquals(1, r.reconcileRequests.get())
         assertTrue("rejoined turn must not error, got ${r.errors}", r.errors.isEmpty())
         // The fix's core invariant: a mid-turn rejoin must NEVER session.resume.
         assertTrue(

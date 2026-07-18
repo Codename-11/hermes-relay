@@ -216,6 +216,15 @@ class AgentDisplayTest {
     }
 
     @Test
+    fun effectiveSessionProfileName_resolvesServerDefaultWithoutOverridingExplicitPick() {
+        assertEquals("victor", AgentDisplay.effectiveSessionProfileName(null, " victor "))
+        assertEquals("victor", AgentDisplay.effectiveSessionProfileName("default", "victor"))
+        assertEquals("default", AgentDisplay.effectiveSessionProfileName(null, "default"))
+        assertEquals("mizu", AgentDisplay.effectiveSessionProfileName("mizu", "victor"))
+        assertNull(AgentDisplay.effectiveSessionProfileName(null, null))
+    }
+
+    @Test
     fun displayModelName_hidesGenericApiAlias() {
         assertNull(AgentDisplay.displayModelName("hermes-agent"))
         assertNull(AgentDisplay.displayModelName(" Hermes Agent "))

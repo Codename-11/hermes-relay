@@ -1057,6 +1057,9 @@
     <string name="appearance_language_desc">Choose the language used by Hermes-Relay. System default follows your device setting.</string>
     <string name="appearance_language_system">System default</string>
     <string name="appearance_language_english">English</string>
+    <string name="appearance_language_german">Deutsch</string>
+    <string name="appearance_language_brazilian_portuguese">Português (Brasil)</string>
+    <string name="appearance_language_japanese">日本語</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
     <string name="appearance_language_spanish">Español</string>
     <string name="appearance_appearance">Appearance</string>
@@ -2407,10 +2410,12 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">Agent icon</string>
-    <string name="agent_icon_set">Set image</string>
-    <string name="agent_icon_change">Change</string>
+    <string name="agent_icon_set">Choose file</string>
+    <string name="agent_icon_change">Choose file</string>
     <string name="agent_icon_clear">Clear</string>
-    <string name="agent_icon_description">Shown beside a profile name in chat. Stays on this device -- never sent to Hermes.</string>
+    <string name="agent_icon_import_host">Import from agent host</string>
+    <string name="agent_icon_importing_host">Importing…</string>
+    <string name="agent_icon_description">Shown beside a profile name in chat. Choose a phone image, or import avatar.png/profile.jpg from the active profile directory on a paired agent host. The copied icon stays on this device.</string>
 
     <!-- ConnectionSecuritySheet -->
     <string name="conn_security_title">Connection security</string>

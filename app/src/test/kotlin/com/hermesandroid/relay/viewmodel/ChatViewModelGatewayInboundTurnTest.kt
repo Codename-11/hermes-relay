@@ -132,6 +132,14 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun gatewaySessionBindingUsesResolvedServerDefaultProfile() {
+        viewModel.setSelectedProfileProvider { null }
+        viewModel.setSessionProfileNameProvider { "victor" }
+
+        assertEquals("victor", gatewayClient.sessionProfileProvider())
+    }
+
+    @Test
     fun unsolicitedGatewayCompletionAppearsAsOneAssistantTurnAndSettles() {
         // Upstream's process-completion poller currently emits this adjacent
         // duplicate pair; it must still create exactly one placeholder.

@@ -1,8 +1,8 @@
 # Localization
 
-English is the canonical product language. Android ships Simplified Chinese and
-Spanish catalogs; additional languages can be added without changing the runtime
-architecture.
+English is the canonical product language. Android also ships Brazilian
+Portuguese, German, Japanese, Simplified Chinese, and Spanish catalogs;
+additional languages can be added without changing the runtime architecture.
 
 Translation coverage and linguistic verification are separate. Shipped locale
 status is recorded in `docs/localization-status.json` as `ai-translated`,
@@ -11,10 +11,10 @@ technical gates pass; the status must not imply human review that did not occur.
 See `docs/translation-playbook.md` for the required translation and critique
 workflow.
 
-Users can switch between System default, English, Spanish, and Simplified Chinese from
-Settings → Appearance → Language. The picker stays synchronized with Android's
-per-app language setting; Android 12 and lower use AppCompat's automatic locale
-storage.
+Users can switch between System default, English, Brazilian Portuguese, German,
+Japanese, Spanish, and Simplified Chinese from Settings → Appearance → Language.
+The picker stays synchronized with Android's per-app language setting; Android
+12 and lower use AppCompat's automatic locale storage.
 
 ## Android resource contract
 
@@ -91,6 +91,62 @@ should link to the canonical English page rather than copying stale content.
 `docs/localization-status.json` is the authoritative per-locale and per-surface
 status. README and user-documentation translations may follow app translation;
 maintainer `docs/` and ADRs remain canonical English.
+
+The public documentation currently localizes a deliberately bounded first-run
+set for every Android locale:
+
+- documentation home;
+- Quick Start;
+- condensed Installation & Setup;
+- release-track choice;
+- symptom-first Troubleshooting.
+
+Fast-moving API, architecture, security, CLI, and operator references remain
+canonical English and are linked from localized pages instead of copied. Each
+localized page declares `translation_status` and `canonical_source` in its
+frontmatter. `docs_source_sha256` in the status registry records the exact
+English page revision used for every locale.
+
+Validate localized documentation and links with:
+
+```bash
+python scripts/check-user-docs-locales.py
+```
+
+After intentionally refreshing all five locale versions of a changed English
+core page, record the new canonical hashes with:
+
+```bash
+python scripts/check-user-docs-locales.py --refresh
+```
+
+The validator rejects stale source hashes, missing pages, broken internal
+links, unbalanced code fences, and translated or invented executable lines.
+VitePress runs this gate automatically before development and production builds.
+
+## Marketing website
+
+The product site ships the same locale set under `/de/`, `/es/`, `/ja/`,
+`/pt-BR/`, and `/zh-CN/`. Marketing copy, navigation, accessibility labels, and
+page metadata are localized. Product screenshots, command examples, and live UI
+recreations remain unchanged so they continue to represent the shipped product.
+
+Validate the typed copy dictionaries and their English-source freshness with:
+
+```bash
+python scripts/check-website-locales.py
+```
+
+After reviewing every marketing translation against an intentional English copy
+change, record the new source hash with:
+
+```bash
+python scripts/check-website-locales.py --refresh
+```
+
+The Astro development, check, and production-build commands run this gate
+automatically. Locale routes publish their own canonical URL, language metadata,
+alternate-language links, and sitemap entry.
 
 ## Translation corrections and pull requests
 

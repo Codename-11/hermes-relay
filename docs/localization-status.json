@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "canonical_locale": "en",
   "verification_definitions": {
     "canonical": "English source text that defines product meaning.",
@@ -8,6 +8,30 @@
     "verified": "Comprehensively reviewed in context by a fluent contributor across the shipped surface."
   },
   "locales": {
+    "de": {
+      "native_name": "Deutsch",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "core-pages",
+        "website": "complete"
+      },
+      "docs_locale": "de",
+      "docs_source_sha256": {
+        "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
+        "guide/quick-start.md": "3c59c6b4fe188db19fb38eb026a25036a5ad588f04f91936ad6e30a6582024f9",
+        "guide/getting-started.md": "c7119552d0ff8c46e5f081947db7f90098f54b94341bb41ee501fc15cd825410",
+        "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
+        "guide/troubleshooting.md": "9285efecd02b8a8bf3ee7bb421299e32ae436f5e33cd351ee20c8e0bd4c55152"
+      },
+      "website_source_sha256": "fa34022613a537b752a54b940cc166e4aa83bc7cb888a601c461780eca76c342"
+    },
     "en": {
       "native_name": "English",
       "verification": "canonical",
@@ -15,7 +39,8 @@
       "surfaces": {
         "android": "canonical",
         "readme": "canonical",
-        "user_docs": "canonical"
+        "user_docs": "canonical",
+        "website": "canonical"
       }
     },
     "es": {
@@ -23,28 +48,96 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "9522c2998cd3fe859ee67b74f79c63b0a1c5495268b2a2c0fb854db9a70cd091",
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
         "readme": "english-fallback",
-        "user_docs": "english-fallback"
-      }
+        "user_docs": "core-pages",
+        "website": "complete"
+      },
+      "docs_locale": "es",
+      "docs_source_sha256": {
+        "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
+        "guide/quick-start.md": "3c59c6b4fe188db19fb38eb026a25036a5ad588f04f91936ad6e30a6582024f9",
+        "guide/getting-started.md": "c7119552d0ff8c46e5f081947db7f90098f54b94341bb41ee501fc15cd825410",
+        "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
+        "guide/troubleshooting.md": "9285efecd02b8a8bf3ee7bb421299e32ae436f5e33cd351ee20c8e0bd4c55152"
+      },
+      "website_source_sha256": "fa34022613a537b752a54b940cc166e4aa83bc7cb888a601c461780eca76c342"
+    },
+    "ja": {
+      "native_name": "日本語",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "core-pages",
+        "website": "complete"
+      },
+      "docs_locale": "ja",
+      "docs_source_sha256": {
+        "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
+        "guide/quick-start.md": "3c59c6b4fe188db19fb38eb026a25036a5ad588f04f91936ad6e30a6582024f9",
+        "guide/getting-started.md": "c7119552d0ff8c46e5f081947db7f90098f54b94341bb41ee501fc15cd825410",
+        "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
+        "guide/troubleshooting.md": "9285efecd02b8a8bf3ee7bb421299e32ae436f5e33cd351ee20c8e0bd4c55152"
+      },
+      "website_source_sha256": "fa34022613a537b752a54b940cc166e4aa83bc7cb888a601c461780eca76c342"
+    },
+    "pt-BR": {
+      "native_name": "Português (Brasil)",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete",
+        "readme": "english-fallback",
+        "user_docs": "core-pages",
+        "website": "complete"
+      },
+      "docs_locale": "pt-BR",
+      "docs_source_sha256": {
+        "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
+        "guide/quick-start.md": "3c59c6b4fe188db19fb38eb026a25036a5ad588f04f91936ad6e30a6582024f9",
+        "guide/getting-started.md": "c7119552d0ff8c46e5f081947db7f90098f54b94341bb41ee501fc15cd825410",
+        "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
+        "guide/troubleshooting.md": "9285efecd02b8a8bf3ee7bb421299e32ae436f5e33cd351ee20c8e0bd4c55152"
+      },
+      "website_source_sha256": "fa34022613a537b752a54b940cc166e4aa83bc7cb888a601c461780eca76c342"
     },
     "zh-Hans": {
       "native_name": "简体中文",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "9522c2998cd3fe859ee67b74f79c63b0a1c5495268b2a2c0fb854db9a70cd091",
+        "main": "0b9cdf734d26aea8c37502e8e3109d305985e3493375fbf1ccd4ce93a1bd44d3",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
         "readme": "maintained-summary",
-        "user_docs": "core-pages"
-      }
+        "user_docs": "core-pages",
+        "website": "complete"
+      },
+      "docs_locale": "zh-CN",
+      "docs_source_sha256": {
+        "index.md": "bbaa33578cd9d8963150ed861e7a0bd489d3938b7c6c2d572beea725f319e136",
+        "guide/quick-start.md": "3c59c6b4fe188db19fb38eb026a25036a5ad588f04f91936ad6e30a6582024f9",
+        "guide/getting-started.md": "c7119552d0ff8c46e5f081947db7f90098f54b94341bb41ee501fc15cd825410",
+        "guide/release-tracks.md": "390982de1e1430bed0b8a0e854431c97e3368cf04e477197eb5cb893db225f51",
+        "guide/troubleshooting.md": "9285efecd02b8a8bf3ee7bb421299e32ae436f5e33cd351ee20c8e0bd4c55152"
+      },
+      "website_source_sha256": "fa34022613a537b752a54b940cc166e4aa83bc7cb888a601c461780eca76c342"
     }
   }
 }

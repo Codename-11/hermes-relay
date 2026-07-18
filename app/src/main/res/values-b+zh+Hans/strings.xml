@@ -1054,6 +1054,9 @@
     <string name="appearance_language_desc">选择 Hermes-Relay 使用的语言。跟随系统会使用设备的语言设置。</string>
     <string name="appearance_language_system">跟随系统</string>
     <string name="appearance_language_english">English</string>
+    <string name="appearance_language_german">Deutsch</string>
+    <string name="appearance_language_brazilian_portuguese">Português (Brasil)</string>
+    <string name="appearance_language_japanese">日本語</string>
     <string name="appearance_language_simplified_chinese">简体中文</string>
     <string name="appearance_language_spanish">Español</string>
     <string name="appearance_appearance">外观</string>
@@ -2406,10 +2409,12 @@
 
     <!-- AgentIconRow -->
     <string name="agent_icon_title">代理图标</string>
-    <string name="agent_icon_set">设置图像</string>
-    <string name="agent_icon_change">更改</string>
+    <string name="agent_icon_set">选择文件</string>
+    <string name="agent_icon_change">选择文件</string>
     <string name="agent_icon_clear">清除</string>
-    <string name="agent_icon_description">显示在此配置文件名称旁边。仅保留在此设备上，不会发送到 Hermes。</string>
+    <string name="agent_icon_import_host">从代理主机导入</string>
+    <string name="agent_icon_importing_host">正在导入…</string>
+    <string name="agent_icon_description">显示在聊天中的配置文件名称旁边。可选择手机图片，或从已配对代理主机的当前配置文件目录导入 avatar.png/profile.jpg。复制的图标仅保留在此设备上。</string>
 
     <!-- ConnectionSecuritySheet -->
     <string name="conn_security_title">连接安全</string>
