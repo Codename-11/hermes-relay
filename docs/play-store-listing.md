@@ -85,14 +85,11 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.7 - Smoother replies, more languages
+v1.4.8 - Privacy policy link restored
 
-Smooth streaming
-* Long replies grow steadily and stay anchored at the newest text through completion.
-* Scrolling into history preserves your reading position.
-
-More languages
-* Use German, Brazilian Portuguese, or Japanese throughout the app.
+* The privacy policy now lives at hermes-relay.dev.
+* The About screen opens the hosted policy directly.
+* Releases verify the public policy before publishing.
 ```
 
 ## Category
@@ -133,6 +130,15 @@ path-filtered Play Store Listing workflow or publish locally with:
 ## Play Console Declarations
 
 Submission-time declarations the Play Console requires — keep in sync with the merged `googlePlay` manifest.
+
+### Privacy policy
+
+Use `https://hermes-relay.dev/privacy.html` as the Play Console privacy-policy
+URL. The Android preflight and release workflows require both that canonical
+page and the historical GitHub Pages compatibility URL to return the complete
+policy before they can publish. The standard Android Publisher listing API does
+not expose this Play policy-declaration field, so the legacy URL remains a
+permanent compatibility page for existing Console metadata.
 
 ### App access
 

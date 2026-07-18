@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Privacy policy for the Hermes-Relay Android app" />
+    <link rel="canonical" href="https://hermes-relay.dev/privacy.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Privacy Policy | Hermes-Relay" />
+    <meta property="og:description" content="Privacy policy for the Hermes-Relay Android app" />
+    <meta property="og:url" content="https://hermes-relay.dev/privacy.html" />
+    <meta property="og:image" content="https://hermes-relay.dev/social-card.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"WebPage","name":"Hermes-Relay Privacy Policy","url":"https://hermes-relay.dev/privacy.html","isPartOf":{"@type":"WebSite","name":"Hermes-Relay","url":"https://hermes-relay.dev/"}}
+    </script>
+    <title>Privacy Policy | Hermes-Relay</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.6; }
+      body { margin: 0; background: #111019; color: #f4f0ff; }
+      main { width: min(48rem, calc(100% - 2rem)); margin: 0 auto; padding: 3rem 0 5rem; }
+      a { color: #c5a7ff; }
+      h1, h2 { line-height: 1.2; }
+      h2 { margin-top: 2.25rem; }
+      .summary { padding: 1rem 1.25rem; border: 1px solid #584b72; border-radius: 0.75rem; background: #191624; }
+      table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
+      th, td { padding: 0.65rem; border: 1px solid #584b72; text-align: left; vertical-align: top; }
+      footer { margin-top: 3rem; color: #bdb5ca; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy Policy</h1>
+      <p><strong>Hermes-Relay</strong> · Effective date: July 18, 2026</p>
+
+      <section class="summary">
+        <h2>Summary</h2>
+        <p>Hermes-Relay does not collect, transmit, or share personal data with third parties. The app connects only to servers that you configure. There are no accounts, no hosted Hermes-Relay cloud service, and no externally transmitted analytics.</p>
+      </section>
+
+      <h2>Google Play build</h2>
+      <p>The Google Play build ships Hermes Bridge Core: chat, voice, terminal and TUI relay, notification companion, media handoff, relay sessions, and status. It does not include AccessibilityService-based Device Control and cannot read your screen, tap, type, swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.</p>
+      <p>The sideload build is a separate distribution track for users who intentionally install Device Control outside Google Play.</p>
+
+      <h2>Data storage</h2>
+      <p>All data is stored locally on your device in the app's private sandbox.</p>
+      <table>
+        <thead><tr><th>Data</th><th>Storage method</th></tr></thead>
+        <tbody>
+          <tr><td>Server URLs and preferences</td><td>Android DataStore (app-private)</td></tr>
+          <tr><td>API keys and relay session tokens</td><td>AES-256-GCM encryption via Android Keystore</td></tr>
+          <tr><td>Performance counters</td><td>Android DataStore (local only)</td></tr>
+          <tr><td>Notification trigger rules and activity log</td><td>Android DataStore (local only)</td></tr>
+        </tbody>
+      </table>
+      <p>Chat messages are not cached on your device. They are loaded from your Hermes server on demand and exist only in memory while the app is running.</p>
+
+      <h2>Network connections</h2>
+      <p>The app connects only to endpoints you configure: your Hermes API server for chat streaming; your relay server for terminal and TUI relay, Bridge Core status, media handoff, notification companion, and session management; and your relay voice routes when you use Voice mode.</p>
+      <p>No connections are made to Google, Anthropic, or any other third-party service by the app. There is no telemetry, advertising, external crash reporting, DNS prefetching, or background network activity to hosted Hermes-Relay services. Your Hermes server may separately connect to AI providers according to its configuration; that server-side activity is outside the scope of this app.</p>
+
+      <h2>Permissions</h2>
+      <table>
+        <thead><tr><th>Permission or access</th><th>Purpose</th><th>Required</th></tr></thead>
+        <tbody>
+          <tr><td>Internet</td><td>Connect to your Hermes servers</td><td>Yes</td></tr>
+          <tr><td>Network state</td><td>Detect connectivity for reconnect behavior</td><td>Yes</td></tr>
+          <tr><td>Camera</td><td>QR code scanning for server pairing</td><td>No</td></tr>
+          <tr><td>Microphone</td><td>Voice mode speech-to-text</td><td>No</td></tr>
+          <tr><td>Notification access</td><td>Optional notification companion metadata forwarding to your paired relay</td><td>No</td></tr>
+        </tbody>
+      </table>
+      <p>Notification access is granted and revoked from Android system settings. When enabled, Hermes-Relay forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay. It does not forward notifications to a Hermes-Relay cloud service. Optional notification-trigger matching happens locally on the phone and does not automatically send an AI request or reply in another app.</p>
+
+      <h2>Third-party services</h2>
+      <p>Hermes-Relay includes no advertising, tracking, or analytics services. The app is built with Android platform components and open-source libraries.</p>
+
+      <h2>Data export and deletion</h2>
+      <p>From Settings, you can export a connection backup, import a saved configuration, or perform a full reset. Exported backups can include server URLs, preferences, API keys, relay session tokens, device IDs, and dashboard cookies, so keep them private. Full reset permanently deletes local data including encrypted credentials. Uninstalling the app removes all stored app data from your device.</p>
+
+      <h2>Children's privacy</h2>
+      <p>Hermes-Relay is not directed at children under 13. We do not knowingly collect information from children.</p>
+
+      <h2>Changes to this policy</h2>
+      <p>Updates will be posted on this page with a revised effective date. Significant changes will be noted in the app's release notes.</p>
+
+      <h2>Contact</h2>
+      <p>For privacy questions, open an issue in the <a href="https://github.com/Codename-11/hermes-relay/issues">Hermes-Relay issue tracker</a>.</p>
+
+      <h2>Open source</h2>
+      <p>Hermes-Relay is <a href="https://github.com/Codename-11/hermes-relay">MIT licensed and publicly auditable</a>.</p>
+
+      <footer><a href="https://hermes-relay.dev/">Return to hermes-relay.dev</a></footer>
+    </main>
+  </body>
+</html>

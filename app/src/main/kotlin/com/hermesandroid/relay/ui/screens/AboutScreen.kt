@@ -432,7 +432,7 @@ fun AboutScreen(
                     // Privacy policy link
                     OutlinedButton(
                         onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Codename-11/hermes-relay/blob/main/docs/privacy.md"))
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-relay.dev/privacy.html"))
                             context.startActivity(intent)
                         },
                         modifier = Modifier.fillMaxWidth()

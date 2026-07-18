@@ -42,4 +42,4 @@ From **Settings**, you can export a full connection backup, import a backup, or 
 
 ## Open source
 
-All code is [MIT licensed](https://github.com/Codename-11/hermes-relay) and publicly auditable. See the full privacy document at [`docs/privacy.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/privacy.md).
+All code is [MIT licensed](https://github.com/Codename-11/hermes-relay) and publicly auditable. See the full [privacy policy](https://hermes-relay.dev/privacy.html).

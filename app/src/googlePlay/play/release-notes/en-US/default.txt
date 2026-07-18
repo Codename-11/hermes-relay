@@ -1,1 +1,1 @@
-Long streamed replies now grow smoothly and stay anchored at the newest text through completion, while scrolling into history preserves your reading position. German, Brazilian Portuguese, and Japanese are now available throughout the app.
+The privacy policy now lives at hermes-relay.dev, the About screen opens it directly, and release automation verifies the public policy before publishing.
