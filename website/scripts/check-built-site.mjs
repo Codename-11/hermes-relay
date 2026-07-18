@@ -12,6 +12,7 @@ const localeByRelativePath = new Map([
   [join('pt-BR', 'index.html'), 'pt-BR'],
   [join('zh-CN', 'index.html'), 'zh-CN'],
 ]);
+const expectedHtmlPaths = new Set([...localeByRelativePath.keys(), 'privacy.html']);
 
 async function walk(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -90,8 +91,12 @@ for (const htmlPath of htmlFiles) {
   }
 }
 
-if (htmlFiles.length !== localeByRelativePath.size) {
-  failures.push(`expected ${localeByRelativePath.size} localized HTML pages, found ${htmlFiles.length}`);
+const actualHtmlPaths = new Set(htmlFiles.map((path) => path.slice(distRoot.length + 1)));
+for (const expectedPath of expectedHtmlPaths) {
+  if (!actualHtmlPaths.has(expectedPath)) failures.push(`missing expected HTML page ${expectedPath}`);
+}
+for (const actualPath of actualHtmlPaths) {
+  if (!expectedHtmlPaths.has(actualPath)) failures.push(`unexpected HTML page ${actualPath}`);
 }
 
 if (failures.length) {

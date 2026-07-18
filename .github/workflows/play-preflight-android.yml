@@ -81,6 +81,7 @@ jobs:
       - name: Validate release metadata and source compatibility
         run: |
           python3 scripts/check-version-tracks.py
+          python3 scripts/check-privacy-policy.py --live
           python3 scripts/check-android-locales.py
           python3 scripts/check-android-collection-apis.py
           python3 -m json.tool app/src/main/assets/changelog.json >/dev/null

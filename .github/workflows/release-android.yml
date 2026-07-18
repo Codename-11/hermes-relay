@@ -74,6 +74,9 @@ jobs:
 
           echo "Version validated: $TAG_VERSION"
 
+      - name: Verify public privacy policy URLs
+        run: python3 scripts/check-privacy-policy.py --live
+
       - name: Verify tagged commit belongs to main
         run: |
           set -euo pipefail
@@ -123,6 +126,7 @@ jobs:
       - name: Validate release metadata and Android API compatibility
         run: |
           python3 scripts/check-version-tracks.py
+          python3 scripts/check-privacy-policy.py
           python3 scripts/check-android-locales.py
           python3 scripts/check-android-collection-apis.py
 

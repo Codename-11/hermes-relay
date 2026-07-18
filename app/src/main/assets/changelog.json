@@ -1,6 +1,20 @@
 {
  "versions": [
   {
+   "version": "1.4.8",
+   "title": "Privacy policy restored",
+   "date": "2026-07-18",
+   "sections": [
+    {
+     "header": "Google Play compliance",
+     "bullets": [
+      "The privacy policy now lives at hermes-relay.dev and the historical store URL remains valid for compatibility.",
+      "The About screen opens the hosted policy directly, and releases verify it is publicly available before publishing."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.4.7",
    "title": "Smoother replies, more languages",
    "date": "2026-07-18",
