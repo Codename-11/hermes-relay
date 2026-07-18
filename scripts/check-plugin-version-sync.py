@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify plugin-owned version metadata stays in sync.
 
-Plugin releases use the `plugin-v*` track. The canonical version is
+Server releases use the `server-v*` track. The canonical version is
 `pyproject.toml`'s `[project].version`; plugin and dashboard metadata should
 match because they ship as one Hermes plugin package.
 

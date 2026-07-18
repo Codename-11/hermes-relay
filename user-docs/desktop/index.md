@@ -11,7 +11,7 @@ Prebuilt CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64. The 
 :::
 
 ::: info Where this track is headed
-This surface is focusing into a **remote-hands connector** — remote control, filesystem, and terminal access for the agent on machines you install it to. Desktop chat and management UX belong to [hermes-desktop](https://github.com/NousResearch/hermes-agent); this CLI's `chat` mode keeps working for scripting but isn't where new features land. "Desktop" is shorthand, not a constraint — the same binary runs on laptops and headless servers (`daemon` mode needs no display at all). New release tags use the `cli-v*` track; historical alpha prereleases used `desktop-v*`.
+This surface is focusing into a **remote-hands connector** — remote control, filesystem, and terminal access for the agent on machines you install it to. Desktop chat and management UX belong to [hermes-desktop](https://github.com/NousResearch/hermes-agent); this CLI's `chat` mode keeps working for scripting but isn't where new features land. "Desktop" is shorthand, not a constraint — the same binary runs on laptops and headless servers (`daemon` mode needs no display at all). New release tags use the `desktop-v*` track; historical releases used `cli-v*`.
 :::
 
 ## The point — the agent works on *your* machine
@@ -140,4 +140,4 @@ Use `shell` when you want to drive interactively; use `chat --json` from scripts
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent) — the agent platform the CLI talks to.
 - [Herm](https://github.com/liftaris/herm) — optional terminal dashboard plugin installable from the CLI.
 - [CLI GitHub source](https://github.com/Codename-11/hermes-relay/tree/main/desktop) — `@hermes-relay/cli` package.
-- [Release notes](https://github.com/Codename-11/hermes-relay/releases?q=cli) — tagged `cli-v*` (separate track from Android); old alpha prereleases are under `desktop-v*`.
+- [Release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop) — tagged `desktop-v*` (separate track from Android); historical releases are under `cli-v*`.

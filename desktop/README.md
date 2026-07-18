@@ -63,7 +63,7 @@ Windows downloads and verifies `hermes-relay-windows-x64-setup.exe`. The install
 places the CLI and systray together, adds `~/.hermes/bin` to the user PATH, and
 lets the systray start at sign-in. CLI-only installs download the same prebuilt
 single-file CLI binary without the systray. Pin a release with
-`HERMES_RELAY_VERSION=cli-v0.3.0-alpha.18`; CLI-only installs can override the
+`HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.18`; CLI-only installs can override the
 install directory with `HERMES_RELAY_INSTALL_DIR=...`.
 
 After install, use `hermes-relay <prompt>`. The shorter `hermes <prompt>` alias is optional because it can shadow a real local hermes-agent install. Enable it only when you want hermes-relay to be the `hermes` command for tools like Orca:
@@ -550,7 +550,7 @@ Precedence for credentials: `--token` → `HERMES_RELAY_TOKEN` → `--code` → 
 
 ## Roadmap
 
-What's shipped on the `cli-v*` track: remote chat + tool-event rendering,
+What's shipped on the `desktop-v*` track: remote chat + tool-event rendering,
 one-time pairing, the interactive PTY/TUI shell, client-side tool routing,
 auto-reconnect with TOFU cert pinning, server-side session management, the
 headless daemon, local diagnostics, and the optional menu-only Windows systray.

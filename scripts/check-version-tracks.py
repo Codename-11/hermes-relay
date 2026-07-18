@@ -4,8 +4,8 @@
 The repo ships three independently versioned artifacts:
 
 - Android app: ``android-v*`` tags, source in ``gradle/libs.versions.toml``.
-- Plugin: ``plugin-v*`` tags, source in ``pyproject.toml``.
-- CLI: ``cli-v*`` tags, source in ``desktop/package.json``.
+- Server: ``server-v*`` tags, source in ``pyproject.toml``.
+- Desktop: ``desktop-v*`` tags, source in ``desktop/package.json``.
 
 This script gives release prep one command that checks the sources without
 forcing unrelated artifacts to share the same SemVer.
@@ -124,10 +124,10 @@ def _plugin_track(errors: list[str]) -> Track:
         if found != version:
             errors.append(f"plugin version mismatch: {source} has {found}, expected {version}")
     return Track(
-        name="plugin",
+        name="server",
         version=version,
         source="pyproject.toml",
-        tag=f"plugin-v{version}",
+        tag=f"server-v{version}",
         details="plugin + dashboard metadata",
     )
 
@@ -164,10 +164,10 @@ def _cli_track(errors: list[str]) -> Track:
                 "run npm run sync:version in desktop/"
             )
     return Track(
-        name="cli",
+        name="desktop",
         version=version,
         source="desktop/package.json",
-        tag=f"cli-v{version}",
+        tag=f"desktop-v{version}",
         details="CLI + tray metadata",
     )
 

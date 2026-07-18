@@ -1,8 +1,8 @@
-name: Release CLI
+name: Release Desktop
 
 on:
   push:
-    tags: ['cli-v*']
+    tags: ['desktop-v*']
 
 permissions:
   contents: write
@@ -36,13 +36,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#cli-v}"
+          version="${GITHUB_REF_NAME#desktop-v}"
           if [[ -z "$version" || "$version" == "$GITHUB_REF_NAME" ]]; then
-            echo "Expected a cli-v* tag, got $GITHUB_REF_NAME" >&2
+            echo "Expected a desktop-v* tag, got $GITHUB_REF_NAME" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           npm run check:version-sync -- --expect "$version"
+          if ! grep -Fq "## [$version]" ../CHANGELOG.md; then
+            echo "CHANGELOG.md has no release heading for $version" >&2
+            exit 1
+          fi
 
       - name: Verify tagged commit belongs to main
         shell: bash
@@ -52,7 +56,7 @@ jobs:
           git fetch origin main --no-tags
           tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
           if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-            echo "CLI releases must be tagged from main; $tag_commit is not in origin/main" >&2
+            echo "Desktop releases must be tagged from main; $tag_commit is not in origin/main" >&2
             exit 1
           fi
 
@@ -234,9 +238,9 @@ jobs:
       # (the other publish-release steps only consume downloaded build artifacts).
       - uses: actions/checkout@v7
 
-      - name: Extract CLI version
+      - name: Extract Desktop version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#cli-v}" >> "$GITHUB_OUTPUT"
+        run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v8
         with:
@@ -253,7 +257,7 @@ jobs:
 
       # Render CLI_RELEASE_NOTES.md (hand-written per release) into the GitHub
       # Release body. __VERSION__ = bare version (0.3.0), __TAG__ = full tag
-      # (cli-v0.3.0) so the install/pin commands stay accurate without manual edits.
+      # (desktop-v0.3.0) so install/pin commands stay accurate without manual edits.
       - name: Render release notes
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -266,7 +270,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-CLI v${{ steps.version.outputs.version }}
+          name: Hermes-Relay-Desktop v${{ steps.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}

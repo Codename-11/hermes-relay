@@ -201,7 +201,7 @@ hermes-relay daemon start                      # background tool router — agen
 hermes-relay update                            # self-update via GitHub Releases
 ```
 
-It pairs against the **same relay and credential store** as the Android app — pair once from either, both work. Tagged on a separate `cli-v*` [release track](https://github.com/Codename-11/hermes-relay/releases?q=cli), with old alpha prereleases still visible under `desktop-v*`.
+It pairs against the **same relay and credential store** as the Android app — pair once from either, both work. Tagged on the `desktop-v*` [release track](https://github.com/Codename-11/hermes-relay/releases?q=desktop), with historical releases still visible under `cli-v*`.
 
 On Windows, the default installer adds the optional right-click-only systray: no dashboard or app window, just TUI launch, User/Administrator-aware daemon controls, pairing, local grant review, audit, diagnostics, logs, desktop-use status/cancellation, sign-in startup, and emergency stop.
 
@@ -236,7 +236,7 @@ configure API, dashboard, and relay routes without merging their auth models.
 | [API Reference](https://hermes-relay.dev/docs/reference/api.html) | Hermes API endpoints used by both surfaces |
 | [Specification](docs/spec.md) | Full spec — protocol, UI, phases, dependencies |
 | [Architecture Decisions](docs/decisions.md) | ADRs — framework, channels, auth, terminal |
-| [Changelog](CHANGELOG.md) | Release history (`android-v*`, `plugin-v*`, `cli-v*`) |
+| [Changelog](CHANGELOG.md) | Release history (`android-v*`, `server-v*`, `desktop-v*`; historical prefixes remain immutable) |
 
 <details>
 <summary><b>Install with an AI agent</b> — paste-ready prompt for Claude / GPT</summary>

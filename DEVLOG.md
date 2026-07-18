@@ -194,6 +194,60 @@ Verification: seven profile-avatar endpoint tests and the focused Android host
 avatar client plus profile-controller suites passed. Android lint and final diff
 checks are recorded with the completed work.
 
+## 2026-07-15 — Repository branch, release, and hotfix contract reconciliation
+
+Repository guidance now has one provider-neutral branch contract in `AGENTS.md`:
+normal work, including documentation, branches from and returns to `dev`; release
+preparation happens on `dev`; approved release PRs merge `dev` to `main`; and
+immutable surface tags are cut from the new `main` tip. Staging is an environment
+sourced from an exact tested SHA or release-candidate tag. Production uses
+`android-v*`, `server-v*`, or `desktop-v*`. Hotfixes branch from the affected
+production tag, change and patch-bump only that surface, merge to `main`, tag,
+verify, and immediately merge `main` back into `dev`.
+
+Stable release workflows now require the tagged commit to be contained in
+`main`, require the tag to match the authoritative surface version source, and
+require a matching `CHANGELOG.md` release heading before any build or publish
+job. Server and Desktop use the canonical `server-v*` and `desktop-v*` prefixes;
+runtime update discovery retains fallback support for immutable historical
+`plugin-v*` and `cli-v*` releases. No historical tag was moved or rewritten.
+
+Audit inventory:
+
+- Canonical/root guidance: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
+  `RELEASE.md`, `README.md`, `DEVLOG.md`, `PLUGIN_RELEASE_NOTES.md`, and
+  `CLI_RELEASE_NOTES.md`.
+- Contributor metadata: `.github/PULL_REQUEST_TEMPLATE.md`; every file in
+  `.github/ISSUE_TEMPLATE/` (`bug_report.yml`, `config.yml`, `docs.yml`,
+  `feature_request.yml`, and `translation.yml`); `.github/copilot-instructions.md`;
+  and `.github/dependabot.yml`.
+- GitHub workflows: `approve-release-android.yml`, `ci-android.yml`,
+  `ci-contract.yml`, `ci-dashboard.yml`, `ci-desktop.yml`, `ci-plugin.yml`,
+  `ci-required.yml`, `dependabot-auto-merge.yml`, `docs.yml`, `issue-triage.yml`,
+  `play-listing.yml`, `play-preflight-android.yml`, `release-android.yml`,
+  `release-cli.yml`, and `release-plugin.yml`.
+- Developer documentation: every Markdown file directly under `docs/`, plus
+  `docs/audits/`, `docs/diagrams/`, and `docs/mockups/`. Historical files under
+  `docs/plans/` were inspected for classification but not rewritten as current
+  instructions. Current contradictions were corrected in `docs/decisions.md`
+  and `docs/worktree-workflow.md`.
+- Public documentation: every Markdown file under `user-docs/`, including the
+  architecture, desktop, features, guide, reference, and `zh-CN` trees. Current
+  tag guidance was corrected in `user-docs/desktop/index.md` and
+  `user-docs/desktop/installation.md`.
+- Release/runtime seams: all three release workflows; `scripts/bump-version.sh`,
+  `scripts/bump-plugin-version.sh`, `scripts/check-version-tracks.py`, and
+  `scripts/check-plugin-version-sync.py`; Desktop install/update sources under
+  `desktop/scripts/` and `desktop/src/`; and Server update-discovery sources and
+  focused tests under `plugin/`.
+
+The repository audit also confirmed that GitHub-owned settings cannot be
+reconciled through repository files. The default branch correctly remained
+`main`, the release-history branch. At audit time, `dev` was unprotected, squash
+and rebase merges were enabled, and `main` protection did not apply to
+administrators. An operator must align those remaining settings with the
+documented contract.
+
 ## 2026-07-15 — Android 1.4.5 release and automated Play gate
 
 Android 1.4.5 shipped as versionCode 28 after the signed release build, final

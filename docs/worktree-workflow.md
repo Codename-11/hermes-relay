@@ -90,5 +90,5 @@ git worktree remove <path> # delete a worktree (must be clean, or pass --force)
 
 Worktrees change *nothing* about the release contract. Feature worktrees merge to
 `dev`; releases are still cut by merging `dev` → `main` with `--no-ff` and tagging
-from `main` (Android `android-v*`, plugin `plugin-v*`, CLI `cli-v*`). Version bumps
+from `main` (Android `android-v*`, server `server-v*`, desktop `desktop-v*`). Version bumps
 happen on `dev` at release-prep, never on a feature branch — see RELEASE.md.

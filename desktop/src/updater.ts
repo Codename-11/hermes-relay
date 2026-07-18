@@ -3,8 +3,8 @@
 //
 // Strategy:
 //   1. Query the GitHub Releases API for this repo (default Codename-11/hermes-relay),
-//      prefer tags starting with `cli-v`, and fall back to historical
-//      `desktop-v` prereleases. Zero deps.
+//      prefer tags starting with `desktop-v`, and fall back to historical
+//      `cli-v` releases. Zero deps.
 //   2. Pick the asset for this platform (`process.platform` + `process.arch`).
 //   3. Download to `<target>.download`, verify against SHA256SUMS.txt, then
 //      atomically rename — POSIX rename keeps the running process's inode
@@ -85,7 +85,7 @@ interface ParsedVersion {
 }
 
 function parseVersion(raw: string): ParsedVersion | null {
-  // Strip leading `v` / `cli-v` / historical `desktop-v`.
+  // Strip leading `v` / `desktop-v` / historical `cli-v`.
   let v = raw.trim()
   if (v.startsWith('cli-v')) v = v.slice('cli-v'.length)
   else if (v.startsWith('desktop-v')) v = v.slice('desktop-v'.length)
@@ -196,16 +196,16 @@ export async function checkForUpdate(opts: { repo?: string } = {}): Promise<Upda
   const repo = opts.repo ?? DEFAULT_REPO
   const releases = await fetchReleases(repo)
 
-  // Prefer cli-v* tags. Historical public prereleases used desktop-v*, so keep
-  // a fallback while the alpha channel migrates. NOTE: GitHub orders the
+  // Prefer desktop-v* tags. Historical public releases used cli-v*, so keep
+  // a fallback while the stable surface names migrate. NOTE: GitHub orders the
   // response by the release row's created_at, NOT by SemVer of the tag — and
   // "created_at" can shift when the row is touched (re-tag, manual edit).
   // Don't trust [0]; pick the SemVer-maximum tag explicitly so a touched alpha
   // row can't outrank a freshly-tagged release.
-  const cli = releases.filter((r) => r.tag_name.startsWith('cli-v'))
-  const candidates = cli.length > 0
-    ? cli
-    : releases.filter((r) => r.tag_name.startsWith('desktop-v'))
+  const desktop = releases.filter((r) => r.tag_name.startsWith('desktop-v'))
+  const candidates = desktop.length > 0
+    ? desktop
+    : releases.filter((r) => r.tag_name.startsWith('cli-v'))
   if (candidates.length === 0) return null
   const pick = candidates.reduce((max, r) =>
     compareVersions(r.tag_name, max.tag_name) > 0 ? r : max
