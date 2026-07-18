@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "legacy-pages-redirect/**"
+      - "website/public/privacy.html"
       - ".github/workflows/legacy-docs-redirect.yml"
   push:
     branches: [main]
     paths:
       - "legacy-pages-redirect/**"
+      - "website/public/privacy.html"
       - ".github/workflows/legacy-docs-redirect.yml"
   workflow_dispatch:
 
@@ -34,10 +36,12 @@ jobs:
         run: |
           set -euo pipefail
           source_file="legacy-pages-redirect/redirect.html"
+          privacy_file="website/public/privacy.html"
           output_dir="legacy-pages-redirect/_site"
           rm -rf "$output_dir"
           mkdir -p \
             "$output_dir/guide/getting-started" \
+            "$output_dir/privacy" \
             "$output_dir/reference/relay-server" \
             "$output_dir/architecture"
           for target in \
@@ -50,8 +54,12 @@ jobs:
             architecture/connection-security.html; do
             cp "$source_file" "$output_dir/$target"
           done
+          cp "$privacy_file" "$output_dir/privacy.html"
+          cp "$privacy_file" "$output_dir/privacy/index.html"
           touch "$output_dir/.nojekyll"
-          test "$(find "$output_dir" -type f | wc -l)" -eq 8
+          test "$(find "$output_dir" -type f | wc -l)" -eq 10
+          grep -Fq '<h1>Privacy Policy</h1>' "$output_dir/privacy.html"
+          grep -Fq 'https://hermes-relay.dev/privacy.html' "$output_dir/privacy.html"
           if grep -R -E '<title>VitePress|<div id="app">' "$output_dir"; then
             echo "Full documentation content must not be deployed by this workflow." >&2
             exit 1

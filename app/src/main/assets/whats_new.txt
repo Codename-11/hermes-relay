@@ -1,8 +1,5 @@
-v1.4.7 - Smoother replies, more languages
+v1.4.8 - Privacy policy link restored
 
-Smooth streaming
-* Long replies grow steadily and stay anchored at the newest text through completion.
-* Scrolling into history still leaves your reading position alone.
-
-More languages
-* Use German, Brazilian Portuguese, or Japanese throughout the app.
+* The privacy policy now lives at hermes-relay.dev.
+* The About screen opens the hosted policy directly.
+* Release automation verifies the policy is publicly available before publishing.

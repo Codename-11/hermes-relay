@@ -6,7 +6,7 @@ description: Privacy policy for the Hermes-Relay Android app
 
 # Privacy Policy
 
-**Hermes-Relay** · Effective date: May 19, 2026
+**Hermes-Relay** · Effective date: July 18, 2026
 
 Hermes-Relay is a native Android app that connects to your own [Hermes Agent](https://github.com/NousResearch/hermes-agent) host. This policy describes how the app handles your data.
 

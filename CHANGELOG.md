@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
 
+## [1.4.8] - 2026-07-18
+
+### Fixed
+
+- **The Google Play privacy-policy URL is permanently available.** The canonical policy now lives on hermes-relay.dev, the historical GitHub Pages URL serves the complete policy for compatibility, and Android release automation blocks publication if either public page is unavailable.
+- **Android opens the hosted privacy policy directly.** The About screen no longer sends users to a repository source file.
+
 ## [1.4.7] - 2026-07-18
 
 ### Added

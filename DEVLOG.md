@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-18 — Android privacy-policy URL hotfix
+
+The canonical Android privacy policy moved to a stable public page on
+hermes-relay.dev. The historical GitHub Pages path now serves the complete
+policy for compatibility with existing store metadata instead of depending on
+a client-side redirect. Android's About screen, public privacy references, and
+Play submission documentation use the canonical site URL.
+
+The legacy Pages workflow publishes both file and directory policy paths from
+the same canonical HTML source. Repository validation checks the policy's
+required disclosures and URL wiring, while Play preflight and stable tag release
+jobs additionally require both deployed policy URLs to return complete policy
+content before an artifact can be uploaded or promoted. Android advanced to
+1.4.8 with versionCode 31 for the replacement Play submission.
+
 ## 2026-07-18 — Android 1.4.7 release preparation
 
 Android advanced to 1.4.7 with versionCode 30 after the localization, streaming,
