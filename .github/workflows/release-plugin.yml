@@ -1,31 +1,48 @@
-name: Release Plugin
+name: Release Server
 
 on:
   push:
     tags:
-      - "plugin-v*"
+      - "server-v*"
 
 permissions:
   contents: write
 
 jobs:
   validate:
-    name: Validate Plugin release
+    name: Validate Server release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/plugin-v}" >> "$GITHUB_OUTPUT"
+        run: echo "version=${GITHUB_REF#refs/tags/server-v}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Plugin version sync
-        run: python scripts/check-plugin-version-sync.py --expect "$TAG_VERSION"
+      - name: Verify Server version sync and changelog
+        run: |
+          python scripts/check-plugin-version-sync.py --expect "$TAG_VERSION"
+          if ! grep -Fq "## [$TAG_VERSION]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no release heading for $TAG_VERSION"
+            exit 1
+          fi
         env:
           TAG_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Verify tagged commit belongs to main
+        run: |
+          set -euo pipefail
+          git fetch origin main --no-tags
+          tag_commit="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "Server releases must be tagged from main; $tag_commit is not in origin/main" >&2
+            exit 1
+          fi
 
   test:
     name: Test Plugin package
@@ -100,8 +117,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Plugin v${{ needs.validate.outputs.version }}
-          tag_name: plugin-v${{ needs.validate.outputs.version }}
+          name: Hermes-Relay-Server v${{ needs.validate.outputs.version }}
+          tag_name: server-v${{ needs.validate.outputs.version }}
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           fail_on_unmatched_files: true
           body_path: release_notes_rendered.md

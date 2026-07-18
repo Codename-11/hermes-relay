@@ -2103,9 +2103,19 @@ class GatewayChatClient(
 
         private val rejoinAttempts = java.util.concurrent.atomic.AtomicInteger(0)
 
-        /** True if this socket loss should be answered with a rejoin attempt. */
-        fun beginRejoin(): Boolean =
-            !ended && rejoinAttempts.incrementAndGet() <= MAX_TURN_REJOINS
+        @Volatile
+        private var reconcileRequired = false
+
+        /**
+         * True if this socket loss should be answered with a rejoin attempt.
+         * Mark reconciliation before reconnecting so a terminal event arriving
+         * immediately after `gateway.ready` cannot race ahead of the signal.
+         */
+        fun beginRejoin(): Boolean {
+            val shouldRejoin = !ended && rejoinAttempts.incrementAndGet() <= MAX_TURN_REJOINS
+            if (shouldRejoin) reconcileRequired = true
+            return shouldRejoin
+        }
 
         private var watchdog: Job? = null
 
@@ -2132,6 +2142,12 @@ class GatewayChatClient(
             // Ask requests block with no further events, so they arm with
             // their own (longer) duration via watchdogTimeoutFor.
             armWatchdog(watchdogTimeoutFor(type))
+            // Queue this immediately before the terminal callbacks. Both are
+            // marshalled through the same dispatcher, preserving callback order
+            // even when the WebSocket reader and reconnect coroutine differ.
+            if (type == "message.complete" && reconcileRequired) {
+                callbacks.onReconcileRequired()
+            }
             mapper.onEvent(type, payload)
             if (mapper.turnEnded) {
                 disarmWatchdog()
@@ -2305,6 +2321,7 @@ class GatewayChatClient(
         onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
         onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },
         onTurnComplete = { callbackDispatcher { callbacks.onTurnComplete() } },
+        onReconcileRequired = { callbackDispatcher { callbacks.onReconcileRequired() } },
         onComplete = { callbackDispatcher { callbacks.onComplete() } },
         onUsage = { v -> callbackDispatcher { callbacks.onUsage(v) } },
         onError = { v -> callbackDispatcher { callbacks.onError(v) } },

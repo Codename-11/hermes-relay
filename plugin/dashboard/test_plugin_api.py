@@ -371,7 +371,7 @@ class UpdateCheckTests(PluginApiTestCase):
 
     def test_update_available(self) -> None:
         def handler(_req: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json=[{"tag_name": "plugin-v99.0.0"}])
+            return httpx.Response(200, json=[{"tag_name": "server-v99.0.0"}])
 
         _install_mock_transport(self, handler)
         body = self.client.get("/update-check").json()
@@ -385,7 +385,7 @@ class UpdateCheckTests(PluginApiTestCase):
         cur = update_check.current_version()
 
         def handler(_req: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json=[{"tag_name": f"plugin-v{cur}"}])
+            return httpx.Response(200, json=[{"tag_name": f"server-v{cur}"}])
 
         _install_mock_transport(self, handler)
         body = self.client.get("/update-check").json()

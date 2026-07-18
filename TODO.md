@@ -645,13 +645,12 @@ every bubble) + grouping breaks on a >5min gap (`GROUP_GAP_MS`) so a resumed
 conversation gets its own beat; long-press haptic on the action menu; streaming dots
 gated to pre-first-token. Deferred:
 
-- **Streaming↔final render parity — conservative 1.4.1 slice implemented; live
-  reflow check remains.** Blank-terminated, unambiguous top-level prose/headings use
-  the final Markdown renderer during generation while the active tail stays raw.
-  Lists, quotes, tables, HTML, and fences intentionally remain lightweight until the
-  final parse because partial CommonMark containers can re-parent earlier blocks.
-  Verify that the chosen boundary removes the common heading/prose pop without
-  introducing partial-fence or list flicker.
+- **Streaming↔final render parity — live reflow check remains.** Blank-terminated,
+  unambiguous top-level prose/headings use the final Markdown renderer during
+  generation while the active tail stays lightweight. Completion intentionally
+  parses one full CommonMark document so global link references, indentation, and
+  nested containers remain correct; the viewport now anchors that same remeasure.
+  Verify lists, tables, quotes, HTML, nested fences, and reference links on-device.
 - **Bubble body 14sp → 15sp/21.** 14sp is the smallest body of the five reference
   apps. Bump markdown paragraph/text/list + the two plain `Text` sites
   (`MessageBubble.kt` user/system) together; keep ~1.4 leading so the ~272dp measure
@@ -673,13 +672,12 @@ gated to pre-first-token. Deferred:
   kebab). Needs on-device confirmation of the current conflict first.
 - **Drop the no-op tap ripple on bubbles.** The 1.4.1 jump-to-bottom unread badge is
   code-complete; `combinedClickable(onClick={})` still ripples on a normal bubble tap.
-- **Sessions-transport `animateItem` flash.** Stream-complete rebuilds the list with
-  new ids → every visible bubble replays its enter animation (gateway transport,
-  stable id, is unaffected). Reuse the streaming bubble's id for the final message.
-- **Viewport re-pin on the `isStreaming` true→false height growth** (gateway
-  transport): `ChatScreen` early-returns on `onlyStreamingFlagChanged`; issue one
-  `withFrameNanos{}` + instant `scrollToItem(last)` when the flag flips and the user
-  isn't scrolled away. Largely neutralized once render parity removes the height delta.
+- **Sessions per-turn reconciliation.** Current upstream includes assistant/tool
+  rows in `run.completed.messages`, but Android still uses a full profile-aware
+  history read for successful Sessions turns so older servers and persisted message
+  boundaries remain safe. Replace it only with a bounded partial-turn merge that
+  preserves the prior transcript and client-only fields, with a full-history fallback
+  when the completion payload is absent or incomplete.
 - **Full 15-role `Typography` + metadata contrast.** Type.kt declares only 7 roles at
   0 tracking; the rest inherit M3 defaults with 0.1–0.5sp tracking (ChatScreen uses
   several) — declare all 15 for one coherent scale. Separately, floor muted-metadata

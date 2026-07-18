@@ -269,7 +269,7 @@ async def get_update_check(refresh: Optional[bool] = Query(default=False)) -> di
     """Report whether a newer hermes-relay plugin release is available.
 
     Compares the installed ``plugin.relay.__version__`` against the latest
-    ``plugin-v*`` GitHub release. The GitHub fetch is cached for an hour
+    ``server-v*`` GitHub release (with historical ``plugin-v*`` fallback). The GitHub fetch is cached for an hour
     (``?refresh=true`` forces it) so a polling dashboard doesn't hammer the
     releases API. Network failures degrade to ``update_available=false`` with
     an ``error`` string — never a 5xx — so the card can show "couldn't check".

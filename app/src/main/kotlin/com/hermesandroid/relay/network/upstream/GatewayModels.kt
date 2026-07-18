@@ -335,6 +335,12 @@ class GatewayTurnCallbacks(
     /** Attach deterministic output-risk metadata to the matching tool card. */
     val onToolOutputRisk: (GatewayToolOutputRisk) -> Unit = { _ -> },
     val onTurnComplete: () -> Unit,
+    /**
+     * Fired before [onComplete] when this turn rejoined after a socket gap.
+     * Events emitted while the socket was unavailable are not replayed, so
+     * the caller must reconcile the durable transcript after completion.
+     */
+    val onReconcileRequired: () -> Unit,
     val onComplete: () -> Unit,
     val onUsage: (UsageInfo?) -> Unit,
     val onError: (String) -> Unit,

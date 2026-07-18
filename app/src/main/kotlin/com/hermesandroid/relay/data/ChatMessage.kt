@@ -129,6 +129,19 @@ data class ChatMessage(
      * the live message can be matched to its server row.
      */
     val backgroundTask: BackgroundTaskState? = null,
+    /**
+     * Stable identity for Compose list rendering.
+     *
+     * Gateway/user rows start with client UUIDs, then post-turn history
+     * reconciliation adopts the server message id into [id]. That server-id
+     * adoption must not make a visible bubble look removed and reinserted to
+     * LazyColumn: doing so discards its scroll anchor, which is especially
+     * disruptive when the row is a long answer occupying the viewport.
+     *
+     * New rows default to their current [id]. Reconciled rows retain this key
+     * through `copy`, while [id] remains the authoritative lookup/wire id.
+     */
+    val uiKey: String = id,
 )
 
 /** One Chat-visible identity for a promoted/durable realtime Hermes run. */

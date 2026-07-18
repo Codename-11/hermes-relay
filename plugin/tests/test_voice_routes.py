@@ -810,6 +810,25 @@ class EnhancedVoiceHelpersTests(unittest.TestCase):
         self.assertEqual(out["audio_tags"], False)
         self.assertEqual(out["language"], "en")
 
+    def test_extract_overrides_drops_untrusted_base_urls(self) -> None:
+        from plugin.relay.voice import _extract_voice_overrides
+
+        top_level = _extract_voice_overrides(
+            {"text": "hi", "voice": "Puck", "base_url": "https://attacker.invalid"}
+        )
+        nested = _extract_voice_overrides(
+            {
+                "text": "hi",
+                "gemini": {
+                    "voice": "Puck",
+                    "base_url": "https://attacker.invalid",
+                },
+            }
+        )
+
+        self.assertEqual(top_level, {"voice": "Puck"})
+        self.assertEqual(nested, {"voice": "Puck"})
+
     def test_extract_overrides_empty_for_plain_body(self) -> None:
         from plugin.relay.voice import _extract_voice_overrides
 
@@ -854,6 +873,42 @@ class EnhancedVoiceHelpersTests(unittest.TestCase):
         self.assertTrue(block["supports_language"])
         self.assertEqual(block["voices"], [])  # free-text on the client
         self.assertIn("language", block["overrides"])
+
+    def test_gemini_adapter_keeps_operator_configured_base_url(self) -> None:
+        from plugin.relay import upstream_voice
+
+        captured: dict[str, object] = {}
+        tts_mod = sys.modules["tools.tts_tool"]
+        original = getattr(tts_mod, "_generate_gemini_tts", None)
+
+        def _capture(text: str, output_path: str, config: dict[str, object]) -> str:
+            captured["config"] = config
+            return output_path
+
+        try:
+            tts_mod._generate_gemini_tts = _capture
+            result = upstream_voice._synthesize_gemini(
+                {
+                    "provider": "gemini",
+                    "gemini": {"base_url": "https://operator.example", "voice": "Kore"},
+                },
+                "hello",
+                "voice.mp3",
+                {"base_url": "https://attacker.invalid", "voice": "Puck"},
+            )
+        finally:
+            if original is None:
+                delattr(tts_mod, "_generate_gemini_tts")
+            else:
+                tts_mod._generate_gemini_tts = original
+
+        self.assertEqual(result, {"success": True, "file_path": "voice.mp3"})
+        config = captured["config"]
+        assert isinstance(config, dict)
+        gemini = config["gemini"]
+        assert isinstance(gemini, dict)
+        self.assertEqual(gemini["base_url"], "https://operator.example")
+        self.assertEqual(gemini["voice"], "Puck")
 
     def test_apply_xai_speech_tags_calls_through_and_fails_soft(self) -> None:
         # Used by the streaming /voice/output renderer to match the synthesize

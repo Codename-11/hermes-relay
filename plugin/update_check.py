@@ -4,7 +4,7 @@ Hermes already ships the update *mechanism* — ``hermes plugins update
 hermes-relay`` for native plugin installs, ``hermes-relay-update`` for the
 full-relay installer. What was missing is *discovery*: telling the operator a
 newer release exists. This module compares the installed version against the
-latest ``plugin-v*`` GitHub release and picks the right update command for how
+latest ``server-v*`` GitHub release and picks the right update command for how
 this host was installed.
 
 Pure helpers (version parsing/compare, tag selection, command detection) carry
@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 GITHUB_RELEASES_URL = "https://api.github.com/repos/Codename-11/hermes-relay/releases"
-PLUGIN_TAG_PREFIX = "plugin-v"
+SERVER_TAG_PREFIX = "server-v"
+LEGACY_PLUGIN_TAG_PREFIX = "plugin-v"
 
 # Native-plugin update command vs. full-relay installer shim. Detected per host.
 _NATIVE_UPDATE_CMD = "hermes plugins update hermes-relay"
@@ -46,7 +47,7 @@ _SEMVER_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 def parse_semver(value: str) -> Optional[Tuple[int, int, int]]:
     """Extract ``(major, minor, patch)`` from a version-ish string.
 
-    Tolerates a leading ``v`` / ``plugin-v`` prefix and any pre-release suffix
+    Tolerates release-tag prefixes and any pre-release suffix
     (``1.2.0-rc1`` → ``(1, 2, 0)``). Returns ``None`` when no ``X.Y.Z`` core is
     present.
     """
@@ -76,22 +77,32 @@ def compare_versions(current: str, latest: str) -> int:
 
 
 def pick_latest_plugin_tag(releases: Any) -> Optional[str]:
-    """Pick the highest ``plugin-v*`` version from a GitHub releases payload.
+    """Pick the highest Server version from a GitHub releases payload.
 
     ``releases`` is the decoded JSON list from the GitHub releases API. Drafts
     are ignored; pre-releases are considered (the plugin ships ``-alpha``/``-rc``
     tags). Returns the bare version (``"1.3.0"``), or ``None`` when no plugin
-    release is present.
+    release is present. Canonical ``server-v*`` releases take precedence over
+    historical ``plugin-v*`` releases.
     """
     if not isinstance(releases, list):
         return None
+    canonical = [
+        rel for rel in releases
+        if isinstance(rel, dict)
+        and not rel.get("draft")
+        and isinstance(rel.get("tag_name"), str)
+        and rel["tag_name"].startswith(SERVER_TAG_PREFIX)
+    ]
+    candidates = canonical or releases
+    accepted_prefix = SERVER_TAG_PREFIX if canonical else LEGACY_PLUGIN_TAG_PREFIX
     best: Optional[Tuple[int, int, int]] = None
     best_name: Optional[str] = None
-    for rel in releases:
+    for rel in candidates:
         if not isinstance(rel, dict) or rel.get("draft"):
             continue
         tag = rel.get("tag_name") or ""
-        if not isinstance(tag, str) or not tag.startswith(PLUGIN_TAG_PREFIX):
+        if not isinstance(tag, str) or not tag.startswith(accepted_prefix):
             continue
         ver = parse_semver(tag)
         if ver is None:

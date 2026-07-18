@@ -1,5 +1,83 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-18 — Android 1.4.7 release preparation
+
+Android advanced to 1.4.7 with versionCode 30 after the localization, streaming,
+release-history, and branch-contract reconciliation landed on `dev`. The public
+changelog, GitHub release body, in-app What's New surfaces, Play metadata, and
+store-listing copy now describe the Android-only patch while the unreleased Relay
+security work remains assigned to its independent server release track.
+
+## 2026-07-17 — Smooth streamed-reply rendering and finalization
+
+Uninterrupted Gateway turns treat their structured live assistant, reasoning, and
+tool events as authoritative instead of immediately republishing the transcript
+through a full history read. Rejoined sockets, Sessions SSE, detached turns,
+profile-aware resume, errors, and missing-data recovery retain their required
+authoritative reconciliation paths.
+
+Bursty provider deltas now enter a main-thread frame pacer that publishes adaptive
+UTF-16-safe slices at a display-sized cadence. The visible live tail uses one stable
+plain-text node, ignores leading blank transport lines, and expands inside a short
+clipped size animation. Tool, thinking, completion, cancellation, and error
+boundaries still flush buffered content immediately and preserve event order.
+
+Bottom-following is driven by stable row identity, real drag interactions, measured
+positive tail growth, and structural anchors. The active response retains its live
+renderer through completion, settles the exact footer for two frames, and releases
+to full Markdown after another row becomes the tail or the session is revisited.
+This prevents both the completion-time top snap and the transient scroll-to-bottom
+button without interrupting readers who intentionally move into history.
+
+Focused stream-pacing, Unicode-boundary, leading-whitespace, Gateway reconnect,
+completion-policy, and scroll regressions passed. Repeated sideload builds and live
+phone tests verified smooth following, stable completion, exact-bottom settling,
+frame-paced text insertion, and clipped bubble growth.
+
+## 2026-07-17 — Stable chat rows across post-turn history reconciliation
+
+Android chat now separates the stable Compose identity of a visible message row
+from its authoritative server message ID. The post-turn history reconcile can
+adopt persisted IDs and rebuild message boundaries without making LazyColumn
+remove and reinsert the long answer currently anchoring the viewport.
+
+Regression coverage exercises both the same-count user/assistant ID adoption
+and a list-expansion reconcile that inserts persisted rows around a matched live
+tail. The focused ChatHandler and scroll-snapshot unit tests passed.
+
+## 2026-07-16 — Stable chat position after stream completion
+
+Android chat now observes the assistant message identity and the streaming-to-final
+transition as conversation-tail changes. When a reader is already following the
+response, completion performs an instant multi-frame bottom settle after the
+streaming renderer is replaced by the final Markdown layout. The existing
+user-scroll gate remains authoritative, so reading older messages is not
+interrupted.
+
+Focused snapshot regression coverage verifies completion detection, ordinary
+stream growth, stream startup, and server message-ID reconciliation.
+
+## 2026-07-16 — Critical Relay authorization hardening
+
+Relay privileged interfaces now enforce host-authorized policy at every shared
+dispatch boundary. Anonymous pairing-code minting was removed; pairing clients
+can no longer choose session lifetime or grants; Android bridge HTTP routes and
+terminal messages require live sessions with active route grants; ordinary
+session bearers can only reduce their own lifetime and existing grants; remote
+profile config reads expose an explicit public schema without host paths; and
+voice requests cannot override credential-bearing provider origins.
+
+Six bounded exploit harnesses stopped at the restored boundaries. The combined
+security regression set passed 96 tests, Python compilation passed, Ruff passed
+for changed modules and tests apart from the pre-existing unused `signal`
+import in `server.py`, and `git diff --check` passed. The broad plugin
+discovery run progressed through unrelated suites but was interrupted by the
+existing Windows async-suite `KeyboardInterrupt` behavior, so the focused
+security and neighboring route suites remain the authoritative local result.
+The required-check path classifier now reads changed paths from the checked-out
+PR merge commit instead of GitHub's PR-files API, so an API outage cannot skip
+every surface check.
+
 ## 2026-07-16 — Fix production docs asset context
 
 Updated the production docs Docker stage to build from the same full repository
@@ -123,6 +201,60 @@ path is unchanged.
 Verification: seven profile-avatar endpoint tests and the focused Android host
 avatar client plus profile-controller suites passed. Android lint and final diff
 checks are recorded with the completed work.
+
+## 2026-07-15 — Repository branch, release, and hotfix contract reconciliation
+
+Repository guidance now has one provider-neutral branch contract in `AGENTS.md`:
+normal work, including documentation, branches from and returns to `dev`; release
+preparation happens on `dev`; approved release PRs merge `dev` to `main`; and
+immutable surface tags are cut from the new `main` tip. Staging is an environment
+sourced from an exact tested SHA or release-candidate tag. Production uses
+`android-v*`, `server-v*`, or `desktop-v*`. Hotfixes branch from the affected
+production tag, change and patch-bump only that surface, merge to `main`, tag,
+verify, and immediately merge `main` back into `dev`.
+
+Stable release workflows now require the tagged commit to be contained in
+`main`, require the tag to match the authoritative surface version source, and
+require a matching `CHANGELOG.md` release heading before any build or publish
+job. Server and Desktop use the canonical `server-v*` and `desktop-v*` prefixes;
+runtime update discovery retains fallback support for immutable historical
+`plugin-v*` and `cli-v*` releases. No historical tag was moved or rewritten.
+
+Audit inventory:
+
+- Canonical/root guidance: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
+  `RELEASE.md`, `README.md`, `DEVLOG.md`, `PLUGIN_RELEASE_NOTES.md`, and
+  `CLI_RELEASE_NOTES.md`.
+- Contributor metadata: `.github/PULL_REQUEST_TEMPLATE.md`; every file in
+  `.github/ISSUE_TEMPLATE/` (`bug_report.yml`, `config.yml`, `docs.yml`,
+  `feature_request.yml`, and `translation.yml`); `.github/copilot-instructions.md`;
+  and `.github/dependabot.yml`.
+- GitHub workflows: `approve-release-android.yml`, `ci-android.yml`,
+  `ci-contract.yml`, `ci-dashboard.yml`, `ci-desktop.yml`, `ci-plugin.yml`,
+  `ci-required.yml`, `dependabot-auto-merge.yml`, `docs.yml`, `issue-triage.yml`,
+  `play-listing.yml`, `play-preflight-android.yml`, `release-android.yml`,
+  `release-cli.yml`, and `release-plugin.yml`.
+- Developer documentation: every Markdown file directly under `docs/`, plus
+  `docs/audits/`, `docs/diagrams/`, and `docs/mockups/`. Historical files under
+  `docs/plans/` were inspected for classification but not rewritten as current
+  instructions. Current contradictions were corrected in `docs/decisions.md`
+  and `docs/worktree-workflow.md`.
+- Public documentation: every Markdown file under `user-docs/`, including the
+  architecture, desktop, features, guide, reference, and `zh-CN` trees. Current
+  tag guidance was corrected in `user-docs/desktop/index.md` and
+  `user-docs/desktop/installation.md`.
+- Release/runtime seams: all three release workflows; `scripts/bump-version.sh`,
+  `scripts/bump-plugin-version.sh`, `scripts/check-version-tracks.py`, and
+  `scripts/check-plugin-version-sync.py`; Desktop install/update sources under
+  `desktop/scripts/` and `desktop/src/`; and Server update-discovery sources and
+  focused tests under `plugin/`.
+
+The repository audit also confirmed that GitHub-owned settings cannot be
+reconciled through repository files. The default branch correctly remained
+`main`, the release-history branch. At audit time, `dev` was unprotected, squash
+and rebase merges were enabled, and `main` protection did not apply to
+administrators. An operator must align those remaining settings with the
+documented contract.
 
 ## 2026-07-15 — Android 1.4.5 release and automated Play gate
 

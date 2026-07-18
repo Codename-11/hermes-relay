@@ -53,6 +53,12 @@ class _FakeSession:
 class _FakeServer:
     def __init__(self, bridge: BridgeHandler) -> None:
         self.bridge = bridge
+        session = _FakeSession("bridge-test-token", "test", "test")
+        self.sessions = type(
+            "FakeSessions",
+            (),
+            {"get_session": lambda _self, token: session if token == session.token else None},
+        )()
 
 
 class _FakeRequest:
@@ -70,6 +76,7 @@ class _FakeRequest:
         self.query = query or {}
         self._body = body
         self.remote = remote
+        self.headers = {"Authorization": "Bearer bridge-test-token"}
 
     @property
     def body_exists(self) -> bool:
