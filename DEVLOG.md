@@ -70,6 +70,16 @@ The required-check path classifier now reads changed paths from the checked-out
 PR merge commit instead of GitHub's PR-files API, so an API outage cannot skip
 every surface check.
 
+## 2026-07-16 — Fix production docs asset context
+
+Updated the production docs Docker stage to build from the same full repository
+checkout used by CI rather than a hand-maintained file allowlist. This supplies
+the canonical screenshot manifest, localization registry and validators, route
+contract source, version metadata, and preview renderer without creating
+Docker-only `ENOENT` failures when those build inputs grow. Both Node build
+stages now install Python 3 so the localized website and docs validators run
+inside the production image build as they do in CI.
+
 ## 2026-07-16 — Localized marketing site
 
 The Astro product site now publishes German, Spanish, Japanese, Brazilian
