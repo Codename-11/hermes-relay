@@ -55,6 +55,60 @@ const READY_TIMEOUT_MS = 60_000
 // killed legitimate work.
 const TURN_IDLE_TIMEOUT_MS = 10 * 60_000
 
+export interface OneTurnModelSelection {
+  command: string
+  label: string
+}
+
+/** Parse the upstream `/model ... --once` form without arming server state. */
+export function parseOneTurnModelCommand(line: string): OneTurnModelSelection | null {
+  const trimmed = line.trim()
+  const tokens = trimmed.split(/\s+/)
+  if (tokens[0] !== '/model' || !tokens.includes('--once')) {
+    return null
+  }
+  let model: string | null = null
+  let provider: string | null = null
+  for (let i = 1; i < tokens.length; i += 1) {
+    if (tokens[i] === '--provider') {
+      provider = tokens[i + 1] && !tokens[i + 1].startsWith('--') ? tokens[++i] : null
+    } else if (!tokens[i].startsWith('--') && model === null) {
+      model = tokens[i]
+    }
+  }
+  if (!model && !provider) {
+    return null
+  }
+  return { command: trimmed, label: model ?? `${provider} provider` }
+}
+
+function oneTurnModelFromArgs(args: ParsedArgs): OneTurnModelSelection | null {
+  const model = flag(args, 'model-once')?.trim()
+  if (!model) {
+    return null
+  }
+  const provider = flag(args, 'model-provider')?.trim()
+  return {
+    command: `/model ${model}${provider ? ` --provider ${provider}` : ''} --once`,
+    label: model
+  }
+}
+
+async function armOneTurnModel(
+  gw: GatewayClient,
+  sessionId: string,
+  selection: OneTurnModelSelection
+): Promise<void> {
+  const raw = await gw.request<Record<string, unknown>>('slash.exec', {
+    session_id: sessionId,
+    command: selection.command
+  })
+  const result = asRpcResult<Record<string, unknown>>(raw)
+  if (!result) {
+    throw new Error('gateway did not accept the one-turn model override')
+  }
+}
+
 function flag(args: ParsedArgs, name: string): string | null {
   const v = args.flags[name]
   return typeof v === 'string' ? v : null
@@ -389,6 +443,7 @@ const SLASH_HELP = [
   '  /screenshot primary  — capture primary monitor only',
   '  /screenshot <N>      — capture monitor N (0 = primary, 1+ = secondary)',
   '  /image <path>        — attach image file (png/jpg/jpeg/webp/gif)',
+  '  /model <name> --once — use a model for the next turn only',
   '  /quit /exit :q       — exit',
   '  /help                — this list'
 ].join('\n')
@@ -672,18 +727,43 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     }
   })
 
+  // Kept only in this process until immediately before prompt.submit. Merely
+  // choosing --model-once (or the REPL slash form) never mutates the session,
+  // so quitting/restarting before Send cannot leave a stale override armed.
+  let pendingOneTurnModel = oneTurnModelFromArgs(args)
+
+  const runPrompt = async (prompt: string): Promise<TurnHandle> => {
+    const once = pendingOneTurnModel
+    if (once) {
+      await armOneTurnModel(gw, session.sessionId, once)
+      pendingOneTurnModel = null
+      process.stderr.write(`[one turn: ${once.label}]\n`)
+    }
+    return runOneTurn(gw, session.sessionId, prompt, renderer)
+  }
+
+  const reportModelRestore = (once: OneTurnModelSelection | null) => {
+    if (once && pendingOneTurnModel !== once) {
+      process.stderr.write(`[model restored: ${session.model ?? 'server default'}]\n`)
+    }
+  }
+
   // Mode detection — one-shot vs piped vs REPL.
 
   const oneShotPrompt = args.positional.join(' ').trim()
   if (oneShotPrompt) {
+    const once = pendingOneTurnModel
     try {
-      await runOneTurn(gw, session.sessionId, oneShotPrompt, renderer).promise
+      const turn = await runPrompt(oneShotPrompt)
+      await turn.promise
       tearDown()
       return 0
     } catch (e) {
       process.stderr.write(`\nerror: ${rpcErrorMessage(e)}\n`)
       tearDown()
       return 1
+    } finally {
+      reportModelRestore(once)
     }
   }
 
@@ -694,14 +774,18 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
       tearDown()
       return 0
     }
+    const once = pendingOneTurnModel
     try {
-      await runOneTurn(gw, session.sessionId, piped, renderer).promise
+      const turn = await runPrompt(piped)
+      await turn.promise
       tearDown()
       return 0
     } catch (e) {
       process.stderr.write(`\nerror: ${rpcErrorMessage(e)}\n`)
       tearDown()
       return 1
+    } finally {
+      reportModelRestore(once)
     }
   }
 
@@ -752,6 +836,13 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
       continue
     }
 
+    const oneTurnSelection = parseOneTurnModelCommand(trimmed)
+    if (oneTurnSelection) {
+      pendingOneTurnModel = oneTurnSelection
+      process.stderr.write(`[next turn model: ${oneTurnSelection.label}; not persisted]\n`)
+      continue
+    }
+
     // Image-attach slash commands — ship bytes to the server, then loop
     // back without consuming a turn. The NEXT message the user types is
     // the one the agent sees (with the attached image auto-enriched
@@ -798,15 +889,17 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
       continue
     }
 
-    const turn = runOneTurn(gw, session.sessionId, trimmed, renderer)
-    currentTurn = turn
+    const once = pendingOneTurnModel
     try {
+      const turn = await runPrompt(trimmed)
+      currentTurn = turn
       await turn.promise
     } catch (e) {
       process.stderr.write(`\nerror: ${rpcErrorMessage(e)}\n`)
       exitCode = 1
     } finally {
       currentTurn = null
+      reportModelRestore(once)
     }
   }
 

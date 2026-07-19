@@ -466,6 +466,10 @@ class GatewayChatClient(
      *   into the session's USER messages (counted from the first user
      *   message). The server drops that message and everything after it
      *   before running [text] as a fresh turn.
+     * @param oneTurnModelCommand optional full `/model ... --once` command.
+     *   It is dispatched only after the live session and attachments are ready,
+     *   immediately before `prompt.submit`, so merely selecting a one-turn model
+     *   never leaves a server-side override armed across an app restart.
      * @param onPreflightFailure invoked INSTEAD of starting the turn when the
      *   gateway could not be reached / authenticated / the prompt could not
      *   be submitted — i.e. nothing started server-side, so the caller can
@@ -479,6 +483,7 @@ class GatewayChatClient(
         callbacks: GatewayTurnCallbacks,
         attachments: List<GatewayAttachment> = emptyList(),
         truncateBeforeUserOrdinal: Int? = null,
+        oneTurnModelCommand: String? = null,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -507,6 +512,20 @@ class GatewayChatClient(
                 }
                 if (turn.cancelled) return@launch
                 if (!awaitCancelledTurnDrain(turn, storedSessionId)) return@launch
+                if (!oneTurnModelCommand.isNullOrBlank()) {
+                    rpc(
+                        "slash.exec",
+                        buildJsonObject {
+                            put("session_id", liveSessionId ?: error("no live session"))
+                            put("command", oneTurnModelCommand)
+                        },
+                    ).getOrElse { e ->
+                        throw GatewayPreflightException(
+                            "one-turn model switch failed: ${e.message}",
+                        )
+                    }
+                }
+                if (turn.cancelled) return@launch
                 activeTurn = turn
                 turn.armWatchdog()
                 val submitted = rpc(

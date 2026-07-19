@@ -590,6 +590,30 @@ class ChatViewModel : ViewModel() {
      */
     private val _selectedProviderOverride = MutableStateFlow<String?>(null)
 
+    /** In-memory-only model choice for exactly the next submitted chat turn. */
+    data class OneTurnModelOverride(val model: String, val provider: String? = null)
+
+    private val _pendingOneTurnModelOverride = MutableStateFlow<OneTurnModelOverride?>(null)
+    val pendingOneTurnModelOverride: StateFlow<OneTurnModelOverride?> =
+        _pendingOneTurnModelOverride.asStateFlow()
+
+    private val _activeOneTurnModelOverride = MutableStateFlow<OneTurnModelOverride?>(null)
+    val activeOneTurnModelOverride: StateFlow<OneTurnModelOverride?> =
+        _activeOneTurnModelOverride.asStateFlow()
+
+    /** Queue a model locally; gateway state is not touched until Send. */
+    fun selectModelOnce(model: String, provider: String? = null) {
+        val requested = AgentDisplay.requestModelName(model) ?: return
+        _pendingOneTurnModelOverride.value = OneTurnModelOverride(
+            model = requested,
+            provider = provider?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    fun clearModelOnce() {
+        _pendingOneTurnModelOverride.value = null
+    }
+
     fun fetchModels() {
         val client = apiClient ?: return
         viewModelScope.launch { _availableModels.value = client.getModels() }
@@ -604,6 +628,7 @@ class ChatViewModel : ViewModel() {
      * default.
      */
     fun selectModel(model: String?, provider: String? = null) {
+        _pendingOneTurnModelOverride.value = null
         _selectedModelOverride.value = AgentDisplay.requestModelName(model)
         // Keep the provider paired with the model pick so a fresh chat's
         // session.create can bind both (gateway needs the provider to resolve
@@ -2318,6 +2343,8 @@ class ChatViewModel : ViewModel() {
                 historyLoadGeneration.incrementAndGet()
                 sessionRefreshGeneration.incrementAndGet()
                 intentionallyCancelled = true
+                _pendingOneTurnModelOverride.value = null
+                _activeOneTurnModelOverride.value = null
                 activeStreamDeltas?.discard()
                 activeStreamDeltas = null
                 activeStream?.cancel()
@@ -3859,6 +3886,7 @@ class ChatViewModel : ViewModel() {
         activeStreamDeltas = null
         val checkpoint = if (canBackground) buildTurnCheckpoint() else null
         if (canBackground && gateway.backgroundActiveTurn()) {
+            _activeOneTurnModelOverride.value = null
             if (checkpoint != null) {
                 val key = TurnCheckpointKey(checkpoint.contextKey, checkpoint.sessionId)
                 backgroundTurnCheckpoints[key] = checkpoint
@@ -3881,6 +3909,7 @@ class ChatViewModel : ViewModel() {
 
         clearTurnCheckpoint()
         intentionallyCancelled = true
+        _activeOneTurnModelOverride.value = null
         activeStream?.cancel()
         activeStream = null
         activeStreamIsGateway = false
@@ -4424,6 +4453,9 @@ class ChatViewModel : ViewModel() {
 
     private fun sendMessageInternal(client: HermesApiClient, handler: ChatHandler, text: String) {
         AppAnalytics.onMessageSent()
+        val oneTurnModelOverride = _pendingOneTurnModelOverride.value
+        _pendingOneTurnModelOverride.value = null
+        _activeOneTurnModelOverride.value = oneTurnModelOverride
         val interfaceContextPrompt = nextInterfaceContextPrompt
         nextInterfaceContextPrompt = null
 
@@ -4454,6 +4486,13 @@ class ChatViewModel : ViewModel() {
         // poll for the NEW one (by difference) and switch to it.
         pendingThread?.let { pending ->
             pendingThread = null
+            _activeOneTurnModelOverride.value = null
+            if (oneTurnModelOverride != null) {
+                _pendingOneTurnModelOverride.value = oneTurnModelOverride
+                handler.addSystemNotice(
+                    "One-turn model choices apply to normal Hermes chat turns, not Threads.",
+                )
+            }
             val send = onProactiveReply
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
@@ -4479,6 +4518,13 @@ class ChatViewModel : ViewModel() {
         // expose it); unknown → null → the relay/adapter's home channel ("phone").
         val activeThread = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
         if (activeThread?.source == "phone") {
+            _activeOneTurnModelOverride.value = null
+            if (oneTurnModelOverride != null) {
+                _pendingOneTurnModelOverride.value = oneTurnModelOverride
+                handler.addSystemNotice(
+                    "One-turn model choices apply to normal Hermes chat turns, not Threads.",
+                )
+            }
             val send = onProactiveReply
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
@@ -5535,6 +5581,11 @@ class ChatViewModel : ViewModel() {
         }
         val onCompleteCb = {
             flushAndReleaseStreamDeltas()
+            val completedOneTurnModel = _activeOneTurnModelOverride.value
+            _activeOneTurnModelOverride.value = null
+            if (completedOneTurnModel != null && streamingEndpoint == "gateway") {
+                refreshModelOptions()
+            }
             // Double-finalize guard: if a straggler completion arrives while
             // the answer-recovery poller is running, the normal completion
             // wins — stop the poller before finalizing so the turn can't
@@ -5645,6 +5696,11 @@ class ChatViewModel : ViewModel() {
         }
         val onErrorCb = { errorMsg: String ->
             flushAndReleaseStreamDeltas()
+            val failedOneTurnModel = _activeOneTurnModelOverride.value
+            _activeOneTurnModelOverride.value = null
+            if (failedOneTurnModel != null && streamingEndpoint == "gateway") {
+                refreshModelOptions()
+            }
             val errorSessionId = handler.currentSessionId.value
             if (intentionallyCancelled) {
                 intentionallyCancelled = false
@@ -5786,6 +5842,8 @@ class ChatViewModel : ViewModel() {
         // a model from profile B.
         val modelOverride: String? = AgentDisplay.requestModelName(
             when {
+                _activeOneTurnModelOverride.value != null ->
+                    _activeOneTurnModelOverride.value?.model
                 useIsolatedProfileApi -> null
                 // An explicit in-chat model pick wins over the profile's model.
                 !_selectedModelOverride.value.isNullOrBlank() -> _selectedModelOverride.value
@@ -6044,12 +6102,21 @@ class ChatViewModel : ViewModel() {
                     attachments = attachments.orEmpty()
                         .map { it.toGatewayAttachment() },
                     truncateBeforeUserOrdinal = truncateOrdinal,
+                    oneTurnModelCommand = _activeOneTurnModelOverride.value?.let { once ->
+                        buildString {
+                            append("/model ")
+                            append(once.model)
+                            once.provider?.let { append(" --provider ").append(it) }
+                            append(" --once")
+                        }
+                    },
                     onPreflightFailure = {
                         _steerableTurn.value = false
                         if (intentionallyCancelled) {
                             // User cancelled while preflight was in flight —
                             // don't resurrect the turn on SSE.
                             intentionallyCancelled = false
+                            _activeOneTurnModelOverride.value = null
                             activeStream = null
                         } else {
                             // Nothing started server-side — rerun this turn on
@@ -6136,6 +6203,7 @@ class ChatViewModel : ViewModel() {
 
     fun cancelStream() {
         intentionallyCancelled = true
+        _activeOneTurnModelOverride.value = null
         // User Stop also aborts a dropped-stream answer recovery. settleUi
         // false: the Stopped-badge block below finalizes the placeholder
         // itself (completing it here first would hide it from findLast).

@@ -390,6 +390,17 @@ The /tmp directory contains …
 
 Ctrl+C during a turn interrupts that turn (via `session.interrupt`). Ctrl+C at the empty prompt exits.
 
+Use an upstream model for one turn without changing the session default:
+
+```sh
+hermes-relay chat --model-once sonnet --model-provider anthropic "summarize this"
+```
+
+In the REPL, `/model sonnet --once` queues the choice locally; it is sent to
+the gateway only when the next prompt is submitted. Completion, interruption,
+or failure restores the prior model upstream, and quitting before the prompt
+does not persist or arm the choice.
+
 #### Relay WSS typed-stream mode
 
 `chat` keeps the gateway/TUI session path above as its default. Paired clients
