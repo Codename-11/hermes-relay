@@ -86,18 +86,6 @@ class ProfileDiscoveryTests(unittest.TestCase):
         self.profiles_dir = self.hermes_dir / "profiles"
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
 
-        # `_probe_gateway_running` cross-checks /proc/<pid>/comm + /proc/<pid>/cmdline
-        # for "hermes" or "gateway" to defend against PID reuse. The test process
-        # is `python3` and won't match — patch the comm/cmdline check to True so
-        # the gateway-running probe degrades to "PID exists + start_time matches"
-        # for these tests. Both predicates remain enforced in production code.
-        self._comm_patcher = patch(
-            "plugin.relay.config._pid_matches_hermes",
-            return_value=True,
-        )
-        self._comm_patcher.start()
-        self.addCleanup(self._comm_patcher.stop)
-
     def _start_live_process(self) -> subprocess.Popen[bytes]:
         """Start a disposable process for PID liveness tests."""
         process = subprocess.Popen(
