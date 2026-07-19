@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import unittest
 from unittest import mock
 
@@ -75,6 +77,43 @@ class BootstrapSessionOffloadTest(unittest.IsolatedAsyncioTestCase):
         raw_db.search_messages.assert_called_once_with(
             query="older", limit=5, offset=0
         )
+
+    async def test_first_construction_is_offloaded_and_shared(self) -> None:
+        constructor_started = threading.Event()
+        allow_constructor_return = threading.Event()
+        constructor_saw_ticker: list[bool] = []
+        raw_db = mock.MagicMock()
+        raw_db.search_messages.return_value = []
+
+        def make_db():
+            constructor_started.set()
+            constructor_saw_ticker.append(allow_constructor_return.wait(timeout=1.0))
+            return raw_db
+
+        session_db_cls = mock.MagicMock(side_effect=make_db)
+        upstream = {
+            "web": web,
+            "SessionDB": session_db_cls,
+            "AsyncSessionDB": None,
+        }
+        handler = _handlers._make_session_search_handlers(
+            _Adapter(), upstream
+        )["search_sessions"]
+
+        async def tick_after_constructor_starts() -> None:
+            while not constructor_started.is_set():
+                await asyncio.sleep(0)
+            allow_constructor_return.set()
+
+        responses = await asyncio.gather(
+            handler(_Request(query={"q": "first"})),
+            handler(_Request(query={"q": "second"})),
+            tick_after_constructor_starts(),
+        )
+
+        self.assertEqual([response.status for response in responses[:2]], [200, 200])
+        self.assertEqual(constructor_saw_ticker, [True])
+        session_db_cls.assert_called_once_with()
 
 
 class _BudgetedMemoryStore:

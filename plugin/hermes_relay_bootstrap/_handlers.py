@@ -149,12 +149,35 @@ def _state_for(adapter) -> Dict[str, Any]:
     return state
 
 
-def _get_session_db(adapter, upstream):
+async def _get_session_db(adapter, upstream):
+    """Return the cached SessionDB without constructing it on the event loop."""
     state = _state_for(adapter)
     db = state.get("session_db")
-    if db is None:
-        db = upstream["SessionDB"]()
-        state["session_db"] = db
+    if db is not None:
+        return db
+
+    # Cache the in-flight task as well as the completed instance. Two first
+    # requests can arrive before SQLite schema/FTS initialization completes;
+    # they must share one constructor rather than opening competing stores.
+    init_task = state.get("session_db_init_task")
+    if init_task is None:
+        init_task = asyncio.create_task(asyncio.to_thread(upstream["SessionDB"]))
+        state["session_db_init_task"] = init_task
+
+    try:
+        # A disconnected HTTP client must not cancel the shared constructor
+        # while another first request is waiting for the same database.
+        db = await asyncio.shield(init_task)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        if state.get("session_db_init_task") is init_task:
+            state.pop("session_db_init_task", None)
+        raise
+
+    state["session_db"] = db
+    if state.get("session_db_init_task") is init_task:
+        state.pop("session_db_init_task", None)
     return db
 
 
@@ -170,11 +193,11 @@ async def _call_session_db(adapter, upstream, method: str, *args, **kwargs):
     if async_db_cls is not None:
         db = state.get("async_session_db")
         if db is None:
-            db = async_db_cls(_get_session_db(adapter, upstream))
+            db = async_db_cls(await _get_session_db(adapter, upstream))
             state["async_session_db"] = db
         return await getattr(db, method)(*args, **kwargs)
 
-    db = _get_session_db(adapter, upstream)
+    db = await _get_session_db(adapter, upstream)
     return await asyncio.to_thread(getattr(db, method), *args, **kwargs)
 
 
