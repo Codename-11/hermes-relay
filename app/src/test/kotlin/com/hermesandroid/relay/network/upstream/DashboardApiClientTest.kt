@@ -60,6 +60,36 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun getStatus_parsesNousAndOptionalGatewayTopology() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """
+                {
+                  "auth_required": false,
+                  "nous_session_valid": "terminal",
+                  "profiles": ["default", "worker"],
+                  "gateway_mode": "multiplex",
+                  "gateways": [{
+                    "profile": "default",
+                    "ports": {"api_server": 8642, "webhook": 8080},
+                    "served_profiles": ["default", "worker"]
+                  }]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val status = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getStatus().getOrThrow()
+
+        assertEquals("terminal", status.nousSessionValid)
+        assertEquals(listOf("default", "worker"), status.profiles)
+        assertEquals("multiplex", status.gatewayMode)
+        assertEquals(8642, status.gateways.single().ports["api_server"])
+        assertEquals(listOf("default", "worker"), status.gateways.single().servedProfiles)
+    }
+
+    @Test
     fun getModelOptions_alwaysRequestsUnconfiguredProviders() = runTest {
         // HRUI-022: newer upstream hides unconfigured provider skeleton rows
         // unless the client opts in — without include_unconfigured=1 the

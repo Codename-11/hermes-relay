@@ -3139,4 +3139,10 @@
     <string name="tool_output_risk_a11y">, %1$s output risk</string>
     <string name="tool_output_risk_findings">Output risk findings</string>
     <string name="tool_output_risk_redacted">Sensitive spans were redacted upstream.</string>
+    <string name="diag_gateway_heartbeat" translatable="false">Gateway loop: %1$s%2$s</string>
+    <string name="diag_toolsets_inventory" translatable="false">API toolsets: %1$d of %2$d enabled · Relay tools visible: %3$s</string>
+    <string name="diag_yes" translatable="false">yes</string>
+    <string name="diag_no" translatable="false">no</string>
+    <string name="dashboard_nous_terminal_warning" translatable="false">Nous sign-in is no longer valid. Sign in again before starting an inference turn.</string>
+    <string name="dashboard_gateway_topology" translatable="false">Gateway: %1$s · Profiles: %2$s · Ports: %3$s</string>
 </resources>

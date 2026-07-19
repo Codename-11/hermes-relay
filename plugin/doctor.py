@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .compat import collect_compat_status
+from .gateway_diagnostics import assess_gateway_heartbeat
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_NAME = "hermes-relay"
@@ -330,6 +331,7 @@ def collect_doctor_report(
     port = relay_port if relay_port is not None else _default_relay_port()
 
     api_capabilities = probe(_url(api_base, "/v1/capabilities"), method="GET", timeout=timeout)
+    api_toolsets = probe(_url(api_base, "/v1/toolsets"), method="GET", timeout=timeout)
     dashboard_status = probe(_url(dashboard_base, "/api/status"), method="GET", timeout=timeout)
     dashboard_audio = probe(
         _url(dashboard_base, "/api/audio/transcribe"),
@@ -369,6 +371,7 @@ def collect_doctor_report(
     duplicate_dirs = _duplicate_plugin_dirs(plugins_root, plugin_name)
     bootstrap = _bootstrap_status(site_dirs)
     relay_import = _relay_import_chain()
+    gateway_heartbeat = assess_gateway_heartbeat()
     checks: list[dict[str, str]] = []
 
     _check(
@@ -406,12 +409,58 @@ def collect_doctor_report(
     )
     _check(
         checks,
+        "api-toolsets",
+        "ok" if api_toolsets.get("ok") else ("ok" if api_toolsets.get("exists") else "warn"),
+        "standard API /v1/toolsets reachable"
+        if api_toolsets.get("ok")
+        else (
+            "standard API /v1/toolsets exists (authentication required for inventory)"
+            if api_toolsets.get("exists")
+            else "standard API /v1/toolsets was not detected"
+        ),
+    )
+    _check(
+        checks,
         "dashboard-status",
         "ok" if dashboard_status.get("ok") else "warn",
         "dashboard /api/status reachable"
         if dashboard_status.get("ok")
         else "dashboard not reachable from this host",
     )
+    dashboard_json = dashboard_status.get("json")
+    topology = dashboard_json if isinstance(dashboard_json, dict) else {}
+    nous_state = topology.get("nous_session_valid")
+    if nous_state == "terminal":
+        _check(
+            checks,
+            "dashboard-nous-session",
+            "warn",
+            "Nous bootstrap session is terminal; sign in again before inference",
+        )
+
+    mode = topology.get("gateway_mode")
+    profiles = topology.get("profiles")
+    if isinstance(mode, str) or isinstance(profiles, list):
+        safe_profiles = [str(item) for item in (profiles or []) if isinstance(item, str)]
+        summary = f"gateway mode {mode or 'unknown'}"
+        if safe_profiles:
+            summary += f"; profiles: {', '.join(safe_profiles)}"
+        _check(checks, "dashboard-topology", "ok", summary)
+
+    heartbeat_status = gateway_heartbeat["status"]
+    heartbeat_check_status = (
+        "warn" if heartbeat_status in {"stale", "malformed", "pid_mismatch", "start_mismatch"} else "ok"
+    )
+    heartbeat_summary = {
+        "fresh": "upstream gateway event loop heartbeat is fresh",
+        "stale": "upstream gateway event loop heartbeat is stale",
+        "malformed": "upstream gateway heartbeat is malformed",
+        "pid_mismatch": "upstream gateway heartbeat PID does not match gateway ownership",
+        "start_mismatch": "upstream gateway heartbeat belongs to an earlier process start",
+        "legacy": "running gateway does not expose the event-loop heartbeat (older Hermes)",
+        "missing": "gateway event-loop heartbeat is not present",
+    }[heartbeat_status]
+    _check(checks, "gateway-heartbeat", heartbeat_check_status, heartbeat_summary)
     _check(
         checks,
         "dashboard-manage-surface",
@@ -490,7 +539,7 @@ def collect_doctor_report(
         "standard": {
             "api_url": api_base,
             "dashboard_url": dashboard_base,
-            "api": {"capabilities": api_capabilities},
+            "api": {"capabilities": api_capabilities, "toolsets": api_toolsets},
             "dashboard": {
                 "status": dashboard_status,
                 "audio_transcribe": dashboard_audio,
@@ -505,6 +554,7 @@ def collect_doctor_report(
             "info": relay_info,
             "import_chain": relay_import,
         },
+        "gateway_heartbeat": gateway_heartbeat,
         "bootstrap": bootstrap,
         "lifecycle": {
             "upstream_plugin_remove_cleans_external_artifacts": False,

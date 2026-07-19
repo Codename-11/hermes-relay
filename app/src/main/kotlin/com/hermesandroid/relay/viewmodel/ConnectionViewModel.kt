@@ -63,6 +63,7 @@ import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
@@ -1917,6 +1918,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _relayInfo = MutableStateFlow<RelayHttpClient.RelayInfo?>(null)
     val relayInfo: StateFlow<RelayHttpClient.RelayInfo?> = _relayInfo.asStateFlow()
+    private val _toolsetInventory = MutableStateFlow<List<ToolsetInfo>?>(null)
+    val toolsetInventory: StateFlow<List<ToolsetInfo>?> = _toolsetInventory.asStateFlow()
     private val _diagnosticsCheckedAt = MutableStateFlow<Long?>(null)
     val diagnosticsCheckedAt: StateFlow<Long?> = _diagnosticsCheckedAt.asStateFlow()
     private val _diagnosticsRefreshing = MutableStateFlow(false)
@@ -1937,6 +1940,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val info = relayHttpClient.fetchRelayInfo().getOrNull()
             _relayInfo.value = info
+            _toolsetInventory.value = _apiClient.value?.getToolsets()?.getOrNull()
             relayHttpClient.fetchUpdateCheck().onSuccess { _relayUpdateInfo.value = it }
             _diagnosticsCheckedAt.value = System.currentTimeMillis()
             _diagnosticsRefreshing.value = false

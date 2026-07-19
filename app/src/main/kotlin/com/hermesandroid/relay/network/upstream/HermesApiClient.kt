@@ -21,6 +21,7 @@ import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -157,6 +158,25 @@ internal fun parseSkillListBody(json: Json, body: String): List<SkillInfo>? {
     } catch (_: Exception) {
         return null
     }
+}
+
+@Serializable
+data class ToolsetInfo(
+    val name: String,
+    val label: String = "",
+    val description: String = "",
+    val enabled: Boolean = false,
+    val configured: Boolean = false,
+    val tools: List<String> = emptyList(),
+)
+
+@Serializable
+private data class ToolsetListResponse(val data: List<ToolsetInfo> = emptyList())
+
+internal fun parseToolsetListBody(json: Json, body: String): List<ToolsetInfo>? = try {
+    json.decodeFromString<ToolsetListResponse>(body).data
+} catch (_: Exception) {
+    null
 }
 
 /**
@@ -443,6 +463,24 @@ class HermesApiClient(
         }
 
         emptyList()
+    }
+
+    /** Authenticated read-only inventory from upstream `GET /v1/toolsets`. */
+    suspend fun getToolsets(): Result<List<ToolsetInfo>> = withContext(Dispatchers.IO) {
+        try {
+            val request = authRequest("$baseUrl/v1/toolsets").get().build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IOException("HTTP ${response.code}"))
+                }
+                val body = response.body?.string().orEmpty()
+                val parsed = parseToolsetListBody(json, body)
+                    ?: return@withContext Result.failure(IOException("Malformed toolset inventory"))
+                Result.success(parsed)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     // --- Available models ---
