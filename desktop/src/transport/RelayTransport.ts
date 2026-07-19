@@ -10,12 +10,13 @@
 
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { connect as tlsConnect } from 'node:tls'
+import * as tls from 'node:tls'
 
 import { comparePins, extractSpkiSha256, isSecureUrl, pinKey } from '../certPin.js'
 import type { GatewayEvent } from '../gatewayTypes.js'
 import { CircularBuffer } from '../lib/circularBuffer.js'
 import { getSession, saveSession } from '../remoteSessions.js'
+import { installWindowsSystemCaTrust } from '../windowsSystemCa.js'
 
 import type { Transport } from './Transport.js'
 
@@ -43,6 +44,11 @@ const RECONNECT_MAX_MS = 30_000
 const RECONNECT_BACKOFF_CEIL = 4 // cap the exponent so 2^n doesn't overflow past MAX
 const RECONNECT_RATE_LIMITED_MS = 5 * 60 * 1000
 const TLS_PROBE_TIMEOUT_MS = 10_000
+
+// Install Windows roots before either TLS client creates a secure context.
+// This changes only Node on Windows; Bun and other platforms retain their
+// runtime-owned trust behavior.
+installWindowsSystemCaTrust(tls)
 
 const truncateLine = (line: string) =>
   line.length > MAX_LOG_LINE_BYTES ? `${line.slice(0, MAX_LOG_LINE_BYTES)}… [truncated ${line.length} bytes]` : line
@@ -380,7 +386,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     const expectedPin = stored?.certPinSha256 ?? null
 
     const actualPin = await new Promise<string>((resolve, reject) => {
-      const socket = tlsConnect({
+      const socket = tls.connect({
         host,
         port,
         servername: host,

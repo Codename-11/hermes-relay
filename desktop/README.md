@@ -178,6 +178,13 @@ Modes combine: `--purge --service` runs both.
 - **For the `curl | sh` / `irm | iex` binary install:** no runtime deps — the binary is self-contained. `~/.hermes/bin/` on PATH.
 - **For local clone + `npm link`:** Node.js ≥21 — needed for the built-in global `WebSocket`. Older Node needs `--experimental-websocket`; we don't support that.
 
+On Windows, the prebuilt CLI trusts certificates from the Windows system store
+in addition to its bundled roots. Local Node runs gain the same behavior on
+Node 22.19 or newer; older supported Node releases keep their existing bundled
+and `NODE_EXTRA_CA_CERTS` trust behavior because they do not expose the required
+system-CA APIs. Certificate validation is never disabled, and the Relay's TOFU
+SPKI pin is still checked after the certificate chain is accepted.
+
 ## First-time pairing
 
 On the Hermes host, mint a one-time pairing invite:
