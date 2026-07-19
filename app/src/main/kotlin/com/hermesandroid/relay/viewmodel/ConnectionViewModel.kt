@@ -1940,7 +1940,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val info = relayHttpClient.fetchRelayInfo().getOrNull()
             _relayInfo.value = info
-            _toolsetInventory.value = _apiClient.value?.getToolsets()?.getOrNull()
+            // Toolsets are profile-scoped upstream. Use the same routed client
+            // as Chat so Diagnostics cannot pair a selected profile's Relay
+            // state with the base/default profile's tool inventory.
+            _toolsetInventory.value = _chatApiClient.value?.getToolsets()?.getOrNull()
             relayHttpClient.fetchUpdateCheck().onSuccess { _relayUpdateInfo.value = it }
             _diagnosticsCheckedAt.value = System.currentTimeMillis()
             _diagnosticsRefreshing.value = false
