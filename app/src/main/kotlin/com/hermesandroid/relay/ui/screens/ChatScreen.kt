@@ -552,6 +552,7 @@ fun ChatScreen(
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+    val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
@@ -1581,6 +1582,7 @@ fun ChatScreen(
                     val subtitleText = when {
                         !headerApiReachable -> statusText
                         else -> listOfNotNull(
+                            gatewayProjectName?.takeIf { it.isNotBlank() },
                             nonDefaultPersonality,
                             modelName?.takeIf { it.isNotBlank() },
                         ).joinToString(" \u00B7 ").ifBlank { statusText }

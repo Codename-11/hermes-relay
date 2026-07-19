@@ -61,6 +61,15 @@ class GatewayClientHarness(
     @Volatile
     var recoveryAssistant = ""
 
+    @Volatile
+    var recoveryInflightStreaming: Boolean? = null
+
+    @Volatile
+    var recoveryQueuedUser: String? = null
+
+    @Volatile
+    var recoveryProject: JsonObject? = null
+
     /** Optional durable-id -> live-id mapping for multi-session switch tests. */
     val resumeLiveSessionIds = ConcurrentHashMap<String, String>()
 
@@ -259,12 +268,19 @@ class GatewayClientHarness(
         put("session_id", sessionId)
         put("running", recoveryRunning)
         put("status", if (recoveryRunning) "streaming" else "idle")
-        if (recoveryRunning) {
+        recoveryProject?.let { project ->
+            put("info", buildJsonObject { put("project", project) })
+        }
+        val inflightStreaming = recoveryInflightStreaming ?: recoveryRunning
+        if (recoveryRunning || recoveryInflightStreaming != null) {
             put("inflight", buildJsonObject {
                 put("user", "research this")
                 put("assistant", recoveryAssistant)
-                put("streaming", true)
+                put("streaming", inflightStreaming)
             })
+        }
+        recoveryQueuedUser?.let { user ->
+            put("queued", buildJsonObject { put("user", user) })
         }
     }
 
@@ -1668,6 +1684,105 @@ class GatewayChatClientTest {
         )
         assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
         assertEquals(listOf("recovered"), recorder.textDeltas.toList())
+    }
+
+    @Test
+    fun `recoverTurn keeps queued-only resume live`() {
+        harness.recoveryQueuedUser = "do this next"
+
+        val recovery = runBlocking {
+            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+        }
+
+        assertFalse(recovery.running)
+        assertTrue(recovery.hasPendingWork)
+        assertEquals("do this next", recovery.queued?.user)
+        assertNull(recovery.inflight)
+        assertNotNull(recovery.handle)
+        recovery.handle!!.detach()
+    }
+
+    @Test
+    fun `recoverTurn keeps inflight-only resume live`() {
+        harness.recoveryInflightStreaming = true
+        harness.recoveryAssistant = "partial"
+
+        val recovery = runBlocking {
+            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+        }
+
+        assertTrue(recovery.running)
+        assertTrue(recovery.hasPendingWork)
+        assertEquals("partial", recovery.inflight?.assistant)
+        assertNull(recovery.queued)
+        assertNotNull(recovery.handle)
+        recovery.handle!!.detach()
+    }
+
+    @Test
+    fun `recoverTurn keeps inflight and queued resume live`() {
+        harness.recoveryInflightStreaming = true
+        harness.recoveryQueuedUser = "follow up"
+
+        val recovery = runBlocking {
+            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+        }
+
+        assertTrue(recovery.running)
+        assertTrue(recovery.hasPendingWork)
+        assertEquals("follow up", recovery.queued?.user)
+        assertNotNull(recovery.inflight)
+        assertNotNull(recovery.handle)
+        recovery.handle!!.detach()
+    }
+
+    @Test
+    fun `recoverTurn settles resume with neither inflight nor queued work`() {
+        val recovery = runBlocking {
+            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+        }
+
+        assertFalse(recovery.running)
+        assertFalse(recovery.hasPendingWork)
+        assertNull(recovery.inflight)
+        assertNull(recovery.queued)
+        assertNull(recovery.handle)
+    }
+
+    @Test
+    fun `recoverTurn parses optional session project`() {
+        harness.recoveryProject = buildJsonObject {
+            put("id", "project-17")
+            put("slug", "hermes-relay")
+            put("name", "Hermes Relay")
+            put("primary_path", "/workspace/hermes-relay")
+            put("future_field", "ignored")
+        }
+
+        runBlocking {
+            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+        }
+
+        assertEquals("project-17", client.serverProject.value?.id)
+        assertEquals("hermes-relay", client.serverProject.value?.slug)
+        assertEquals("Hermes Relay", client.serverProject.value?.name)
+        assertEquals("/workspace/hermes-relay", client.serverProject.value?.primaryPath)
+    }
+
+    @Test
+    fun `recoverTurn clears project for legacy session info`() {
+        harness.recoveryProject = buildJsonObject { put("name", "Previous Project") }
+        runBlocking {
+            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+        }
+        assertEquals("Previous Project", client.serverProject.value?.name)
+
+        harness.recoveryProject = null
+        runBlocking {
+            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+        }
+
+        assertNull(client.serverProject.value)
     }
 
     @Test

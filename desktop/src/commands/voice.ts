@@ -31,6 +31,12 @@ import type {
   SessionCreateResponse,
   SessionResumeResponse
 } from '../gatewayTypes.js'
+import {
+  sessionProjectName,
+  sessionQueuedPromptPreview,
+  sessionResumeActivity,
+  type SessionResumeActivity
+} from '../gatewayTypes.js'
 import { getActiveDesktopRelayUrl } from '../desktopConfig.js'
 import { formatError } from '../lib/hints.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
@@ -437,18 +443,36 @@ function waitForReady(gw: GatewayClient, timeoutMs = READY_TIMEOUT_MS): Promise<
 async function createOrResumeSession(
   gw: GatewayClient,
   resumeId: string | null
-): Promise<{ sessionId: string; model: string | null }> {
+): Promise<{
+  sessionId: string
+  model: string | null
+  projectName: string | null
+  queuedPrompt: string | null
+  resumeActivity: SessionResumeActivity
+}> {
   const cols = process.stdout.columns ?? 80
   if (resumeId) {
     const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
     const r = asRpcResult<SessionResumeResponse>(raw)
     if (!r?.session_id) throw new Error(`failed to resume session ${resumeId}`)
-    return { sessionId: r.session_id, model: r.info?.model ?? null }
+    return {
+      sessionId: r.session_id,
+      model: r.info?.model ?? null,
+      projectName: sessionProjectName(r.info),
+      queuedPrompt: sessionQueuedPromptPreview(r),
+      resumeActivity: sessionResumeActivity(r)
+    }
   }
   const raw = await gw.request<SessionCreateResponse>('session.create', { cols })
   const r = asRpcResult<SessionCreateResponse>(raw)
   if (!r?.session_id) throw new Error('failed to create session')
-  return { sessionId: r.session_id, model: r.info?.model ?? null }
+  return {
+    sessionId: r.session_id,
+    model: r.info?.model ?? null,
+    projectName: sessionProjectName(r.info),
+    queuedPrompt: null,
+    resumeActivity: 'idle'
+  }
 }
 
 async function voiceMode(args: ParsedArgs): Promise<number> {
@@ -493,7 +517,13 @@ async function voiceMode(args: ParsedArgs): Promise<number> {
     return 1
   }
 
-  let session: { sessionId: string; model: string | null }
+  let session: {
+    sessionId: string
+    model: string | null
+    projectName: string | null
+    queuedPrompt: string | null
+    resumeActivity: SessionResumeActivity
+  }
   try {
     session = await createOrResumeSession(gw, conversation)
   } catch (e) {
@@ -501,8 +531,20 @@ async function voiceMode(args: ParsedArgs): Promise<number> {
     await tearDown()
     return 1
   }
-  if (session.model) {
-    process.stderr.write(`Session ${session.sessionId.slice(0, 8)}… on ${session.model}\n`)
+  if (session.model || session.projectName) {
+    const modelDetail = session.model ? ` on ${session.model}` : ''
+    const projectDetail = session.projectName ? ` · ${session.projectName}` : ''
+    process.stderr.write(`Session ${session.sessionId.slice(0, 8)}…${modelDetail}${projectDetail}\n`)
+  }
+  if (session.resumeActivity === 'running-and-queued') {
+    process.stderr.write('Resumed live turn; the next accepted prompt is queued.\n')
+  } else if (session.resumeActivity === 'running') {
+    process.stderr.write('Resumed live turn still in progress.\n')
+  } else if (session.resumeActivity === 'queued') {
+    process.stderr.write('Resumed session with an accepted prompt waiting to run.\n')
+  }
+  if (session.queuedPrompt) {
+    process.stderr.write(`Queued prompt: ${session.queuedPrompt}\n`)
   }
 
   try {
