@@ -1877,6 +1877,9 @@ class ChatViewModel : ViewModel() {
      */
     private var lastSurfacedCredentialWarning: String? = null
 
+    private val _gatewayProjectName = MutableStateFlow<String?>(null)
+    val gatewayProjectName: StateFlow<String?> = _gatewayProjectName.asStateFlow()
+
     /**
      * Track the active client's `session.info`-derived state (personality, model,
      * provider, reasoning effort, credential warning, YOLO, fast) so a change made
@@ -1957,6 +1960,12 @@ class ChatViewModel : ViewModel() {
                         _contextWindow.value = ContextWindowUsage(usedTokens = used, maxTokens = max)
                         _contextUsage.value = (used.toFloat() / max).coerceIn(0f, 1f)
                     }
+                }
+            }
+            launch {
+                client.serverProject.collect { project ->
+                    if (gatewayClient !== client) return@collect
+                    _gatewayProjectName.value = project?.name
                 }
             }
         }
@@ -3986,7 +3995,7 @@ class ChatViewModel : ViewModel() {
                 recovery?.handle?.detach()
                 return true
             }
-            if (recovery?.running == true && recovery.handle != null) {
+            if (recovery?.hasPendingWork == true && recovery.handle != null) {
                 activeStream = recovery.handle
                 activeStreamIsGateway = true
                 activeTurnCheckpointSeed?.liveSessionId = recovery.liveSessionId
@@ -3995,8 +4004,14 @@ class ChatViewModel : ViewModel() {
                     upstreamAssistantText = recovery.inflight?.assistant,
                 )
                 handler.setTurnStatus(
-                    checkpoint.turnStatus?.takeIf { it.isNotBlank() }
-                        ?: "Reconnected — Hermes is still working…",
+                    when {
+                        recovery.queued != null && recovery.running ->
+                            "Reconnected — Hermes is working · queued: “${queuedPromptPreview(recovery.queued.user)}”"
+                        recovery.queued != null ->
+                            "Reconnected — queued: “${queuedPromptPreview(recovery.queued.user)}”"
+                        else -> checkpoint.turnStatus?.takeIf { it.isNotBlank() }
+                            ?: "Reconnected — Hermes is still working…"
+                    },
                 )
                 restorePendingAsk(handler, checkpoint)
                 scheduleCheckpointWrite(immediate = true)
@@ -6737,6 +6752,11 @@ class ChatViewModel : ViewModel() {
             }
         }
     }
+}
+
+private fun queuedPromptPreview(prompt: String, maxChars: Int = 96): String {
+    val compact = prompt.replace(Regex("\\s+"), " ").trim()
+    return if (compact.length <= maxChars) compact else compact.take(maxChars - 1).trimEnd() + "…"
 }
 
 /** Production adapter for the independently-testable process controller. */

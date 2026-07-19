@@ -97,6 +97,19 @@ data class GatewayInflightTurn(
     val streaming: Boolean,
 )
 
+/** A next-turn prompt accepted by upstream while the current turn was busy. */
+data class GatewayQueuedTurn(
+    val user: String,
+)
+
+/** Optional project identity attached to newer upstream session metadata. */
+data class GatewaySessionProject(
+    val id: String?,
+    val slug: String?,
+    val name: String,
+    val primaryPath: String?,
+)
+
 /** Result of reattaching Android to an existing durable Gateway session. */
 data class GatewaySessionRecovery(
     val storedSessionId: String,
@@ -104,9 +117,14 @@ data class GatewaySessionRecovery(
     val running: Boolean,
     val status: String?,
     val inflight: GatewayInflightTurn?,
+    val queued: GatewayQueuedTurn?,
     /** Non-null only when subsequent turn events are bound to [GatewayTurnCallbacks]. */
     val handle: ActiveTurnHandle?,
-)
+) {
+    /** Whether upstream still owes this client live turn events. */
+    val hasPendingWork: Boolean
+        get() = running || queued != null
+}
 
 /** A detached sibling turn reached its terminal event on the shared Gateway socket. */
 data class GatewayBackgroundTurnCompletion(

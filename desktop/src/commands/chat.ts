@@ -24,6 +24,12 @@ import type {
   SessionInterruptResponse,
   SessionResumeResponse
 } from '../gatewayTypes.js'
+import {
+  sessionProjectName,
+  sessionQueuedPromptPreview,
+  sessionResumeActivity,
+  type SessionResumeActivity
+} from '../gatewayTypes.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { renderLogo } from '../lib/logo.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
@@ -337,7 +343,13 @@ async function resolveHermesSessionId(
 async function createOrResumeSession(
   gw: GatewayClient,
   resumeId: string | null
-): Promise<{ sessionId: string; model: string | null }> {
+): Promise<{
+  sessionId: string
+  model: string | null
+  projectName: string | null
+  queuedPrompt: string | null
+  resumeActivity: SessionResumeActivity
+}> {
   const cols = process.stdout.columns ?? 80
 
   if (resumeId) {
@@ -346,7 +358,13 @@ async function createOrResumeSession(
     if (!r?.session_id) {
       throw new Error(`failed to resume session ${resumeId}`)
     }
-    return { sessionId: r.session_id, model: r.info?.model ?? null }
+    return {
+      sessionId: r.session_id,
+      model: r.info?.model ?? null,
+      projectName: sessionProjectName(r.info),
+      queuedPrompt: sessionQueuedPromptPreview(r),
+      resumeActivity: sessionResumeActivity(r)
+    }
   }
 
   const raw = await gw.request<SessionCreateResponse>('session.create', { cols })
@@ -354,7 +372,13 @@ async function createOrResumeSession(
   if (!r?.session_id) {
     throw new Error('failed to create session')
   }
-  return { sessionId: r.session_id, model: r.info?.model ?? null }
+  return {
+    sessionId: r.session_id,
+    model: r.info?.model ?? null,
+    projectName: sessionProjectName(r.info),
+    queuedPrompt: null,
+    resumeActivity: 'idle'
+  }
 }
 
 /** Dispatch a REPL slash-command line to the right AttachPayload source.
@@ -650,7 +674,13 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     return 1
   }
 
-  let session: { sessionId: string; model: string | null }
+  let session: {
+    sessionId: string
+    model: string | null
+    projectName: string | null
+    queuedPrompt: string | null
+    resumeActivity: SessionResumeActivity
+  }
   try {
     session = await createOrResumeSession(gw, resumeId)
   } catch (e) {
@@ -659,8 +689,20 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     return 1
   }
 
-  if (session.model) {
-    process.stderr.write(`Session ${session.sessionId.slice(0, 8)}… on ${session.model}\n`)
+  if (session.model || session.projectName) {
+    const modelDetail = session.model ? ` on ${session.model}` : ''
+    const projectDetail = session.projectName ? ` · ${session.projectName}` : ''
+    process.stderr.write(`Session ${session.sessionId.slice(0, 8)}…${modelDetail}${projectDetail}\n`)
+  }
+  if (session.resumeActivity === 'running-and-queued') {
+    process.stderr.write('Resumed live turn; the next accepted prompt is queued.\n')
+  } else if (session.resumeActivity === 'running') {
+    process.stderr.write('Resumed live turn still in progress.\n')
+  } else if (session.resumeActivity === 'queued') {
+    process.stderr.write('Resumed session with an accepted prompt waiting to run.\n')
+  }
+  if (session.queuedPrompt) {
+    process.stderr.write(`Queued prompt: ${session.queuedPrompt}\n`)
   }
   renderer.handle({
     type: 'session.info',
