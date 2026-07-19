@@ -260,6 +260,32 @@ limit bounds, redaction, every terminal state, recovery of an interrupted owner
 as `unknown`, and the distinction between a failed attempt and a successfully
 created session. Relay Android consumption waits for this public contract.
 
+## 12. Atomic One-Turn Model Arm and Prompt Submit
+
+**Current state:** `/model <name> --once` safely avoids persistence and restores
+the previous model after the next turn completes, errors, or is interrupted.
+Gateway clients must currently issue `slash.exec` and `prompt.submit` as two
+separate RPCs. If the client disconnects or the user stops during that narrow
+gap, the armed override has not been consumed by a turn and can apply to a later
+prompt unexpectedly.
+
+**Proposed:** Add one atomic gateway operation that validates and arms a
+one-turn model/provider override and accepts the prompt under the same
+session/turn ownership boundary. An alternative is to make
+`session.interrupt`/an explicit cancellation RPC clear an armed-but-unconsumed
+override and report whether it did so. Do not make clients restore by writing a
+persistent session/global model: that can race with another client and defeats
+the non-persistence guarantee.
+
+**Compatibility:** Existing `/model --once` and `prompt.submit` behavior remains
+unchanged. The new method or capability is additive; clients use it only when
+advertised and otherwise retain the current ordered two-RPC path.
+
+**Verification gate:** Gateway tests cover disconnect, explicit interrupt, RPC
+cancellation, and process failure between arm and submit; prove no later prompt
+inherits the stale override; and prove success/error/interrupt after submission
+still restores the prior model exactly once without a config write-through.
+
 ## Notes
 
 - These are suggestions, not requirements. The app works without any of them.

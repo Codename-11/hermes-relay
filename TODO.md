@@ -36,6 +36,31 @@ removal.
 
 ---
 
+## Upstream impact certification follow-ups (2026-07-19)
+
+The client/plugin implementation batch for queued recovery, one-turn model
+selection, multiplex-profile fallback routing, gateway diagnostics, Windows
+system-CA trust, and retained bootstrap async safety is complete on its feature
+branch. The following gates intentionally remain outside that code batch:
+
+- Run `docs/upstream-compatibility-certification.md` against an approved test
+  gateway with real provider calls and an Android device. Include concurrent
+  model/image routing, turn isolation off/on, queued reconnect, same-profile
+  background-completion ownership, compression lineage, and the explicitly
+  approved restart case. Static upstream fixtures are necessary but do not
+  prove device or restart behavior.
+- Upstream the atomic one-turn model arm/submit contract proposed in
+  `docs/upstream-contributions.md`. Until then, document the narrow race where a
+  disconnect or Stop after `/model --once` succeeds but before prompt submission
+  can leave the override armed for a later prompt.
+- Upstream the first-class commentary event and profile-scoped cron execution
+  attempts API before adding Relay client parsers for those surfaces.
+- Keep Standard voice labeled host-global until upstream exposes a stable
+  profile/per-request audio contract; do not emulate it through Relay on the
+  vanilla path.
+
+---
+
 ## Multi-profile Phone/Threads routing — deferred (2026-07-12)
 
 Android profile hot-swap and concurrent Gateway turns are separate from proactive
