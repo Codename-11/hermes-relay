@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Hermes connections now use the Dashboard/Gateway as their standard surface.** Chat, sessions, Manage, and voice share one upstream sign-in; the API server is an optional automatic fallback or headless compatibility path, while Relay remains optional for power features.
+- **Connection management is more compact and explicit.** Multi-server installs can restore the last-used connection or pin a startup connection, Dashboard-only routes remain visible, and Advanced and Security present their settings and posture directly.
+
 ### Fixed
 
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.

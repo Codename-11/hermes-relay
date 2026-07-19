@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network.shared
 
 import com.hermesandroid.relay.data.ApiEndpoint
+import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import kotlinx.coroutines.test.runTest
@@ -346,6 +347,52 @@ class EndpointResolverTest {
         val outcome = resolver.probeOutcomes.value[EndpointResolver.cacheKey(lan)]
         assertNotNull(outcome)
         assertTrue(!outcome!!.reachable)
+    }
+
+    @Test
+    fun dashboardOnlyCandidate_probesGatewayStatusWithoutApiOrRelay() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/status" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val dashboardOnly = EndpointCandidate(
+            role = "tailscale",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(dashboardOnly))
+
+        assertEquals(dashboardOnly, winner)
+        val request = reachableServer.takeRequest(1, TimeUnit.SECONDS)
+        assertNotNull(request)
+        assertEquals("GET", request!!.method)
+        assertEquals("/api/status", request.path)
+    }
+
+    @Test
+    fun explicitDashboard_isProbeTarget_whenOptionalApiAndRelayArePresent() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/status" -> MockResponse().setResponseCode(200)
+                "/health" -> MockResponse().setResponseCode(500)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val candidate = EndpointCandidate(
+            role = "tailscale",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+            api = ApiEndpoint(reachableServer.hostName, reachableServer.port),
+            relay = RelayEndpoint("ws://${reachableServer.hostName}:${reachableServer.port}"),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(candidate))
+
+        assertEquals(candidate, winner)
+        assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
     }
 
     // ---------------------------------------------------------------

@@ -89,7 +89,10 @@ import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.viewmodel.ChatViewModel
+import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
@@ -656,6 +659,7 @@ fun AgentInfoSheet(
     // Profile + personality state — same flows the old pickers consumed.
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val resolvedDisplayProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
     var showProfileManager by remember { mutableStateOf(false) }
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
@@ -735,6 +739,26 @@ fun AgentInfoSheet(
     val allConnections by connectionViewModel.connectionStore.connections.collectAsState()
     val activeConnectionId by connectionViewModel.connectionStore
         .activeConnectionId.collectAsState()
+    val activeConnection = remember(allConnections, activeConnectionId) {
+        allConnections.firstOrNull { it.id == activeConnectionId }
+    }
+    val chatRuntimeStatus = resolveChatRuntimeStatus(
+        gateway = when (gatewayAvailability) {
+            GatewayAvailability.Ready -> ChatTransportReadiness.Ready
+            GatewayAvailability.Unknown -> if (
+                activeConnection?.resolvedDashboardUrl.isNullOrBlank()
+            ) ChatTransportReadiness.NotConfigured else ChatTransportReadiness.Connecting
+            GatewayAvailability.SignInRequired,
+            GatewayAvailability.Unreachable,
+            GatewayAvailability.Unsupported -> ChatTransportReadiness.Unavailable
+        },
+        apiSse = when {
+            apiServerReachable -> ChatTransportReadiness.Ready
+            activeConnection?.apiServerUrl.isNullOrBlank() -> ChatTransportReadiness.NotConfigured
+            chatMode != ChatMode.DISCONNECTED -> ChatTransportReadiness.Connecting
+            else -> ChatTransportReadiness.Unavailable
+        },
+    )
 
     // Mid-stream gate — mirrors what ProfilePicker's `enabled` flag was doing:
     // a radio tap during an in-flight chat turn would race the request. Apply
@@ -758,12 +782,8 @@ fun AgentInfoSheet(
 
     val profileOverridesPersonality =
         selectedProfile?.systemMessage?.isNotBlank() == true
-    val effectiveDisplayProfile = AgentDisplay.effectiveDisplayProfile(
-        selectedProfile = selectedProfile,
-        profiles = agentProfiles,
-    )
     val serverResolvedAgentName = AgentDisplay.agentName(
-        profile = effectiveDisplayProfile,
+        profile = resolvedDisplayProfile,
         selectedPersonality = selectedPersonality,
         defaultPersonality = defaultPersonality,
         connectionLabel = null,
@@ -816,7 +836,7 @@ fun AgentInfoSheet(
                 ?.name
                 ?.takeIf { it.isNotBlank() }
             AgentSheetHeader(
-                profile = effectiveDisplayProfile,
+                profile = resolvedDisplayProfile,
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 localDisplayAlias = profileDisplayAlias,
@@ -826,8 +846,7 @@ fun AgentInfoSheet(
                 // default with the session provider.
                 sessionModelName = selectedModelOverride ?: gatewayCurrentModel,
                 modelProviderLabel = currentProviderLabel,
-                apiServerReachable = apiServerReachable,
-                chatMode = chatMode,
+                chatRuntimeStatus = chatRuntimeStatus,
                 isCustomized = selectedProfile != null ||
                     selectedPersonality != "default" ||
                     profileDisplayAlias != null,
@@ -1133,8 +1152,7 @@ fun AgentInfoSheet(
                     }
 
                     val inspectProfileText = stringResource(R.string.conn_info_inspect_profile)
-                    val inspectorTarget = selectedProfile
-                        ?: serverDefaultProfile
+                    val inspectorTarget = resolvedDisplayProfile
                         ?: visibleProfileKeys
                             .asSequence()
                             .mapNotNull { key -> agentProfiles.firstOrNull { it.name == key } }
@@ -1526,10 +1544,8 @@ fun AgentInfoSheet(
                 // Pre-resolve strings for Connection section
                 val connectionTitle = stringResource(R.string.conn_info_connection_title)
                 val switchServersHint = stringResource(R.string.conn_info_switch_servers_hint)
-                val authLabel = stringResource(R.string.conn_info_auth)
-                val apiReachableLabel = stringResource(R.string.conn_info_api_reachable)
-                val pairedLabel = stringResource(R.string.conn_info_paired)
-                val hermesLabel = stringResource(R.string.conn_info_hermes)
+                val relayAuthLabel = stringResource(R.string.conn_info_relay_auth)
+                val apiFallbackLabel = stringResource(R.string.active_section_optional_api_fallback)
 
                 SectionLabel(
                     title = connectionTitle,
@@ -1546,10 +1562,24 @@ fun AgentInfoSheet(
                 val sessionTransport = sessionPathTransport(
                     connectionViewModel.resolveStreamingEndpoint(streamingEndpoint),
                 )
-                val routeLabel = activeEndpoint?.displayLabel()
-                    ?: com.hermesandroid.relay.data.Connection
-                        .extractDefaultLabel(apiServerUrl)
-                        .takeIf { it.isNotBlank() }
+                val routeLabel = if (sessionTransport.isGateway) {
+                    val dashboardUrl = activeConnection?.resolvedDashboardUrl.orEmpty()
+                    activeConnection?.routeCandidates
+                        ?.firstOrNull { it.dashboard?.url?.trimEnd('/') == dashboardUrl.trimEnd('/') }
+                        ?.displayLabel()
+                        ?: dashboardUrl.takeIf { it.isNotBlank() }?.let { url ->
+                            com.hermesandroid.relay.data.Connection.endpointCandidateFromDashboardUrl(
+                                role = com.hermesandroid.relay.data.Connection.inferRouteRole(url),
+                                priority = 0,
+                                dashboardUrl = url,
+                            )?.displayLabel()
+                        }
+                } else {
+                    activeEndpoint?.displayLabel()
+                        ?: com.hermesandroid.relay.data.Connection
+                            .extractDefaultLabel(apiServerUrl)
+                            .takeIf { it.isNotBlank() }
+                }
                 val relayConnected = relayConnectionState == ConnectionState.Connected
                 val threadsActive = connectionViewModel.proactiveEnabled.collectAsState().value &&
                     connectionViewModel.authState.collectAsState().value is
@@ -1570,7 +1600,7 @@ fun AgentInfoSheet(
 
                 // Multi-connection switcher. Renders inline as a radio list
                 // (mirrors the Profile + Personality sections above) when the
-                // user has ≥2 paired connections. Replaces the separate top-
+                // user has ≥2 connections. Replaces the separate top-
                 // bar ConnectionChip that used to be the only switch surface
                 // — folding it here keeps all agent/connection controls in
                 // one place, matching Bailey's ask in the 2026-04-20 audit.
@@ -1583,11 +1613,10 @@ fun AgentInfoSheet(
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         allConnections.forEach { connection ->
                             val isActive = connection.id == activeConnectionId
-                            val hostname = com.hermesandroid.relay.data.Connection
-                                .extractDefaultLabel(connection.apiServerUrl)
+                            val hostname = connection.primaryHost.ifBlank { connection.label }
                             val statusLine = when {
                                 connection.pairedAt == null -> stringResource(R.string.conn_info_hostname_hermes, hostname)
-                                else -> stringResource(R.string.conn_info_hostname_paired, hostname)
+                                else -> stringResource(R.string.conn_info_hostname_relay_paired, hostname)
                             }
                             ProfileRadioRow(
                                 primary = connection.label,
@@ -1605,9 +1634,17 @@ fun AgentInfoSheet(
                     }
                 }
 
-                ChipRow(label = authLabel) { authStateChip(authState) }
-                ChipRow(label = apiReachableLabel) {
-                    val (label, bg, fg) = if (apiServerReachable) {
+                if (relayUrl.isNotBlank() || authState is AuthState.Paired) {
+                    ChipRow(label = relayAuthLabel) { authStateChip(authState) }
+                }
+                ChipRow(label = apiFallbackLabel) {
+                    val (label, bg, fg) = if (apiServerUrl.isBlank()) {
+                        Triple(
+                            stringResource(R.string.active_section_not_configured),
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else if (apiServerReachable) {
                         Triple(
                             stringResource(R.string.conn_info_yes),
                             MaterialTheme.colorScheme.primaryContainer,
@@ -2307,8 +2344,7 @@ private fun AgentSheetHeader(
     serverModelName: String,
     sessionModelName: String? = null,
     modelProviderLabel: String? = null,
-    apiServerReachable: Boolean,
-    chatMode: ChatMode,
+    chatRuntimeStatus: ChatRuntimeStatus,
     isCustomized: Boolean,
 ) {
     val agentName = AgentDisplay.agentName(
@@ -2326,17 +2362,18 @@ private fun AgentSheetHeader(
     // The global default — surfaced as a quiet caption only when THIS session
     // runs something different (the always-visible global-vs-session split).
     val serverDefaultLabel = AgentDisplay.displayModelName(serverModelName)
-    val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
+    val isConnected = chatRuntimeStatus is ChatRuntimeStatus.Connected
+    val isConnecting = chatRuntimeStatus is ChatRuntimeStatus.Connecting
     val connectedText = stringResource(R.string.conn_info_connected)
     val connectingText = stringResource(R.string.conn_info_connecting)
     val disconnectedText = stringResource(R.string.conn_info_disconnected)
     val statusText = when {
-        apiServerReachable -> connectedText
+        isConnected -> connectedText
         isConnecting -> connectingText
         else -> disconnectedText
     }
     val statusColor = when {
-        apiServerReachable -> MaterialTheme.colorScheme.primary
+        isConnected -> MaterialTheme.colorScheme.primary
         isConnecting -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.error
     }

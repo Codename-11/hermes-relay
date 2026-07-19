@@ -132,6 +132,19 @@ class ProfileController(
         AgentDisplay.effectiveSessionProfileName(selected?.name, serverDefault?.active)
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
+    /** Display identity resolved through the same sticky server default used by session routing. */
+    val effectiveDisplayProfile: StateFlow<Profile?> = combine(
+        selectedProfile,
+        agentProfiles,
+        serverDefaultProfileScope,
+    ) { selected, profiles, serverDefault ->
+        AgentDisplay.effectiveDisplayProfile(
+            selectedProfile = selected,
+            profiles = profiles,
+            serverDefaultProfileName = serverDefault?.active,
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, null)
+
     /**
      * True once the active connection's persisted profile selection has SETTLED
      * — i.e. profile-scoped reads (session drawer, transcript restore, voice

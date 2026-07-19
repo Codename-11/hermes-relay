@@ -4,16 +4,18 @@ Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailsc
 
 ## What Uses Which Connection
 
-Vanilla Hermes setup saves the API server URL and API key directly. The setup form
-also has a **Remote access — Tailscale URL** field; fill it in and Android
-stores both routes and uses the highest-priority reachable one. A Relay
-pairing QR can also carry both parts of the app when you enable the optional
-relay:
+Vanilla Hermes setup saves the Dashboard/Gateway address as the standard route.
+Remote LAN, Tailscale, VPN, or public routes can be added to the same connection
+and Android uses the highest-priority reachable one. API fallback and Relay
+routes remain independently optional:
 
-- **Chat and API-backed voice** use the Hermes API server URL and the Hermes API bearer key when one is configured.
+- **Chat, sessions, Manage, and standard voice** use the Dashboard/Gateway route and its dashboard session.
+- **API fallback/headless compatibility** uses the API server URL and bearer only when configured.
 - **Terminal, bridge, TUI, media/session management, clipboard, profile writes, Android control, and relay-token voice fallback** use the relay URL and require a paired relay session token.
 
-The app stores your base API URL, optional Tailscale API URL, and relay URL on the connection, then uses the active route selected from saved route candidates at runtime. That means one saved connection can use LAN at home and Tailscale away from home.
+The app stores these capabilities under one stable connection identity. One
+Hermes connection can therefore use LAN at home and Tailscale away from home
+without making API or Relay availability define whether standard chat is ready.
 
 ## Recommended: Tailscale
 
@@ -24,14 +26,23 @@ hermes-relay-tailscale enable
 hermes pair --mode auto --prefer tailscale
 ```
 
-The Tailscale helper publishes both required loopback services, fronting each with TLS:
+The Tailscale helper can publish the optional Relay and API services with TLS:
 
 ```bash
 tailscale serve --bg --https=8767 http://127.0.0.1:8767
 tailscale serve --bg --https=8642 http://127.0.0.1:8642
 ```
 
-Port `8767` carries relay WSS and relay HTTP routes. Port `8642` carries the Hermes API server for chat, API-key voice auth, and endpoint health probes. If only `8767` is served, terminal/bridge may work while chat and API-key voice still fail remotely.
+Port `8767` carries Relay WSS and HTTP routes. Port `8642` carries the optional
+API fallback and API-bearer Relay voice compatibility. Publish the primary
+Dashboard/Gateway on `:9119` separately; missing optional API does not break a
+healthy dashboard route.
+
+You can add and test a Tailscale Dashboard address without configuring either
+optional service. Use `http://100.x.y.z:9119` for a directly reachable dashboard,
+or the `https://host.ts.net` URL and port/path from your own Dashboard proxy.
+Android probes the Dashboard itself and handles Dashboard sign-in; it does not
+look for `API_SERVER_KEY` on this path.
 
 ::: tip Two layers, both optional-to-stack
 Your tailnet is already encrypted by WireGuard, so even a plain `http://100.x.y.z` route is
@@ -72,26 +83,27 @@ You can also override from the phone: **Settings -> Connections -> active connec
 
 ## Which URL Do I Enter?
 
-Route fields want the **API server** (port `8642` by default) — never the
-dashboard (`9119`) or relay (`8767`); those are derived from the host
-automatically. You can type just a host or IP: `100.64.0.1` is saved as
-`http://100.64.0.1:8642`, and the editor previews the exact URL before you
-save.
+Normal connection and route fields use the **Dashboard/Gateway** address (port
+`9119` by convention). Advanced endpoint settings expose API fallback (`8642`)
+and Relay (`8767`) independently; do not substitute one service's port for
+another. The editor previews the exact URL before saving.
 
 Pick the scheme by how the server is reached:
 
-- **Raw Tailscale IP (`100.x.y.z`) or LAN IP** → `http://` (the default).
-  The Hermes API server speaks plain HTTP; an `https://` route against it
-  fails its TLS handshake on every probe and never wins. This also requires
-  the API server to listen beyond loopback (`0.0.0.0:8642` or the tailnet
-  interface). Note that an `http://` route over a raw Tailscale IP is **not
+- **Raw Tailscale IP (`100.x.y.z`)** → normally
+  `http://100.x.y.z:9119` for the Dashboard/Gateway. The dashboard must listen
+  on an interface reachable through Tailscale. This route needs no API server
+  or API key. An `http://` route over a raw Tailscale IP is **not
   plaintext on the wire** — WireGuard encrypts it end-to-end. It's secure
   transport, just not TLS (the app reports it as 🛡️ Tailscale, not ⚠️ Not
-  encrypted). A plain LAN IP, by contrast, has no such wrapping.
-- **`*.ts.net` hostname fronted by `hermes-relay-tailscale enable`** →
-  `https://` — Tailscale terminates TLS for the MagicDNS hostname (the cert
-  is only valid for that name, not for the raw `100.x` IP). This adds TLS
-  *on top of* the WireGuard encryption you already had over the tailnet.
+  encrypted).
+- **`*.ts.net` hostname** → use the exact `http://` or `https://` Dashboard URL
+  your operator published. `hermes-relay-tailscale enable` only fronts the
+  optional Relay and API ports; it does not automatically publish Dashboard
+  `:9119`. If you separately front the Dashboard with Tailscale HTTPS, its
+  certificate is valid for the `.ts.net` name, not the raw `100.x` IP.
+- **LAN IP** → normally `http://host:9119`. Unlike a raw Tailscale route, plain
+  LAN HTTP has no WireGuard transport layer.
 - **Public reverse proxy** → `https://` with whatever host/port the proxy
   exposes.
 
@@ -105,11 +117,12 @@ connection refused, timeout, HTTP status). A route that never shows
 You don't need to re-run setup (or use a QR) to add remote access later.
 Open **Settings -> Connections -> active connection -> Show routes**:
 
-- **Add route** opens an editor with Tailscale / Public / Custom presets and
-  an API URL field. The relay and dashboard URLs are derived from the host
-  automatically.
+- **Add route** opens an editor with Tailscale / Public / Custom presets for the
+  Dashboard/Gateway. Entering a `100.x` or `.ts.net` Dashboard address is enough
+  to save and test that route. Advanced settings can add matching API and Relay
+  endpoints, but they are not prerequisites.
 - Each fallback route's menu has **Edit route** and **Remove route**. The
-  primary route mirrors the connection's API URL and is edited there instead.
+  primary route mirrors the connection's Dashboard/Gateway URL and is edited there instead.
 - When the phone is on Tailscale but the connection has no Tailscale route,
   the Connections card shows an **Add Tailscale route** shortcut.
 
@@ -125,22 +138,30 @@ route; the app keeps both sessions afterwards.
 
 ## Other Remote Paths
 
-Reverse proxies work if they expose both services:
+Reverse proxies should expose the standard Dashboard/Gateway and whichever
+optional capabilities you use:
 
+- Dashboard/Gateway: `https://...` to local `127.0.0.1:9119`
 - Relay: `wss://...` to local `127.0.0.1:8767`
-- API: `https://...` to local `127.0.0.1:8642`
+- Optional API fallback: `https://...` to local `127.0.0.1:8642`
 
 Plain `ws://` and `http://` are acceptable only on a LAN or VPN you trust. The app requires explicit plain-transport consent before it uses those routes. Do not expose plain relay or API ports to the open internet.
 
 ## Troubleshooting
 
-From the phone browser, verify both:
+From the phone browser, verify the exact Dashboard/Gateway URL first, then any
+optional endpoints you configured. The three URLs below are examples only; the
+Dashboard URL depends on how you published it:
 
 ```text
+https://<tailnet-host>.ts.net:9119
 https://<tailnet-host>.ts.net:8767/health
 https://<tailnet-host>.ts.net:8642/health
 ```
 
-If relay health works but API health fails, terminal/bridge can pair while chat, API-key voice, and route probes still fail. Re-run `hermes-relay-tailscale enable`, verify `API_SERVER_ENABLED=true`, and make sure the Hermes API server is listening on `127.0.0.1:8642` or `0.0.0.0:8642` on the host.
+If the optional API health check fails while Dashboard/Gateway works, standard
+chat remains available and only API fallback is unavailable. If Relay health
+fails, terminal/bridge and Relay voice extensions are unavailable without
+affecting the standard upstream path.
 
 For the full operator matrix and reverse-proxy examples, see the [repository remote access guide](https://github.com/Codename-11/hermes-relay/blob/main/docs/remote-access.md).

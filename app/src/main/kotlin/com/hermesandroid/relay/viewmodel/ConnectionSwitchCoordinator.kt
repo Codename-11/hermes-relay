@@ -59,18 +59,16 @@ import kotlinx.coroutines.withTimeoutOrNull
  *  8. Update URL flows via [setApiServerUrl] and [setRelayUrl] so
  *     [HermesApiClient] and [RelayHttpClient] pick up the new endpoints.
  *     [persistUrls] writes both values to the app DataStore in one pass.
- *  9. Rebuild the API client via [rebuildApiClient] so subsequent chat
- *     calls hit the new API server with the new API key.
- * 10. Await the new AuthManager's first non-[AuthState.Unpaired] /
+ *  9. Persist the new active-connection id so Dashboard/Gateway probes resolve
+ *     against the target connection rather than the outgoing one.
+ * 10. Rebuild the API client (or clear it for Dashboard-only) and probe the
+ *     target Dashboard/Gateway surface.
+ * 11. Await the new AuthManager's first non-[AuthState.Unpaired] /
  *     non-[AuthState.Loading] emission (or a short timeout) before deciding
  *     whether to kick the WSS handshake. Connecting too early fires an
  *     auth envelope with no pair context, which tick the relay's rate
  *     limiter — exactly the trap [AuthManager.hasPairContext] was
  *     introduced to avoid.
- * 11. Persist the new active-connection id via
- *     [ConnectionStore.setActiveConnection] last so an early failure leaves
- *     the previous active connection in place.
- *
  * The whole sequence runs under [switchMutex] so rapid-fire switches from
  * the UI queue cleanly instead of interleaving partial teardowns.
  */
@@ -269,11 +267,22 @@ class ConnectionSwitchCoordinator(
             runCatching { persistUrls(target.apiServerUrl, targetRelayUrl) }
                 .onFailure { Log.w(TAG, "persistUrls failed: ${it.message}") }
 
-            // 9 — rebuild the API client against the new URL + key.
+            // 9 — publish the target context BEFORE rebuilding/probing. The
+            // Dashboard URL and cookie store are resolved from activeConnection;
+            // probing first would accidentally re-probe the outgoing connection
+            // and leave a Dashboard-only target stuck at Gateway.Unknown.
+            runCatching { connectionStore.setActiveConnection(connectionId) }
+                .onFailure {
+                    Log.w(TAG, "connectionStore.setActiveConnection failed: ${it.message}")
+                    return@withLock
+                }
+
+            // 10 — rebuild the API client against the new URL + key (or clear
+            // it and probe Dashboard/Gateway when this is Dashboard-only).
             runCatching { rebuildApiClient() }
                 .onFailure { Log.w(TAG, "rebuildApiClient failed: ${it.message}") }
 
-            // 10 — wait briefly for the new AuthManager to hydrate its
+            // 11 — wait briefly for the new AuthManager to hydrate its
             // stored token (if any) so hasPairContext returns the right
             // answer. The authState flow seeds to Unpaired and flips to
             // Paired asynchronously; without this await we'd almost
@@ -309,24 +318,16 @@ class ConnectionSwitchCoordinator(
                 )
             }
 
-            if (newAuth.hasPairContext) {
+            if (newAuth.hasPairContext && targetRelayUrl.isNotBlank()) {
                 runCatching { connectionManager.connect(targetRelayUrl) }
                     .onFailure { Log.w(TAG, "connectionManager.connect failed: ${it.message}") }
             } else {
                 Log.i(
                     TAG,
-                    "switchConnection: new connection has no pair context — skipping WSS connect " +
-                        "(user will pair from the Connection screen)",
+                    "switchConnection: Relay is not ready for this connection — " +
+                        "skipping WSS connect",
                 )
             }
-
-            // 11 — persist last so an earlier failure leaves the previous
-            // active pointer in place. setActiveConnection updates the
-            // connectionStore.activeConnectionId StateFlow synchronously
-            // after the DataStore write lands, so the UI reacts without
-            // waiting for a recomposition pass.
-            runCatching { connectionStore.setActiveConnection(connectionId) }
-                .onFailure { Log.w(TAG, "connectionStore.setActiveConnection failed: ${it.message}") }
         }
     }
 

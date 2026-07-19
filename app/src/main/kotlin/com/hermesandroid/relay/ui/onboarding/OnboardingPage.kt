@@ -1,11 +1,10 @@
 package com.hermesandroid.relay.ui.onboarding
 
 import androidx.compose.foundation.background
-import com.hermesandroid.relay.ui.theme.LocalBrand
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
@@ -20,23 +19,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
-import com.hermesandroid.relay.ui.theme.gradientBorder
 
 @Composable
 fun OnboardingPage(
@@ -44,7 +41,6 @@ fun OnboardingPage(
     title: String,
     description: String,
     modifier: Modifier = Modifier,
-    transparentHero: Boolean = false,
     heroContent: @Composable BoxScope.() -> Unit = {
         FeatureHero(
             icon = icon,
@@ -53,101 +49,44 @@ fun OnboardingPage(
     },
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
-    val isDarkTheme = LocalBrand.current.isDark
-    val heroShape = RoundedCornerShape(30.dp)
-    val bodyShape = RoundedCornerShape(26.dp)
-    val heroBrush = Brush.radialGradient(
-        colors = if (isDarkTheme) {
-            listOf(
-                MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.96f),
-                MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.92f),
-                MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.98f),
-            )
-        } else {
-            listOf(
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.60f),
-            )
-        }
-    )
-
-    // Short viewports (small phones, large font scale, split screen) shrink or
-    // drop the hero so the body text fits; the vertical scroll below is the
-    // safety net when even that isn't enough. The enclosing pager Box centers
-    // short content, so no Arrangement.Center here — it conflicts with
-    // verticalScroll when content overflows.
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val heroHeight = when {
-            maxHeight < 480.dp -> 0.dp
-            maxHeight < 620.dp -> 160.dp
-            else -> 232.dp
-        }
-        Column(
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 560.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 42.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 560.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .height(210.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            if (heroHeight > 0.dp) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(heroHeight)
-                        .gradientBorder(shape = heroShape, isDarkTheme = isDarkTheme),
-                    shape = heroShape,
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (transparentHero) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer
-                    )
-                ) {
-                    val heroModifier = Modifier
-                        .fillMaxWidth()
-                        .height(heroHeight)
-                    Box(
-                        modifier = if (transparentHero) heroModifier else heroModifier.background(heroBrush),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        heroContent()
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-            }
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .gradientBorder(shape = bodyShape, isDarkTheme = isDarkTheme),
-                shape = bodyShape,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 22.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.headlineMedium,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    content()
-                }
-            }
+            heroContent()
         }
+
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineLarge.copy(
+                fontSize = 38.sp,
+                lineHeight = 40.sp,
+            ),
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 25.sp),
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        content()
     }
 }
 
@@ -156,26 +95,45 @@ private fun FeatureHero(
     icon: ImageVector,
     title: String,
 ) {
-    val isDarkTheme = LocalBrand.current.isDark
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
         Box(
             modifier = Modifier
-                .size(136.dp)
+                .size(176.dp)
                 .clip(CircleShape)
                 .background(
-                    MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkTheme) 0.14f else 0.10f)
+                    Color(0xFF7B55F6).copy(alpha = 0.07f)
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = title,
-                modifier = Modifier.size(74.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
+            Box(
+                modifier = Modifier
+                    .size(128.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF7B55F6).copy(alpha = 0.10f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Surface(
+                    modifier = Modifier.size(86.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                    border = BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f),
+                    ),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = title,
+                            modifier = Modifier.size(46.dp),
+                            tint = Color(0xFF7B55F6),
+                        )
+                    }
+                }
+            }
         }
     }
 }

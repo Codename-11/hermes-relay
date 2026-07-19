@@ -8,12 +8,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
@@ -42,12 +46,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
 import com.hermesandroid.relay.ui.components.ActiveCardFeaturesSection
@@ -60,7 +66,6 @@ import com.hermesandroid.relay.ui.components.SessionInfoSheet
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
-import com.hermesandroid.relay.viewmodel.statusText
 
 /**
  * Tabbed detail for a single Hermes connection — the level-2 screen the
@@ -105,8 +110,6 @@ fun ConnectionDetailScreen(
     val connections by connectionViewModel.connections.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
-    val relayRow by connectionViewModel.relayRowState.collectAsState()
-    val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
     val relayEnabled by FeatureFlags.relayEnabled(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
 
@@ -200,6 +203,12 @@ fun ConnectionDetailScreen(
                                 menuExpanded = false
                                 onRepair(connectionId)
                             },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.QrCodeScanner,
+                                    contentDescription = null,
+                                )
+                            },
                         )
                         if (connection.pairedAt != null) {
                             DropdownMenuItem(
@@ -265,8 +274,6 @@ fun ConnectionDetailScreen(
                             ActiveOverview(
                                 connectionViewModel = connectionViewModel,
                                 connection = connection,
-                                relayConfigured = relayConfigured,
-                                relayStatusText = relayRow.statusText(connectedLabel = stringResource(R.string.detail_connected)),
                                 relayUiState = relayUiState,
                                 relayEnabled = relayEnabled,
                                 onReconnect = onReconnect,
@@ -289,18 +296,23 @@ fun ConnectionDetailScreen(
                         connectionViewModel = connectionViewModel,
                         connection = connection,
                         liveState = relayUiState,
+                        onEditDashboard = {
+                            selectedTab = tabs.indexOf(DetailTab.Advanced)
+                        },
                     )
 
                     DetailTab.Advanced -> ActiveCardAdvancedSection(
                         connectionViewModel = connectionViewModel,
                         relayEnabled = relayEnabled,
                         isDarkTheme = isDarkTheme,
+                        onPairRelay = { onRepair(connectionId) },
                         onInsecureAckRequested = { showInsecureAckDialog = true },
                     )
 
                     DetailTab.Security -> ActiveCardSecurityPosture(
                         connectionViewModel = connectionViewModel,
                         onNavigateToPairedDevices = onNavigateToPairedDevices,
+                        onRevokeRelay = { showRevokeConfirm = true },
                     )
                 }
 
@@ -410,8 +422,6 @@ private enum class DetailTab {
 private fun ActiveOverview(
     connectionViewModel: ConnectionViewModel,
     connection: Connection,
-    relayConfigured: Boolean,
-    relayStatusText: String,
     relayUiState: RelayUiState,
     relayEnabled: Boolean,
     onReconnect: () -> Unit,
@@ -421,37 +431,67 @@ private fun ActiveOverview(
     onOpenRelayInfo: () -> Unit,
     onOpenSessionInfo: () -> Unit,
 ) {
-    val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
-    val headerLine = if (relayConfigured) relayStatusText else stringResource(R.string.detail_standard_prefix) + hostname
+    val hostname = connection.primaryHost.ifBlank { connection.label }
+    val dashboardReady = connection.dashboardLastStatus?.reachable == true
 
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = headerLine,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = hostname,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Dashboard,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.detail_dashboard_primary),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = connection.resolvedDashboardUrl.ifBlank { hostname },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            HorizontalDivider()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = if (dashboardReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Text(
+                    text = if (dashboardReady) {
+                        stringResource(R.string.detail_core_ready)
+                    } else {
+                        stringResource(R.string.detail_core_configured)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (dashboardReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
     }
 
     Text(
-        text = stringResource(R.string.detail_routes_help),
+        text = stringResource(R.string.detail_overview_summary),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -463,6 +503,7 @@ private fun ActiveOverview(
         onOpenDashboard = onOpenDashboard,
         onOpenRelayInfo = onOpenRelayInfo,
         onOpenSessionInfo = onOpenSessionInfo,
+        onPairRelay = onRepair,
     )
 
     Row(
@@ -471,9 +512,6 @@ private fun ActiveOverview(
     ) {
         if (relayUiState == RelayUiState.Stale) {
             Button(onClick = onReconnect) { Text(stringResource(R.string.detail_reconnect)) }
-        }
-        TextButton(onClick = onRepair) {
-            Text(if (connection.pairedAt == null) stringResource(R.string.detail_pair_relay) else stringResource(R.string.detail_repair))
         }
     }
 }
@@ -489,10 +527,10 @@ private fun InactiveOverview(
     onSwitch: () -> Unit,
     onRepair: () -> Unit,
 ) {
-    val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
+    val hostname = connection.primaryHost.ifBlank { connection.label }
     val statusLine = when {
         connection.pairedAt != null -> stringResource(R.string.detail_paired_relay_configured)
-        connection.apiServerUrl.isNotBlank() -> stringResource(R.string.detail_standard_not_paired)
+        connection.capabilities.chatConfigured -> stringResource(R.string.detail_standard_not_paired)
         else -> stringResource(R.string.detail_not_configured)
     }
 

@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.primaryRouteUrl
+import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -56,7 +58,10 @@ data class RouteProbeOutcome(
  *    candidate is reachable we use it; reachability never promotes a lower
  *    priority over a higher one. Reachability is **only** the tiebreaker
  *    among candidates that share the same priority.
- *  * **Reachability probe.** `HEAD ${api.url}/health` with a 2-second
+ *  * **Reachability probe.** Dashboard-first routes use `GET
+ *    ${dashboard.url}/api/status`; legacy API routes use `HEAD
+ *    ${api.url}/health`. Relay-only routes use `HEAD ${relay.httpUrl}/health`.
+ *    Each request has a 4-second
  *    per-candidate timeout. Positive results are cached longer than negative
  *    results so repeated `connect()` calls don't hammer healthy routes, while
  *    transient handoff misses do not pin a good fallback offline.
@@ -100,6 +105,13 @@ class EndpointResolver(
      * entry was written; after expiry the entry is re-probed.
      */
     private data class CacheEntry(val expiresAt: Long, val reachable: Boolean)
+
+    private data class ProbeTarget(
+        val baseUrl: String,
+        val requestUrl: String,
+        val path: String,
+        val useHead: Boolean,
+    )
 
     private val probeCache = ConcurrentHashMap<String, CacheEntry>()
 
@@ -156,13 +168,13 @@ class EndpointResolver(
         private const val PROBE_TIMEOUT_DETAIL = "No answer (timed out)"
 
         /**
-         * Stable cache key for a candidate: `"<role>|<api.host>:<api.port>"`.
+         * Stable cache key for a candidate: `"<role>|<primary host>:<port>"`.
          * Roles are preserved case-verbatim (HMAC canonicalization contract)
          * but hostnames are lowercased — two roles pointing at the same
          * host:port share reachability state.
          */
         internal fun cacheKey(candidate: EndpointCandidate): String =
-            "${candidate.role}|${candidate.api.host.lowercase()}:${candidate.api.port}"
+            "${candidate.role}|${candidate.routeAuthority() ?: candidate.primaryRouteUrl().orEmpty().lowercase()}"
     }
 
     /**
@@ -194,14 +206,14 @@ class EndpointResolver(
             val winner = raceGroup(group)
             if (winner != null) {
                 Log.i(TAG, "resolve winner: role=${winner.role} " +
-                    "api=${winner.api.host}:${winner.api.port} priority=$priority")
+                    "route=${winner.primaryRouteUrl()} priority=$priority")
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Info,
                     title = context?.getString(R.string.endpoint_diag_selected) ?: "Endpoint selected",
                     detail = "priority=$priority",
                     endpointRole = winner.role,
-                    url = winner.relay.url,
+                    url = winner.primaryRouteUrl(),
                 )
                 return winner
             }
@@ -281,7 +293,7 @@ class EndpointResolver(
     }
 
     /**
-     * One-shot HEAD /health probe against a candidate. 2-second timeout,
+     * One-shot probe against a candidate's primary configured surface.
      * no retries — callers that need retry semantics can re-invoke after
      * the cache expires.
      *
@@ -290,18 +302,19 @@ class EndpointResolver(
      */
     private suspend fun probe(candidate: EndpointCandidate): Boolean {
         val startedAtMs = clock()
-        val url = "${candidate.api.url}/health".toHttpUrlOrNull()
+        val target = probeTarget(candidate)
+        val url = target?.requestUrl?.toHttpUrlOrNull()
             ?: run {
                 Log.w(TAG, "probe: invalid url for role=${candidate.role}")
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Error,
                     title = context?.getString(R.string.endpoint_diag_probe_invalid) ?: "Endpoint probe invalid",
-                    detail = "Invalid API URL",
+                    detail = "No valid Dashboard, API, or Relay URL",
                     endpointRole = candidate.role,
-                    url = candidate.api.url,
+                    url = candidate.primaryRouteUrl(),
                 )
-                recordOutcome(candidate, reachable = false, detail = "Invalid API URL")
+                recordOutcome(candidate, reachable = false, detail = "Invalid route URL")
                 return false
             }
         val fastClient = httpClient.newBuilder()
@@ -310,11 +323,10 @@ class EndpointResolver(
             .writeTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .callTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .build()
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(url)
-            .head()
             .header("Accept", "*/*")
-            .build()
+        val request = if (target.useHead) requestBuilder.head().build() else requestBuilder.get().build()
         return withContext(Dispatchers.IO) {
             try {
                 withTimeoutOrNull(PROBE_TIMEOUT_MS + 200L) {
@@ -331,13 +343,13 @@ class EndpointResolver(
                             title = probeTitle,
                             detail = if (ok) null else "HTTP ${resp.code}",
                             endpointRole = candidate.role,
-                            url = candidate.api.url,
+                            url = target.baseUrl,
                             elapsedMs = clock() - startedAtMs,
                         )
                         recordOutcome(
                             candidate,
                             reachable = ok,
-                            detail = if (ok) null else "HTTP ${resp.code} from /health",
+                            detail = if (ok) null else "HTTP ${resp.code} from ${target.path}",
                         )
                         ok
                     }
@@ -346,9 +358,9 @@ class EndpointResolver(
                         category = DiagnosticCategory.Endpoint,
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
-                        detail = "No /health response in ${PROBE_TIMEOUT_MS}ms",
+                        detail = "No ${target.path} response in ${PROBE_TIMEOUT_MS}ms",
                         endpointRole = candidate.role,
-                        url = candidate.api.url,
+                        url = target.baseUrl,
                         elapsedMs = clock() - startedAtMs,
                     )
                     recordOutcome(candidate, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
@@ -359,29 +371,76 @@ class EndpointResolver(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Warning,
                     title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
-                    detail = "No /health response in ${PROBE_TIMEOUT_MS}ms",
+                    detail = "No ${target.path} response in ${PROBE_TIMEOUT_MS}ms",
                     endpointRole = candidate.role,
-                    url = candidate.api.url,
+                    url = target.baseUrl,
                     elapsedMs = clock() - startedAtMs,
                 )
                 recordOutcome(candidate, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
                 false
             } catch (e: Exception) {
                 Log.d(TAG, "probe failed role=${candidate.role} " +
-                    "host=${candidate.api.host}: ${e.javaClass.simpleName}")
+                    "route=${target.baseUrl}: ${e.javaClass.simpleName}")
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Endpoint,
                     severity = DiagnosticSeverity.Warning,
                     title = context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed",
                     detail = e.javaClass.simpleName,
                     endpointRole = candidate.role,
-                    url = candidate.api.url,
+                    url = target.baseUrl,
                     elapsedMs = clock() - startedAtMs,
                 )
                 recordOutcome(candidate, reachable = false, detail = humanProbeFailure(e))
                 false
             }
         }
+    }
+
+    /** Choose the standard Dashboard/Gateway surface first when advertised. */
+    private fun probeTarget(candidate: EndpointCandidate): ProbeTarget? {
+        candidate.dashboard?.url
+            ?.trim()
+            ?.trimEnd('/')
+            ?.takeIf { it.isNotBlank() }
+            ?.let { base ->
+                return ProbeTarget(
+                    baseUrl = base,
+                    requestUrl = "$base/api/status",
+                    path = "/api/status",
+                    useHead = false,
+                )
+            }
+
+        candidate.api?.url?.let { base ->
+            return ProbeTarget(
+                baseUrl = base,
+                requestUrl = "$base/health",
+                path = "/health",
+                useHead = true,
+            )
+        }
+
+        candidate.relay?.url
+            ?.trim()
+            ?.trimEnd('/')
+            ?.takeIf { it.isNotBlank() }
+            ?.let { relayUrl ->
+                val httpBase = when {
+                    relayUrl.startsWith("ws://", ignoreCase = true) ->
+                        "http://${relayUrl.substringAfter("://")}"
+                    relayUrl.startsWith("wss://", ignoreCase = true) ->
+                        "https://${relayUrl.substringAfter("://")}"
+                    else -> return null
+                }
+                return ProbeTarget(
+                    baseUrl = relayUrl,
+                    requestUrl = "$httpBase/health",
+                    path = "/health",
+                    useHead = true,
+                )
+            }
+
+        return null
     }
 
     /**

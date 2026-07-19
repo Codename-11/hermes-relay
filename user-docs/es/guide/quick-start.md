@@ -26,8 +26,8 @@ estar instaladas a la vez.
 
 ## 2. Inicia Hermes
 
-El servidor de API de Hermes debe estar activo y accesible desde el teléfono.
-Si es necesario, inicia el host con `hermes gateway`. Consulta
+El Dashboard/Gateway de Hermes debe estar activo y accesible desde el teléfono.
+Si es necesario, inícialo con `hermes dashboard`. Consulta
 [Instalación y configuración](/es/guide/getting-started) para preparar el servidor.
 
 ## 3. Conecta
@@ -35,16 +35,19 @@ Si es necesario, inicia el host con `hermes gateway`. Consulta
 Abre la aplicación y llega a **Connect**. Puedes:
 
 1. Usar **Scan for Hermes on LAN** para buscar el servidor en tu red local.
-2. Introducir una dirección como `http://<host>:8642` y la clave de API configurada.
-3. Escanear un código QR de configuración que contenga la URL y la clave.
+2. Introducir la dirección del Dashboard/Gateway, como `http://<host>:9119`.
+3. Usar **Scan setup QR**; los QR API-first antiguos siguen admitidos para compatibilidad avanzada.
+4. Iniciar sesión con el proveedor del dashboard cuando se solicite.
 
-Si el host se ejecuta intencionadamente sin `API_SERVER_KEY`, deja la clave vacía.
+El servidor de API es un fallback automático opcional o una opción avanzada
+para compatibilidad headless; Relay sigue siendo opcional para extensiones.
 
 ## 4. Comprueba el estado
 
 - **Chat · Ready** significa que ya puedes enviar mensajes.
 - **Manage** puede pedir que inicies sesión en el dashboard.
 - **Voice** se habilita con esa misma sesión del dashboard.
+- **API fallback** puede no estar disponible sin bloquear Chat.
 - **Relay** puede seguir sin emparejar y no bloquea el funcionamiento estándar.
 
 ## 5. Envía el primer mensaje

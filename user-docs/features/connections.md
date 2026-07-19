@@ -4,12 +4,12 @@ A **connection** in Hermes-Relay is a saved link to a Hermes server. Add multipl
 
 ## What a connection contains
 
-Each connection stores everything needed to talk to one Hermes install:
+Each connection has a stable ID for one Hermes install and can hold several
+independent capabilities:
 
-- API server URL (`http(s)://host:8642`) and API key for Chat/session API calls
-- Auto-derived dashboard URL (`http(s)://host:9119`) and dashboard cookies for Manage
-- Auto-derived relay URL (`ws(s)://host:8767`), unless you set a manual relay override
-- Its own Relay pairing record — session token and device ID for Terminal, Bridge, and relay-only power tools
+- Dashboard/Gateway URL (`http(s)://host:9119`) and dashboard session for primary Chat, sessions, Manage, and standard voice
+- Optional API server URL (`http(s)://host:8642`) and API key for automatic chat fallback or advanced headless compatibility
+- Optional Relay URL (`ws(s)://host:8767`) and pairing record for Terminal, Bridge, and relay-only power tools
 - Its own sessions, memory, personalities, and skill list (fetched from that server)
 - Last-active session ID and explicit profile pick, so switching back takes you where you left off
 
@@ -33,19 +33,27 @@ The whole thing takes under a second on a healthy connection.
 
 Open **Settings → Connections** for the connection **list**. Each card shows the
 connection's label, an **Active** badge on the one in use, a one-line status, and
-a compact capability summary (API · Dashboard · Voice · Relay) so you can scan the
+a compact capability summary (Chat · Manage · Voice · API fallback · Relay) so you can scan the
 health of every server at a glance. Tap a card to open its **detail** screen.
+
+With two or more saved connections, **On app start** defaults to **Last used**.
+You can instead pin one connection for cold launches without changing which
+connection is active during the current session.
 
 The detail screen is organized into tabs:
 
 - **Overview** — the live capability timeline (what this connection can do) plus
   quick **Reconnect** / **Re-pair** actions.
-- **Routes** — multi-endpoint route management (LAN / Tailscale / public); pick a
-  route, re-check reachability, or add/edit one.
-- **Advanced** — manual URL / API-key entry, the insecure-connection toggle, and
-  the manual pairing-code fallback. Most people never need this.
-- **Security** — transport posture (TLS / Tailscale / keystore) and **Relay
-  sessions**, where you can review and revoke the phones paired with that server.
+- **Routes** — shows the primary Dashboard route even when no API or Relay is
+  configured. LAN, Tailscale (`100.x` or `.ts.net`), and public Dashboard routes
+  can be added and tested without API configuration. Optional API routes are
+  only for direct chat fallback on the same networks.
+- **Advanced** — manual Dashboard, API, and Relay endpoints; API credentials;
+  the insecure-connection toggle; and the manual pairing-code fallback. Most
+  people never need this.
+- **Security** — transport posture, Dashboard authentication, credential storage,
+  and **Relay sessions**, where you can review and revoke phones paired with that
+  server or sign out of the Dashboard session.
 
 The `⋮` menu in the detail's top bar holds the per-connection actions:
 
@@ -58,7 +66,11 @@ A connection that isn't active opens to a preview with a **Switch to this
 connection** action — the deep tabs (Routes / Advanced / Security) manage the
 *active* connection, so switch to it first to manage its routes and relay sessions.
 
-Tap **Add connection** to create a new one. This launches the same connection wizard used during first-time setup. Choose **Vanilla Hermes** for the normal API/dashboard path, or scan a QR when your host already printed one. Relay pairing is optional and can be added later from the connection's detail screen.
+Tap **Add connection** to create a new one. The normal flow asks for one Hermes
+Dashboard/Gateway address, discovers its capabilities, and signs in through the
+dashboard when required. The API server and Relay are optional and can be added
+later without recreating the connection. Existing API-first setup QRs remain
+importable for compatibility.
 
 ## Live status and diagnostics
 
@@ -67,7 +79,7 @@ Pairing and live reachability are shown separately. A connection can still be
 Relay row shows **Relay unreachable - tap to reconnect** rather than treating
 the saved session as proof of a live server.
 
-Tap the API Server, Relay, or Session rows in the active connection's **Overview**
+Tap the Dashboard/Gateway, API fallback, Relay, or Session rows in the active connection's **Overview**
 tab to open detail sheets with a compact **Recent activity** tail. The tail shows
 sanitized API, route, relay, session, and voice events such as health timeouts,
 selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
@@ -83,7 +95,7 @@ rather than being incorrectly marked current.
 Connection feedback sits where it matters and never covers the nav or shifts the
 screen. There are really two connections, shown in two places:
 
-- **Your agent** (the chat connection) shows in the header **subtitle under the agent
+- **Your agent** (the Dashboard/Gateway chat connection, or API fallback when used) shows in the header **subtitle under the agent
   name** — the model line swaps to **Reconnecting…** / **Connecting…** /
   **Disconnected** (amber or red) and fades back to the model once it recovers, the
   same place messaging apps show "connecting…". This is the one that tells you whether
@@ -101,17 +113,25 @@ A pairing QR can carry multiple endpoint candidates for the same server: LAN, Ta
 
 The split is intentional:
 
-- Chat and API-key voice use the Hermes API server route.
-- Terminal, bridge, TUI, media/session management, clipboard, profile writes, Android control, and relay-token voice fallback use the relay route and require a paired relay session.
+- Standard Chat, sessions, Manage, and voice use the Dashboard/Gateway route.
+- Optional API fallback uses its own route and bearer only when configured.
+- Terminal, bridge, TUI, media, clipboard, profile-file operations, Android
+  control, and Relay voice extensions use the Relay route and require a paired
+  Relay session.
 
-For Tailscale, run this on the host before pairing:
+For optional Relay and API routes over Tailscale, run this on the host before pairing:
 
 ```bash
 hermes-relay-tailscale enable
 hermes pair --mode auto --prefer tailscale
 ```
 
-The helper publishes relay `:8767` and API `:8642`; both must be reachable for the full app to work away from LAN. The route menu in Settings lets you prefer a route for the current session without changing the stored connection.
+The helper publishes Relay `:8767` and the optional API fallback. Add the remote
+Dashboard/Gateway independently — `http://100.x.y.z:9119` works over the
+encrypted tailnet when the Dashboard is reachable there, and needs no API key.
+The route menu in Settings
+lets you prefer a route for the current session without changing the stored
+connection.
 
 See [Remote access](/guide/remote-access) for setup commands and troubleshooting.
 

@@ -32,10 +32,9 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
  * button), and pops back to wherever it came from on complete or cancel.
  *
  * [autoStart] lets the caller deep-link into a specific pair method. When
- * set to `"scan"`, the wizard jumps straight to camera-permission-request
- * → scanner on first composition. Null (default) shows the full Method
- * chooser so users can pick Standard API/dashboard setup or a Relay pairing
- * method.
+ * set to `"scan"`, the wizard jumps straight to the scanner. `"relay"`
+ * opens the connection-scoped Relay method chooser without exposing the
+ * new-server flow. Null shows the full connection chooser.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +44,7 @@ fun PairScreen(
     onCancel: () -> Unit,
     onManageSignIn: (() -> Unit)? = null,
     autoStart: String? = null,
+    setupReady: Boolean = true,
     /**
      * Optional offline "Try the demo" entry, forwarded to [ConnectionWizard].
      * Wired by [RelayApp] only for the bare Connect entry (no placeholder
@@ -65,7 +65,14 @@ fun PairScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.pair_connect_to_hermes)) },
+                title = {
+                    Text(
+                        stringResource(
+                            if (autoStart == "relay") R.string.detail_pair_relay
+                            else R.string.pair_connect_to_hermes,
+                        ),
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
@@ -93,6 +100,7 @@ fun PairScreen(
                 onManageSignIn = onManageSignIn,
                 showSkip = false,
                 autoStart = autoStart,
+                setupReady = setupReady,
                 onTryDemo = onTryDemo,
             )
         }

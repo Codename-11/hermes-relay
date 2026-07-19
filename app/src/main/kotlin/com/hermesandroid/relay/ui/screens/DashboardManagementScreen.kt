@@ -317,6 +317,7 @@ private data class PendingDashboardAction(
 fun DashboardManagementScreen(
     connectionViewModel: ConnectionViewModel,
     onNavigateToConnections: () -> Unit,
+    onNavigateToSignIn: () -> Unit = {},
     onBack: () -> Unit = {},
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
@@ -341,7 +342,6 @@ fun DashboardManagementScreen(
     var actionInFlight by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<PendingDashboardAction?>(null) }
     var detailResult by remember { mutableStateOf<DashboardDetailResult?>(null) }
-    var oauthProvider by remember { mutableStateOf<DashboardAuthProvider?>(null) }
     var confirmClearDashboardSession by remember { mutableStateOf(false) }
     var inputAction by remember { mutableStateOf<PendingDashboardAction?>(null) }
     var modelPickerTarget by remember { mutableStateOf<ModelPickerTarget?>(null) }
@@ -759,60 +759,6 @@ fun DashboardManagementScreen(
         }
     }
 
-    fun submitDashboardSignIn(provider: String, username: String, password: String) {
-        if (dashboardUrl.isBlank() || actionInFlight) return
-        actionInFlight = true
-        actionMessage = null
-        scope.launch {
-            val result = try {
-                withDashboardClient(clientFactory) { client ->
-                    client.loginPassword(
-                        provider = provider,
-                        username = username,
-                        password = password,
-                    ).mapCatching {
-                        val status = client.getStatus().getOrNull()
-                        val session = client.currentSession().getOrNull()
-                        val gatewayTicketAvailable = if (session?.authenticated == true) {
-                            client.requestWsTicket().isSuccess
-                        } else {
-                            null
-                        }
-                        connectionViewModel.recordDashboardStatus(
-                            status = status,
-                            session = session,
-                            reachable = status != null,
-                            gatewayTicketAvailable = gatewayTicketAvailable,
-                        )
-                        if (session?.authenticated != true) {
-                            throw IllegalStateException(
-                                context.getString(R.string.dashboard_signin_no_session),
-                            )
-                        }
-                        it
-                    }
-                }
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-            actionMessage = result.fold(
-                onSuccess = {
-                    payloadStates.clear()
-                    refreshingPayloads.clear()
-                    clearDashboardManageDiskCache(context.cacheDir)
-                    forceReloadKey = null
-                    reloadNonce += 1
-                    // Standard voice rides this same cookie session — unlock the
-                    // mic immediately rather than waiting for the next health tick.
-                    connectionViewModel.refreshStandardVoice()
-                    context.getString(R.string.dashboard_signed_in)
-                },
-                onFailure = { err -> err.message ?: context.getString(R.string.dashboard_signin_failed) },
-            )
-            actionInFlight = false
-        }
-    }
-
     pendingAction?.let { pending ->
         val isActivateProfile = pending.action.kind == DashboardActionKind.ActivateProfile
         val actionLabel = dashboardActionLabel(pending.action)
@@ -1051,32 +997,6 @@ fun DashboardManagementScreen(
         )
     }
 
-    oauthProvider?.let { provider ->
-        val signedInMsg = stringResource(R.string.dashboard_signed_in)
-        val signedInWithMsg = stringResource(R.string.dashboard_signed_in_with)
-        DashboardOAuthSignInDialog(
-            dashboardUrl = dashboardUrl,
-            provider = provider,
-            cookieStoreFactory = cookieStoreFactory,
-            onDismiss = { oauthProvider = null },
-            onAuthenticated = { session ->
-                oauthProvider = null
-                payloadStates.clear()
-                refreshingPayloads.clear()
-                scope.launch {
-                    clearDashboardManageDiskCache(context.cacheDir)
-                }
-                forceReloadKey = null
-                actionMessage = session.provider?.let { signedInWithMsg.format(it) } ?: signedInMsg
-                reloadNonce += 1
-                connectionViewModel.refreshStandardVoice()
-            },
-            onError = { message ->
-                actionMessage = message
-            },
-        )
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1201,8 +1121,7 @@ fun DashboardManagementScreen(
                                         forceReloadKey = payloadKey
                                         reloadNonce += 1
                                     },
-                                    onSignIn = ::submitDashboardSignIn,
-                                    onOAuthSignIn = { provider -> oauthProvider = provider },
+                                    onNavigateToSignIn = onNavigateToSignIn,
                                 )
                                 is DashboardPayloadState.Loaded -> LoadedBody(
                                     section = section,
@@ -1264,8 +1183,7 @@ fun DashboardManagementScreen(
                         actionInFlight = actionInFlight,
                         actionMessage = actionMessage,
                         onClearSession = { confirmClearDashboardSession = true },
-                        onSignIn = ::submitDashboardSignIn,
-                        onOAuthSignIn = { provider -> oauthProvider = provider },
+                        onNavigateToSignIn = onNavigateToSignIn,
                         onNavigateToConnections = onNavigateToConnections,
                         onSelectSection = { sectionPick ->
                             managementSections.indexOf(sectionPick)
@@ -1346,8 +1264,7 @@ private fun ManageOverviewBody(
     actionInFlight: Boolean,
     actionMessage: String?,
     onClearSession: () -> Unit,
-    onSignIn: (String, String, String) -> Unit,
-    onOAuthSignIn: (DashboardAuthProvider) -> Unit,
+    onNavigateToSignIn: () -> Unit,
     onNavigateToConnections: () -> Unit,
     onSelectSection: (DashboardManagementSection) -> Unit,
 ) {
@@ -1426,14 +1343,10 @@ private fun ManageOverviewBody(
         val signInStatus = status
         if (signInStatus?.authRequired == true && authenticated != true) {
             item {
-                DashboardSignInCard(
+                DashboardSignInGateCard(
                     dashboardUrl = dashboardUrl,
                     routeHint = routeHint,
-                    providers = signInStatus.authProviderDetails,
-                    actionInFlight = actionInFlight,
-                    actionMessage = actionMessage,
-                    onSignIn = onSignIn,
-                    onOAuthSignIn = onOAuthSignIn,
+                    onSignIn = onNavigateToSignIn,
                 )
             }
         }
@@ -1961,8 +1874,7 @@ private fun ErrorBody(
     actionInFlight: Boolean,
     actionMessage: String?,
     onRetry: () -> Unit,
-    onSignIn: (String, String, String) -> Unit,
-    onOAuthSignIn: (DashboardAuthProvider) -> Unit,
+    onNavigateToSignIn: () -> Unit,
 ) {
     val signInRequired = message.contains("401") ||
         message.contains("403") ||
@@ -1974,14 +1886,10 @@ private fun ErrorBody(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (signInRequired) {
-            DashboardSignInCard(
+            DashboardSignInGateCard(
                 dashboardUrl = dashboardUrl,
                 routeHint = routeHint,
-                providers = status?.authProviderDetails.orEmpty(),
-                actionInFlight = actionInFlight,
-                actionMessage = actionMessage,
-                onSignIn = onSignIn,
-                onOAuthSignIn = onOAuthSignIn,
+                onSignIn = onNavigateToSignIn,
             )
         } else {
             Card(
@@ -2270,6 +2178,52 @@ private fun DashboardSummaryCard(
             }
         }
     }
+}
+
+@Composable
+private fun DashboardSignInGateCard(
+    dashboardUrl: String,
+    routeHint: String?,
+    onSignIn: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.dashboard_signin_required_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(R.string.dashboard_signin_required_body, dashboardUrl),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            routeHint?.let {
+                Text(
+                    text = stringResource(R.string.dashboard_signin_route_hint, it),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+            Button(onClick = onSignIn, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.dashboard_sign_in))
+            }
+        }
+    }
+}
+
+/** Clear every Manage snapshot after the shared Dashboard auth session changes. */
+internal suspend fun invalidateDashboardManageCache(cacheDir: java.io.File) {
+    DashboardPayloadCache.states.clear()
+    DashboardPayloadCache.refreshing.clear()
+    clearDashboardManageDiskCache(cacheDir)
 }
 
 @Composable

@@ -58,6 +58,28 @@ class ChatViewModelCommandCatalogTest {
         )
     }
 
+    @Test
+    fun parseDashboardPersonalityConfig_readsWrappedAndDirectConfig() {
+        val config = buildJsonObject {
+            put("model", "gpt-test")
+            put("agent", buildJsonObject {
+                put("personalities", buildJsonObject {
+                    put("concise", "Be concise")
+                    put("coach", "Coach the user")
+                })
+            })
+            put("display", buildJsonObject { put("personality", "concise") })
+        }
+
+        listOf(config, buildJsonObject { put("config", config) }).forEach { root ->
+            val parsed = parseDashboardPersonalityConfig(root)
+            assertEquals(listOf("concise", "coach"), parsed.names)
+            assertEquals("Be concise", parsed.prompts["concise"])
+            assertEquals("concise", parsed.defaultName)
+            assertEquals("gpt-test", parsed.modelName)
+        }
+    }
+
     private fun commandPair(
         name: String,
         description: String,

@@ -88,11 +88,39 @@ class ConnectionDashboardFieldsTest {
 
         assertEquals(2, routes.size)
         assertEquals("lan", routes[0].role)
-        assertEquals("192.168.1.25", routes[0].api.host)
-        assertEquals("ws://192.168.1.25:8767", routes[0].relay.url)
+        assertEquals("192.168.1.25", routes[0].api?.host)
+        assertEquals("ws://192.168.1.25:8767", routes[0].relay?.url)
         assertEquals("tailscale", routes[1].role)
-        assertEquals("hermes.tail1234.ts.net", routes[1].api.host)
-        assertEquals("wss://hermes.tail1234.ts.net:8767", routes[1].relay.url)
+        assertEquals("hermes.tail1234.ts.net", routes[1].api?.host)
+        assertEquals("wss://hermes.tail1234.ts.net:8767", routes[1].relay?.url)
+    }
+
+    @Test
+    fun dashboardRouteBuilder_acceptsBareTailscaleHostWithoutOptionalSurfaces() {
+        val route = Connection.endpointCandidateFromDashboardUrl(
+            role = "",
+            priority = 1,
+            dashboardUrl = "100.75.1.2",
+        )
+
+        assertEquals("tailscale", route?.role)
+        assertEquals("http://100.75.1.2:9119", route?.dashboard?.url)
+        assertNull(route?.api)
+        assertNull(route?.relay)
+    }
+
+    @Test
+    fun dashboardRouteBuilder_preservesOptionalApiAndRelayWhenConfigured() {
+        val route = Connection.endpointCandidateFromDashboardUrl(
+            role = "tailscale",
+            priority = 1,
+            dashboardUrl = "hermes.tail1234.ts.net",
+            apiServerUrl = "https://hermes.tail1234.ts.net:8642",
+            relayUrl = "wss://hermes.tail1234.ts.net:8767",
+        )
+
+        assertEquals("https://hermes.tail1234.ts.net:8642", route?.api?.url)
+        assertEquals("wss://hermes.tail1234.ts.net:8767", route?.relay?.url)
     }
 
     @Test
@@ -100,6 +128,30 @@ class ConnectionDashboardFieldsTest {
         assertEquals("tailscale", Connection.inferRouteRole("https://100.75.1.2:8642"))
         assertEquals("lan", Connection.inferRouteRole("http://10.0.0.5:8642"))
         assertEquals("public", Connection.inferRouteRole("https://hermes.example.com:8642"))
+    }
+
+    @Test
+    fun discoveredLabel_prefersHostnameForAnUncustomizedIpLabel() {
+        assertEquals(
+            "hermes-box.local",
+            Connection.chooseDiscoveredLabel(
+                currentLabel = "192.168.1.25",
+                primaryHost = "192.168.1.25",
+                discoveredHostname = "hermes-box.local",
+            ),
+        )
+    }
+
+    @Test
+    fun discoveredLabel_preservesAUserLabel() {
+        assertEquals(
+            "Home Hermes",
+            Connection.chooseDiscoveredLabel(
+                currentLabel = "Home Hermes",
+                primaryHost = "192.168.1.25",
+                discoveredHostname = "hermes-box.local",
+            ),
+        )
     }
 
     private fun sampleConnection(

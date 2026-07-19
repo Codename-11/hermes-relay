@@ -64,6 +64,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
 import com.hermesandroid.relay.ui.components.TransportSecuritySize
@@ -872,8 +873,7 @@ private fun EndpointsSubList(
         for (candidate in endpoints) {
             val isActive = activeEndpoint != null &&
                 activeEndpoint.role.equals(candidate.role, ignoreCase = true) &&
-                activeEndpoint.api.host.equals(candidate.api.host, ignoreCase = true) &&
-                activeEndpoint.api.port == candidate.api.port
+                activeEndpoint.routeAuthority() == candidate.routeAuthority()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -899,7 +899,7 @@ private fun EndpointsSubList(
                     },
                 )
                 Text(
-                    text = "${candidate.api.host}:${candidate.api.port}",
+                    text = candidate.routeAuthority().orEmpty(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
