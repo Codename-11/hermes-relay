@@ -64,6 +64,7 @@ legacy skill detail/toggle, available-models, and session search.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict
@@ -86,6 +87,13 @@ def _resolve_upstream():
     from aiohttp import web
 
     from hermes_state import SessionDB
+    try:
+        from hermes_state import AsyncSessionDB
+    except ImportError:
+        # AsyncSessionDB was added after the compatibility bootstrap. Older
+        # supported Hermes installs still get event-loop-safe access through
+        # asyncio.to_thread() in _call_session_db().
+        AsyncSessionDB = None  # type: ignore[assignment]
     from hermes_cli.config import load_config, save_config
     from hermes_cli.models import (
         curated_models_for_provider,
@@ -107,6 +115,7 @@ def _resolve_upstream():
     return {
         "web": web,
         "SessionDB": SessionDB,
+        "AsyncSessionDB": AsyncSessionDB,
         "MemoryStore": MemoryStore,
         "load_config": load_config,
         "save_config": save_config,
@@ -147,6 +156,26 @@ def _get_session_db(adapter, upstream):
         db = upstream["SessionDB"]()
         state["session_db"] = db
     return db
+
+
+async def _call_session_db(adapter, upstream, method: str, *args, **kwargs):
+    """Call a SessionDB method without blocking aiohttp's event loop.
+
+    Newer Hermes versions provide AsyncSessionDB as the canonical async door.
+    The explicit to_thread fallback keeps the same behavior on older upstream
+    versions instead of making the compatibility hook depend on a new symbol.
+    """
+    state = _state_for(adapter)
+    async_db_cls = upstream.get("AsyncSessionDB")
+    if async_db_cls is not None:
+        db = state.get("async_session_db")
+        if db is None:
+            db = async_db_cls(_get_session_db(adapter, upstream))
+            state["async_session_db"] = db
+        return await getattr(db, method)(*args, **kwargs)
+
+    db = _get_session_db(adapter, upstream)
+    return await asyncio.to_thread(getattr(db, method), *args, **kwargs)
 
 
 def _get_memory_store(adapter, upstream):
@@ -219,8 +248,14 @@ def _make_session_search_handlers(adapter, upstream):
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
-        db = _get_session_db(adapter, upstream)
-        results = db.search_messages(query=query, limit=limit, offset=offset)
+        results = await _call_session_db(
+            adapter,
+            upstream,
+            "search_messages",
+            query=query,
+            limit=limit,
+            offset=offset,
+        )
         return web.json_response({"query": query, "count": len(results), "results": results})
 
     return {
@@ -240,6 +275,12 @@ def _make_memory_handlers(adapter, upstream):
             {"error": "MemoryStore unavailable in this hermes-agent install"},
             status=503,
         )
+
+    def _reset_request_failure_budget(store) -> None:
+        """Treat each REST mutation as its own upstream memory turn."""
+        reset = getattr(store, "reset_consolidation_failures", None)
+        if callable(reset):
+            reset()
 
     async def get_memory(request):
         auth_err = adapter._check_auth(request)
@@ -286,6 +327,7 @@ def _make_memory_handlers(adapter, upstream):
         store = _get_memory_store(adapter, upstream)
         if store is None:
             return _memory_unavailable_response()
+        _reset_request_failure_budget(store)
         result = store.add(target, content)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
@@ -307,6 +349,7 @@ def _make_memory_handlers(adapter, upstream):
         store = _get_memory_store(adapter, upstream)
         if store is None:
             return _memory_unavailable_response()
+        _reset_request_failure_budget(store)
         result = store.replace(target, old_text, content)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
@@ -327,6 +370,7 @@ def _make_memory_handlers(adapter, upstream):
         store = _get_memory_store(adapter, upstream)
         if store is None:
             return _memory_unavailable_response()
+        _reset_request_failure_budget(store)
         result = store.remove(target, old_text)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
