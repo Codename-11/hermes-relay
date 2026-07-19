@@ -37,6 +37,7 @@ import { theme as makeTheme } from '../lib/theme.js'
 import { deleteSession, saveSession } from '../remoteSessions.js'
 import { runRelayChatTurn, type RelayChatTurnHandle } from '../relayChat.js'
 import { CliRenderer } from '../renderer.js'
+import { SessionResumeDrain } from '../resumeDrain.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
 import { configureComputerUseRuntime } from '../tools/computerGrants.js'
@@ -342,28 +343,39 @@ async function resolveHermesSessionId(
 
 async function createOrResumeSession(
   gw: GatewayClient,
-  resumeId: string | null
+  resumeId: string | null,
+  renderer: CliRenderer
 ): Promise<{
   sessionId: string
   model: string | null
   projectName: string | null
   queuedPrompt: string | null
   resumeActivity: SessionResumeActivity
+  resumeDrain: Promise<void> | null
 }> {
   const cols = process.stdout.columns ?? 80
 
   if (resumeId) {
-    const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
-    const r = asRpcResult<SessionResumeResponse>(raw)
-    if (!r?.session_id) {
-      throw new Error(`failed to resume session ${resumeId}`)
-    }
-    return {
-      sessionId: r.session_id,
-      model: r.info?.model ?? null,
-      projectName: sessionProjectName(r.info),
-      queuedPrompt: sessionQueuedPromptPreview(r),
-      resumeActivity: sessionResumeActivity(r)
+    const drain = new SessionResumeDrain(gw, (event) => renderer.handle(event))
+    try {
+      const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
+      const r = asRpcResult<SessionResumeResponse>(raw)
+      if (!r?.session_id) {
+        throw new Error(`failed to resume session ${resumeId}`)
+      }
+      const resumeActivity = sessionResumeActivity(r)
+      const drained = drain.activate(r.session_id, resumeActivity)
+      return {
+        sessionId: r.session_id,
+        model: r.info?.model ?? null,
+        projectName: sessionProjectName(r.info),
+        queuedPrompt: sessionQueuedPromptPreview(r),
+        resumeActivity,
+        resumeDrain: resumeActivity === 'idle' ? null : drained
+      }
+    } catch (error) {
+      drain.cancel()
+      throw error
     }
   }
 
@@ -377,7 +389,8 @@ async function createOrResumeSession(
     model: r.info?.model ?? null,
     projectName: sessionProjectName(r.info),
     queuedPrompt: null,
-    resumeActivity: 'idle'
+    resumeActivity: 'idle',
+    resumeDrain: null
   }
 }
 
@@ -680,9 +693,10 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     projectName: string | null
     queuedPrompt: string | null
     resumeActivity: SessionResumeActivity
+    resumeDrain: Promise<void> | null
   }
   try {
-    session = await createOrResumeSession(gw, resumeId)
+    session = await createOrResumeSession(gw, resumeId, renderer)
   } catch (e) {
     process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
     tearDown()
@@ -703,6 +717,16 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
   }
   if (session.queuedPrompt) {
     process.stderr.write(`Queued prompt: ${session.queuedPrompt}\n`)
+  }
+  if (session.resumeDrain) {
+    try {
+      await session.resumeDrain
+      process.stderr.write('Resumed activity completed.\n')
+    } catch (e) {
+      process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
+      tearDown()
+      return 1
+    }
   }
   renderer.handle({
     type: 'session.info',

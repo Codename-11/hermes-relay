@@ -732,6 +732,7 @@ class GatewayChatClient(
         storedId: String,
         preferredLiveId: String?,
         callbacks: GatewayTurnCallbacks,
+        queuedTurnProvider: ((GatewayQueuedTurn) -> GatewayInboundTurnRegistration?)? = null,
     ): Result<GatewaySessionRecovery> = runCatching {
         require(storedId.isNotBlank()) { "stored session id required" }
         val requestedProfile = currentSessionProfile()
@@ -761,6 +762,7 @@ class GatewayChatClient(
                 boundTurn = GatewayTurn(
                     callbacks = dispatchOn(callbacks),
                     dedupeAdjacentMessageStarts = true,
+                    deferEvents = true,
                 ).also { turn ->
                     turn.markRecoveredStarted()
                     activeTurn = turn
@@ -774,6 +776,7 @@ class GatewayChatClient(
                 response = activated.getOrNull()
                 if (response == null) {
                     if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.discardDeferredEvents()
                     boundTurn.detach()
                     boundTurn = null
                     Log.d(
@@ -826,9 +829,8 @@ class GatewayChatClient(
                     ?.let(::GatewayQueuedTurn)
             }
             val running = response.booleanField("running") == true || inflight?.streaming == true
-            val hasPendingWork = running || queued != null
 
-            if (hasPendingWork) {
+            if (running) {
                 if (boundTurn == null || boundTurn.ended) {
                     boundTurn = GatewayTurn(
                         callbacks = dispatchOn(callbacks),
@@ -838,10 +840,42 @@ class GatewayChatClient(
                         activeTurn = turn
                     }
                 }
+                boundTurn.releaseDeferredEvents()
                 boundTurn.armWatchdog()
+            } else if (queued != null) {
+                // A queued-only snapshot belongs to the NEXT turn. Never let
+                // its events flow through the completed checkpoint's mapper.
+                val priorBoundTurn = boundTurn
+                boundTurn = null
+                val registration = queuedTurnProvider?.invoke(queued)
+                if (registration != null) {
+                    val queuedTurn = GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                    )
+                    // recoverTurn is resumed on its caller's coroutine context;
+                    // ChatViewModel calls it from Main, so this admission runs
+                    // atomically with the checkpoint handoff. Posting back
+                    // through bindInboundTurn would deadlock waiting on the
+                    // same paused Main dispatcher during cold-start recovery.
+                    if (registration.onHandle(queuedTurn)) {
+                        priorBoundTurn?.redirectDeferredEventsTo(queuedTurn)
+                        boundTurn = queuedTurn
+                        activeTurn = queuedTurn
+                        queuedTurn.armWatchdog()
+                        priorBoundTurn?.detach()
+                    } else {
+                        priorBoundTurn?.discardDeferredEvents()
+                        priorBoundTurn?.detach()
+                    }
+                } else {
+                    priorBoundTurn?.discardDeferredEvents()
+                    priorBoundTurn?.detach()
+                }
             } else {
                 if (boundTurn != null) {
                     if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.discardDeferredEvents()
                     boundTurn.detach()
                 }
                 boundTurn = null
@@ -2121,8 +2155,13 @@ class GatewayChatClient(
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
+        deferEvents: Boolean = false,
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
+        private val deferredEventLock = Any()
+        private val deferredEvents = mutableListOf<Pair<String, JsonObject?>>()
+        private var eventsDeferred = deferEvents
+        private var redirectedTo: GatewayTurn? = null
 
         /** t0 = construction ≈ sendTurn entry (the moment the user sent). */
         val tracer = TurnLatencyTracer("gateway")
@@ -2163,6 +2202,21 @@ class GatewayChatClient(
             private set
 
         fun onEvent(type: String, payload: JsonObject?) {
+            val redirect = synchronized(deferredEventLock) {
+                if (eventsDeferred) {
+                    deferredEvents += type to payload
+                    return
+                }
+                redirectedTo
+            }
+            if (redirect != null) {
+                redirect.onEvent(type, payload)
+                return
+            }
+            processEvent(type, payload)
+        }
+
+        private fun processEvent(type: String, payload: JsonObject?) {
             if (type != "session.info") started = true
             tracer.mark("ttfe")
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
@@ -2182,6 +2236,31 @@ class GatewayChatClient(
             if (mapper.turnEnded) {
                 disarmWatchdog()
                 tracer.done()
+            }
+        }
+
+        fun releaseDeferredEvents() {
+            val pending = synchronized(deferredEventLock) {
+                eventsDeferred = false
+                deferredEvents.toList().also { deferredEvents.clear() }
+            }
+            pending.forEach { (type, payload) -> processEvent(type, payload) }
+        }
+
+        fun redirectDeferredEventsTo(target: GatewayTurn) {
+            val pending = synchronized(deferredEventLock) {
+                eventsDeferred = false
+                redirectedTo = target
+                deferredEvents.toList().also { deferredEvents.clear() }
+            }
+            pending.forEach { (type, payload) -> target.onEvent(type, payload) }
+        }
+
+        fun discardDeferredEvents() {
+            synchronized(deferredEventLock) {
+                eventsDeferred = false
+                redirectedTo = null
+                deferredEvents.clear()
             }
         }
 

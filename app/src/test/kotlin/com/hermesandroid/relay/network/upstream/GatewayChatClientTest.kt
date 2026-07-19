@@ -284,6 +284,8 @@ class GatewayClientHarness(
         }
     }
 
+    fun recoveryResult(sessionId: String): JsonObject = recoveryPayload(sessionId)
+
     init {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -1689,9 +1691,17 @@ class GatewayChatClientTest {
     @Test
     fun `recoverTurn keeps queued-only resume live`() {
         harness.recoveryQueuedUser = "do this next"
+        val queuedRecorder = Recorder()
 
         val recovery = runBlocking {
-            client.recoverTurn("stored-42", null, Recorder().callbacks).getOrThrow()
+            client.recoverTurn(
+                "stored-42",
+                null,
+                Recorder().callbacks,
+                queuedTurnProvider = {
+                    GatewayInboundTurnRegistration(queuedRecorder.callbacks) { true }
+                },
+            ).getOrThrow()
         }
 
         assertFalse(recovery.running)
@@ -1700,6 +1710,44 @@ class GatewayChatClientTest {
         assertNull(recovery.inflight)
         assertNotNull(recovery.handle)
         recovery.handle!!.detach()
+    }
+
+    @Test
+    fun `queued-only activation reroutes events received before acknowledgement`() {
+        runBlocking {
+            harness.recoveryQueuedUser = "do this next"
+            harness.suppressAckMethods += "session.activate"
+            val priorRecorder = Recorder()
+            val queuedRecorder = Recorder()
+
+            val pending = async(Dispatchers.IO) {
+                client.recoverTurn(
+                    "stored-42",
+                    "live-queued",
+                    priorRecorder.callbacks,
+                    queuedTurnProvider = {
+                        GatewayInboundTurnRegistration(queuedRecorder.callbacks) { true }
+                    },
+                ).getOrThrow()
+            }
+            val ack = harness.awaitPendingAck()
+            ack.ws.send(harness.eventFrame("message.start", null, "live-queued"))
+            ack.ws.send(
+                harness.eventFrame(
+                    "message.delta",
+                    buildJsonObject { put("text", "queued answer") },
+                    "live-queued",
+                ),
+            )
+            harness.releaseAck(ack, harness.recoveryResult("live-queued"))
+
+            val recovery = pending.await()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (queuedRecorder.textDeltas.isEmpty() && System.nanoTime() < deadline) delay(10)
+            assertEquals(emptyList<String>(), priorRecorder.textDeltas.toList())
+            assertEquals(listOf("queued answer"), queuedRecorder.textDeltas.toList())
+            recovery.handle?.detach()
+        }
     }
 
     @Test
