@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-19 — Android 1.4.9 release preparation
+
+Android advanced to 1.4.9 with versionCode 32 after the dashboard-primary
+connection and onboarding work merged to `dev`. The public changelog, GitHub
+release notes, in-app What's New surfaces, English and Simplified Chinese Play
+notes, and store-listing copy now describe the Android-only patch. Unreleased
+Relay security hardening and the Windows gateway PID fix remain assigned to the
+independent server release track.
+
 ## 2026-07-19 — Connection management detail pass
 
 The Connections list now uses compact capability chips and exposes a cold-start

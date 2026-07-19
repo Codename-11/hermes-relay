@@ -6,15 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Changed
-
-- **Hermes connections now use the Dashboard/Gateway as their standard surface.** Chat, sessions, Manage, and voice share one upstream sign-in; the API server is an optional automatic fallback or headless compatibility path, while Relay remains optional for power features.
-- **Connection management is more compact and explicit.** Multi-server installs can restore the last-used connection or pin a startup connection, Dashboard-only routes remain visible, and Advanced and Security present their settings and posture directly.
-
 ### Fixed
 
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
 - **Starting Relay no longer terminates a running Hermes gateway on Windows.** Profile discovery now checks gateway PIDs through non-signalling process APIs, including during periodic rescans.
+
+## [1.4.9] - 2026-07-19
+
+### Changed
+
+- **Hermes connections now use the Dashboard/Gateway as their standard surface.** Chat, sessions, Manage, and voice share one upstream sign-in; the API server is an optional automatic fallback or headless compatibility path, while Relay remains optional for power features.
+- **Connection management and onboarding now explain each path clearly.** Nearby and remote dashboard setup, Tailscale and custom ports, Relay pairing, startup preference, route details, and security posture are presented in dedicated flows.
+
+### Fixed
+
+- **Server default consistently displays Hermes' pinned active profile.** Chat, session drawers, agent details, settings, voice, diagnostics, and profile inspection now use the active profile identity while preserving server-default routing semantics.
+- **Discovered connections show useful host identity.** Successful local dashboard probes resolve and retain a hostname without overwriting a user-supplied connection label.
 
 ## [1.4.8] - 2026-07-18
 

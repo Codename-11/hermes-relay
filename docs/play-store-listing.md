@@ -85,11 +85,11 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.8 - Privacy policy link restored
+v1.4.9 - Clearer Hermes connections
 
-* The privacy policy now lives at hermes-relay.dev.
-* The About screen opens the hosted policy directly.
-* Releases verify the public policy before publishing.
+* Connect through the Hermes dashboard with one sign-in.
+* Setup now explains nearby, remote, Tailscale, custom-port, and optional Relay paths.
+* Server default consistently displays Hermes' pinned active profile.
 ```
 
 ## Category
