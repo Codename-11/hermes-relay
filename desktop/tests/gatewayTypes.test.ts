@@ -65,6 +65,18 @@ test('session project name accepts optional project metadata', () => {
   )
 })
 
+test('session project name strips terminal controls, folds lines, and bounds output', () => {
+  assert.equal(
+    sessionProjectName({
+      model: 'gpt-5.5',
+      project: { name: `\u001b[31mProject\u001b[0m\n${'x'.repeat(100)}` },
+      skills: {},
+      tools: {}
+    }),
+    `Project ${'x'.repeat(71)}…`
+  )
+})
+
 test('session project name remains absent for legacy metadata', () => {
   assert.equal(sessionProjectName({ model: 'gpt-5.5', skills: {}, tools: {} }), null)
 })

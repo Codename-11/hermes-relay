@@ -44,6 +44,7 @@ import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { theme as makeTheme, type Theme } from '../lib/theme.js'
 import { printUsage, unknownSubcommand, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
+import { SessionResumeDrain } from '../resumeDrain.js'
 import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { openInBrowser, startVoiceServer } from '../voiceServer.js'
@@ -449,18 +450,28 @@ async function createOrResumeSession(
   projectName: string | null
   queuedPrompt: string | null
   resumeActivity: SessionResumeActivity
+  resumeDrain: Promise<void> | null
 }> {
   const cols = process.stdout.columns ?? 80
   if (resumeId) {
-    const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
-    const r = asRpcResult<SessionResumeResponse>(raw)
-    if (!r?.session_id) throw new Error(`failed to resume session ${resumeId}`)
-    return {
-      sessionId: r.session_id,
-      model: r.info?.model ?? null,
-      projectName: sessionProjectName(r.info),
-      queuedPrompt: sessionQueuedPromptPreview(r),
-      resumeActivity: sessionResumeActivity(r)
+    const drain = new SessionResumeDrain(gw)
+    try {
+      const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
+      const r = asRpcResult<SessionResumeResponse>(raw)
+      if (!r?.session_id) throw new Error(`failed to resume session ${resumeId}`)
+      const resumeActivity = sessionResumeActivity(r)
+      const drained = drain.activate(r.session_id, resumeActivity)
+      return {
+        sessionId: r.session_id,
+        model: r.info?.model ?? null,
+        projectName: sessionProjectName(r.info),
+        queuedPrompt: sessionQueuedPromptPreview(r),
+        resumeActivity,
+        resumeDrain: resumeActivity === 'idle' ? null : drained
+      }
+    } catch (error) {
+      drain.cancel()
+      throw error
     }
   }
   const raw = await gw.request<SessionCreateResponse>('session.create', { cols })
@@ -471,7 +482,8 @@ async function createOrResumeSession(
     model: r.info?.model ?? null,
     projectName: sessionProjectName(r.info),
     queuedPrompt: null,
-    resumeActivity: 'idle'
+    resumeActivity: 'idle',
+    resumeDrain: null
   }
 }
 
@@ -523,6 +535,7 @@ async function voiceMode(args: ParsedArgs): Promise<number> {
     projectName: string | null
     queuedPrompt: string | null
     resumeActivity: SessionResumeActivity
+    resumeDrain: Promise<void> | null
   }
   try {
     session = await createOrResumeSession(gw, conversation)
@@ -545,6 +558,16 @@ async function voiceMode(args: ParsedArgs): Promise<number> {
   }
   if (session.queuedPrompt) {
     process.stderr.write(`Queued prompt: ${session.queuedPrompt}\n`)
+  }
+  if (session.resumeDrain) {
+    try {
+      await session.resumeDrain
+      process.stderr.write('Resumed activity completed.\n')
+    } catch (e) {
+      process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
+      await tearDown()
+      return 1
+    }
   }
 
   try {

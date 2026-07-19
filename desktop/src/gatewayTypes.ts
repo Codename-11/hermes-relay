@@ -79,6 +79,19 @@ export interface SessionResumeResponse {
 
 export type SessionResumeActivity = 'idle' | 'queued' | 'running' | 'running-and-queued'
 
+/** Sanitize untrusted gateway text for a bounded, single-line terminal status. */
+export function terminalStatusPreview(value: string | undefined, maxChars: number): string | null {
+  const compact = value
+    ?.replaceAll(/\x1b\[[?\d;]*[a-zA-Z~]/g, '')
+    .replaceAll(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replaceAll(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!compact) return null
+  const limit = Math.max(2, maxChars)
+  return compact.length <= limit ? compact : `${compact.slice(0, limit - 1).trimEnd()}…`
+}
+
 /** Classify optional live-work fields added by newer vanilla Hermes gateways. */
 export function sessionResumeActivity(response: SessionResumeResponse): SessionResumeActivity {
   const running = response.running === true || response.inflight?.streaming === true
@@ -91,21 +104,12 @@ export function sessionResumeActivity(response: SessionResumeResponse): SessionR
 
 /** Return the accepted next-turn prompt as a safe one-line status preview. */
 export function sessionQueuedPromptPreview(response: SessionResumeResponse, maxChars = 120): string | null {
-  const compact = response.queued?.user
-    ?.replaceAll(/\x1b\[[?\d;]*[a-zA-Z~]/g, '')
-    .replaceAll(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
-    .replaceAll(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!compact) return null
-  const limit = Math.max(2, maxChars)
-  return compact.length <= limit ? compact : `${compact.slice(0, limit - 1).trimEnd()}…`
+  return terminalStatusPreview(response.queued?.user, maxChars)
 }
 
 /** Return a displayable project name without requiring newer gateway metadata. */
 export function sessionProjectName(info: SessionInfo | undefined): string | null {
-  const name = info?.project?.name?.trim()
-  return name ? name : null
+  return terminalStatusPreview(info?.project?.name, 80)
 }
 
 export interface SessionListItem {

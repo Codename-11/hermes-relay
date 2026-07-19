@@ -197,6 +197,12 @@ class ChatViewModel : ViewModel() {
         val startedAt: Long,
     )
 
+    private data class QueuedRecoveryHandoff(
+        val checkpoint: ChatTurnCheckpoint,
+        val completedHistory: List<MessageItem>,
+        val queuedUserText: String,
+    )
+
     /** Test seam for the recovery poll cadence — production uses the defaults. */
     internal var recoveryTimingOverride: ChatStreamRecovery.Timing? = null
 
@@ -1187,6 +1193,7 @@ class ChatViewModel : ViewModel() {
     private fun createGatewayInboundTurnRegistration(
         client: GatewayChatClient,
         storedSessionId: String,
+        queuedRecovery: QueuedRecoveryHandoff? = null,
     ): GatewayInboundTurnRegistration? {
         val handler = chatHandler ?: return null
         fun matchesAdmissionContext(): Boolean =
@@ -1196,6 +1203,7 @@ class ChatViewModel : ViewModel() {
                 handler.currentSessionId.value == storedSessionId
 
         val messageId = "gateway-inbound-${UUID.randomUUID()}"
+        val queuedUserMessageId = "gateway-queued-user-${UUID.randomUUID()}"
         var baselineAssistantCount = 0
         var started = false
         var accepted = false
@@ -1348,7 +1356,25 @@ class ChatViewModel : ViewModel() {
         return GatewayInboundTurnRegistration(
             callbacks = callbacks,
             onHandle = { handle ->
-                if (matchesAdmissionContext() && activeStream == null && !handler.isStreaming.value) {
+                val canReplaceRecoveredCheckpoint = queuedRecovery != null && activeStream == null
+                if (matchesAdmissionContext() && activeStream == null &&
+                    (!handler.isStreaming.value || canReplaceRecoveredCheckpoint)
+                ) {
+                    queuedRecovery?.let { handoff ->
+                        if (handoff.completedHistory.isNotEmpty()) {
+                            handler.loadMessageHistory(handoff.completedHistory)
+                        }
+                        val durableAssistantCount = handoff.completedHistory.count {
+                            it.role.equals("assistant", ignoreCase = true)
+                        }
+                        if (durableAssistantCount <= handoff.checkpoint.baselineAssistantCount) {
+                            // Persistence can trail the resume snapshot. Preserve
+                            // the prior checkpoint as a completed partial turn
+                            // instead of deleting it or appending the next answer.
+                            handler.restoreInFlightTurn(handoff.checkpoint)
+                        }
+                        finalizeTurnSideEffects(handler, handoff.checkpoint.assistant.id)
+                    }
                     // Admission and its transcript baseline are both captured
                     // on the callback/main dispatcher. Reading activeStream or
                     // messages on the WebSocket thread can observe a local
@@ -1361,6 +1387,45 @@ class ChatViewModel : ViewModel() {
                     activeStream = handle
                     activeStreamIsGateway = true
                     _steerableTurn.value = true
+                    queuedRecovery?.let { handoff ->
+                        val now = System.currentTimeMillis()
+                        handler.activeAgentName = currentAgentDisplayName()
+                        handler.addUserMessage(
+                            ChatMessage(
+                                id = queuedUserMessageId,
+                                role = MessageRole.USER,
+                                content = handoff.queuedUserText,
+                                timestamp = now,
+                            ),
+                        )
+                        handler.setLastSentMessage(handoff.queuedUserText)
+                        handler.addPlaceholderMessage(
+                            ChatMessage(
+                                id = messageId,
+                                role = MessageRole.ASSISTANT,
+                                content = "",
+                                timestamp = now + 1L,
+                                isStreaming = true,
+                                agentName = handler.activeAgentName,
+                            ),
+                        )
+                        started = true
+                        beginTurnCheckpoint(
+                            handler = handler,
+                            sessionId = storedSessionId,
+                            transport = "gateway",
+                            userMessageId = queuedUserMessageId,
+                            userText = handoff.queuedUserText,
+                            assistantMessageId = messageId,
+                            assistantTimestamp = now + 1L,
+                        )
+                        activeTurnCheckpointSeed?.liveSessionId =
+                            client.currentLiveSessionId(storedSessionId)
+                        handler.setTurnStatus(
+                            "Reconnected — queued: “${queuedPromptPreview(handoff.queuedUserText)}”",
+                        )
+                        scheduleCheckpointWrite(immediate = true)
+                    }
                     true
                 } else {
                     false
@@ -3990,7 +4055,30 @@ class ChatViewModel : ViewModel() {
                 storedId = sessionId,
                 preferredLiveId = checkpoint.liveSessionId,
                 callbacks = callbacks,
+                queuedTurnProvider = { queued ->
+                    createGatewayInboundTurnRegistration(
+                        client = client,
+                        storedSessionId = sessionId,
+                        queuedRecovery = QueuedRecoveryHandoff(
+                            checkpoint = checkpoint,
+                            completedHistory = initialHistory,
+                            queuedUserText = queued.user,
+                        ),
+                    )
+                },
             ).getOrNull()
+            if (recovery?.queued != null && !recovery.running && recovery.handle != null) {
+                val ownsQueuedHandoff =
+                    chatHandler === handler &&
+                        handler.currentSessionId.value == sessionId &&
+                        activeProfileContextKey == contextKey &&
+                        activeStream === recovery.handle
+                if (!ownsQueuedHandoff) recovery.handle.detach()
+                if (ownsQueuedHandoff) {
+                    gatewayProcessController.sessionReady(sessionId)
+                }
+                return true
+            }
             if (!ownsTurnCheckpoint(checkpoint, handler)) {
                 recovery?.handle?.detach()
                 return true
@@ -3999,21 +4087,21 @@ class ChatViewModel : ViewModel() {
                 activeStream = recovery.handle
                 activeStreamIsGateway = true
                 activeTurnCheckpointSeed?.liveSessionId = recovery.liveSessionId
-                handler.restoreInFlightTurn(
-                    checkpoint = checkpoint,
-                    upstreamAssistantText = recovery.inflight?.assistant,
-                )
-                handler.setTurnStatus(
-                    when {
-                        recovery.queued != null && recovery.running ->
+                if (recovery.running) {
+                    handler.restoreInFlightTurn(
+                        checkpoint = checkpoint,
+                        upstreamAssistantText = recovery.inflight?.assistant,
+                    )
+                    handler.setTurnStatus(
+                        if (recovery.queued != null) {
                             "Reconnected — Hermes is working · queued: “${queuedPromptPreview(recovery.queued.user)}”"
-                        recovery.queued != null ->
-                            "Reconnected — queued: “${queuedPromptPreview(recovery.queued.user)}”"
-                        else -> checkpoint.turnStatus?.takeIf { it.isNotBlank() }
-                            ?: "Reconnected — Hermes is still working…"
-                    },
-                )
-                restorePendingAsk(handler, checkpoint)
+                        } else {
+                            checkpoint.turnStatus?.takeIf { it.isNotBlank() }
+                                ?: "Reconnected — Hermes is still working…"
+                        },
+                    )
+                    restorePendingAsk(handler, checkpoint)
+                }
                 scheduleCheckpointWrite(immediate = true)
                 gatewayProcessController.sessionReady(sessionId)
                 return true
