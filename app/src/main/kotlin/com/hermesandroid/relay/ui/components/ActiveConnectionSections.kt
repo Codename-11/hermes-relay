@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.ClipData
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,13 +20,28 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Lan
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -68,8 +84,10 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.hasSecureProxy
+import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.ui.showHumanError
@@ -255,12 +273,14 @@ fun ActiveCardFeaturesSection(
     onOpenDashboard: () -> Unit,
     onOpenRelayInfo: () -> Unit,
     onOpenSessionInfo: () -> Unit,
+    onPairRelay: () -> Unit,
 ) {
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val standardVoiceAvailability by
         connectionViewModel.standardVoiceAvailability.collectAsState()
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
     val relayReady by connectionViewModel.relayReady.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
@@ -271,6 +291,19 @@ fun ActiveCardFeaturesSection(
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
     val secureProxyAdvertised =
         activeConnection?.routeCandidates.orEmpty().any { it.hasSecureProxy() }
+
+    val chatValue = when {
+        gatewayAvailability == GatewayAvailability.Ready || apiReachable -> stringResource(R.string.active_section_ready)
+        gatewayAvailability == GatewayAvailability.SignInRequired -> stringResource(R.string.active_section_sign_in)
+        gatewayAvailability == GatewayAvailability.Unreachable && !apiReachable -> stringResource(R.string.active_section_offline)
+        else -> stringResource(R.string.active_section_checking)
+    }
+    val chatTone = when {
+        gatewayAvailability == GatewayAvailability.Ready || apiReachable -> CapabilityTone.Good
+        gatewayAvailability == GatewayAvailability.SignInRequired -> CapabilityTone.Info
+        gatewayAvailability == GatewayAvailability.Unreachable && !apiReachable -> CapabilityTone.Warning
+        else -> CapabilityTone.Neutral
+    }
 
     val apiValue = when {
         apiHealth == ConnectionViewModel.HealthStatus.Probing -> stringResource(R.string.active_section_checking)
@@ -352,31 +385,33 @@ fun ActiveCardFeaturesSection(
     val terminalLabel = stringResource(R.string.active_section_terminal)
     val secureProxyLabel = stringResource(R.string.active_section_secure_proxy)
 
-    // Lighter than the old six-filled-tile grid: one subtle grouped surface
-    // with a status dot + value per capability, dividers between rows. The
-    // header/glance pills used to duplicate API/Dashboard/Voice/Relay state;
-    // this list is now the single place those facts live on the active card.
+    Text(
+        text = stringResource(R.string.active_section_core_hermes),
+        style = MaterialTheme.typography.titleSmall,
+    )
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
             CapabilityRow(
-                label = hermesApiLabel,
-                value = apiValue,
-                tone = apiTone,
-                onClick = onOpenApiInfo,
+                icon = Icons.Filled.Chat,
+                label = stringResource(R.string.conn_chat_label),
+                value = chatValue,
+                tone = chatTone,
             )
             CapabilityDivider()
             CapabilityRow(
-                label = dashboardLabel,
+                icon = Icons.Filled.Dashboard,
+                label = stringResource(R.string.conn_manage_label),
                 value = dashboardValue,
                 tone = dashboardTone,
                 onClick = onOpenDashboard,
             )
             CapabilityDivider()
             CapabilityRow(
+                icon = Icons.Filled.GraphicEq,
                 label = hermesVoiceLabel,
                 value = voiceValue,
                 tone = voiceTone,
@@ -388,26 +423,96 @@ fun ActiveCardFeaturesSection(
                     null
                 },
             )
-            CapabilityDivider()
+        }
+    }
+
+    Text(
+        text = stringResource(R.string.active_section_optional_relay),
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Link,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (relayConfigured) {
+                            stringResource(R.string.active_section_relay_connected_features)
+                        } else {
+                            stringResource(R.string.active_section_extend_connection)
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = stringResource(R.string.active_section_relay_optional_summary),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            HorizontalDivider()
             CapabilityRow(
+                icon = Icons.Filled.Link,
                 label = relayToolsLabel,
                 value = relayValue,
                 tone = relayTone,
-                onClick = onOpenRelayInfo,
+                onClick = if (relayConfigured) onOpenRelayInfo else null,
             )
             CapabilityDivider()
             CapabilityRow(
+                icon = Icons.Filled.Devices,
                 label = terminalLabel,
                 value = terminalValue,
                 tone = terminalTone,
-                onClick = onOpenSessionInfo,
+                onClick = if (authState is AuthState.Paired) onOpenSessionInfo else null,
             )
             CapabilityDivider()
             CapabilityRow(
+                icon = Icons.Filled.Shield,
                 label = secureProxyLabel,
                 value = proxyValue,
                 tone = proxyTone,
             )
+            OutlinedButton(
+                onClick = if (relayConfigured) onOpenRelayInfo else onPairRelay,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    if (relayConfigured) Icons.Filled.Link else Icons.Filled.QrCodeScanner,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(
+                    if (relayConfigured) {
+                        stringResource(R.string.active_section_view_relay_details)
+                    } else {
+                        stringResource(R.string.active_section_scan_relay_qr)
+                    },
+                )
+            }
+            if (!relayConfigured) {
+                Text(
+                    text = stringResource(R.string.active_section_core_unchanged),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -434,6 +539,7 @@ private fun CapabilityDivider() {
  */
 @Composable
 private fun CapabilityRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     value: String,
     tone: CapabilityTone,
@@ -461,11 +567,11 @@ private fun CapabilityRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(50))
-                .background(dotColor),
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = dotColor,
+            modifier = Modifier.size(20.dp),
         )
         Text(
             text = label,
@@ -494,17 +600,12 @@ private fun CapabilityRow(
 }
 
 /**
- * Advanced expandable section — three subsections:
+ * Advanced tab content — three directly visible subsections:
  *  - Manual URL configuration (API URL + key + Save & Test,
  *    Relay URL + Save & Test + Disconnect)
  *  - Allow-insecure-connections toggle (with first-enable Ack dialog)
  *  - Manual pairing code fallback (3-step flow with in-flight Connect
  *    watcher + snackbar feedback)
- *
- * Wrapped in a single `SettingsExpandableCard` so the user can collapse
- * the entire block — none of it is needed for the common paired-via-QR
- * flow. Expanded-state is `rememberSaveable` so rotation / process death
- * preserves user intent.
  *
  * [onInsecureAckRequested] opens the `InsecureConnectionAckDialog` at
  * screen scope; this composable never owns it directly so the dialog
@@ -514,32 +615,174 @@ private fun CapabilityRow(
 fun ActiveCardAdvancedSection(
     connectionViewModel: ConnectionViewModel,
     relayEnabled: Boolean,
-    isDarkTheme: Boolean,
+    @Suppress("UNUSED_PARAMETER") isDarkTheme: Boolean,
+    onPairRelay: () -> Unit,
     onInsecureAckRequested: () -> Unit,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
+    val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    var apiEditorOpen by rememberSaveable { mutableStateOf(false) }
+    var apiHelpOpen by rememberSaveable { mutableStateOf(false) }
+    var relayEditorOpen by rememberSaveable { mutableStateOf(false) }
+    var pairingOpen by rememberSaveable { mutableStateOf(false) }
 
-    SettingsExpandableCard(
-        title = stringResource(R.string.active_section_advanced),
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
-        isDarkTheme = isDarkTheme,
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        ManualUrlSubsection(
-            connectionViewModel = connectionViewModel,
-            relayEnabled = relayEnabled,
+        Text(
+            text = stringResource(R.string.active_section_optional_api_fallback),
+            style = MaterialTheme.typography.titleMedium,
         )
+        Text(
+            text = stringResource(R.string.active_section_api_not_required),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (apiEditorOpen) {
+            Surface(
+                color = Color.Transparent,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { apiEditorOpen = false }) {
+                            Text(stringResource(R.string.active_section_done))
+                        }
+                    }
+                    ManualUrlSubsection(connectionViewModel, relayEnabled, showApi = true, showRelay = false)
+                }
+            }
+        } else {
+            Surface(
+                color = Color.Transparent,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = apiServerUrl.ifBlank { stringResource(R.string.active_section_not_configured) },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(stringResource(R.string.active_section_api_server_url_label)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = stringResource(R.string.active_section_api_optional_direct),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = { apiEditorOpen = true }) {
+                        Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text(stringResource(R.string.active_section_configure_test))
+                    }
+                    TextButton(
+                        onClick = { apiHelpOpen = !apiHelpOpen },
+                        contentPadding = PaddingValues(horizontal = 0.dp),
+                    ) {
+                        Text(stringResource(R.string.active_section_where_api_key))
+                    }
+                    if (apiHelpOpen) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.active_section_api_key_explainer),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(12.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
-        if (relayEnabled) {
-            HorizontalDivider()
-            InsecureToggleSubsection(
-                connectionViewModel = connectionViewModel,
-                onInsecureAckRequested = onInsecureAckRequested,
-            )
-            HorizontalDivider()
-            ManualPairingCodeSubsection(
-                connectionViewModel = connectionViewModel,
-            )
+        HorizontalDivider()
+
+        Text(text = stringResource(R.string.active_section_relay), style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = relayUrl.ifBlank { stringResource(R.string.active_section_not_configured) },
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = stringResource(R.string.active_section_relay_optional_bridge),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onPairRelay) {
+            Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(stringResource(R.string.active_section_scan_relay_qr))
+        }
+        TextButton(onClick = { relayEditorOpen = !relayEditorOpen }) {
+            Text(stringResource(R.string.active_section_other_relay_methods))
+        }
+        if (relayEnabled && relayEditorOpen) {
+            Surface(
+                color = Color.Transparent,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { relayEditorOpen = false }) {
+                            Text(stringResource(R.string.active_section_done))
+                        }
+                    }
+                    ManualUrlSubsection(connectionViewModel, relayEnabled = true, showApi = false, showRelay = true)
+                }
+            }
+        }
+
+        HorizontalDivider()
+        Text(
+            text = stringResource(R.string.active_section_connection_behavior),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        InsecureToggleSubsection(connectionViewModel, onInsecureAckRequested)
+
+        HorizontalDivider()
+        Text(
+            text = stringResource(R.string.active_section_manual_pairing),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = stringResource(R.string.active_section_pair_device_using_code),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = { pairingOpen = !pairingOpen }) {
+            Icon(Icons.Filled.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(stringResource(R.string.active_section_enter_pairing_code))
+        }
+        if (pairingOpen) {
+            Surface(
+                color = Color.Transparent,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    ManualPairingCodeSubsection(connectionViewModel)
+                }
+            }
         }
     }
 }
@@ -556,6 +799,8 @@ fun ActiveCardAdvancedSection(
 private fun ManualUrlSubsection(
     connectionViewModel: ConnectionViewModel,
     relayEnabled: Boolean,
+    showApi: Boolean,
+    showRelay: Boolean,
 ) {
     val context = LocalContext.current
 
@@ -620,7 +865,7 @@ private fun ManualUrlSubsection(
         }
     }
 
-    OutlinedTextField(
+    if (showApi) OutlinedTextField(
         value = apiUrlInput,
         onValueChange = { apiUrlInput = it },
         label = { Text(apiServerUrlLabel) },
@@ -629,7 +874,7 @@ private fun ManualUrlSubsection(
         modifier = Modifier.fillMaxWidth(),
     )
 
-    OutlinedTextField(
+    if (showApi) OutlinedTextField(
         value = apiKeyInput,
         onValueChange = { apiKeyInput = it },
         label = { Text(apiKeyOptionalLabel) },
@@ -666,7 +911,7 @@ private fun ManualUrlSubsection(
         modifier = Modifier.fillMaxWidth(),
     )
 
-    Row(
+    if (showApi) Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -715,7 +960,7 @@ private fun ManualUrlSubsection(
         }
     }
 
-    if (relayEnabled) {
+    if (relayEnabled && showRelay) {
         HorizontalDivider()
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1194,93 +1439,240 @@ private fun ManualPairingCodeSubsection(
 fun ActiveCardSecurityPosture(
     connectionViewModel: ConnectionViewModel,
     onNavigateToPairedDevices: () -> Unit,
+    onRevokeRelay: () -> Unit,
 ) {
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val pairedDevices by connectionViewModel.pairedDevices.collectAsState()
+    var showSecurityDetails by remember { mutableStateOf(false) }
 
-    // Connection-level security rollup (single source of truth —
-    // ConnectionSecurity). Tap for the per-surface breakdown + the
-    // mechanism explainer (TLS vs Tailscale/WireGuard vs plain).
-    ConnectionSecurityBadgeWithSheet(
-        security = connectionSecurity,
-        size = TransportSecuritySize.Row,
-        modifier = Modifier.fillMaxWidth(),
-    )
-
-    // Pre-resolve strings
-    val tailscaleDetectedText = stringResource(R.string.active_section_tailscale_detected)
-    val sessionTokenHardwareKeystoreText = stringResource(R.string.active_section_session_token_hardware_keystore)
-    val relaySessionsLabel = stringResource(R.string.active_section_relay_sessions)
-    val activeSessionsOnServerText = stringResource(R.string.active_section_active_sessions_on_server)
-    val managePhonesConnectText = stringResource(R.string.active_section_manage_phones_connect)
-
-    if (isTailscaleDetected) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Shield,
-                contentDescription = null,
-                tint = Color(0xFF2E7D32),
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = tailscaleDetectedText,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF2E7D32),
-            )
-        }
+    val dashboardStatus = activeConnection?.dashboardLastStatus
+    val dashboardUrl = activeConnection?.resolvedDashboardUrl.orEmpty()
+    val dashboardTransport = when {
+        dashboardUrl.startsWith("https://", ignoreCase = true) -> "HTTPS"
+        dashboardUrl.startsWith("http://", ignoreCase = true) -> "HTTP"
+        else -> stringResource(R.string.active_section_not_configured)
+    }
+    val pairedLabel = if (currentPairedSession != null) {
+        stringResource(R.string.active_section_paired)
+    } else {
+        stringResource(R.string.active_section_not_paired)
     }
 
-    if (currentPairedSession?.hasHardwareStorage == true) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(
-                imageVector = Icons.Filled.Shield,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = sessionTokenHardwareKeystoreText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Column(modifier = Modifier.padding(14.dp)) {
+                val postureColor = if (connectionSecurity.isEncrypted) {
+                    com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showSecurityDetails = true }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Shield,
+                        contentDescription = null,
+                        tint = postureColor,
+                        modifier = Modifier.size(48.dp),
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = if (connectionSecurity.isEncrypted) {
+                                stringResource(R.string.active_section_protected)
+                            } else {
+                                stringResource(R.string.active_section_not_encrypted)
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = postureColor,
+                        )
+                        Text(
+                            text = if (connectionSecurity.isEncrypted) {
+                                stringResource(R.string.active_section_no_security_issues)
+                            } else {
+                                stringResource(R.string.active_section_unencrypted_transport)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                if (dashboardUrl.isNotBlank()) {
+                    SecurityFactRow(
+                        icon = Icons.Filled.Dashboard,
+                        label = stringResource(R.string.active_section_dashboard_session),
+                        value = when {
+                            dashboardStatus?.authenticated == true -> stringResource(R.string.active_section_signed_in)
+                            dashboardStatus?.authRequired == true -> stringResource(R.string.active_section_sign_in_required)
+                            dashboardStatus?.reachable == true -> stringResource(R.string.active_section_available)
+                            else -> stringResource(R.string.active_section_not_checked)
+                        },
+                        positive = dashboardStatus?.authenticated == true,
+                    )
+                    HorizontalDivider()
+                }
+                SecurityFactRow(
+                    icon = Icons.Filled.Shield,
+                    label = stringResource(R.string.active_section_transport),
+                    value = if (isTailscaleDetected) "$dashboardTransport · Tailscale" else dashboardTransport,
+                    positive = dashboardTransport == "HTTPS" || isTailscaleDetected,
+                )
+                HorizontalDivider()
+                SecurityFactRow(
+                    icon = Icons.Filled.VpnKey,
+                    label = stringResource(R.string.active_section_credential_storage),
+                    value = when {
+                        currentPairedSession?.hasHardwareStorage == true -> stringResource(R.string.active_section_hardware_backed)
+                        currentPairedSession != null -> stringResource(R.string.active_section_encrypted_storage)
+                        else -> stringResource(R.string.active_section_no_relay_credential)
+                    },
+                    positive = currentPairedSession?.hasHardwareStorage == true,
+                )
+                HorizontalDivider()
+                SecurityFactRow(
+                    icon = Icons.Filled.Link,
+                    label = stringResource(R.string.active_section_relay_session),
+                    value = pairedLabel,
+                    positive = currentPairedSession != null,
+                )
+            }
         }
-    }
 
+        Text(text = stringResource(R.string.active_section_access), style = MaterialTheme.typography.titleSmall)
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column {
+                SecurityAccessRow(
+                    icon = Icons.Filled.Devices,
+                    label = stringResource(R.string.active_section_paired_devices),
+                    value = stringResource(R.string.active_section_device_count, pairedDevices.size),
+                    onClick = onNavigateToPairedDevices,
+                )
+                HorizontalDivider()
+                SecurityAccessRow(
+                    icon = Icons.Filled.Schedule,
+                    label = stringResource(R.string.active_section_session_activity),
+                    value = stringResource(R.string.active_section_last_checked_just_now),
+                    onClick = onNavigateToPairedDevices,
+                )
+            }
+        }
+
+        Text(text = stringResource(R.string.active_section_actions), style = MaterialTheme.typography.titleSmall)
+        OutlinedButton(
+            onClick = { connectionViewModel.clearDashboardSession() },
+            enabled = dashboardStatus?.authenticated == true,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Filled.Logout, contentDescription = null)
+            Text(stringResource(R.string.active_section_sign_out_dashboard), modifier = Modifier.padding(start = 8.dp))
+        }
+        OutlinedButton(
+            onClick = onRevokeRelay,
+            enabled = currentPairedSession != null,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Filled.LinkOff, contentDescription = null)
+            Text(stringResource(R.string.active_section_revoke_relay), modifier = Modifier.padding(start = 8.dp))
+        }
+        Text(
+            text = stringResource(R.string.active_section_credentials_encrypted),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (showSecurityDetails) {
+        ConnectionSecuritySheet(
+            security = connectionSecurity,
+            onDismiss = { showSecurityDetails = false },
+        )
+    }
+}
+
+@Composable
+private fun SecurityAccessRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onNavigateToPairedDevices() }
-            .padding(vertical = 4.dp),
+            .clickable(onClick = onClick)
+            .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = relaySessionsLabel,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = if (pairedDevices.isNotEmpty()) {
-                    activeSessionsOnServerText.format(pairedDevices.size)
-                } else {
-                    managePhonesConnectText
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f).padding(start = 12.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
         Icon(
-            imageVector = Icons.Filled.ChevronRight,
+            Icons.Filled.ChevronRight,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun SecurityFactRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    positive: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.size(10.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (positive) {
+                com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
     }
 }
@@ -1299,6 +1691,7 @@ fun ActiveCardRoutesSection(
     connectionViewModel: ConnectionViewModel,
     connection: Connection,
     liveState: RelayUiState?,
+    onEditDashboard: () -> Unit,
 ) {
     val context = LocalContext.current
     val endpoints: List<EndpointCandidate> by connectionViewModel.observeDeviceEndpoints()
@@ -1330,7 +1723,9 @@ fun ActiveCardRoutesSection(
         context.packageManager.getLaunchIntentForPackage("com.tailscale.ipn")
     }
     val isRouteProbing = routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Probing
-    val probeCameUpEmpty = activeEndpoint == null &&
+    val dashboardOnly = endpoints.isEmpty() && connection.resolvedDashboardUrl.isNotBlank()
+    val dashboardReachable = connection.dashboardLastStatus?.reachable == true
+    val probeCameUpEmpty = !dashboardOnly && activeEndpoint == null &&
         routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Done &&
         routeProbeStatus.winner == null
 
@@ -1342,15 +1737,20 @@ fun ActiveCardRoutesSection(
 
     val activeRouteLabel = when {
         activeEndpoint != null -> activeEndpoint!!.displayLabel()
+        dashboardOnly -> stringResource(R.string.active_section_primary_dashboard)
         isRouteProbing -> checkingRoutesText
         probeCameUpEmpty -> noRouteReachableText
         else -> resolvingText
     }
-    val activeRouteHost = activeEndpoint?.api?.url
-        ?: usingSavedUrlText.format(connection.apiServerUrl.ifBlank { connection.relayUrl })
+    val activeRouteHost = activeEndpoint?.primaryRouteUrl()
+        ?: if (dashboardOnly) connection.resolvedDashboardUrl
+        else usingSavedUrlText.format(connection.apiServerUrl.ifBlank { connection.relayUrl })
 
     // Pre-resolve other UI strings
-    val chooseHowPhoneReachesText = stringResource(R.string.active_section_choose_how_phone_reaches)
+    val chooseHowPhoneReachesText = stringResource(
+        R.string.active_section_choose_how_phone_reaches_named,
+        connection.label,
+    )
     val currentRouteText = stringResource(R.string.active_section_current_route)
     val noRoutesAnsweredProbeText = stringResource(R.string.active_section_no_routes_answered_probe)
     val tailscaleRouteNotActiveText = stringResource(R.string.active_section_tailscale_route_not_active)
@@ -1369,25 +1769,40 @@ fun ActiveCardRoutesSection(
     ) {
         Text(
             text = chooseHowPhoneReachesText,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.titleSmall,
         )
 
         Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+            color = if (dashboardOnly) {
+                MaterialTheme.colorScheme.surfaceVariant
+            } else {
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+            },
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (dashboardOnly) {
+                        Icon(
+                            imageVector = Icons.Filled.Dashboard,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                     Text(
-                        text = currentRouteText.format(activeRouteLabel),
+                        text = if (dashboardOnly) {
+                            stringResource(R.string.active_section_primary_dashboard)
+                        } else {
+                            currentRouteText.format(activeRouteLabel)
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (probeCameUpEmpty) {
                             MaterialTheme.colorScheme.error
@@ -1401,6 +1816,31 @@ fun ActiveCardRoutesSection(
                             strokeWidth = 2.dp,
                         )
                     }
+                    if (dashboardOnly) {
+                        Surface(
+                            color = if (dashboardReachable) {
+                                com.hermesandroid.relay.ui.theme.RelayRefresh.Green.copy(alpha = 0.18f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text(
+                                text = if (dashboardReachable) {
+                                    stringResource(R.string.active_section_reachable_badge)
+                                } else {
+                                    stringResource(R.string.active_section_unchecked_badge)
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (dashboardReachable) {
+                                    com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            )
+                        }
+                    }
                 }
                 Text(
                     text = activeRouteHost,
@@ -1409,6 +1849,61 @@ fun ActiveCardRoutesSection(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (dashboardOnly) {
+                    Text(
+                        text = stringResource(R.string.active_section_dashboard_home_lan),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = if (dashboardReachable) {
+                                com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = when {
+                                dashboardReachable && connection.dashboardLastStatus?.authenticated == true ->
+                                    stringResource(R.string.active_section_signed_in)
+                                dashboardReachable -> stringResource(R.string.active_section_dashboard_reachable)
+                                connection.dashboardLastStatus == null -> stringResource(R.string.active_section_dashboard_not_checked)
+                                else -> stringResource(R.string.active_section_dashboard_unreachable)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = { connectionViewModel.probeNow() },
+                            enabled = !isRouteProbing,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.size(6.dp))
+                            Text(if (isRouteProbing) checkingText else recheckText)
+                        }
+                        OutlinedButton(
+                            onClick = onEditDashboard,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.size(6.dp))
+                            Text(stringResource(R.string.active_section_edit))
+                        }
+                    }
+                }
                 if (probeCameUpEmpty) {
                     Text(
                         text = noRoutesAnsweredProbeText,
@@ -1501,59 +1996,133 @@ fun ActiveCardRoutesSection(
             }
         }
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                onClick = { connectionViewModel.probeNow() },
-                enabled = !isRouteProbing,
+        if (!dashboardOnly) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(if (isRouteProbing) checkingText else recheckText)
-            }
-            if (preferredRole != null || manualSwitchActive) {
                 TextButton(
-                    onClick = {
-                        connectionViewModel.setPreferredEndpointRole(null)
-                        preferredRole = null
-                    },
+                    onClick = { connectionViewModel.probeNow() },
+                    enabled = !isRouteProbing,
                 ) {
-                    Text(autoText)
+                    Text(if (isRouteProbing) checkingText else recheckText)
+                }
+                if (preferredRole != null || manualSwitchActive) {
+                    TextButton(
+                        onClick = {
+                            connectionViewModel.setPreferredEndpointRole(null)
+                            preferredRole = null
+                        },
+                    ) {
+                        Text(autoText)
+                    }
                 }
             }
         }
 
-        EndpointsCard(
-            endpoints = endpoints,
-            activeEndpoint = activeEndpoint,
-            isProbing = isRouteProbing,
-            outcomeFor = { candidate ->
-                routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
-            },
-            preferredRole = preferredRole,
-            manualOverrideRole = manualOverrideRole,
-            onUseNow = { candidate -> connectionViewModel.useRouteNow(candidate.role) },
-            onCancelUseNow = { connectionViewModel.useRouteNow(null) },
-            onPreferEndpoint = { candidate ->
-                connectionViewModel.setPreferredEndpointRole(candidate.role)
-                preferredRole = candidate.role
-            },
-            onClearPreferred = {
-                connectionViewModel.setPreferredEndpointRole(null)
-                preferredRole = null
-            },
-            onProbeNow = { connectionViewModel.probeNow() },
-            onViewPin = { candidate -> connectionViewModel.lookupEndpointPin(candidate) },
-            onAddRoute = {
-                routeEditorOriginal = null
-                routeEditorOpen = true
-            },
-            onEditRoute = { candidate ->
-                routeEditorOriginal = candidate
-                routeEditorOpen = true
-            },
-            onRemoveRoute = { candidate -> connectionViewModel.removeExtraRoute(candidate) },
-        )
+        if (dashboardOnly) {
+            Text(
+                text = stringResource(R.string.active_section_fallback_routes),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Lan,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(36.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.active_section_no_fallback_routes),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = stringResource(R.string.active_section_no_fallback_routes_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(
+                        onClick = {
+                            routeEditorOriginal = null
+                            routeEditorOpen = true
+                        },
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text(stringResource(R.string.active_section_add_api_fallback))
+                    }
+                }
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.active_section_route_selection),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = stringResource(R.string.active_section_automatic),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp).size(18.dp),
+                    )
+                }
+            }
+        } else {
+            EndpointsCard(
+                endpoints = endpoints,
+                activeEndpoint = activeEndpoint,
+                isProbing = isRouteProbing,
+                outcomeFor = { candidate ->
+                    routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
+                },
+                preferredRole = preferredRole,
+                manualOverrideRole = manualOverrideRole,
+                onUseNow = { candidate -> connectionViewModel.useRouteNow(candidate.role) },
+                onCancelUseNow = { connectionViewModel.useRouteNow(null) },
+                onPreferEndpoint = { candidate ->
+                    connectionViewModel.setPreferredEndpointRole(candidate.role)
+                    preferredRole = candidate.role
+                },
+                onClearPreferred = {
+                    connectionViewModel.setPreferredEndpointRole(null)
+                    preferredRole = null
+                },
+                onProbeNow = { connectionViewModel.probeNow() },
+                onViewPin = { candidate -> connectionViewModel.lookupEndpointPin(candidate) },
+                onAddRoute = {
+                    routeEditorOriginal = null
+                    routeEditorOpen = true
+                },
+                onEditRoute = { candidate ->
+                    routeEditorOriginal = candidate
+                    routeEditorOpen = true
+                },
+                onRemoveRoute = { candidate -> connectionViewModel.removeExtraRoute(candidate) },
+            )
+        }
 
         if (routeEditorOpen) {
             RouteEditorDialog(

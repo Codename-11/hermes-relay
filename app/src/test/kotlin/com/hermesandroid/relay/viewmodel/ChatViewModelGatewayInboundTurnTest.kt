@@ -140,6 +140,87 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun dashboardOnlyConnectionCanSendWithoutApiClient() {
+        viewModel.updateGatewayClient(null)
+        gatewayClient.clearSession()
+        handler = ChatHandler()
+        viewModel = ChatViewModel().also {
+            it.initialize(null, handler)
+            it.streamingEndpoint = "gateway"
+            it.setProfileMessageLoader { Result.success(persistedHistory) }
+            it.updateGatewayClient(gatewayClient)
+        }
+
+        viewModel.sendMessage("Dashboard-only gateway turn")
+
+        gatewayHarness.awaitRpc("prompt.submit")
+        assertTrue(handler.messages.value.any { it.content == "Dashboard-only gateway turn" })
+        assertTrue(gatewayClient.hasActiveTurn())
+    }
+
+    @Test
+    fun dashboardOnlyPersonalityCatalogLoadsAndSurvivesRefreshFailure() {
+        viewModel.updateApiClient(null)
+        viewModel.streamingEndpoint = "completions"
+        viewModel.selectPersonality("coach")
+        val config = buildJsonObject {
+            put("config", buildJsonObject {
+                put("agent", buildJsonObject {
+                    put("personalities", buildJsonObject {
+                        put("concise", "Be concise")
+                        put("coach", "Coach the user")
+                    })
+                })
+                put("display", buildJsonObject { put("personality", "concise") })
+            })
+        }
+        viewModel.setDashboardConfigLoader { Result.success(config) }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("concise", "coach"), viewModel.personalityNames.value)
+        assertEquals("concise", viewModel.defaultPersonality.value)
+        assertEquals("coach", viewModel.selectedPersonality.value)
+
+        viewModel.setDashboardConfigLoader { Result.failure(IllegalStateException("offline")) }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("concise", "coach"), viewModel.personalityNames.value)
+        assertEquals("concise", viewModel.defaultPersonality.value)
+        assertEquals("coach", viewModel.selectedPersonality.value)
+    }
+
+    @Test
+    fun dashboardOnlyProfileContextLoadsPersistedHistoryWithoutApiClient() {
+        viewModel.updateApiClient(null)
+        persistedHistory = persistedAnswerHistory(answer = "Dashboard history")
+        handler.setSessionId(null)
+
+        viewModel.switchProfileContext("connection-dashboard/profile-default", STORED_SESSION_ID)
+
+        awaitCondition { handler.messages.value.any { it.content == "Dashboard history" } }
+    }
+
+    @Test
+    fun connectionCatalogResetPreventsDashboardOnlyLeakage() {
+        viewModel.updateApiClient(null)
+        val config = buildJsonObject {
+            put("agent", buildJsonObject {
+                put("personalities", buildJsonObject { put("private-a", "A") })
+            })
+        }
+        viewModel.setDashboardConfigLoader { Result.success(config) }
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf("private-a"), viewModel.personalityNames.value)
+
+        viewModel.resetConnectionCatalogs()
+
+        assertTrue(viewModel.personalityNames.value.isEmpty())
+        assertTrue(viewModel.availableSkills.value.isEmpty())
+        assertTrue(viewModel.availableModels.value.isEmpty())
+        assertTrue(viewModel.serverCommands.value.isEmpty())
+    }
+
+    @Test
     fun unsolicitedGatewayCompletionAppearsAsOneAssistantTurnAndSettles() {
         // Upstream's process-completion poller currently emits this adjacent
         // duplicate pair; it must still create exactly one placeholder.

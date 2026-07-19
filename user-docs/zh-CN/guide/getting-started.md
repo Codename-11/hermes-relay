@@ -31,30 +31,29 @@ canonical_source: /guide/getting-started
 
 ## 2. 让手机可以访问 Hermes
 
-Android 通常通过 `:8642` 访问 Hermes API 服务器：
+Android 的标准连接是 `:9119` 上的 Hermes Dashboard/Gateway。它提供 Chat、
+会话、登录、Manage 和标准 Voice。请使用 `hermes dashboard` 启动，并确保手机可访问。
 
-- `API_SERVER_ENABLED=true` 启用 API 服务器。
-- `API_SERVER_HOST=0.0.0.0` 允许网络访问。
-- `API_SERVER_KEY` 使用 bearer 密钥保护 Chat 请求。
-- `hermes gateway` 启动 Hermes 和已启用的 API 服务器。
+`:8642` 上的 API 服务器是可选的，仅用于 Chat 自动 fallback 或高级 headless
+兼容。只有配置该可选端点时才需要 API 密钥。`API_SERVER_KEY` 由服务器运维人员创建，Dashboard 不会提供该密钥。
 
 ::: warning 保护网络访问
-`0.0.0.0` 允许网络中的其他设备访问服务。请使用强 API 密钥。不要将未加密
-端口直接暴露到互联网；远程访问应使用 Tailscale、VPN 或 HTTPS。
+不要将未加密的 Dashboard、API 或 Relay 端口直接暴露到互联网；远程访问应使用 Tailscale、VPN 或 HTTPS。
 :::
 
-`:9119` 上的 Dashboard 是可选的。Manage 和标准 Voice 使用它，并且它有独立
-登录；API 密钥不是 Dashboard 登录凭据。
+Dashboard 登录使用 Cookie 和短期 Gateway ticket。API 密钥与其独立，不能用于 Dashboard 登录。
 
 ## 3. 连接并开始对话
 
 1. 在 Android 应用中打开 **Connect**。
-2. 搜索局域网中的 Hermes、扫描设置二维码，或输入 API URL 和密钥。
-3. 点击 **Connect**。
-4. 确认显示 **Chat · Ready**。
-5. 打开 Chat 并发送第一条消息。
+2. 搜索局域网中的 Hermes、输入 Dashboard/Gateway URL，或扫描设置二维码；旧版 API-first 二维码仍兼容。
+3. 按提示登录 Dashboard。
+4. 点击 **Connect** 并确认显示 **Chat · Ready**。
+5. 如有需要，稍后在 **Advanced** 中添加 API fallback、Relay 或远程路由。
 
-Manage 和 Voice 可能仍要求登录。Relay 显示未配对也是正常状态。
+可以添加并测试 `http://100.x.y.z:9119` 这样的 Tailscale Dashboard 地址，或单独发布的 `.ts.net` 地址；无需配置 API 服务器或 API 密钥。
+
+同一个登录会启用 Chat、会话、Manage 和 Voice。Relay 未配对或 API fallback 不可用都是正常状态。
 
 ## 可选：添加 Relay 工具
 

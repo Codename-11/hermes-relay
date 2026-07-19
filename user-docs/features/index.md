@@ -18,7 +18,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
 | [Command Palette](/guide/chat#slash-commands) | Searchable command browser — 29 gateway commands, personalities, 90+ skills |
 | [Slash Commands](/guide/chat#slash-commands) | Inline autocomplete as you type `/` |
-| [Vanilla Hermes Setup](/guide/getting-started#_3-connect-chat) | Connect by API URL/key first; scan a QR only when you want Relay pairing |
+| [Vanilla Hermes Setup](/guide/getting-started#_3-connect-chat) | Connect through the Dashboard/Gateway; add API fallback or Relay later when needed |
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
 
@@ -120,7 +120,7 @@ Google Play builds do not include AccessibilityService-backed screen reading or 
 |---------|-------------|
 | Android Keystore session storage | StrongBox-preferred, TEE fallback |
 | TOFU cert pinning | Trust-on-first-use SHA-256 SPKI fingerprints |
-| Bearer token auth | Optional API key authentication |
+| Native auth separation | Dashboard session for the standard path; optional API bearer and Relay session remain scoped to their own surfaces |
 | Per-channel grants | Time-bound access for terminal, bridge, TUI, and voice channels |
 
 ## Choose your track

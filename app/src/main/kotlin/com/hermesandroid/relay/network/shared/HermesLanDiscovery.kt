@@ -8,22 +8,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
 data class HermesLanDiscoveryResult(
     val host: String,
+    val hostname: String? = null,
     val apiUrl: String,
     val dashboardUrl: String?,
     val apiReachable: Boolean,
     val dashboardReachable: Boolean,
-)
+) {
+    val displayHost: String
+        get() = hostname ?: host
+}
 
 /**
  * User-triggered local-network discovery for standard Hermes setup.
@@ -59,7 +66,9 @@ object HermesLanDiscovery {
             hosts.map { host ->
                 async {
                     semaphore.withPermit {
-                        probeHost(client, host, apiPort, dashboardPort)
+                        probeHost(client, host, apiPort, dashboardPort)?.let { result ->
+                            result.copy(hostname = resolveHostname(host))
+                        }
                     }
                 }
             }.awaitAll()
@@ -128,6 +137,24 @@ object HermesLanDiscovery {
             Log.d(TAG, "probe failed url=$url type=${e.javaClass.simpleName}")
             false
         }
+    }
+
+    private suspend fun resolveHostname(address: String): String? =
+        withTimeoutOrNull(350L) {
+            runInterruptible(Dispatchers.IO) {
+                normalizeResolvedHostname(
+                    address = address,
+                    resolved = InetAddress.getByName(address).canonicalHostName,
+                )
+            }
+        }
+
+    internal fun normalizeResolvedHostname(address: String, resolved: String?): String? {
+        val normalized = resolved?.trim()?.trimEnd('.')?.takeIf { it.isNotBlank() } ?: return null
+        if (normalized.equals(address.trim(), ignoreCase = true)) return null
+        if (normalized.equals("localhost", ignoreCase = true)) return null
+        if (normalized.matches(Regex("^\\d{1,3}(?:\\.\\d{1,3}){3}$"))) return null
+        return normalized
     }
 
     private fun looksLikeDashboardStatus(body: String, contentType: String): Boolean {

@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -70,13 +72,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -89,9 +98,11 @@ import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.network.shared.HermesLanDiscovery
 import com.hermesandroid.relay.network.shared.HermesLanDiscoveryResult
 import com.hermesandroid.relay.util.ServerAddress
@@ -171,6 +182,7 @@ fun ConnectionWizard(
      * flow; re-pair surfaces leave it null so the chooser stays available.
      */
     autoStart: String? = null,
+    setupReady: Boolean = true,
     /**
      * Optional "Try the demo" affordance shown atop the Method step. When
      * non-null, the wizard surfaces an offline Demo / Explore entry point so a
@@ -191,8 +203,9 @@ fun ConnectionWizard(
     val currentApiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val currentRelayUrl by connectionViewModel.relayUrl.collectAsState()
     val currentDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
 
-    var step by remember { mutableStateOf(WizardStep.Method) }
+    var step by remember { mutableStateOf(WizardStep.Nearby) }
     var chosenMethod by remember { mutableStateOf(PairMethod.Standard) }
     var pendingPayload by remember { mutableStateOf<HermesPairingPayload?>(null) }
     var ttlSeconds by remember { mutableStateOf(PairingPreferencesDefault) }
@@ -202,6 +215,20 @@ fun ConnectionWizard(
     var standardBusy by remember { mutableStateOf(false) }
     var standardError by remember { mutableStateOf<String?>(null) }
     var standardSuccess by remember { mutableStateOf<ConnectionViewModel.StandardApiSetupResult?>(null) }
+    var nearbyBusy by remember { mutableStateOf(false) }
+    var nearbyResults by remember { mutableStateOf<List<HermesLanDiscoveryResult>>(emptyList()) }
+    var nearbyMessage by remember { mutableStateOf<String?>(null) }
+    var dashboardAddress by remember(currentDashboardUrl) { mutableStateOf(currentDashboardUrl) }
+    var dashboardProbeBusy by remember { mutableStateOf(false) }
+    var dashboardProbeError by remember { mutableStateOf<String?>(null) }
+    var dashboardProbeResult by remember {
+        mutableStateOf<ConnectionViewModel.DashboardSetupResult?>(null)
+    }
+    var dashboardSuggestedHostname by remember { mutableStateOf<String?>(null) }
+    var connectionGuideExpanded by rememberSaveable { mutableStateOf(showSkip) }
+    var pendingDashboardDraft by remember { mutableStateOf<DashboardConnectionDraft?>(null) }
+    val relayScopedFlow = autoStart == "relay"
+    val pairingHome = if (relayScopedFlow) WizardStep.RelayChoice else WizardStep.Method
 
     // Pre-pair duplicate detection. When the user is about to pair to an
     // API URL that already has a connection in the store, we stop the
@@ -253,7 +280,7 @@ fun ConnectionWizard(
             // Don't dead-end on denial — return to the chooser and point the
             // user at the manual pairing paths (URL entry / 6-char code)
             // instead of leaving them on a vanishing toast with no scanner.
-            step = WizardStep.Method
+            step = WizardStep.Nearby
             Toast.makeText(
                 context,
                 context.getString(R.string.cw_camera_denied),
@@ -270,13 +297,52 @@ fun ConnectionWizard(
     // (keyed on Unit); unrecognized autoStart values fall through silently
     // so a future build that adds more deep-link targets can ignore old
     // args without crashing.
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    val launchNearbyScan: () -> Unit = {
+        nearbyBusy = true
+        nearbyResults = emptyList()
+        nearbyMessage = null
+        wizardScope.launch {
+            runCatching { HermesLanDiscovery.scan(context) }
+                .onSuccess { found ->
+                    // Dashboard/Gateway is the normal Hermes path. API-only
+                    // discoveries remain available under Other ways.
+                    nearbyResults = found.filter { it.dashboardReachable }
+                    if (nearbyResults.isEmpty()) {
+                        nearbyMessage = context.getString(R.string.cw_nearby_empty)
+                    }
+                }
+                .onFailure {
+                    nearbyMessage = context.getString(R.string.cw_nearby_failed)
+                }
+            nearbyBusy = false
+        }
+    }
+    val inspectDashboard: (String, String?) -> Unit = { address, suggestedHostname ->
+        dashboardAddress = address
+        dashboardSuggestedHostname = suggestedHostname
+        dashboardProbeBusy = true
+        dashboardProbeError = null
+        connectionViewModel.probeHermesDashboard(address) { result ->
+            dashboardProbeBusy = false
+            if (result.ok) {
+                dashboardProbeResult = result
+                dashboardAddress = result.dashboardUrl
+                step = WizardStep.DashboardFound
+            } else {
+                dashboardProbeError = result.message
+            }
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(setupReady, autoStart) {
+        if (!setupReady) return@LaunchedEffect
         when (autoStart) {
             "scan" -> {
                 chosenMethod = PairMethod.Scan
                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
-            else -> Unit
+            "relay" -> step = WizardStep.RelayChoice
+            else -> launchNearbyScan()
         }
     }
 
@@ -357,12 +423,36 @@ fun ConnectionWizard(
     // Re-pair flows from Settings → Connections switch to the target BEFORE
     // entering the wizard, so during those the active id IS the target
     // and the filter correctly returns null (no pointless self-prompt).
-    val findDuplicateFor: (String) -> Connection? = { serverUrl ->
+    val findDuplicateFor:
+        (String, String, String?) -> Connection? = { apiUrl, relayUrl, dashboardUrl ->
         val activeId = connectionViewModel.activeConnectionId.value
-        connectionViewModel.connectionStore.connections.value.firstOrNull { c ->
-            c.id != activeId &&
-                c.apiServerUrl.isNotBlank() &&
-                c.apiServerUrl == serverUrl
+        ConnectionValidation.findDuplicate(
+            connections = connectionViewModel.connectionStore.connections.value,
+            apiServerUrl = apiUrl,
+            relayUrl = relayUrl,
+            excludeId = activeId,
+            dashboardUrl = dashboardUrl,
+        )
+    }
+
+    val applyDashboardConnect: (DashboardConnectionDraft) -> Unit = { draft ->
+        standardBusy = true
+        standardError = null
+        connectionViewModel.saveDashboardConnection(
+            dashboardUrl = draft.dashboardUrl,
+            discoveredHostname = draft.discoveredHostname,
+        ) { saved ->
+            standardBusy = false
+            saved.fold(
+                onSuccess = {
+                    if (draft.signInRequired && onManageSignIn != null) {
+                        onManageSignIn()
+                    } else {
+                        step = WizardStep.DashboardComplete
+                    }
+                },
+                onFailure = { standardError = it.message },
+            )
         }
     }
 
@@ -392,7 +482,7 @@ fun ConnectionWizard(
     val launchStandardConnect:
         (String, String, String, String, List<EndpointCandidate>?) -> Unit = { apiUrl, apiKey, tailscaleApiUrl, dashboardUrl, routes ->
         val trimmedApi = apiUrl.trim()
-        val existing = findDuplicateFor(trimmedApi)
+        val existing = findDuplicateFor(trimmedApi, "", dashboardUrl)
         if (existing != null) {
             pendingStandardDraft = StandardConnectionDraft(
                 apiUrl = trimmedApi,
@@ -418,7 +508,11 @@ fun ConnectionWizard(
     // bypasses the check so we don't loop.
     val launchManualPair: (String) -> Unit = { code ->
         val trimmedApi = manualApiUrl.trim()
-        val existing = findDuplicateFor(trimmedApi)
+        val existing = if (relayScopedFlow) {
+            null
+        } else {
+            findDuplicateFor(trimmedApi, manualRelayUrl.trim(), null)
+        }
         if (existing != null) {
             // Remember what to re-run when the user confirms.
             pendingManualCode = code
@@ -451,6 +545,98 @@ fun ConnectionWizard(
             label = "wizard-step",
         ) { current ->
             when (current) {
+                WizardStep.Nearby -> NearbyHermesStep(
+                    busy = nearbyBusy || !setupReady,
+                    setupReady = setupReady,
+                    results = nearbyResults,
+                    message = nearbyMessage,
+                    onSearchAgain = launchNearbyScan,
+                    onSelect = { candidate ->
+                        candidate.dashboardUrl?.let { dashboardUrl ->
+                            inspectDashboard(dashboardUrl, candidate.hostname)
+                        }
+                    },
+                    onManual = {
+                        dashboardProbeError = null
+                        step = WizardStep.DashboardManual
+                    },
+                    onPairRelayQr = {
+                        chosenMethod = PairMethod.Scan
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    },
+                    onPairRelayCode = {
+                        chosenMethod = PairMethod.EnterCode
+                        manualCode = ""
+                        step = WizardStep.ManualEntry
+                    },
+                    onOtherWays = { step = WizardStep.Method },
+                    onSkip = if (showSkip) onCancel else null,
+                    onTryDemo = onTryDemo,
+                    guideExpanded = connectionGuideExpanded,
+                    onGuideExpandedChange = { connectionGuideExpanded = it },
+                )
+
+                WizardStep.DashboardManual -> DashboardManualStep(
+                    address = dashboardAddress,
+                    onAddressChange = {
+                        dashboardAddress = it
+                        dashboardProbeError = null
+                    },
+                    busy = dashboardProbeBusy,
+                    error = dashboardProbeError,
+                    onBack = { step = WizardStep.Nearby },
+                    onSubmit = { inspectDashboard(dashboardAddress, null) },
+                )
+
+                WizardStep.DashboardFound -> dashboardProbeResult?.let { result ->
+                    DashboardFoundStep(
+                        result = result,
+                        saving = standardBusy,
+                        error = standardError,
+                        onBack = {
+                            standardError = null
+                            step = WizardStep.Nearby
+                        },
+                    onConnect = {
+                            val draft = DashboardConnectionDraft(
+                                dashboardUrl = result.dashboardUrl,
+                                signInRequired = result.signInRequired,
+                                discoveredHostname = dashboardSuggestedHostname,
+                            )
+                            val existing = findDuplicateFor("", "", result.dashboardUrl)
+                            if (existing != null) {
+                                pendingDashboardDraft = draft
+                                duplicatePrompt = existing
+                            } else {
+                                applyDashboardConnect(draft)
+                            }
+                        },
+                    )
+                }
+
+                WizardStep.DashboardComplete -> DashboardCompleteStep(
+                    onComplete = onComplete,
+                )
+
+                WizardStep.RelayChoice -> RelayChoiceStep(
+                    connectionLabel = activeConnection?.label.orEmpty(),
+                    dashboardUrl = currentDashboardUrl,
+                    relayEnabled = relayEnabled,
+                    onPickScan = {
+                        chosenMethod = PairMethod.Scan
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    },
+                    onPickEnterCode = {
+                        chosenMethod = PairMethod.EnterCode
+                        manualCode = ""
+                        step = WizardStep.ManualEntry
+                    },
+                    onPickShowCode = {
+                        chosenMethod = PairMethod.ShowCode
+                        step = WizardStep.ShowCode
+                    },
+                )
+
                 WizardStep.Method -> MethodStep(
                     relayEnabled = relayEnabled,
                     onPickStandard = {
@@ -526,7 +712,7 @@ fun ConnectionWizard(
                         // Defensive — shouldn't happen because we only enter
                         // Confirm after a successful scan, but if it does,
                         // bounce back to the chooser instead of crashing.
-                        LaunchedEffect(Unit) { step = WizardStep.Method }
+                        LaunchedEffect(Unit) { step = pairingHome }
                     } else {
                         ConfirmStep(
                             payload = payload,
@@ -537,7 +723,7 @@ fun ConnectionWizard(
                             standardSuccess = standardSuccess,
                             onBack = {
                                 pendingPayload = null
-                                step = WizardStep.Method
+                                step = pairingHome
                             },
                             onComplete = onComplete,
                             onManageSignIn = onManageSignIn,
@@ -555,9 +741,15 @@ fun ConnectionWizard(
                                 // DuplicateConnectionDialog at the bottom
                                 // of this composable) or cancel out. If no
                                 // duplicate, proceed to Verify as before.
-                                val existing = findDuplicateFor(
-                                    reorderedPayload.serverUrl,
-                                )
+                                val existing = if (relayScopedFlow) {
+                                    null
+                                } else {
+                                    findDuplicateFor(
+                                        reorderedPayload.serverUrl,
+                                        reorderedPayload.relay?.url.orEmpty(),
+                                        reorderedPayload.dashboardUrl,
+                                    )
+                                }
                                 if (existing != null) {
                                     duplicatePrompt = existing
                                 } else if (reorderedPayload.relay == null) {
@@ -578,6 +770,7 @@ fun ConnectionWizard(
                                         connectionViewModel.applyPairingPayload(
                                             reorderedPayload,
                                             ttlSeconds,
+                                            preserveStandardConfig = relayScopedFlow,
                                         )
                                         step = WizardStep.Verify
                                         verifyAttempt += 1
@@ -595,7 +788,8 @@ fun ConnectionWizard(
                     onRelayUrlChange = { manualRelayUrl = it },
                     code = manualCode,
                     onCodeChange = { manualCode = it.uppercase() },
-                    onBack = { step = WizardStep.Method },
+                    requireApi = !relayScopedFlow,
+                    onBack = { step = pairingHome },
                     onSubmit = { launchManualPair(manualCode) },
                 )
 
@@ -606,7 +800,8 @@ fun ConnectionWizard(
                     onRelayUrlChange = { manualRelayUrl = it },
                     pairingCode = pairingCode,
                     onRegenerate = { connectionViewModel.regeneratePairingCode() },
-                    onBack = { step = WizardStep.Method },
+                    requireApi = !relayScopedFlow,
+                    onBack = { step = pairingHome },
                     onConnect = { launchManualPair(pairingCode) },
                 )
 
@@ -624,7 +819,11 @@ fun ConnectionWizard(
                                 null,
                             )
                             PairMethod.Scan -> pendingPayload?.let {
-                                connectionViewModel.applyPairingPayload(it, ttlSeconds)
+                                connectionViewModel.applyPairingPayload(
+                                    it,
+                                    ttlSeconds,
+                                    preserveStandardConfig = relayScopedFlow,
+                                )
                                 verifyAttempt += 1
                             }
                             PairMethod.EnterCode -> launchManualPair(manualCode)
@@ -666,6 +865,7 @@ fun ConnectionWizard(
                 step = WizardStep.Confirm
             },
             onDismiss = { showQrScanner = false },
+            relayOnly = relayScopedFlow,
         )
     }
 
@@ -712,7 +912,28 @@ fun ConnectionWizard(
                     // 3. Apply the connect/pair, now targeting the existing
                     //    connection's auth store. Standard paths save API
                     //    settings only; Relay paths apply the pairing code.
-                    when (chosenMethod) {
+                    val dashboardDraft = pendingDashboardDraft
+                    if (dashboardDraft != null) {
+                        pendingDashboardDraft = null
+                        // The discovery probe ran while the temporary add-flow
+                        // connection was active. Probe again after switching so
+                        // auth/sign-in is evaluated with the existing
+                        // connection's Dashboard cookie store.
+                        connectionViewModel.probeHermesDashboard(
+                            dashboardDraft.dashboardUrl,
+                        ) { refreshed ->
+                            applyDashboardConnect(
+                                if (refreshed.ok) {
+                                    dashboardDraft.copy(
+                                        dashboardUrl = refreshed.dashboardUrl,
+                                        signInRequired = refreshed.signInRequired,
+                                    )
+                                } else {
+                                    dashboardDraft
+                                },
+                            )
+                        }
+                    } else when (chosenMethod) {
                         PairMethod.Standard -> {
                             val draft = pendingStandardDraft
                             if (draft != null) {
@@ -768,6 +989,7 @@ fun ConnectionWizard(
                 duplicatePrompt = null
                 pendingManualCode = null
                 pendingStandardDraft = null
+                pendingDashboardDraft = null
                 // Scan path: kick back to the Confirm step so the user
                 // can either re-confirm (which will re-trigger the prompt)
                 // or hit Back to scan a different QR. Manual paths: the
@@ -793,7 +1015,7 @@ private fun applyManualPair(
     relayUrl: String,
     code: String,
 ) {
-    vm.updateApiServerUrl(apiUrl)
+    if (apiUrl.isNotBlank()) vm.updateApiServerUrl(apiUrl)
     vm.updateRelayUrl(relayUrl)
     vm.authManager.applyServerIssuedCodeAndReset(code.trim().uppercase())
     vm.disconnectRelay()
@@ -830,7 +1052,7 @@ private fun DuplicateConnectionDialog(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = existing.apiServerUrl,
+                    text = existing.primaryEndpointUrl,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
@@ -856,6 +1078,11 @@ private val PairingPreferencesDefault: Long =
     com.hermesandroid.relay.data.PairingPreferences.DEFAULT_TTL_SECONDS
 
 private enum class WizardStep {
+    Nearby,
+    DashboardManual,
+    DashboardFound,
+    DashboardComplete,
+    RelayChoice,
     Method,
     StandardEntry,
     Confirm,
@@ -866,9 +1093,9 @@ private enum class WizardStep {
     /** Slot index in the 3-dot indicator regardless of which path is active. */
     val indicatorIndex: Int
         get() = when (this) {
-            Method -> 0
-            StandardEntry, Confirm, ManualEntry, ShowCode -> 1
-            Verify -> 2
+            Nearby, RelayChoice, Method -> 0
+            DashboardManual, DashboardFound, StandardEntry, Confirm, ManualEntry, ShowCode -> 1
+            DashboardComplete, Verify -> 2
         }
 }
 
@@ -880,6 +1107,12 @@ private data class StandardConnectionDraft(
     val tailscaleApiUrl: String = "",
     val dashboardUrl: String = "",
     val routeCandidates: List<EndpointCandidate>? = null,
+)
+
+private data class DashboardConnectionDraft(
+    val dashboardUrl: String,
+    val signInRequired: Boolean,
+    val discoveredHostname: String? = null,
 )
 
 private const val SetupGuideUrl = "https://hermes-relay.dev/docs/guide/getting-started"
@@ -894,7 +1127,9 @@ private fun openExternalUrl(context: android.content.Context, url: String) {
 private fun WizardStepIndicator(currentStep: Int, method: PairMethod) {
     val totalSteps = 3
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -961,6 +1196,600 @@ private fun WizardStepIndicator(currentStep: Int, method: PairMethod) {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+@Composable
+private fun NearbyHermesStep(
+    busy: Boolean,
+    setupReady: Boolean,
+    results: List<HermesLanDiscoveryResult>,
+    message: String?,
+    onSearchAgain: () -> Unit,
+    onSelect: (HermesLanDiscoveryResult) -> Unit,
+    onManual: () -> Unit,
+    onPairRelayQr: () -> Unit,
+    onPairRelayCode: () -> Unit,
+    onOtherWays: () -> Unit,
+    onSkip: (() -> Unit)?,
+    onTryDemo: (() -> Unit)?,
+    guideExpanded: Boolean,
+    onGuideExpandedChange: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.cw_connect_to_hermes),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
+        )
+        Text(
+            text = stringResource(R.string.cw_nearby_description),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize(),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            role = Role.Button,
+                            onClick = { onGuideExpandedChange(!guideExpanded) },
+                        )
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.cw_before_connecting),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(if (guideExpanded) 90f else 0f),
+                    )
+                }
+                if (guideExpanded) {
+                    Column(
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        ConnectionGuideStep(
+                            number = "1",
+                            title = stringResource(R.string.cw_connect_step_server_title),
+                            body = stringResource(R.string.cw_connect_step_server_body),
+                        )
+                        ConnectionGuideStep(
+                            number = "2",
+                            title = stringResource(R.string.cw_connect_step_network_title),
+                            body = stringResource(R.string.cw_connect_step_network_body),
+                        )
+                        ConnectionGuideStep(
+                            number = "3",
+                            title = stringResource(R.string.cw_connect_step_phone_title),
+                            body = stringResource(R.string.cw_connect_step_phone_body),
+                        )
+                        TextButton(
+                            onClick = { openExternalUrl(context, SetupGuideUrl) },
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.MenuBook,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(stringResource(R.string.cw_setup_guide))
+                        }
+                    }
+                }
+            }
+        }
+
+        if (busy) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    Column {
+                        Text(
+                            stringResource(
+                                if (setupReady) R.string.cw_nearby_searching
+                                else R.string.cw_preparing_connection,
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            stringResource(
+                                if (setupReady) R.string.cw_nearby_searching_hint
+                                else R.string.cw_preparing_connection_hint,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (results.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.cw_nearby_heading),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { heading() },
+            )
+            results.forEach { candidate ->
+                NearbyHermesResult(candidate = candidate, onClick = { onSelect(candidate) })
+            }
+        }
+
+        message?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            Text(
+                text = stringResource(R.string.cw_nearby_empty_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (!busy) {
+            OutlinedButton(
+                onClick = onSearchAgain,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text(stringResource(R.string.cw_nearby_search_again))
+            }
+        }
+        Button(
+            onClick = onManual,
+            enabled = setupReady,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        ) {
+            Text(stringResource(R.string.cw_nearby_enter_address))
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+        Text(
+            text = stringResource(R.string.cw_relay_entry_title),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = stringResource(R.string.cw_relay_entry_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        MethodTile(
+            icon = Icons.Filled.QrCodeScanner,
+            title = stringResource(R.string.cw_relay_pair_qr),
+            subtitle = stringResource(R.string.cw_relay_pair_qr_desc),
+            onClick = onPairRelayQr,
+            enabled = setupReady,
+        )
+        TextButton(onClick = onPairRelayCode, enabled = setupReady, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.cw_relay_enter_code))
+        }
+
+        TextButton(onClick = onOtherWays, enabled = setupReady, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.cw_other_connection_methods))
+        }
+        if (onTryDemo != null) {
+            TextButton(onClick = onTryDemo, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.cw_try_demo))
+            }
+        }
+        if (onSkip != null) {
+            TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.cw_skip_for_now))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionGuideStep(
+    number: String,
+    title: String,
+    body: String,
+) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            shape = CircleShape,
+            modifier = Modifier.size(28.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(number, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                body,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NearbyHermesResult(
+    candidate: HermesLanDiscoveryResult,
+    onClick: () -> Unit,
+) {
+    val address = candidate.dashboardUrl.orEmpty()
+    val availableState = stringResource(R.string.cw_semantics_hermes_available)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { stateDescription = availableState },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = candidate.displayHost,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Text(
+                    text = if (candidate.hostname != null) {
+                        "${candidate.host} · $address"
+                    } else {
+                        address
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
+                )
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+    }
+}
+
+@Composable
+private fun DashboardManualStep(
+    address: String,
+    onAddressChange: (String) -> Unit,
+    busy: Boolean,
+    error: String?,
+    onBack: () -> Unit,
+    onSubmit: () -> Unit,
+) {
+    val context = LocalContext.current
+    val fieldError = optionalHttpUrlError(address, context)
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            text = stringResource(R.string.cw_manual_hermes_title),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
+        )
+        Text(
+            text = stringResource(R.string.cw_manual_hermes_description),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = address,
+            onValueChange = onAddressChange,
+            label = { Text(stringResource(R.string.cw_hermes_address)) },
+            placeholder = { Text(stringResource(R.string.cw_hermes_address_placeholder)) },
+            supportingText = {
+                Text(fieldError ?: stringResource(R.string.cw_hermes_address_hint))
+            },
+            isError = fieldError != null || error != null,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, autoCorrectEnabled = false),
+            keyboardActions = KeyboardActions(onGo = {
+                if (address.isNotBlank() && fieldError == null && !busy) onSubmit()
+            }),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        error?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onBack, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.cw_back))
+            }
+            Button(
+                onClick = onSubmit,
+                enabled = address.isNotBlank() && fieldError == null && !busy,
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+            ) {
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text(stringResource(R.string.cw_find_hermes))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardFoundStep(
+    result: ConnectionViewModel.DashboardSetupResult,
+    saving: Boolean,
+    error: String?,
+    onBack: () -> Unit,
+    onConnect: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            text = stringResource(R.string.cw_hermes_found),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = Connection.extractDefaultLabel(result.dashboardUrl),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Text(
+                    text = result.dashboardUrl,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                )
+                Text(
+                    text = stringResource(R.string.cw_ready_to_connect),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+        FoundCapabilityLine(
+            label = stringResource(R.string.cw_chat),
+            value = if (result.signInRequired) stringResource(R.string.cw_available_after_signin) else stringResource(R.string.cw_ready),
+            ready = !result.signInRequired,
+        )
+        FoundCapabilityLine(
+            label = stringResource(R.string.cw_manage),
+            value = if (result.signInRequired) stringResource(R.string.cw_available_after_signin) else stringResource(R.string.cw_ready),
+            ready = !result.signInRequired,
+        )
+        FoundCapabilityLine(
+            label = stringResource(R.string.cw_voice),
+            value = when (result.voiceAvailability) {
+                StandardVoiceAvailability.Ready -> stringResource(R.string.cw_ready)
+                StandardVoiceAvailability.SignInRequired -> stringResource(R.string.cw_available_after_signin)
+                StandardVoiceAvailability.Unsupported -> stringResource(R.string.cw_unavailable_server)
+                StandardVoiceAvailability.Unreachable,
+                StandardVoiceAvailability.Unknown -> stringResource(R.string.cw_could_not_verify)
+            },
+            ready = result.voiceAvailability == StandardVoiceAvailability.Ready,
+        )
+        error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onBack, enabled = !saving, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.cw_choose_another))
+            }
+            Button(onClick = onConnect, enabled = !saving, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text(if (result.signInRequired) stringResource(R.string.cw_sign_in_to_hermes) else stringResource(R.string.cw_connect_button))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardCompleteStep(onComplete: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shape = CircleShape,
+            modifier = Modifier.size(64.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(34.dp),
+                )
+            }
+        }
+        Text(
+            text = stringResource(R.string.cw_dashboard_connected_title),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
+        )
+        Text(
+            text = stringResource(R.string.cw_dashboard_connected_body),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ConnectionSetupTimeline(
+            steps = listOf(
+                ConnectionSetupTimelineStep(
+                    stringResource(R.string.cw_timeline_discovered),
+                    stringResource(R.string.cw_timeline_discovered_detail),
+                ),
+                ConnectionSetupTimelineStep(
+                    stringResource(R.string.cw_timeline_access),
+                    stringResource(R.string.cw_timeline_access_ready),
+                ),
+                ConnectionSetupTimelineStep(
+                    stringResource(R.string.cw_timeline_ready),
+                    stringResource(R.string.cw_timeline_ready_detail),
+                ),
+            ),
+        )
+        Button(
+            onClick = onComplete,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        ) {
+            Text(stringResource(R.string.cw_continue))
+        }
+    }
+}
+
+@Composable
+private fun FoundCapabilityLine(label: String, value: String, ready: Boolean) {
+    val capabilityState = stringResource(R.string.cw_semantics_capability, label, value)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { stateDescription = capabilityState }
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = if (ready) Icons.Filled.Check else Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun RelayChoiceStep(
+    connectionLabel: String,
+    dashboardUrl: String,
+    relayEnabled: Boolean,
+    onPickScan: () -> Unit,
+    onPickEnterCode: () -> Unit,
+    onPickShowCode: () -> Unit,
+) {
+    val context = LocalContext.current
+    Column(
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = stringResource(
+                R.string.cw_pair_relay_for,
+                connectionLabel.ifBlank { stringResource(R.string.cw_current_connection) },
+            ),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
+        )
+        Text(
+            text = stringResource(R.string.cw_pair_relay_scoped_desc),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.cw_current_hermes_connection),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = connectionLabel.ifBlank { stringResource(R.string.cw_current_connection) },
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (dashboardUrl.isNotBlank()) {
+                    Text(
+                        text = dashboardUrl,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.cw_existing_connection_unchanged),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        MethodTile(
+            icon = Icons.Filled.QrCodeScanner,
+            title = stringResource(R.string.cw_relay_pair_qr),
+            subtitle = stringResource(R.string.cw_relay_pair_qr_desc),
+            onClick = onPickScan,
+            isPrimary = true,
+        )
+        MethodTile(
+            icon = Icons.Filled.Keyboard,
+            title = stringResource(R.string.cw_method_pair_code_title),
+            subtitle = stringResource(R.string.cw_method_pair_code_subtitle),
+            onClick = onPickEnterCode,
+        )
+        if (relayEnabled) {
+            MethodTile(
+                icon = Icons.Filled.PhonelinkLock,
+                title = stringResource(R.string.cw_method_show_code_title),
+                subtitle = stringResource(R.string.cw_method_show_code_subtitle),
+                onClick = onPickShowCode,
+            )
+        }
+        TextButton(
+            onClick = { openExternalUrl(context, RelaySetupDocsUrl) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.MenuBook,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(stringResource(R.string.cw_relay_docs))
+        }
+    }
 }
 
 @Composable
@@ -1129,11 +1958,12 @@ private fun MethodTile(
     subtitle: String,
     onClick: () -> Unit,
     isPrimary: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = if (isPrimary) {
                 MaterialTheme.colorScheme.primaryContainer
@@ -1879,16 +2709,17 @@ private fun ManualEntryStep(
     onRelayUrlChange: (String) -> Unit,
     code: String,
     onCodeChange: (String) -> Unit,
+    requireApi: Boolean,
     onBack: () -> Unit,
     onSubmit: () -> Unit,
 ) {
     val trimmedCode = code.trim().uppercase()
     val codeValid = trimmedCode.length in 4..12 && trimmedCode.all { it.isLetterOrDigit() }
     val context = LocalContext.current
-    val apiError = apiUrlSchemeError(apiUrl, context)
+    val apiError = if (requireApi) apiUrlSchemeError(apiUrl, context) else null
     val relayError = relayUrlSchemeError(relayUrl, context)
     val canSubmit = codeValid &&
-        relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
+        relayUrl.isNotBlank() && (!requireApi || apiUrl.isNotBlank()) &&
         apiError == null && relayError == null
 
     Column(
@@ -1905,18 +2736,20 @@ private fun ManualEntryStep(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        OutlinedTextField(
-            value = apiUrl,
-            onValueChange = onApiUrlChange,
-            label = { Text(stringResource(R.string.cw_api_url_label_field)) },
-            placeholder = { Text(stringResource(R.string.cw_api_url_field_placeholder)) },
-            singleLine = true,
-            isError = apiError != null,
-            supportingText = {
-                Text(apiError ?: stringResource(R.string.cw_api_url_field_supporting))
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (requireApi) {
+            OutlinedTextField(
+                value = apiUrl,
+                onValueChange = onApiUrlChange,
+                label = { Text(stringResource(R.string.cw_api_url_label_field)) },
+                placeholder = { Text(stringResource(R.string.cw_api_url_field_placeholder)) },
+                singleLine = true,
+                isError = apiError != null,
+                supportingText = {
+                    Text(apiError ?: stringResource(R.string.cw_api_url_field_supporting))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         OutlinedTextField(
             value = relayUrl,
@@ -1979,16 +2812,17 @@ private fun ShowCodeStep(
     onRelayUrlChange: (String) -> Unit,
     pairingCode: String,
     onRegenerate: () -> Unit,
+    requireApi: Boolean,
     onBack: () -> Unit,
     onConnect: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val apiError = apiUrlSchemeError(apiUrl, context)
+    val apiError = if (requireApi) apiUrlSchemeError(apiUrl, context) else null
     val relayError = relayUrlSchemeError(relayUrl, context)
     val canConnect = pairingCode.isNotBlank() &&
-        relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
+        relayUrl.isNotBlank() && (!requireApi || apiUrl.isNotBlank()) &&
         apiError == null && relayError == null
 
     Column(
@@ -2005,18 +2839,20 @@ private fun ShowCodeStep(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        OutlinedTextField(
-            value = apiUrl,
-            onValueChange = onApiUrlChange,
-            label = { Text(stringResource(R.string.cw_api_url_label_field)) },
-            placeholder = { Text(stringResource(R.string.cw_api_url_field_placeholder)) },
-            singleLine = true,
-            isError = apiError != null,
-            supportingText = {
-                Text(apiError ?: stringResource(R.string.cw_api_url_field_supporting))
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (requireApi) {
+            OutlinedTextField(
+                value = apiUrl,
+                onValueChange = onApiUrlChange,
+                label = { Text(stringResource(R.string.cw_api_url_label_field)) },
+                placeholder = { Text(stringResource(R.string.cw_api_url_field_placeholder)) },
+                singleLine = true,
+                isError = apiError != null,
+                supportingText = {
+                    Text(apiError ?: stringResource(R.string.cw_api_url_field_supporting))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         OutlinedTextField(
             value = relayUrl,
@@ -2200,12 +3036,14 @@ private fun ConfirmStep(
     // app auto-falls back to the secure one, so a blanket "Insecure (dev)"
     // badge from endpoint[0] alone would lie to the user.
     val anySecure = endpoints.any { c ->
-        c.relay.url.startsWith("wss://") || c.api.tls ||
-            c.relay.transportHint.equals("wss", ignoreCase = true)
+        c.relay?.url?.startsWith("wss://") == true || c.api?.tls == true ||
+            c.relay?.transportHint.equals("wss", ignoreCase = true) ||
+            c.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
     }
     val anyInsecure = endpoints.any { c ->
-        c.relay.url.startsWith("ws://") || !c.api.tls ||
-            c.relay.transportHint.equals("ws", ignoreCase = true)
+        c.relay?.url?.startsWith("ws://") == true || c.api?.tls == false ||
+            c.relay?.transportHint.equals("ws", ignoreCase = true) ||
+            c.dashboard?.url?.startsWith("http://", ignoreCase = true) == true
     }
     val securityState = when {
         endpoints.isEmpty() ->
@@ -2219,13 +3057,15 @@ private fun ConfirmStep(
     // Mixed case ("Tailscale is encrypted..." vs "Public is encrypted...").
     val firstSecureLabel = endpoints
         .firstOrNull { c ->
-            c.relay.url.startsWith("wss://") || c.api.tls ||
-                c.relay.transportHint.equals("wss", ignoreCase = true)
+            c.relay?.url?.startsWith("wss://") == true || c.api?.tls == true ||
+                c.relay?.transportHint.equals("wss", ignoreCase = true) ||
+                c.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
         }?.displayLabel()
     val firstInsecureLabel = endpoints
         .firstOrNull { c ->
-            c.relay.url.startsWith("ws://") ||
-                c.relay.transportHint.equals("ws", ignoreCase = true)
+            c.relay?.url?.startsWith("ws://") == true ||
+                c.relay?.transportHint.equals("ws", ignoreCase = true) ||
+                c.dashboard?.url?.startsWith("http://", ignoreCase = true) == true
         }?.displayLabel()
     val distinctRoles = endpoints.map { it.role }.distinct()
     var preferRole by remember(payload) { mutableStateOf<String?>(null) }
@@ -2738,9 +3578,10 @@ private fun EndpointPreviewRow(
 ) {
     // Per-row security derived from the same three signals as the overall
     // securityState computation — scheme, tls flag, transportHint.
-    val isSecure = candidate.relay.url.startsWith("wss://") ||
-        candidate.api.tls ||
-        candidate.relay.transportHint.equals("wss", ignoreCase = true)
+    val isSecure = candidate.relay?.url?.startsWith("wss://") == true ||
+        candidate.api?.tls == true ||
+        candidate.relay?.transportHint.equals("wss", ignoreCase = true) ||
+        candidate.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
     val ordinalLabel = when (index) {
         0 -> stringResource(R.string.cw_ordinal_first)
         1 -> stringResource(R.string.cw_ordinal_fallback)
@@ -2773,8 +3614,8 @@ private fun EndpointPreviewRow(
                 }
             }
             Text(
-                text = "${candidate.api.host}:${candidate.api.port}" +
-                    (candidate.relay.transportHint?.let { " \u00b7 $it" } ?: ""),
+                text = candidate.primaryRouteUrl().orEmpty() +
+                    (candidate.relay?.transportHint?.let { " \u00b7 $it" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,

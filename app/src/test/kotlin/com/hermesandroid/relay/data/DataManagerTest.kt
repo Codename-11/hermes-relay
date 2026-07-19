@@ -270,7 +270,7 @@ class DataManagerTest {
         val result = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
         assertNotNull(result)
-        assertEquals(5, result.version)
+        assertEquals(6, result.version)
         assertNull(result.serverUrl)
         assertNull(result.apiServerUrl)
         assertNull(result.relayUrl)
@@ -301,9 +301,9 @@ class DataManagerTest {
     // --- Format version handling ---
 
     @Test
-    fun backup_defaultVersion_isFive() {
+    fun backup_defaultVersion_isSix() {
         val backup = DataManager.AppBackup()
-        assertEquals(5, backup.version)
+        assertEquals(6, backup.version)
     }
 
     @Test
@@ -396,7 +396,7 @@ class DataManagerTest {
 
         assertEquals(connections, restored.connections)
         assertEquals("tailscale", restored.connections[1].preferredRouteRole)
-        assertEquals("hermes.ts.net", restored.connections[1].routeCandidates[1].api.host)
+        assertEquals("hermes.ts.net", restored.connections[1].routeCandidates[1].api?.host)
     }
 
     @Test
@@ -407,6 +407,33 @@ class DataManagerTest {
         val restored = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
         assertTrue(restored.connections.isEmpty())
+    }
+
+    @Test
+    fun backup_dashboardOnlyConnection_roundTrip() {
+        val connection = Connection(
+            id = "dashboard-only",
+            label = "Hermes",
+            apiServerUrl = "",
+            relayUrl = "",
+            tokenStoreKey = "hermes_auth_dashboard",
+            dashboardUrl = "https://hermes.example.com",
+        )
+        val backup = DataManager.AppBackup(
+            connections = listOf(connection),
+            activeConnectionId = connection.id,
+            startupConnectionId = connection.id,
+        )
+
+        val restored = json.decodeFromString<DataManager.AppBackup>(json.encodeToString(backup))
+
+        assertEquals(connection, restored.connections.single())
+        assertEquals("dashboard-only", restored.activeConnectionId)
+        assertEquals("dashboard-only", restored.startupConnectionId)
+        assertEquals("https://hermes.example.com", restored.connections.single().primaryEndpointUrl)
+        assertTrue(restored.connections.single().capabilities.gatewayChatAvailable)
+        assertFalse(restored.connections.single().capabilities.apiChatFallbackAvailable)
+        assertFalse(restored.connections.single().capabilities.relayFeaturesAvailable)
     }
 
     @Test

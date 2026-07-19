@@ -54,52 +54,48 @@ Install → connect → talk, in about two minutes.
 
 Sideload builds check GitHub for updates and show a one-tap banner when you're behind; Play builds update through the Store. See [Release tracks](https://hermes-relay.dev/docs/guide/release-tracks) for the capability matrix.
 
-### 2 · Have Hermes running
+### 2 · Have the Hermes Dashboard running
 
-The app needs your Hermes **API server enabled and reachable from your phone**, plus an **API key** — the token the app sends to authenticate Chat (pick any value you like). Installing Hermes and choosing a provider is vanilla Hermes setup; the [full walkthrough](https://hermes-relay.dev/docs/guide/getting-started) covers Windows, the dashboard for **Manage**, LAN scan, and QR setup.
+The normal Android connection uses the upstream Hermes Dashboard/Gateway for
+chat, sign-in, sessions, Manage, and voice. Installing Hermes and choosing a
+provider is vanilla Hermes setup:
 
 ```bash
-hermes setup --portal                      # install / log in / pick a provider — skip if already done
-
-mkdir -p ~/.hermes
-API_SERVER_KEY="$(openssl rand -hex 32)"   # strong random key — or substitute your own memorable value
-cat >> ~/.hermes/.env <<EOF
-API_SERVER_ENABLED=true
-API_SERVER_HOST=0.0.0.0
-API_SERVER_PORT=8642
-API_SERVER_KEY=$API_SERVER_KEY
-EOF
-chmod 600 ~/.hermes/.env
-
-echo "Android API URL: http://<this-computer-ip>:8642   key: $API_SERVER_KEY"
-hermes gateway
+hermes setup --portal   # install / log in / pick a provider — skip if already done
+hermes dashboard       # start the standard Dashboard/Gateway surface
 ```
 
-`API_SERVER_ENABLED` turns the API server on; `API_SERVER_HOST=0.0.0.0` makes it reachable on your LAN (the default is localhost-only); `API_SERVER_KEY` is the bearer token the app sends — **your choice of value**.
-
-> **Heads up on `0.0.0.0`:** that exposes the API to every device on your network — fine on a trusted home LAN, but off it keep the key set and front it with Tailscale or an HTTPS reverse proxy ([Remote access](https://hermes-relay.dev/docs/guide/remote-access)) rather than exposing it directly. You don't have to type the key on your phone — **Scan for Hermes on LAN**, or have your agent make a setup QR (below). For **Manage** (skills, models, keys), also run the Hermes dashboard — see [Getting Started](https://hermes-relay.dev/docs/guide/getting-started).
+Make the dashboard reachable from your phone over a trusted LAN, Tailscale, or
+an HTTPS reverse proxy. The [full walkthrough](https://hermes-relay.dev/docs/guide/getting-started)
+covers Windows, remote access, and dashboard authentication. You do not need to
+enable the separate API server or invent an API key for the standard path.
 
 ### 3 · Connect and talk
 
-Open the app and pick how to connect — any of:
+Open the app, choose **Connect to Hermes**, and enter or discover the dashboard
+address (conventionally `http://<host>:9119`). Sign in through the dashboard's
+configured provider when prompted. The app probes the available upstream
+capabilities and finishes with a connection summary.
 
-- **Vanilla Hermes** → tap **Scan for Hermes on LAN** to auto-find the server, then enter your key.
-- **Vanilla Hermes** → type the address (`http://<host>:8642`) and key by hand.
-- **Scan setup QR** → ask your Hermes agent to generate a QR with your URL + key (e.g. `{"api_url":"http://<host>:8642","api_key":"<key>","dashboard_url":"http://<host>:9119"}`) and scan it. `dashboard_url` is optional when the dashboard uses the conventional same-host `:9119` URL.
+The separate API server can be discovered automatically or added later under
+**Advanced** as a chat fallback or for a headless compatibility setup. Its API
+key is requested only when that optional endpoint is configured. Existing
+API-first setup QRs remain importable.
 
 The wizard probes everything and finishes with a capability card:
 
 | Line | What it means |
 |------|---------------|
-| **Chat** | API server reachable — you can talk |
-| **Manage** | Dashboard found — models, keys, skills, profiles from the phone |
+| **Chat** | Dashboard/Gateway ready — you can talk |
+| **Manage** | Models, keys, skills, and profiles are available from the phone |
 | **Voice** | Speech ready via your server (or one Manage sign-in away) |
-| **Remote** | Fallback route configured — keeps working away from home |
-| **Relay** | Optional power tools — fine to leave unpaired |
+| **API fallback** | Optional API route available/unavailable |
+| **Relay** | Optional extensions — fine to leave unpaired |
 
-If your dashboard requires sign-in, do it once under the **Manage** tab — the same session unlocks voice. That's the whole Vanilla Hermes setup.
+One dashboard sign-in unlocks Chat, Manage, sessions, and standard voice. That's
+the whole Vanilla Hermes setup.
 
-> **Going places?** Put your server's Tailscale URL in the setup form's *Remote access* field (or add a route any time under **Settings → Connections → Routes**). The app uses LAN at home and switches routes automatically when you leave. See [Remote access](https://hermes-relay.dev/docs/guide/remote-access).
+> **Going places?** Add the Dashboard's Tailscale address — for example `http://100.x.y.z:9119` or a separately published `https://host.ts.net` URL — under **Settings → Connections → Routes**. Android tests it as a Dashboard route; no API server or API key is required. The app uses LAN at home and switches routes automatically when you leave. See [Remote access](https://hermes-relay.dev/docs/guide/remote-access).
 
 ### 4 · Optional: install Relay for power tools
 
@@ -133,7 +129,7 @@ the QR from the phone's Connections screen — or use
 
 Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-server.md).
 
-**Requirements:** Android 8.0+ (SDK 26) · current upstream [hermes-agent](https://github.com/NousResearch/hermes-agent) with the API server and dashboard enabled · Python 3.11+ on the server.
+**Requirements:** Android 8.0+ (SDK 26) · current upstream [hermes-agent](https://github.com/NousResearch/hermes-agent) with the Dashboard/Gateway enabled · Python 3.11+ on the server. The API server and Relay are optional.
 
 ## Screenshots
 

@@ -60,6 +60,7 @@ import kotlinx.serialization.json.Json
 class ConnectionStore private constructor(
     private val dataStore: DataStore<Preferences>,
     private val context: Context?,
+    private val scope: CoroutineScope,
 ) {
 
     /**
@@ -71,6 +72,7 @@ class ConnectionStore private constructor(
     constructor(context: Context) : this(
         dataStore = context.relayDataStore,
         context = context.applicationContext,
+        scope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
     )
 
     /**
@@ -81,9 +83,13 @@ class ConnectionStore private constructor(
     internal constructor(dataStore: DataStore<Preferences>) : this(
         dataStore = dataStore,
         context = null,
+        scope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
     )
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    internal constructor(
+        dataStore: DataStore<Preferences>,
+        scope: CoroutineScope,
+    ) : this(dataStore = dataStore, context = null, scope = scope)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -99,6 +105,13 @@ class ConnectionStore private constructor(
 
     private val _activeConnectionId = MutableStateFlow<String?>(null)
     val activeConnectionId: StateFlow<String?> = _activeConnectionId.asStateFlow()
+
+    /**
+     * Optional cold-start pin. `null` means restore the last connection the
+     * user actively selected, which remains the recommended default.
+     */
+    private val _startupConnectionId = MutableStateFlow<String?>(null)
+    val startupConnectionId: StateFlow<String?> = _startupConnectionId.asStateFlow()
 
     /**
      * Flips to `true` once the initial DataStore hydrate completes (success OR
@@ -128,6 +141,7 @@ class ConnectionStore private constructor(
                 val oldJson = prefs[KEY_LEGACY_PROFILES]
                 val activeNew = prefs[KEY_ACTIVE_CONNECTION_ID]
                 val activeOld = prefs[KEY_LEGACY_ACTIVE_PROFILE_ID]
+                val startupId = prefs[KEY_STARTUP_CONNECTION_ID]
 
                 // Prefer the new key. If absent and the old key has data,
                 // migrate it once: write to the new key and clear the old ones
@@ -143,15 +157,21 @@ class ConnectionStore private constructor(
                             p.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
                         }
                     }
-                    _connections.value = decodeConnections(oldJson)
-                    _activeConnectionId.value = activeOld
+                    val restored = decodeConnections(oldJson)
+                    val validStartupId = startupId?.takeIf { id -> restored.any { it.id == id } }
+                    _connections.value = restored
+                    _startupConnectionId.value = validStartupId
+                    _activeConnectionId.value = validStartupId ?: activeOld
                     Log.i(
                         TAG,
                         "Migrated legacy DataStore keys (profiles_v1 → connections_v1)",
                     )
                 } else {
-                    _connections.value = decodeConnections(newJson)
-                    _activeConnectionId.value = activeNew
+                    val restored = decodeConnections(newJson)
+                    val validStartupId = startupId?.takeIf { id -> restored.any { it.id == id } }
+                    _connections.value = restored
+                    _startupConnectionId.value = validStartupId
+                    _activeConnectionId.value = validStartupId ?: activeNew
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Initial hydrate failed: ${e.message}")
@@ -229,6 +249,10 @@ class ConnectionStore private constructor(
                     prefs.remove(KEY_ACTIVE_CONNECTION_ID)
                     _activeConnectionId.value = null
                 }
+                if (prefs[KEY_STARTUP_CONNECTION_ID] == id) {
+                    prefs.remove(KEY_STARTUP_CONNECTION_ID)
+                    _startupConnectionId.value = null
+                }
             }
             removed?.let { deleteTokenStoresFor(it) }
         }
@@ -247,10 +271,12 @@ class ConnectionStore private constructor(
                 removed = decodeConnections(prefs[KEY_CONNECTIONS])
                 prefs.remove(KEY_CONNECTIONS)
                 prefs.remove(KEY_ACTIVE_CONNECTION_ID)
+                prefs.remove(KEY_STARTUP_CONNECTION_ID)
                 prefs.remove(KEY_LEGACY_PROFILES)
                 prefs.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
                 _connections.value = emptyList()
                 _activeConnectionId.value = null
+                _startupConnectionId.value = null
             }
             removed.forEach { deleteTokenStoresFor(it) }
         }
@@ -259,6 +285,7 @@ class ConnectionStore private constructor(
     suspend fun replaceConnections(
         connections: List<Connection>,
         activeConnectionId: String? = null,
+        startupConnectionId: String? = null,
     ) {
         writeMutex.withLock {
             var removed: List<Connection> = emptyList()
@@ -266,6 +293,8 @@ class ConnectionStore private constructor(
             val normalizedActiveId = activeConnectionId
                 ?.takeIf { id -> normalizedConnections.any { it.id == id } }
                 ?: normalizedConnections.firstOrNull()?.id
+            val normalizedStartupId = startupConnectionId
+                ?.takeIf { id -> normalizedConnections.any { it.id == id } }
 
             dataStore.edit { prefs ->
                 removed = decodeConnections(prefs[KEY_CONNECTIONS])
@@ -281,8 +310,14 @@ class ConnectionStore private constructor(
                 }
                 prefs.remove(KEY_LEGACY_PROFILES)
                 prefs.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
+                if (normalizedStartupId == null) {
+                    prefs.remove(KEY_STARTUP_CONNECTION_ID)
+                } else {
+                    prefs[KEY_STARTUP_CONNECTION_ID] = normalizedStartupId
+                }
                 _connections.value = normalizedConnections
-                _activeConnectionId.value = normalizedActiveId
+                _activeConnectionId.value = normalizedStartupId ?: normalizedActiveId
+                _startupConnectionId.value = normalizedStartupId
             }
             removed.forEach { deleteTokenStoresFor(it) }
         }
@@ -315,8 +350,40 @@ class ConnectionStore private constructor(
     suspend fun setActiveConnection(id: String) {
         writeMutex.withLock {
             dataStore.edit { prefs ->
+                val current = decodeConnections(prefs[KEY_CONNECTIONS])
+                if (current.any { it.id == id }) {
+                    val next = current.map { connection ->
+                        if (connection.id == id) {
+                            connection.copy(lastUsedAt = System.currentTimeMillis())
+                        } else {
+                            connection
+                        }
+                    }
+                    prefs[KEY_CONNECTIONS] = encodeConnections(next)
+                    _connections.value = next
+                }
                 prefs[KEY_ACTIVE_CONNECTION_ID] = id
                 _activeConnectionId.value = id
+            }
+        }
+    }
+
+    /** Set a specific cold-start connection, or `null` to restore last used. */
+    suspend fun setStartupConnection(id: String?) {
+        writeMutex.withLock {
+            dataStore.edit { prefs ->
+                val validId = id?.takeIf { candidate ->
+                    decodeConnections(prefs[KEY_CONNECTIONS]).any { it.id == candidate }
+                }
+                if (validId == null) {
+                    prefs.remove(KEY_STARTUP_CONNECTION_ID)
+                    _activeConnectionId.value?.let { activeId ->
+                        prefs[KEY_ACTIVE_CONNECTION_ID] = activeId
+                    }
+                } else {
+                    prefs[KEY_STARTUP_CONNECTION_ID] = validId
+                }
+                _startupConnectionId.value = validId
             }
         }
     }
@@ -504,6 +571,7 @@ class ConnectionStore private constructor(
 
         private val KEY_CONNECTIONS = stringPreferencesKey("connections_v1")
         private val KEY_ACTIVE_CONNECTION_ID = stringPreferencesKey("active_connection_id")
+        private val KEY_STARTUP_CONNECTION_ID = stringPreferencesKey("startup_connection_id")
 
         // Pre-rename DataStore keys — read once in init on first launch after
         // the rename, then wiped. See the init block above.

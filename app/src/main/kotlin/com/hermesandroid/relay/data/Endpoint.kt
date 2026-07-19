@@ -2,6 +2,7 @@ package com.hermesandroid.relay.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.net.URI
 
 /**
  * One entry in a pairing payload's `endpoints` array (ADR 24 — multi-endpoint
@@ -38,8 +39,10 @@ import kotlinx.serialization.Serializable
 data class EndpointCandidate(
     val role: String,
     val priority: Int = 0,
-    val api: ApiEndpoint,
-    val relay: RelayEndpoint,
+    /** Optional legacy/API-server surface. Dashboard-only routes omit it. */
+    val api: ApiEndpoint? = null,
+    /** Optional Hermes-Relay bridge surface. Standard upstream routes omit it. */
+    val relay: RelayEndpoint? = null,
     val dashboard: DashboardEndpoint? = null,
     val proxy: ProxyEndpoint? = null,
     val security: String? = null,
@@ -137,11 +140,40 @@ fun EndpointCandidate.displayLabel(): String {
     return when (role.lowercase()) {
         "lan" -> "LAN"
         "tailscale" -> "Tailscale"
-        "public" -> if (api.tls) "HTTPS" else "Public"
+        "public" -> if (primaryRouteUrl()?.startsWith("https://", ignoreCase = true) == true) {
+            "HTTPS"
+        } else {
+            "Public"
+        }
         "https" -> "HTTPS"
         "plugin_proxy", "plugin-proxy" -> "Plugin proxy"
         else -> "Custom VPN ($role)"
     }
+}
+
+/** Dashboard-first URL identity for routing, diagnostics, and UI labels. */
+fun EndpointCandidate.primaryRouteUrl(): String? =
+    dashboard?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        ?: api?.url
+        ?: relay?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        ?: proxy?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+
+/** Stable host/port identity without assuming that an API surface exists. */
+fun EndpointCandidate.routeAuthority(): String? {
+    val rawUrl = primaryRouteUrl() ?: return null
+    val httpUrl = when {
+        rawUrl.startsWith("ws://", ignoreCase = true) -> "http://${rawUrl.substringAfter("://")}"
+        rawUrl.startsWith("wss://", ignoreCase = true) -> "https://${rawUrl.substringAfter("://")}"
+        else -> rawUrl
+    }
+    val uri = runCatching { URI(httpUrl) }.getOrNull() ?: return null
+    val host = uri.host?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+    val port = when {
+        uri.port > 0 -> uri.port
+        uri.scheme.equals("https", ignoreCase = true) -> 443
+        else -> 80
+    }
+    return "$host:$port"
 }
 
 fun EndpointCandidate.hasSecureProxy(): Boolean =

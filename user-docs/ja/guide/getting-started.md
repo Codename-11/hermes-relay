@@ -32,31 +32,35 @@ canonical_source: /guide/getting-started
 
 ## 2. Hermes を到達可能にする
 
-Android は通常 `:8642` の Hermes API サーバーを使用します。
+Android の標準接続先は `:9119` の Hermes Dashboard/Gateway です。Chat、
+セッション、ログイン、Manage、標準 Voice を提供します。`hermes dashboard`
+で起動し、スマートフォンから到達できるようにします。
 
-- `API_SERVER_ENABLED=true` で API サーバーを有効にします。
-- `API_SERVER_HOST=0.0.0.0` でネットワークから到達可能にします。
-- `API_SERVER_KEY` は Chat リクエストを bearer キーで保護します。
-- `hermes gateway` で Hermes と有効化された API サーバーを起動します。
+`:8642` の API サーバーはオプションです。Chat の自動フォールバックまたは
+高度な headless 互換用途でのみ設定し、その場合だけ API キーが必要です。
+`API_SERVER_KEY` はサーバー管理者が作成するもので、Dashboard からは発行されません。
 
 ::: warning ネットワークアクセスを保護する
-`0.0.0.0` はネットワーク上の他のデバイスからの接続を許可します。強力な
-API キーを使用してください。暗号化されていないポートをインターネットへ
+暗号化されていない Dashboard、API、Relay ポートをインターネットへ
 直接公開せず、リモートアクセスには Tailscale、VPN、HTTPS を使用します。
 :::
 
-`:9119` のダッシュボードはオプションです。Manage と標準 Voice に使用され、
-独自のログインがあります。API キーはダッシュボードのログイン情報ではありません。
+ダッシュボードログインは Cookie と短時間の Gateway チケットを使用します。
+API キーは別の認証情報で、ダッシュボードへのログインには使いません。
 
 ## 3. 接続して会話する
 
 1. Android アプリで **Connect** を開きます。
-2. LAN 検索、セットアップ QR、または API URL とキーの入力を選びます。
-3. **Connect** をタップします。
-4. **Chat · Ready** が表示されることを確認します。
-5. Chat を開いて最初のメッセージを送ります。
+2. LAN 検索、Dashboard/Gateway URL の入力、またはセットアップ QR を選びます。従来の API-first QR も互換です。
+3. 求められた場合はダッシュボードへログインします。
+4. **Connect** をタップし、**Chat · Ready** を確認します。
+5. 必要なら後から **Advanced** で API fallback、Relay、リモートルートを追加します。
 
-Manage と Voice はログインを求める場合があります。Relay が未ペアリングでも正常です。
+`http://100.x.y.z:9119` のような Tailscale Dashboard アドレスや、別途公開した
+`.ts.net` アドレスは、API サーバーや API キーなしで追加・テストできます。
+
+同じログインで Chat、セッション、Manage、Voice が有効になります。Relay が
+未ペアリングでも、API fallback が利用不可でも正常です。
 
 ## オプション: Relay ツールを追加する
 

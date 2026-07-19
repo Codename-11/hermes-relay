@@ -58,6 +58,10 @@
 
 ### 3. Chat via Direct API, Not Relay Proxy
 
+**Status:** Superseded as the standard route by ADR 38 (2026-07-18). Direct API
+chat remains the automatic fallback and an advanced headless compatibility
+mode; the upstream Dashboard/Gateway is now the primary connection surface.
+
 **Decision:** ~~Chat channel proxies through the relay to the WebAPI.~~ **Updated:** Chat now connects directly from the Android app to the Hermes API Server via HTTP/SSE. The relay server is only used for bridge and terminal channels.
 
 **Why (original relay approach):**
@@ -132,6 +136,11 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 - Tokens stored in EncryptedSharedPreferences (Android Keystore-backed AES-256-GCM).
 
 #### 6a. QR Carries Both API and Relay Credentials (updated 2026-05-03)
+
+**2026-07-18 amendment:** ADR 38 makes Dashboard/Gateway the normal connection
+anchor. This API-first QR remains a backward-compatible import and Relay-pairing
+format. New setup flows should carry an explicit Dashboard/Gateway URL and must
+not require an API endpoint or API bearer when dashboard chat is ready.
 
 **Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim, all backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes pair` and places it in top-level `key`.
 
@@ -682,6 +691,12 @@ The `data` field tells the activity log and agent trace which tier succeeded, wh
 - `docs/spec.md` §5 Bridge Tab — user-facing description
 
 ### 19. Multi-Connection Support — one app, many Hermes servers (2026-04-18)
+
+**2026-07-18 amendment:** ADR 38 replaces the endpoint-shaped identity described
+below. A connection still represents one Hermes installation, but its stable ID
+is independent of `apiServerUrl`; Dashboard/Gateway is the standard surface and
+API/Relay endpoints are optional capabilities. The original model and migration
+notes remain here as implementation history.
 
 > **Terminology note (2026-04-18):** earlier drafts of this design called these "profiles" — that's been renamed to "Connection" to avoid collision with Hermes's in-config agent profiles concept (agent.profiles in config.yaml defines name + model + description for each agent personality). A follow-up pass will introduce the agent-profile layer on top of the connection layer described here.
 
@@ -2062,3 +2077,64 @@ beside each other under `~/.hermes/bin`; there is no private bundled sidecar.
 - `desktop/tray/installer/hermes-relay.nsi`
 - `desktop/README.md`
 - `RELEASE.md`
+
+---
+
+## ADR 38 — Dashboard/Gateway is the primary Android connection surface
+
+**Status:** Accepted (2026-07-18).
+
+**Context.** Android originally treated the API server URL and bearer key as the
+identity and prerequisite for every saved connection. The app later gained the
+upstream Dashboard/Gateway `/api/ws` transport, dashboard authentication,
+native Manage, session control, and dashboard voice. That route now supplies the
+complete standard experience, but onboarding and persistence still framed it as
+an optional service derived from an API URL. Users with a healthy dashboard were
+therefore asked for an API server and sometimes entered fake credentials.
+
+**Decision.** A saved connection represents one Hermes installation and has a
+stable identity independent of endpoint URLs.
+
+- **Dashboard/Gateway is standard.** It owns primary chat, dashboard auth,
+  sessions, Manage, and Vanilla Hermes voice against unmodified upstream Hermes.
+- **API server is optional.** When discovered or explicitly configured, it is an
+  automatic chat fallback and an advanced headless compatibility surface. Its
+  bearer is requested and validated only when that endpoint is configured.
+- **Relay is optional.** It adds pairing, terminal, bridge/device control,
+  media, notification companion, enhanced voice, and desktop tooling. It never
+  becomes a prerequisite for standard chat or management.
+- **Readiness is capability-based.** Chat, Manage, Voice, API fallback, and
+  Relay extensions report their own state. A missing optional endpoint does not
+  mark the whole connection unhealthy.
+- **Routing is automatic.** Chat prefers Dashboard/Gateway and falls back to the
+  API server only when configured and usable. Users choose a transport only in
+  advanced diagnostics or compatibility settings, not during normal setup.
+
+**Product flow.** Normal onboarding asks for one Hermes address, discovers the
+Dashboard/Gateway, authenticates through its supported provider, and finishes
+with a capability summary. Manual endpoint fields live under Advanced. The
+Connections list leads with server identity and available outcomes rather than
+ports, keys, or transport names. Existing API-only records and API-first pairing
+payloads migrate without behavior loss and remain valid headless configurations.
+An API endpoint or Relay can be added later without recreating the connection.
+
+**Consequences.**
+
+- Dashboard-only Hermes connections can chat, manage, use sessions, and use
+  Vanilla Hermes voice without fake API credentials.
+- API outages do not degrade a healthy Gateway session; they remove only the
+  fallback capability.
+- Connection storage, diagnostics, backup/restore, route discovery, pairing,
+  and profile/session scoping must tolerate independently absent endpoints.
+- Legacy API-only users keep working, but public documentation no longer teaches
+  that compatibility configuration as the normal path.
+
+**Key files:**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/data/ConnectionData.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/data/ConnectionStore.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ConnectionViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/ConnectionWizard.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/GatewayChatClient.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/HermesApiClient.kt`
+- `docs/upstream-surface-matrix.md`

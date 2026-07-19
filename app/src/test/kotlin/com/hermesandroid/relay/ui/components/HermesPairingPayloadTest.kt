@@ -50,11 +50,11 @@ class HermesPairingPayloadTest {
         val ep = endpoints[0]
         assertEquals("lan", ep.role)
         assertEquals(0, ep.priority)
-        assertEquals("192.168.1.100", ep.api.host)
-        assertEquals(8642, ep.api.port)
-        assertFalse(ep.api.tls)
-        assertEquals("http://192.168.1.100:8642", ep.api.url)
-        assertEquals("ws://192.168.1.100:8767", ep.relay.url)
+        assertEquals("192.168.1.100", ep.api?.host)
+        assertEquals(8642, ep.api?.port)
+        assertFalse(ep.api?.tls ?: true)
+        assertEquals("http://192.168.1.100:8642", ep.api?.url)
+        assertEquals("ws://192.168.1.100:8767", ep.relay?.url)
     }
 
     @Test
@@ -104,7 +104,7 @@ class HermesPairingPayloadTest {
         assertNotNull(endpoints)
         assertEquals(1, endpoints!!.size)
         assertEquals("tailscale", endpoints[0].role)
-        assertTrue(endpoints[0].api.tls)
+        assertTrue(endpoints[0].api?.tls == true)
     }
 
     @Test
@@ -159,11 +159,11 @@ class HermesPairingPayloadTest {
         assertEquals(1, endpoints!!.size)
         assertEquals("lan", endpoints[0].role)
         assertEquals(0, endpoints[0].priority)
-        assertEquals("ws://192.168.1.50:8767", endpoints[0].relay.url)
+        assertEquals("ws://192.168.1.50:8767", endpoints[0].relay?.url)
         // The per-endpoint RelayEndpoint carries ONLY url + transport_hint.
         // `code`, `ttl_seconds`, `grants` stay on the top-level RelayPairing
         // — that split is a load-bearing ADR 24 decision.
-        assertEquals("ws", endpoints[0].relay.transportHint)
+        assertEquals("ws", endpoints[0].relay?.transportHint)
     }
 
     @Test
@@ -213,24 +213,24 @@ class HermesPairingPayloadTest {
         // Priority-0 LAN entry — unchanged from the wire.
         assertEquals("lan", endpoints[0].role)
         assertEquals(0, endpoints[0].priority)
-        assertEquals("192.168.1.100", endpoints[0].api.host)
-        assertFalse(endpoints[0].api.tls)
-        assertEquals("ws://192.168.1.100:8767", endpoints[0].relay.url)
-        assertEquals("ws", endpoints[0].relay.transportHint)
+        assertEquals("192.168.1.100", endpoints[0].api?.host)
+        assertFalse(endpoints[0].api?.tls ?: true)
+        assertEquals("ws://192.168.1.100:8767", endpoints[0].relay?.url)
+        assertEquals("ws", endpoints[0].relay?.transportHint)
 
         // Priority-1 Tailscale — tls + wss must round-trip.
         assertEquals("tailscale", endpoints[1].role)
         assertEquals(1, endpoints[1].priority)
-        assertEquals("hermes.tail-scale.ts.net", endpoints[1].api.host)
-        assertTrue(endpoints[1].api.tls)
-        assertEquals("wss", endpoints[1].relay.transportHint)
-        assertEquals("https://hermes.tail-scale.ts.net:8642", endpoints[1].api.url)
+        assertEquals("hermes.tail-scale.ts.net", endpoints[1].api?.host)
+        assertTrue(endpoints[1].api?.tls == true)
+        assertEquals("wss", endpoints[1].relay?.transportHint)
+        assertEquals("https://hermes.tail-scale.ts.net:8642", endpoints[1].api?.url)
 
         // Priority-2 public — 443 + path in relay URL preserved.
         assertEquals("public", endpoints[2].role)
         assertEquals(2, endpoints[2].priority)
-        assertEquals(443, endpoints[2].api.port)
-        assertEquals("wss://hermes.example.com/relay", endpoints[2].relay.url)
+        assertEquals(443, endpoints[2].api?.port)
+        assertEquals("wss://hermes.example.com/relay", endpoints[2].relay?.url)
     }
 
     @Test
@@ -293,7 +293,7 @@ class HermesPairingPayloadTest {
         assertTrue(ep.isKnownRole())
         assertEquals("LAN", ep.displayLabel())
         // transportHint defaulted to null because the wire didn't carry it.
-        assertNull(ep.relay.transportHint)
+        assertNull(ep.relay?.transportHint)
     }
 
     @Test
@@ -349,5 +349,21 @@ class HermesPairingPayloadTest {
         // Defensive: malformed JSON must not throw out of the parser.
         assertNull(parseHermesPairingQr("not-json-at-all"))
         assertNull(parseHermesPairingQr(""))
+    }
+
+    @Test
+    fun scopedRelayPairing_requiresUsableWebSocketUrlAndCode() {
+        fun payload(relay: RelayPairing?) = HermesPairingPayload(
+            host = "192.168.1.10",
+            relay = relay,
+        )
+
+        assertFalse(payload(null).hasUsableRelayPairing())
+        assertFalse(payload(RelayPairing()).hasUsableRelayPairing())
+        assertFalse(payload(RelayPairing(url = "wss://relay.example.com", code = "")).hasUsableRelayPairing())
+        assertFalse(payload(RelayPairing(url = "https://relay.example.com", code = "ABC123")).hasUsableRelayPairing())
+        assertFalse(payload(RelayPairing(url = "wss:///relay", code = "ABC123")).hasUsableRelayPairing())
+        assertTrue(payload(RelayPairing(url = "ws://192.168.1.10:8767", code = "ABC123")).hasUsableRelayPairing())
+        assertTrue(payload(RelayPairing(url = "wss://relay.example.com/relay", code = "ABC123")).hasUsableRelayPairing())
     }
 }

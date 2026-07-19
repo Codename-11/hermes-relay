@@ -30,7 +30,12 @@ The plugin's header shows the relay version, overall health (green / red dot), a
 
 ## Android Manage Surface
 
-The Android app also uses the Hermes dashboard/admin API as its standard management data plane. The **Manage** tab derives the dashboard URL from the active API server URL by default (`:8642` → `:9119`) and reads Skills, Cron, MCP, MCP catalog, Profiles, Models, Keys, and Config from dashboard endpoints when the server supports them.
+The Android app uses the Hermes Dashboard/Gateway as its standard connection:
+primary chat, sessions, Manage, authentication, and standard voice all share
+this upstream surface. New connections store the dashboard address directly;
+legacy API-first records may still derive the conventional `:9119` address for
+compatibility. The **Manage** tab reads Skills, Cron, MCP, MCP catalog, Profiles,
+Models, Keys, and Config from dashboard endpoints when the server supports them.
 
 What you can do from the phone, per section:
 
@@ -46,7 +51,14 @@ A successful dashboard sign-in here also unlocks **standard voice** for the conn
 
 Dashboard sign-in is the upstream-preferred remote auth path. Android supports the bundled `basic` username/password provider and redirect providers such as `nous` or self-hosted OIDC through the dashboard's `/auth/login?provider=...` flow. Successful sign-in stores dashboard cookies, verifies the flat upstream `/api/auth/me` session response, and probes `/api/auth/ws-ticket`. This matches the Hermes Desktop remote-gateway model: sign in once to the dashboard, then reuse that dashboard session for `/api/ws` with a short-lived ticket.
 
-This is separate from relay pairing and from `API_SERVER_KEY`. A dashboard session does not become an API bearer token; Android Chat still uses the API key fallback until its dashboard JSON-RPC chat adapter is enabled. Relay-only capabilities — Terminal, Bridge, Relay sessions, Media inspector, and profile memory file editing — stay under **Settings → Power tools** and show **Requires pairing** until the phone has a paired relay session. Profile **SOUL.md editing is available without Relay** (Manage → Profiles → Edit SOUL, via the dashboard); memory file editing remains in the paired profile inspector.
+This is separate from Relay pairing and from `API_SERVER_KEY`. A dashboard
+session does not become an API bearer token: Android uses it for primary Gateway
+chat and asks for an API bearer only when the optional API fallback is configured.
+Relay-only capabilities — Terminal, Bridge, Relay sessions, Media inspector, and
+profile memory file editing — stay under **Settings → Power tools** and show
+**Requires pairing** until the phone has a paired Relay session. Profile
+**SOUL.md editing is available without Relay** (Manage → Profiles → Edit SOUL,
+via the dashboard); memory file editing remains in the paired profile inspector.
 
 Server-side dashboard auth is owned by upstream Hermes. For current provider registration, Nous OAuth, username/password, and remote dashboard guidance, use the Hermes [Web Dashboard docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
 
@@ -82,7 +94,12 @@ The **Pair new device** button on the Relay Management tab is an alternative to 
 
 **Override persistence.** The dashboard stores the last-used host/port/TLS values in `localStorage` per-browser, so returning to the Pair dialog in the same browser session pre-fills your overrides. Different browsers (or cleared storage) start with the relay's auto-detected defaults. The overrides are never persisted server-side — they only shape the next QR's payload.
 
-**What the minted QR contains.** Top-level `host`/`port`/`tls`/`key` describe the **Hermes API server** the phone hits for chat (defaults `:8642`, override fields labelled "API server"). The nested `relay` block carries the relay's WSS URL and the pairing code — always auto-derived from the relay's own bind config, never operator-editable, since the relay knows where phones need to connect. See `docs/spec.md` §3.3.1 for the full wire-format spec and `plugin/tests/test_pairing_mint_schema.py` for the regression guard that keeps the payload in sync with the Android parser.
+**What the minted QR contains.** The current Relay-pairing payload retains its
+legacy top-level API fields for older phones and headless compatibility. New
+connections should also carry an explicit Dashboard/Gateway URL; neither the API
+endpoint nor its key is required for dashboard-primary chat. The nested `relay`
+block carries the Relay WSS URL and pairing code. See `docs/spec.md` §3.3.1 for
+the full backward-compatible wire format.
 
 **If the minted QR "doesn't do anything" when scanned**, the most common cause is that the host-side API port in the override section points at the wrong service — e.g. you accidentally entered `8767` (the relay's port) in the API Host/Port fields, so the phone tries to reach the API at the relay's address. The relay validates that the URL parses but can't verify the port is actually an API gateway, so this mistake surfaces as a silent pair failure. Double-check that Host points at something serving `/v1/runs` / `/v1/chat/completions`, not your relay.
 

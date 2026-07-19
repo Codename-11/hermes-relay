@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -55,6 +56,8 @@ import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.isEncryptedOverlayRoute
 import com.hermesandroid.relay.data.isKnownRole
 import com.hermesandroid.relay.data.isTlsUrl
+import com.hermesandroid.relay.data.primaryRouteUrl
+import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -72,8 +75,8 @@ import kotlinx.coroutines.launch
  *   on app start, tried first on every resolve; cleared by
  *   [onClearPreferred].
  *
- * Verbose by design — Bailey explicitly asked for per-row visibility, so we
- * do NOT collapse into a master row. The card itself is wrapped in a
+ * Verbose by design: per-route visibility is retained instead of collapsing
+ * into a master row. The card itself is wrapped in a
  * [SettingsExpandableCard] by the caller for page layout hygiene.
  *
  * Not visible on legacy installs: when [endpoints] is empty we render a
@@ -170,8 +173,7 @@ fun EndpointsCard(
                 candidate = candidate,
                 isActive = activeEndpoint != null &&
                     activeEndpoint.role.equals(candidate.role, ignoreCase = true) &&
-                    activeEndpoint.api.host.equals(candidate.api.host, ignoreCase = true) &&
-                    activeEndpoint.api.port == candidate.api.port,
+                    activeEndpoint.routeAuthority() == candidate.routeAuthority(),
                 isPreferred = preferredRole?.equals(candidate.role, ignoreCase = true) == true,
                 isProbing = isProbing,
                 outcome = outcomeFor(candidate),
@@ -283,8 +285,8 @@ private fun EndpointRow(
                 // read "host:8642" can behave completely differently. The
                 // scheme must be visible to be debuggable.
                 Text(
-                    text = candidate.api.url +
-                        (candidate.relay.transportHint?.let { " · $it" } ?: ""),
+                    text = candidate.primaryRouteUrl().orEmpty() +
+                        (candidate.relay?.transportHint?.let { " · $it" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
@@ -400,7 +402,7 @@ private fun EndpointRow(
             title = { Text(stringResource(R.string.endpoints_remove_route_title, candidate.displayLabel())) },
             text = {
                 Text(
-                    text = stringResource(R.string.endpoints_remove_route_body, "${candidate.api.host}:${candidate.api.port}"),
+                    text = stringResource(R.string.endpoints_remove_route_body, candidate.routeAuthority().orEmpty()),
                     style = MaterialTheme.typography.bodySmall,
                 )
             },
@@ -421,7 +423,7 @@ private fun EndpointRow(
     pinDialogText?.let { body ->
         AlertDialog(
             onDismissRequest = { pinDialogText = null },
-            title = { Text(stringResource(R.string.endpoints_pin_title, candidate.api.host)) },
+            title = { Text(stringResource(R.string.endpoints_pin_title, candidate.routeAuthority().orEmpty())) },
             text = {
                 Text(
                     text = body,
@@ -521,7 +523,7 @@ private fun roleIcon(role: String): ImageVector = when (role.lowercase()) {
  * be classified independently before it's the active route.
  */
 private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
-    isTlsUrl(api.url) -> SurfaceSecurityKind.Tls
+    isTlsUrl(primaryRouteUrl().orEmpty()) -> SurfaceSecurityKind.Tls
     isEncryptedOverlayRoute(isTailscaleDetected = false) -> SurfaceSecurityKind.Overlay
     else -> SurfaceSecurityKind.Plain
 }
@@ -546,6 +548,7 @@ fun RouteEditorDialog(
     onSave: (role: String, apiUrl: String, onResult: (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
     val knownRoles = listOf("tailscale", "public")
     var selectedRole by remember {
         mutableStateOf(
@@ -561,7 +564,7 @@ fun RouteEditorDialog(
             original?.role?.takeIf { it.lowercase() !in knownRoles }.orEmpty(),
         )
     }
-    var url by remember { mutableStateOf(original?.api?.url.orEmpty()) }
+    var url by remember(original) { mutableStateOf(original?.primaryRouteUrl().orEmpty()) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
@@ -617,11 +620,10 @@ fun RouteEditorDialog(
                 // https?" is answered before Save, not after a failed probe.
                 val previewCandidate = remember(url, effectiveRole) {
                     url.takeIf { it.isNotBlank() }?.let {
-                        Connection.endpointCandidateFromApiUrl(
+                        Connection.endpointCandidateFromDashboardUrl(
                             role = effectiveRole.ifBlank { "custom" },
                             priority = original?.priority ?: 1,
-                            apiServerUrl = Connection.normalizeApiUrlInput(it),
-                            relayUrl = "",
+                            dashboardUrl = Connection.normalizeDashboardUrlInput(it),
                         )
                     }
                 }
@@ -643,7 +645,7 @@ fun RouteEditorDialog(
                                 url.isBlank() ->
                                     supportingBlank
                                 previewCandidate != null ->
-                                    stringResource(R.string.endpoints_url_supporting_preview, previewCandidate.api.url)
+                                    stringResource(R.string.endpoints_url_supporting_preview, previewCandidate.primaryRouteUrl().orEmpty())
                                 else ->
                                     supportingEnter
                             },
@@ -652,6 +654,18 @@ fun RouteEditorDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (selectedRole == "tailscale") {
+                    Text(
+                        text = stringResource(R.string.endpoints_tailscale_setup_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(
+                        onClick = { uriHandler.openUri(REMOTE_ACCESS_DOCS_URL) },
+                    ) {
+                        Text(stringResource(R.string.endpoints_setup_help))
+                    }
+                }
             }
         },
         confirmButton = {
@@ -682,5 +696,8 @@ fun RouteEditorDialog(
         },
     )
 }
+
+private const val REMOTE_ACCESS_DOCS_URL =
+    "https://hermes-relay.dev/docs/guide/remote-access"
 
 private const val CUSTOM_ROLE = "__custom__"

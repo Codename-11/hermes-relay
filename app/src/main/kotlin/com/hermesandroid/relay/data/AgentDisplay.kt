@@ -31,7 +31,16 @@ object AgentDisplay {
     fun effectiveDisplayProfile(
         selectedProfile: Profile?,
         profiles: List<Profile>,
-    ): Profile? = selectedProfile ?: profiles.firstOrNull { isServerDefaultAlias(it.name) }
+        serverDefaultProfileName: String? = null,
+    ): Profile? {
+        selectedProfile?.let { return it }
+        val resolvedServerDefault = profileRequestName(serverDefaultProfileName)
+        return resolvedServerDefault
+            ?.let { activeName ->
+                profiles.firstOrNull { it.name.equals(activeName, ignoreCase = true) }
+            }
+            ?: profiles.firstOrNull { isServerDefaultAlias(it.name) }
+    }
 
     // The NAME goes in the name slot. Non-default profiles use their profile
     // name first. The synthetic default profile uses its description only when

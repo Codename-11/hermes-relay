@@ -19,7 +19,8 @@ data class DashboardConnectionStatus(
  * A "connection" = a distinct Hermes server connection the app can switch between.
  *
  * Each connection has its own:
- *  - API server URL + relay URL
+ *  - One or more independently-configured Hermes surfaces. Dashboard/Gateway
+ *    is the standard primary path; API server and Relay are optional.
  *  - EncryptedSharedPreferences file (keyed by [tokenStoreKey]) holding the
  *    session token, device ID, API key, and paired-session metadata.
  *  - Cert pin (already host-keyed in [com.hermesandroid.relay.auth.CertPinStore]
@@ -73,16 +74,33 @@ data class Connection(
     val preferredRouteRole: String? = null,
     /** Epoch milliseconds. Pass `System.currentTimeMillis()`; do not pass seconds. */
     val pairedAt: Long? = null,
+    /** Last time the user explicitly selected this connection. */
+    val lastUsedAt: Long? = null,
     val lastActiveSessionId: String? = null,
     val transportHint: String? = null,
     /** Epoch milliseconds. The auth.ok `expires_at` field is seconds — multiply by 1000 at the call site. */
     val expiresAt: Long? = null,
 ) {
+    /**
+     * Effective Dashboard/Gateway endpoint. Legacy records did not persist a
+     * dashboard URL, so they retain the conventional same-host `:9119`
+     * derivation from the API server. Dashboard-only records persist an
+     * explicit URL and may leave [apiServerUrl] and [relayUrl] blank.
+     */
     val resolvedDashboardUrl: String
         get() = dashboardUrl
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: deriveDefaultDashboardUrl(apiServerUrl).orEmpty()
+
+    /** Stable display/host identity that does not depend on the API surface. */
+    val primaryEndpointUrl: String
+        get() = resolvedDashboardUrl.takeIf { it.isNotBlank() }
+            ?: apiServerUrl.trim().takeIf { it.isNotBlank() }
+            ?: relayUrl.trim()
+
+    val primaryHost: String
+        get() = extractHost(primaryEndpointUrl).orEmpty()
 
     companion object {
         /**
@@ -111,12 +129,40 @@ data class Connection(
          * user typed a malformed value — better to show something recognizable
          * than to crash).
          */
-        fun extractDefaultLabel(apiServerUrl: String): String {
-            return try {
-                URI(apiServerUrl).host ?: apiServerUrl
-            } catch (_: Exception) {
-                apiServerUrl
-            }
+        fun extractDefaultLabel(apiServerUrl: String): String =
+            extractHost(apiServerUrl) ?: apiServerUrl
+
+        /** Preserve explicit labels while upgrading an auto-generated IP label to a discovered host name. */
+        fun chooseDiscoveredLabel(
+            currentLabel: String,
+            primaryHost: String,
+            discoveredHostname: String?,
+        ): String {
+            val current = currentLabel.trim()
+            val discovered = discoveredHostname?.trim()?.takeIf { it.isNotBlank() }
+            val isAutomatic = current.isBlank() || current.equals(primaryHost.trim(), ignoreCase = true)
+            return if (isAutomatic && discovered != null) discovered else currentLabel
+        }
+
+        /**
+         * Dashboard-first label for a connection whose surfaces are optional.
+         * The one-argument overload above remains for source compatibility.
+         */
+        fun extractDefaultLabel(
+            dashboardUrl: String?,
+            apiServerUrl: String,
+            relayUrl: String,
+        ): String {
+            val primary = dashboardUrl?.trim()?.takeIf { it.isNotBlank() }
+                ?: apiServerUrl.trim().takeIf { it.isNotBlank() }
+                ?: relayUrl.trim()
+            return extractHost(primary) ?: primary
+        }
+
+        private fun extractHost(url: String): String? = try {
+            URI(url).host
+        } catch (_: Exception) {
+            null
         }
 
         fun deriveDefaultDashboardUrl(
@@ -199,7 +245,7 @@ data class Connection(
 
             return routes
                 .distinctBy {
-                    "${it.role.lowercase()}|${it.api.host.lowercase()}:${it.api.port}"
+                    "${it.role.lowercase()}|${it.routeAuthority()}"
                 }
                 .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
         }
@@ -222,13 +268,13 @@ data class Connection(
             existing: List<EndpointCandidate>,
         ): List<EndpointCandidate> {
             val rebuiltHostPorts = rebuilt
-                .map { "${it.api.host.lowercase()}:${it.api.port}" }
+                .mapNotNull { it.mergeAuthority() }
                 .toSet()
             val preserved = existing
                 .filter { it.priority > 0 }
-                .filterNot { "${it.api.host.lowercase()}:${it.api.port}" in rebuiltHostPorts }
+                .filterNot { it.mergeAuthority() in rebuiltHostPorts }
             return (rebuilt + preserved)
-                .distinctBy { "${it.role.lowercase()}|${it.api.host.lowercase()}:${it.api.port}" }
+                .distinctBy { "${it.role.lowercase()}|${it.routeAuthority()}" }
                 .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
         }
 
@@ -294,6 +340,85 @@ data class Connection(
                     ?.let { DashboardEndpoint(url = it) },
                 relay = RelayEndpoint(url = resolvedRelayUrl, transportHint = transportHint),
             )
+        }
+
+        /**
+         * De-duplication identity for rebuilding stored routes. Prefer the
+         * legacy API authority when present so an older API-only candidate and
+         * its dashboard-enriched replacement still collide. Dashboard-only
+         * candidates fall back to their primary route authority.
+         */
+        private fun EndpointCandidate.mergeAuthority(): String? =
+            api?.let { endpoint -> "api|${endpoint.host.lowercase()}:${endpoint.port}" }
+                ?: routeAuthority()?.let { authority -> "route|$authority" }
+
+        /**
+         * Build a Dashboard/Gateway-primary route from a remote host or URL.
+         * API and Relay are retained only when explicitly configured; callers
+         * no longer need to invent an API key or legacy surface URL.
+         */
+        fun endpointCandidateFromDashboardUrl(
+            role: String,
+            priority: Int,
+            dashboardUrl: String,
+            apiServerUrl: String? = null,
+            relayUrl: String? = null,
+        ): EndpointCandidate? {
+            val normalizedDashboard = normalizeDashboardUrlInput(dashboardUrl)
+            val dashboardUri = runCatching { URI(normalizedDashboard) }.getOrNull() ?: return null
+            if (dashboardUri.scheme?.lowercase() !in setOf("http", "https") ||
+                dashboardUri.host.isNullOrBlank()
+            ) return null
+
+            val api = apiServerUrl
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { apiUrl ->
+                    val apiUri = runCatching { URI(apiUrl.trimEnd('/')) }.getOrNull()
+                        ?: return@let null
+                    val tls = when (apiUri.scheme?.lowercase()) {
+                        "http" -> false
+                        "https" -> true
+                        else -> return@let null
+                    }
+                    val host = apiUri.host?.takeIf { it.isNotBlank() } ?: return@let null
+                    ApiEndpoint(host, if (apiUri.port > 0) apiUri.port else 8642, tls)
+                }
+            val relay = relayUrl
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { url ->
+                    val hint = when {
+                        url.startsWith("wss://", ignoreCase = true) -> "wss"
+                        url.startsWith("ws://", ignoreCase = true) -> "ws"
+                        else -> null
+                    }
+                    RelayEndpoint(url, hint)
+                }
+            return EndpointCandidate(
+                role = role.ifBlank { inferRouteRole(normalizedDashboard) },
+                priority = priority,
+                dashboard = DashboardEndpoint(normalizedDashboard),
+                api = api,
+                relay = relay,
+            )
+        }
+
+        fun normalizeDashboardUrlInput(
+            raw: String,
+            defaultPort: Int = DEFAULT_DASHBOARD_PORT,
+        ): String {
+            val trimmed = raw.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return trimmed
+            if (SCHEME_REGEX.containsMatchIn(trimmed)) return trimmed
+            val withScheme = "http://$trimmed"
+            val uri = runCatching { URI(withScheme) }.getOrNull()
+            val canAppendPort = uri != null &&
+                !uri.host.isNullOrBlank() &&
+                uri.port <= 0 &&
+                uri.rawPath.isNullOrEmpty() &&
+                uri.rawQuery == null
+            return if (canAppendPort) "$withScheme:$defaultPort" else withScheme
         }
 
         fun inferRouteRole(apiServerUrl: String): String {

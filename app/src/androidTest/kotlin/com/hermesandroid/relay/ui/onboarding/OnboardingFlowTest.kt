@@ -121,48 +121,48 @@ class OnboardingFlowTest {
     }
 
     @Test
-    fun connectPage_showsStandardChoiceFirst() {
+    fun connectPage_showsNearbyFirst() {
         setOnboardingContent()
         navigateToPage(4)
 
         composeTestRule
-            .onNodeWithText("Vanilla Hermes")
+            .onNodeWithText("Enter address instead")
             .assertIsDisplayed()
     }
 
     @Test
-    fun standardSetup_showsApiFields() {
+    fun manualSetup_showsHermesAddressWithoutApiCredentials() {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Vanilla Hermes").performClick()
+        composeTestRule.onNodeWithText("Enter address instead").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
-            .onNodeWithText("API server URL")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("API key")
+            .onNodeWithText("Hermes address")
             .assertIsDisplayed()
     }
 
     @Test
-    fun standardSetup_connectButton_isEnabled_withDefaultUrl() {
+    fun manualSetup_findButton_isShown() {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Vanilla Hermes").performClick()
+        composeTestRule.onNodeWithText("Enter address instead").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
-            .onNodeWithText("Connect")
-            .assertIsEnabled()
+            .onNodeWithText("Find Hermes")
+            .assertIsDisplayed()
     }
 
     @Test
     fun connectPage_keepsPairingOptional() {
         setOnboardingContent()
         navigateToPage(4)
+
+        composeTestRule.onNodeWithText("Other connection methods").performClick()
+        composeTestRule.waitForIdle()
 
         composeTestRule
             .onNodeWithText("Pair Relay by code")

@@ -94,27 +94,28 @@ scripts/dev.bat run      # Build + install + launch (requires connected device)
 
 ## 2. Point it at Hermes
 
-Hermes-Relay talks to two upstream Hermes surfaces:
+Hermes-Relay can use two upstream Hermes surfaces:
 
-- **API server** on `:8642` — Chat and sessions
-- **Dashboard** on `:9119` — Manage sign-in and admin screens
+- **Dashboard/Gateway** on `:9119` — primary Chat, sessions, sign-in, Manage, and standard voice
+- **API server** on `:8642` — optional Chat fallback and advanced headless compatibility
 
 ::: tip Already have a Hermes server — or someone set one up for you?
-If Hermes is already running, or a more technical friend handed you a **server
-URL and key**, you're done with this step — skip straight to
+If Hermes is already running, or a more technical friend handed you its
+**Dashboard/Gateway address**, you're done with this step — skip straight to
 [step 3 (Connect)](#_3-connect-chat). Everything below is only for setting up the
 Hermes server itself the first time.
 :::
 
 You'll need a reachable current [Hermes Agent](https://hermes-agent.nousresearch.com)
-instance with the API server and dashboard enabled. The Relay power-user plugin
+instance with the Dashboard/Gateway enabled. The optional API server is a
+fallback or headless compatibility surface. The Relay power-user plugin
 (step 4) additionally needs Python 3.11+ on the server.
 
-::::details Set up Hermes + an API key (first-time server setup)
-**What the app actually needs** is three things: the Hermes API server
-**enabled**, **reachable from your phone**, and an **API key** — the bearer token
-the app sends to authenticate Chat. Installing Hermes and choosing a
-provider/model is ordinary Hermes setup, so we defer that to the official docs
+::::details Advanced: add the optional API fallback
+The standard app path does not require the API server or an API key. Enable this
+surface when you want automatic SSE fallback or an API-only headless
+configuration. Installing Hermes and choosing a provider/model is ordinary
+Hermes setup, so we defer that to the official docs
 ([Installation](https://hermes-agent.nousresearch.com/docs/getting-started/installation),
 [Nous Portal](https://hermes-agent.nousresearch.com/docs/integrations/nous-portal),
 [API Server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server)).
@@ -128,8 +129,8 @@ If Hermes is already installed and a provider is configured, skip the install an
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 hermes setup --portal                      # log in / pick a provider — skip if already configured
 
-# Pick any API_SERVER_KEY you like — you'll scan or type it into the app.
-# openssl just generates a strong random one; substitute your own if you prefer.
+# You, the server operator, create API_SERVER_KEY for this optional fallback.
+# openssl generates a strong random value; Hermes Dashboard does not supply one.
 mkdir -p ~/.hermes
 API_SERVER_KEY="$(openssl rand -hex 32)"
 cat >> ~/.hermes/.env <<EOF
@@ -148,7 +149,8 @@ hermes gateway
 iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 hermes setup --portal                      # log in / pick a provider — skip if already configured
 
-# Pick any API key you like — you'll scan or type it into the app.
+# You, the server operator, create this key for the optional API fallback.
+# Hermes Dashboard does not supply an API_SERVER_KEY.
 $HermesDir = Join-Path $HOME ".hermes"
 New-Item -ItemType Directory -Force $HermesDir | Out-Null
 $ApiKey = ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
@@ -195,12 +197,11 @@ Three easy ways to get the key onto your phone (no 64-character typing required)
 :::
 ::::
 
-**Optional — only for Manage and voice.** Chat works fine without the dashboard.
-Set it up if you want to browse and install skills, switch models, manage keys,
-and edit profiles from your phone, or use voice on a vanilla install.
+**Standard setup — enable the Dashboard/Gateway.** This one upstream surface
+provides primary Chat, sessions, Manage, authentication, and standard voice.
 
 ::::details Enable Manage (Skills, Cron, Models, Keys) — run the dashboard
-For **Manage**, run the Hermes dashboard on a phone-reachable URL. Because your
+Run the Hermes dashboard on a phone-reachable URL. Because your
 phone reaches it on a non-loopback address, the dashboard **requires auth** — it
 won't start on `0.0.0.0` without a provider configured — so set credentials
 *first*, then start it. On a trusted LAN or VPN, username/password is the quick
@@ -225,8 +226,9 @@ hermes dashboard --no-open --host 0.0.0.0 --port 9119
 ```
 :::
 
-You sign in with this username/password from the app's **Manage** tab the first
-time. For stronger setups Hermes also accepts a hashed password
+You sign in with this username/password during connection setup or from the
+app's **Manage** tab. The same session authorizes Gateway chat, sessions, Manage,
+and standard voice. For stronger setups Hermes also accepts a hashed password
 (`HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`) instead of plaintext, and for a
 public or hosted dashboard you should use Nous OAuth or self-hosted OIDC rather
 than a password — see the upstream
@@ -236,10 +238,10 @@ are needed only because your phone connects over the network. (The dashboard als
 reads and writes `~/.hermes/.env`, which holds your keys and secrets.)
 
 ::: warning Dashboard auth and API bearer auth are different
-The API key from the previous step is for Android Chat on `:8642`. Dashboard
-sign-in on `:9119` uses dashboard cookies plus short-lived `/api/ws` tickets.
-Android supports dashboard username/password and Nous/OIDC sign-in for Manage,
-but dashboard login does **not** create an API key.
+Dashboard sign-in on `:9119` uses dashboard cookies plus short-lived `/api/ws`
+tickets and is sufficient for the standard connection. An API key authenticates
+only the optional API fallback on `:8642`; dashboard login does not create one,
+and you should not enter a fake key when no API endpoint is configured.
 :::
 ::::
 
@@ -249,17 +251,12 @@ On first launch:
 
 1. Tap through the onboarding pages.
 2. On **Connect**, pick whichever is easiest:
-   - **Hermes** → tap **Scan for Hermes on LAN** to auto-find the
-     server, then enter your key; or type the API URL
-     (`http://192.168.1.100:8642`) and key by hand.
-   - **Scan setup QR** → scan a QR containing your URL and key. There's no
-     upstream mobile-pairing command for the Vanilla Hermes path yet, so the handy
-     trick is to ask your **Hermes agent to generate one** — a QR encoding
-     `{"api_url":"http://192.168.1.100:8642","api_key":"<your-key>","dashboard_url":"http://192.168.1.100:9119"}`
-     is accepted. `dashboard_url` is optional when the dashboard uses the
-     conventional same-host `:9119` URL.
-3. Optional: add a Tailscale API URL such as `https://your-host.ts.net:8642` in
-   the **Remote access** field.
+   - **Hermes** → discover the server or type the Dashboard/Gateway URL
+     (`http://192.168.1.100:9119`), then sign in when prompted.
+   - **Scan setup QR** → scan a current payload with an explicit
+     Dashboard/Gateway URL. Existing API-first QRs remain accepted for legacy
+     and headless configurations.
+3. Optional: add API fallback, Relay, or remote routes under **Advanced**.
 4. Tap **Connect**.
 
 That's it — Chat is live, and the Manage surfaces (Skills, Cron, MCP, Profiles,
@@ -268,9 +265,12 @@ first time; that same sign-in also unlocks voice for the connection. **Relay
 pairing is not required for any of this.**
 
 ::: tip Home and away on one connection
-Save both a LAN URL and a Tailscale URL and Android probes them on every connect,
-using the highest-priority reachable one. Chat and Manage move together — LAN at
-home, Tailscale when you leave.
+Save both a LAN Dashboard URL and a Tailscale Dashboard URL — for example
+`http://100.x.y.z:9119` or a separately published `https://host.ts.net` URL —
+and Android probes them on every connect using the highest-priority reachable
+one. These are Dashboard routes, so they do not require an API endpoint or
+`API_SERVER_KEY`. Chat and Manage move together — LAN at home, Tailscale when
+you leave.
 :::
 
 ### What you’ll see
@@ -282,12 +282,11 @@ like a hand-recorded demo.
 <FirstRunPreview />
 
 The chat header shows the agent name with a green pulse on the avatar when the
-API server is reachable. If the dot is red:
+Dashboard/Gateway chat route is ready. If the dot is red:
 
-- Is the Hermes agent running? (`hermes gateway`)
-- Is `API_SERVER_ENABLED=true`?
+- Is the Hermes Dashboard/Gateway running? (`hermes dashboard`)
 - Can your phone reach the server? (same network, firewall rules)
-- Is the URL correct? (include the port, e.g. `:8642`)
+- Is the URL correct? (include the port, e.g. `:9119`)
 
 More: [Troubleshooting](/guide/troubleshooting) · [Chat guide](/guide/chat) ·
 [Connections](/features/connections).
@@ -313,10 +312,12 @@ hermes pair
 `hermes pair` is provided by the Hermes-Relay plugin through upstream Hermes'
 plugin CLI support; it is not a built-in Hermes core command. Then scan the QR in
 Android from **Settings → Connections → Pair Relay**, or from onboarding's **Scan
-setup QR** path. If the relay isn't running, the plugin can still print an
-API-only QR, so Chat works and Relay can be paired later.
-The QR may include `dashboard_url` for custom dashboard/reverse-proxy layouts;
-otherwise Android derives the dashboard from the API host on port `9119`.
+setup QR** path. If the Relay isn't running, the plugin may still print a legacy
+API-first compatibility QR; dashboard-primary Chat does not depend on that
+payload and Relay can be added later.
+The QR should include `dashboard_url` for current dashboard-primary and custom
+reverse-proxy layouts; legacy payloads without it may derive the dashboard from
+the API host on port `9119`.
 
 Use the legacy installer only when you also want the systemd user service, shell
 shims, external skill-path registration, and the old clone/update workflow:
@@ -353,8 +354,9 @@ automatically.
 For persistent deployment, Docker, systemd, and TLS options, see the
 [Relay Server docs](/reference/relay-server).
 
-If you only saw an API-only QR earlier (because the relay wasn't running), just
-start the relay and re-run `hermes pair` — the new QR will include the relay block.
+If you only saw an API-first QR earlier, start Relay and re-run `hermes pair` —
+the new QR will include the Relay block. Your Dashboard/Gateway connection stays
+the standard Chat path.
 ::::
 
 ::: tip Multiple Hermes servers
@@ -373,13 +375,13 @@ when you change networks.
   the LAN, detects Tailscale if it's running, and emits an ordered candidate list
   in the QR. Add `--public-url https://hermes.example.com` to include an external
   reverse-proxy or Cloudflare Tunnel URL.
-- **Enable Tailscale on the server** with `hermes-relay-tailscale enable` — this
-  fronts the loopback relay port `8767` and Hermes API port `8642` with
-  `tailscale serve`, using Tailscale's managed TLS + tailnet ACLs. (Both ports
-  matter: relay pairing covers terminal/bridge/control; chat and API-key voice
-  use the Hermes API server.) Prefer a reverse proxy + Let's Encrypt or a
-  self-hosted VPN? Both work identically as long as the phone can reach both
-  services.
+- **Add the Dashboard's Tailscale address** directly as a remote route — a raw
+  `http://100.x.y.z:9119` address is valid over the encrypted tailnet and needs
+  no API configuration. `hermes-relay-tailscale enable` publishes Relay and the
+  optional API fallback, not the Dashboard; publish the Dashboard/Gateway route
+  separately when you want a `https://host.ts.net` address. Prefer a reverse proxy + Let's Encrypt or a
+  self-hosted VPN? Both work as long as the phone can reach each capability you
+  configured.
 - **Force a mode at pair time** — `--mode` accepts `auto`, `lan`, `tailscale`, or
   `public`. `--prefer <role>` promotes a named role to priority 0 (e.g.
   `--prefer tailscale`).
@@ -419,10 +421,9 @@ back to API-server SSE when it is not.
 **During onboarding:**
 
 1. On the **Connect** page, tap **Hermes**.
-2. Type your API server URL — e.g. `http://192.168.1.100:8642` — scan for Hermes
-   on LAN, or scan a generic QR containing the API URL/key.
-3. Enter the value you set in `API_SERVER_KEY` if the QR didn't include it.
-4. Optional: enter a Tailscale API URL such as `https://your-host.ts.net:8642`.
+2. Type your Dashboard/Gateway URL — e.g. `http://192.168.1.100:9119` — or discover it on LAN.
+3. Sign in through the dashboard's configured provider when prompted.
+4. Optional: expand **Advanced** to add an API fallback URL/key or Relay route.
 5. Tap **Connect**.
 
 **After onboarding:** open **Settings → Connections**. Each Hermes host is a card;
@@ -431,10 +432,10 @@ the active card expands inline to show status rows, route details, and an
 insecure-mode toggle, and the manual Relay pairing-code fallback. The per-card
 **Pair Relay** / **Re-pair** button scans a Relay QR when you need power tools.
 
-For Vanilla Hermes setup there is no built-in upstream mobile pairing command yet, so
-use LAN scan, copy/paste, or a generic QR with the API URL/key. If a QR includes
-a Relay block, Android shows the Relay pairing confirmation and TTL/grants picker;
-if it's API-only, Android saves the Vanilla Hermes API/dashboard connection.
+For Vanilla Hermes setup, use discovery or enter the Dashboard/Gateway address.
+If a QR includes a Relay block, Android shows the Relay pairing confirmation and
+TTL/grants picker. Legacy API-only QRs still create an advanced compatibility
+connection.
 :::
 
 ::: details Uninstall the Relay plugin

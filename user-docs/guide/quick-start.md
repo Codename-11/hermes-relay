@@ -18,32 +18,34 @@ Need Hermes to read, tap, type, or navigate on your phone? Install the signed
 ## 2. Have Hermes running
 
 You need a reachable [hermes-agent](https://github.com/NousResearch/hermes-agent)
-with its API server enabled. If yours isn't running yet,
+with its Dashboard/Gateway enabled. The API server is optional fallback and
+headless compatibility. If yours isn't running yet,
 [Installation & Setup](./getting-started) has the copy/paste commands for the
 host machine.
 
 ## 3. Connect
 
-Open the app and swipe through to **Connect**. Enter your server's address —
-`http://<host>:8642` — and the API key configured on that Hermes host. If the
-server intentionally runs without `API_SERVER_KEY`, leave the key field blank.
-The wizard probes everything for you, finishing with a capability card:
+Open the app and swipe through to **Connect**. Enter or discover the
+Dashboard/Gateway address — conventionally `http://<host>:9119` — and sign in
+through its configured provider when prompted. The wizard probes everything for
+you, finishing with a capability card:
 
-> Don't want to type it? Tap **Scan for Hermes on LAN** to auto-find the server,
-> or use **Scan setup QR** — you can even ask your Hermes agent to generate a QR
-> with your URL and key. Full host setup is in [Installation & Setup](./getting-started).
+> Don't want to type it? Tap **Scan for Hermes on LAN** to auto-find the server.
+> Existing API-first setup QRs remain supported for advanced compatibility.
+> Full host setup is in [Installation & Setup](./getting-started).
 
 | Line | What it means |
 |---|---|
-| **Chat** | API server reachable — you can talk |
-| **Manage** | Dashboard found — skills, models, keys, profiles from the phone |
+| **Chat** | Dashboard/Gateway ready — you can talk |
+| **Manage** | Skills, models, keys, profiles from the phone |
 | **Voice** | Speech ready via your server (or one sign-in away) |
+| **API fallback** | Optional API route available/unavailable |
 | **Relay** | Optional power tools — fine to leave unpaired |
 
 ## 4. Sign in to Manage (only if asked)
 
-If your dashboard requires sign-in, do it once under the **Manage** tab.
-That same session also unlocks voice for the connection.
+If your dashboard requires sign-in, complete it during setup or once under the
+**Manage** tab. That same session unlocks Chat, sessions, Manage, and voice.
 
 ## 5. Talk
 

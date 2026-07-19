@@ -43,7 +43,7 @@ class ConnectionRouteCandidateMergeTest {
         assertEquals(2, merged.size)
         assertEquals("lan", merged[0].role)
         assertEquals("tailscale", merged[1].role)
-        assertEquals("100.64.0.7", merged[1].api.host)
+        assertEquals("100.64.0.7", merged[1].api?.host)
     }
 
     @Test
@@ -66,7 +66,7 @@ class ConnectionRouteCandidateMergeTest {
 
         val merged = Connection.mergeRouteCandidates(rebuilt, existing)
 
-        assertEquals(payloadRelay, merged.first { it.role == "tailscale" }.relay.url)
+        assertEquals(payloadRelay, merged.first { it.role == "tailscale" }.relay?.url)
     }
 
     @Test
@@ -90,9 +90,9 @@ class ConnectionRouteCandidateMergeTest {
         val merged = Connection.mergeRouteCandidates(rebuilt, existing)
 
         assertEquals(2, merged.size)
-        val tailscale = merged.first { it.api.host == "100.64.0.7" }
+        val tailscale = merged.first { it.api?.host == "100.64.0.7" }
         assertEquals("tailscale", tailscale.role)
-        assertEquals("ws://100.64.0.7:8767", tailscale.relay.url)
+        assertEquals("ws://100.64.0.7:8767", tailscale.relay?.url)
     }
 
     @Test
@@ -111,10 +111,10 @@ class ConnectionRouteCandidateMergeTest {
         assertEquals(2, merged.size)
         assertTrue(
             "old priority-0 host must be replaced by the edited URL",
-            merged.none { it.api.host == "192.168.1.50" },
+            merged.none { it.api?.host == "192.168.1.50" },
         )
-        assertEquals("10.0.0.99", merged.first { it.priority == 0 }.api.host)
-        assertEquals("100.64.0.7", merged.first { it.priority == 1 }.api.host)
+        assertEquals("10.0.0.99", merged.first { it.priority == 0 }.api?.host)
+        assertEquals("100.64.0.7", merged.first { it.priority == 1 }.api?.host)
     }
 
     @Test

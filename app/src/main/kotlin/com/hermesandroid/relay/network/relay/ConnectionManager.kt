@@ -9,6 +9,7 @@ import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
@@ -325,17 +326,18 @@ class ConnectionManager(
         // the synthesized list just collapses to the same URL anyway.
         scope.launch {
             val resolved = resolveBestEndpointSafe()
-            val targetUrl = resolved?.relay?.url ?: url
+            val resolvedRelayUrl = resolved?.relay?.url?.takeIf { it.isNotBlank() }
+            val targetUrl = resolvedRelayUrl ?: url.takeIf { it.isNotBlank() }
             if (resolved != null) {
                 _activeEndpoint.value = resolved
                 Log.i(TAG, "connect: resolver picked role=${resolved.role} " +
-                    "relay=${resolved.relay.url} (fallback would have been $url)")
+                    "route=${resolved.primaryRouteUrl()} (relay fallback would have been $url)")
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Relay,
                     severity = DiagnosticSeverity.Info,
                     title = context?.getString(R.string.conn_diag_route_selected) ?: "Relay route selected",
                     endpointRole = resolved.role,
-                    url = resolved.relay.url,
+                    url = resolved.primaryRouteUrl(),
                 )
             } else {
                 _activeEndpoint.value = null
@@ -348,7 +350,11 @@ class ConnectionManager(
                     url = url,
                 )
             }
-            connectToUrlOnMainPath(targetUrl)
+            if (targetUrl != null) {
+                connectToUrlOnMainPath(targetUrl)
+            } else {
+                Log.d(TAG, "connect: selected route has no Relay surface; route published for HTTP/Gateway clients")
+            }
         }
     }
 
@@ -656,10 +662,11 @@ class ConnectionManager(
             // (connectToUrlOnMainPath force-sets shouldReconnect = true, so
             // the swap path never re-checked it.)
             if (!shouldReconnect) return@launch
-            val normalizedNew = normalizeRelayUrl(resolved.relay.url)
+            val relayUrl = resolved.relay?.url?.takeIf { it.isNotBlank() } ?: return@launch
+            val normalizedNew = normalizeRelayUrl(relayUrl)
             if (normalizedNew != current) {
                 Log.i(TAG, "network change: swapping $current → $normalizedNew")
-                connectToUrlOnMainPath(resolved.relay.url, closeReason)
+                connectToUrlOnMainPath(relayUrl, closeReason)
             } else if (_connectionState.value == ConnectionState.Disconnected &&
                 reconnectGate()
             ) {

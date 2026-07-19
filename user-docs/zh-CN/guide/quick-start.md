@@ -23,24 +23,26 @@ Hermes Agent，不要求安装 Relay 插件。
 
 ## 2. 启动 Hermes
 
-Hermes API 服务器必须运行，并且手机可以访问。如有需要，在主机上运行
-`hermes gateway`。服务器准备步骤见[安装与设置](/zh-CN/guide/getting-started)。
+Hermes Dashboard/Gateway 必须运行，并且手机可以访问。如有需要，在主机上运行
+`hermes dashboard`。服务器准备步骤见[安装与设置](/zh-CN/guide/getting-started)。
 
 ## 3. 连接
 
 打开应用并进入 **Connect**，然后选择一种方式：
 
 1. 使用 **Scan for Hermes on LAN** 搜索局域网服务器。
-2. 输入类似 `http://<host>:8642` 的地址和已配置的 API 密钥。
-3. 扫描包含 URL 和密钥的设置二维码。
+2. 输入类似 `http://<host>:9119` 的 Dashboard/Gateway 地址。
+3. 使用 **Scan setup QR**；旧版 API-first 二维码仍支持高级兼容场景。
+4. 按提示使用已配置的 Dashboard 提供方登录。
 
-如果主机有意不设置 `API_SERVER_KEY`，请将密钥字段留空。
+API 服务器仅作为可选自动 fallback 或高级 headless 兼容方式；Relay 也只在使用扩展功能时需要。
 
 ## 4. 检查状态
 
 - **Chat · Ready** 表示可以发送消息。
 - **Manage** 可能仍要求登录 Dashboard。
 - **Voice** 通过同一个 Dashboard 会话启用。
+- **API fallback** 不可用时不会阻止 Chat。
 - **Relay** 可以保持未配对，不会阻止标准功能。
 
 ## 5. 发送第一条消息

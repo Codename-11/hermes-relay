@@ -31,31 +31,36 @@ baixe o arquivo `.aab`; ele é destinado ao Google Play.
 
 ## 2. Deixe o Hermes acessível
 
-O Android precisa do servidor de API do Hermes, normalmente em `:8642`:
+O Android usa normalmente o Dashboard/Gateway do Hermes em `:9119`. Ele fornece
+Chat, sessões, login, Manage e voz padrão. Inicie-o com `hermes dashboard` e
+deixe esse endereço acessível pelo celular.
 
-- `API_SERVER_ENABLED=true` ativa o servidor.
-- `API_SERVER_HOST=0.0.0.0` permite acesso pela rede.
-- `API_SERVER_KEY` protege as solicitações de Chat com uma chave bearer.
-- `hermes gateway` inicia o Hermes e o servidor de API ativado.
+O servidor de API em `:8642` é opcional: funciona como fallback automático do
+Chat ou para compatibilidade headless avançada. Uma chave de API só é necessária
+quando esse endpoint opcional é configurado. O operador do servidor cria
+`API_SERVER_KEY`; o Dashboard não fornece essa chave.
 
 ::: warning Proteja o acesso pela rede
-`0.0.0.0` permite que outros dispositivos na rede alcancem o serviço. Use uma
-chave forte. Não exponha diretamente uma porta sem criptografia à Internet;
+Não exponha diretamente uma porta de Dashboard, API ou Relay sem criptografia à Internet;
 para acesso remoto, use Tailscale, VPN ou HTTPS.
 :::
 
-O dashboard em `:9119` é opcional. Ele é usado pelo Manage e pela voz padrão e
-possui login próprio; a chave de API não autentica no dashboard.
+O login do dashboard usa cookies e tickets temporários do Gateway. A chave de
+API é separada e não autentica no dashboard.
 
 ## 3. Conecte e converse
 
 1. Abra **Connect** no Android.
-2. Procure o Hermes na LAN, escaneie um QR de configuração ou informe a URL e a chave.
-3. Toque em **Connect**.
-4. Confirme que **Chat · Ready** aparece.
-5. Abra o Chat e envie a primeira mensagem.
+2. Procure o Hermes na LAN, informe a URL do Dashboard/Gateway ou escaneie um QR; QRs API-first antigos continuam compatíveis.
+3. Entre no dashboard quando solicitado.
+4. Toque em **Connect** e confirme **Chat · Ready**.
+5. Adicione API fallback, Relay ou rotas remotas depois em **Advanced**, se necessário.
 
-Manage e Voice ainda podem solicitar login. Também é normal que o Relay apareça sem pareamento.
+Você pode adicionar e testar um endereço Dashboard do Tailscale como
+`http://100.x.y.z:9119`, ou um endereço `.ts.net` publicado separadamente, sem configurar o servidor de API nem uma chave de API.
+
+A mesma sessão libera Chat, sessões, Manage e Voice. Relay sem pareamento e API
+fallback indisponível são estados normais.
 
 ## Opcional: adicione as ferramentas do Relay
 
