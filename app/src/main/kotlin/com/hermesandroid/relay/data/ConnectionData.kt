@@ -13,6 +13,8 @@ data class DashboardConnectionStatus(
     val authProvider: String? = null,
     val gatewayTicketAvailable: Boolean? = null,
     val message: String? = null,
+    val gatewayMode: String? = null,
+    val profiles: List<String> = emptyList(),
 )
 
 /**

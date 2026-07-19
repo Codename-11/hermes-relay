@@ -3969,6 +3969,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         try {
             val status = client.getStatus().getOrNull()
             if (status == null) {
+                updateDashboardTopology(connectionId, null)
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
                 _serverChatDisplaySettings.value = null
@@ -3976,6 +3977,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
             }
+            updateDashboardTopology(connectionId, status)
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             val authed = !status.authRequired || session?.authenticated == true
             recordDashboardStatusIfChanged(connectionId, status, session)
@@ -4019,6 +4021,38 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private var topologyConnectionId: String? = null
+    private var topologyGatewayMode: String? = null
+    private var topologyProfiles: List<String> = emptyList()
+
+    fun selectedProfileUsesIsolatedApiRoute(): Boolean {
+        val profile = profileController.selectedProfile.value ?: return false
+        if (profile.hasIsolatedApi) return true
+        val activeConnectionId = connectionStore.activeConnectionId.value
+        val persisted = connectionStore.connections.value
+            .firstOrNull { it.id == activeConnectionId }
+            ?.dashboardLastStatus
+        val liveTopology = topologyConnectionId == activeConnectionId
+        val mode = if (liveTopology) topologyGatewayMode else persisted?.gatewayMode
+        val profiles = if (liveTopology) topologyProfiles else persisted?.profiles.orEmpty()
+        return mode.equals("multiplex", ignoreCase = true) && profile.name in profiles
+    }
+
+    /** Keep chat routing synchronized with the latest public dashboard topology. */
+    private suspend fun updateDashboardTopology(connectionId: String, status: DashboardStatus?) {
+        val nextMode = status?.gatewayMode
+        val nextProfiles = status?.profiles.orEmpty()
+        val changed = topologyConnectionId != connectionId ||
+            topologyGatewayMode != nextMode ||
+            topologyProfiles != nextProfiles
+        topologyConnectionId = connectionId
+        topologyGatewayMode = nextMode
+        topologyProfiles = nextProfiles
+        if (changed && connectionStore.activeConnectionId.value == connectionId) {
+            rebuildChatApiClient()
+        }
+    }
+
     private suspend fun refreshChatDisplaySettings(
         client: DashboardApiClient,
         authenticated: Boolean,
@@ -4050,7 +4084,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val materiallySame = previous != null &&
             previous.reachable == reachable &&
             previous.authRequired == status?.authRequired &&
-            previous.authenticated == session?.authenticated
+            previous.authenticated == session?.authenticated &&
+            previous.gatewayMode == status?.gatewayMode &&
+            previous.profiles == status?.profiles.orEmpty()
         if (!materiallySame) {
             recordDashboardStatus(status = status, session = session, reachable = reachable)
         }
@@ -4421,6 +4457,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     authProvider = session?.provider,
                     gatewayTicketAvailable = gatewayTicketAvailable,
                     message = message,
+                    gatewayMode = status?.gatewayMode,
+                    profiles = status?.profiles.orEmpty(),
                 ),
             )
         }
@@ -4453,6 +4491,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     authProvider = null,
                     gatewayTicketAvailable = false,
                     message = "Dashboard session cleared",
+                    gatewayMode = active?.dashboardLastStatus?.gatewayMode,
+                    profiles = active?.dashboardLastStatus?.profiles.orEmpty(),
                 ),
             )
             probeStandardVoice()
@@ -4953,9 +4993,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private suspend fun rebuildChatApiClient() {
         val baseApiUrl = ProfileApiUrlResolver.normalize(effectiveApiServerUrlSnapshot())
-        val profileApiUrl = ProfileApiUrlResolver.resolveForConnection(
-            profileApiUrl = profileController.selectedProfile.value?.apiServerUrl,
+        val selectedProfile = profileController.selectedProfile.value
+        val activeConnectionId = connectionStore.activeConnectionId.value
+        val topology = connectionStore.connections.value
+            .firstOrNull { it.id == activeConnectionId }
+            ?.dashboardLastStatus
+        val liveTopology = topologyConnectionId == activeConnectionId
+        val profileApiUrl = ProfileApiUrlResolver.resolveChatBase(
+            profileApiUrl = selectedProfile?.apiServerUrl,
             baseApiUrl = baseApiUrl,
+            selectedProfileName = selectedProfile?.name,
+            gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
+            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
         )
         val baseClient = _apiClient.value
         val key = apiKeyForClientBuild()

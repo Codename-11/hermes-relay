@@ -893,7 +893,7 @@ Current Android dependency versions. Source of truth is `gradle/libs.versions.to
 | Surface | How We Connect |
 |---------|---------------|
 | **Gateway chat** | Dashboard `/api/auth/ws-ticket` + `/api/ws` for live thinking/reasoning when Manage auth is ready |
-| **API-server chat fallback** | `/api/sessions/*/chat/stream`, `/v1/chat/completions`, or `/v1/runs` based on capability probes |
+| **API-server chat fallback** | `/api/sessions/*/chat/stream`, `/v1/chat/completions`, or `/v1/runs` based on capability probes; a known selected multiplex profile uses the shared listener's `/p/<profile>` prefix |
 | **API-server sessions** | `GET/POST/PATCH/DELETE /api/sessions` for CRUD |
 | **Manage** | Dashboard `/api/status`, `/api/auth/me`, `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` |
 | **Vanilla Hermes voice** | Dashboard `POST /api/audio/transcribe` and `POST /api/audio/speak` |
