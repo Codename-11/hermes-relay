@@ -580,7 +580,10 @@ We considered four options:
    501 toggle stub remain — no native equivalent exists.
 3. Config/memory/available-models/session search: remove those compatibility
    handlers only after stable core APIs exist or the dependent Android surfaces
-   are redesigned.
+   are redesigned. While they remain, session search is offloaded through
+   upstream `AsyncSessionDB` (or `asyncio.to_thread` on older Hermes), and each
+   memory mutation request resets the optional upstream per-turn consolidation
+   failure budget so independent REST calls cannot consume one shared budget.
 4. Slash middleware: remove after native API-server slash preprocessing exists.
 5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update

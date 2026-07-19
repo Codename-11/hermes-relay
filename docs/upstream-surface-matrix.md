@@ -31,7 +31,7 @@ Verified upstream source snapshot:
 | `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab | FastAPI plugin backend proxies loopback requests to the Relay server. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability, plugin layout, Relay loopback state, and legacy bootstrap presence. |
-| `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-upstream | Fallback only | Installed via `.pth` by legacy installer. Injects only compatibility-only gaps: session search, memory, legacy skill detail/toggle, config, available-models, slash middleware. Sessions CRUD and skill/toolset lists are native upstream and retired from the bootstrap. |
+| `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-upstream | Fallback only | Installed via `.pth` by legacy installer. Injects only compatibility-only gaps: session search, memory, legacy skill detail/toggle, config, available-models, slash middleware. Sessions CRUD and skill/toolset lists are native upstream and retired from the bootstrap. Retained session-database work is offloaded (`AsyncSessionDB` when available, `asyncio.to_thread` fallback), and memory mutations reset newer upstream's request-local consolidation-failure budget. |
 
 ## Client capability gate (build flavor)
 
