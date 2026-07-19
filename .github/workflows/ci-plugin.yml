@@ -50,6 +50,7 @@ jobs:
 
       - name: Syntax check (plugin relay — canonical location)
         run: |
+          python -m py_compile plugin/relay/config.py
           python -m py_compile plugin/relay/server.py
           python -m py_compile plugin/relay/channels/terminal.py
           python -m py_compile plugin/relay/channels/chat.py
@@ -103,4 +104,6 @@ jobs:
             plugin/tests/test_relay_security.py \
             plugin/tests/test_voice_routes.py \
             plugin/tests/test_session_grants.py \
-            plugin/tests/test_native_layout_imports.py
+            plugin/tests/test_native_layout_imports.py \
+            plugin/tests/test_profile_discovery.py \
+            plugin/tests/test_profiles_updated_broadcast.py

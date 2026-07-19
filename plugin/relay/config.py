@@ -16,6 +16,11 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+try:
+    import psutil as _psutil  # type: ignore[import-not-found]
+except ImportError:  # Hermes normally provides psutil; standalone installs may not.
+    _psutil = None
+
 # Characters used for pairing codes. Full A-Z + 0-9 alphabet (36 chars) so
 # codes the phone generates with AuthManager.PAIRING_CODE_CHARS always
 # validate cleanly. The earlier "no ambiguous 0/O/1/I" restriction only
@@ -705,22 +710,73 @@ def _extract_description_from_soul(soul_text: str) -> str:
     return ""
 
 
-def _pid_is_alive(pid: int) -> bool:
-    """Return True if ``pid`` refers to a live process on this host.
+def _windows_pid_is_alive(pid: int) -> bool:
+    """Probe a Windows PID through a non-signalling process handle."""
+    try:
+        import ctypes
 
-    Uses the POSIX ``os.kill(pid, 0)`` "probe" pattern — signal 0 performs
-    the permission/existence check without delivering a real signal. On
-    Windows, ``os.kill`` with signal 0 on CPython is implemented via
-    ``OpenProcess`` and returns success for live PIDs, ``OSError`` with
-    ``EINVAL``/``ESRCH``/``EPERM``-ish errno for dead or inaccessible
-    ones. We treat any ``OSError`` as "not running" — we prefer
-    false-negatives here (the gateway will simply be flagged offline) to
-    false-positives that would claim a dead daemon is live.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
+
+        process_query_limited_information = 0x1000
+        synchronize = 0x00100000
+        wait_timeout = 0x00000102
+        error_invalid_parameter = 87
+        error_access_denied = 5
+
+        handle = kernel32.OpenProcess(
+            process_query_limited_information | synchronize,
+            False,
+            pid,
+        )
+        if not handle:
+            error = ctypes.get_last_error()
+            if error == error_access_denied:
+                return True
+            if error == error_invalid_parameter:
+                return False
+            return False
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Return whether ``pid`` identifies a live process without signalling it.
+
+    Hermes normally supplies :mod:`psutil`, whose PID probe uses native process
+    APIs on Windows. Standalone Relay installs may not include psutil, so the
+    fallback uses ``OpenProcess``/``WaitForSingleObject`` on Windows and keeps
+    the signal-0 probe strictly on POSIX. Windows must never call
+    ``os.kill(pid, 0)``: CPython can route signal 0 through console-control or
+    process-termination behavior instead of treating it as a no-op.
     """
     if pid <= 0:
         return False
+
+    if _psutil is not None:
+        try:
+            return bool(_psutil.pid_exists(pid))
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        return _windows_pid_is_alive(pid)
+
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok — POSIX-only branch
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
     except OSError:
         return False
     except Exception:  # pragma: no cover — defensive
@@ -821,11 +877,10 @@ def _probe_gateway_running(profile_home: Path) -> bool:
       ``hermes`` or ``gateway``. A PID pointing at (say) ``init`` or
       ``sshd`` reports ``False``.
 
-    On platforms without ``/proc`` (Windows/macOS dev hosts) these
-    secondary checks degrade to "don't penalize" — the primary
-    ``os.kill(pid, 0)`` probe still runs. Returns ``False`` on any
-    filesystem or parse error — the feature is advisory, not
-    load-bearing.
+    On platforms without ``/proc`` (Windows/macOS dev hosts) these secondary
+    checks degrade to "don't penalize"; the primary cross-platform process
+    probe still runs without signalling the target. Returns ``False`` on any
+    filesystem or parse error — the feature is advisory, not load-bearing.
     """
     pid_file = profile_home / "gateway.pid"
     try:
@@ -857,7 +912,7 @@ def _probe_gateway_running(profile_home: Path) -> bool:
         return False
 
     # Start-time cross-check (Linux only — no /proc means None and we
-    # skip this gate, trusting os.kill alone).
+    # skip this gate, trusting the cross-platform liveness probe alone).
     if claimed_start_time is not None:
         actual_start_time = _read_proc_start_time(pid)
         if actual_start_time is not None and actual_start_time != claimed_start_time:

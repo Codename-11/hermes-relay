@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +30,7 @@ from plugin.relay.config import RelayConfig
 from plugin.relay.server import (
     _broadcast_profiles_updated,
     _notify_profiles_changed,
+    _profile_rescan_loop,
     create_app,
 )
 
@@ -185,6 +188,47 @@ class NotifyProfilesChangedTests(unittest.IsolatedAsyncioTestCase):
         mock_bcast.assert_awaited()
         names = [p["name"] for p in server.config.profiles]
         self.assertIn("fresh", names)
+
+    async def test_periodic_rescan_does_not_terminate_gateway_pid(self) -> None:
+        """The recurring discovery path leaves a live gateway process intact."""
+        server = self._build_server()
+        pdir = self._write_profile("live")
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", "hermes-gateway"]
+        )
+        self.addAsyncCleanup(self._stop_process, process)
+        (pdir / "gateway.pid").write_text(str(process.pid), encoding="utf-8")
+
+        with (
+            patch("plugin.relay.server._PROFILE_RESCAN_INTERVAL_SECONDS", 0.01),
+            patch(
+                "plugin.relay.server._broadcast_profiles_updated",
+                new_callable=AsyncMock,
+            ) as mock_bcast,
+            patch("plugin.relay.config._pid_matches_hermes", return_value=True),
+        ):
+            task = asyncio.create_task(_profile_rescan_loop({"server": server}))
+            try:
+                for _ in range(50):
+                    if mock_bcast.await_count:
+                        break
+                    await asyncio.sleep(0.01)
+            finally:
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
+        mock_bcast.assert_awaited()
+        self.assertIsNone(process.poll(), "periodic rescan terminated the child")
+
+    async def _stop_process(self, process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                await asyncio.to_thread(process.wait, 5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                await asyncio.to_thread(process.wait, 5)
 
 
 class PutEndpointBroadcastIntegrationTests(AioHTTPTestCase):
