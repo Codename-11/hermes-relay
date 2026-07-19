@@ -190,6 +190,76 @@ prove that the request metadata and expiry event carry the effective value,
 that a late response resolves zero entries, and that expiry affects only the
 active session's approval.
 
+## 10. First-Class Gateway Commentary Events
+
+**Current state:** Codex runtimes deliver completed, redacted commentary through
+`interim_assistant_callback` on messaging-gateway paths, and the app-server
+bridge projects tool lifecycle and reasoning callbacks. The TUI gateway used by
+Hermes-Relay dashboard WebSocket chat does not wire that commentary callback.
+Relay therefore receives the tool lifecycle but cannot distinguish commentary
+from reasoning or final-answer text without guessing.
+
+**Proposed:** Add a dedicated, optional gateway event for a completed commentary
+item, for example:
+
+```json
+{
+  "type": "commentary.complete",
+  "session_id": "...",
+  "commentary_id": "...",
+  "text": "Checking the deployment state now."
+}
+```
+
+Wire `interim_assistant_callback` in `tui_gateway`, emit only the callback's
+already-redacted and deduplicated completed value, and keep commentary separate
+from `message.delta`, reasoning deltas, and durable final-answer history. The
+event should be suppressed when `display.show_commentary` is false. Its id must
+be stable within a live turn so reconnect replay cannot duplicate a commentary
+item.
+
+**Compatibility:** The event is additive. Older clients ignore it. Relay
+Android and desktop should not add a parser until the upstream event name and
+payload are accepted; once accepted, they can render commentary as a distinct
+transient/mid-turn assistant item.
+
+**Verification gate:** A TUI-gateway fixture emits commentary, a tool lifecycle,
+and a final answer in that order; proves `show_commentary: false` suppresses only
+commentary; proves analysis/reasoning is not leaked; and proves replay does not
+duplicate the commentary or final answer.
+
+## 11. Profile-Scoped Cron Execution Attempts API
+
+**Current state:** Hermes records every cron dispatch attempt in the profile's
+`cron/executions.db`, including pre-session failures and restart-ambiguous
+`unknown` outcomes. The dashboard job list exposes only `latest_execution`, and
+`/api/cron/jobs/{id}/runs` reports session-backed runs rather than the complete
+attempt ledger. Relay Android must not read the host database directly.
+
+**Proposed:** Add a bounded dashboard endpoint:
+
+```text
+GET /api/cron/jobs/{job_id}/executions?profile=<profile>&limit=<n>&before=<cursor>
+```
+
+The response should contain an opaque pagination cursor and immutable attempts
+with `id`, `job_id`, `profile`, `claimed_at`, `started_at`, `finished_at`, and
+`status` (`claimed|running|completed|failed|unknown`). Include a sanitized error
+summary when appropriate, but never raw terminal output, environment values,
+tokens, or provider credentials. The existing session-backed runs endpoint
+remains distinct and may be linked by an optional session id.
+
+Profile authorization and defaulting must match the other dashboard cron
+routes. `limit` must have a conservative server maximum, and old profiles or
+builds without the execution ledger should return an empty supported response
+or the normal unsupported status rather than synthesizing attempts from
+sessions.
+
+**Verification gate:** Dashboard tests cover profile isolation, pagination and
+limit bounds, redaction, every terminal state, recovery of an interrupted owner
+as `unknown`, and the distinction between a failed attempt and a successfully
+created session. Relay Android consumption waits for this public contract.
+
 ## Notes
 
 - These are suggestions, not requirements. The app works without any of them.
