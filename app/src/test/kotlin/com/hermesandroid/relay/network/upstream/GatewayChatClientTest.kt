@@ -1526,53 +1526,6 @@ class GatewayChatClientTest {
         assertFalse(submit.containsKey("truncate_before_user_ordinal"))
     }
 
-    @Test
-    fun `one-turn model is armed after session creation immediately before prompt`() {
-        val r = Recorder()
-        client.sendTurn(
-            sessionId = null,
-            text = "use the fast model",
-            newSessionTitle = null,
-            callbacks = r.callbacks,
-            oneTurnModelCommand = "/model sonnet --provider anthropic --once",
-            onPreflightFailure = { r.preflightFailures += it },
-        )
-
-        harness.awaitRpc("prompt.submit")
-        val methods = harness.rpcLog.map { it.first }
-        assertTrue(methods.indexOf("session.create") < methods.indexOf("slash.exec"))
-        assertTrue(methods.indexOf("slash.exec") < methods.indexOf("prompt.submit"))
-        val slash = harness.awaitRpc("slash.exec")
-        assertEquals("live-1", (slash["session_id"] as? JsonPrimitive)?.contentOrNull)
-        assertEquals(
-            "/model sonnet --provider anthropic --once",
-            (slash["command"] as? JsonPrimitive)?.contentOrNull,
-        )
-    }
-
-    @Test
-    fun `rejected one-turn model fails preflight without submitting prompt`() {
-        harness.methodNotFound += "slash.exec"
-        val r = Recorder()
-        val preflightLatch = CountDownLatch(1)
-
-        client.sendTurn(
-            sessionId = null,
-            text = "do not submit this",
-            newSessionTitle = null,
-            callbacks = r.callbacks,
-            oneTurnModelCommand = "/model sonnet --once",
-            onPreflightFailure = {
-                r.preflightFailures += it
-                preflightLatch.countDown()
-            },
-        )
-
-        assertTrue(preflightLatch.await(5, TimeUnit.SECONDS))
-        assertTrue(r.preflightFailures.single().contains("one-turn model switch failed"))
-        assertFalse(harness.rpcLog.any { it.first == "prompt.submit" })
-    }
-
     // --- HRUI-016: long / fire-and-forget prompt.submit ack semantics.
     // Upstream treats prompt.submit as a long-running RPC (desktop passes a
     // 30-min PROMPT_SUBMIT_REQUEST_TIMEOUT_MS at every call site) because the

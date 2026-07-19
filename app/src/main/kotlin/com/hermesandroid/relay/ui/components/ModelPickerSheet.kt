@@ -62,7 +62,6 @@ fun ModelPickerSheet(
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     onSelect: (ChatInputPickerOption) -> Unit,
-    onSelectOnce: ((ChatInputPickerOption) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -192,11 +191,7 @@ fun ModelPickerSheet(
                         )
                     }
                     items(items = opts, key = { "$provider:${it.value}" }) { opt ->
-                        ModelPickerRow(
-                            option = opt,
-                            onClick = { onSelect(opt) },
-                            onSelectOnce = onSelectOnce?.let { select -> { select(opt) } },
-                        )
+                        ModelPickerRow(option = opt, onClick = { onSelect(opt) })
                     }
                 }
 
@@ -225,7 +220,6 @@ fun ModelPickerSheet(
 private fun ModelPickerRow(
     option: ChatInputPickerOption,
     onClick: () -> Unit,
-    onSelectOnce: (() -> Unit)? = null,
 ) {
     val enabled = option.enabled
     Row(
@@ -264,11 +258,6 @@ private fun ModelPickerRow(
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(18.dp),
             )
-        }
-        if (onSelectOnce != null && enabled) {
-            TextButton(onClick = onSelectOnce) {
-                Text("Once")
-            }
         }
     }
 }

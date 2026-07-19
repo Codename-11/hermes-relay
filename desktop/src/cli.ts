@@ -194,8 +194,6 @@ Flags:
                          shell: tmux session name (distinct — tmux, not hermes)
   --conversation <id>    chat/shell: resume a specific hermes conversation; bypasses picker
   --new                  chat/shell: force a fresh conversation; bypasses picker
-  --model-once <model>   chat: use this model for the submitted turn only
-  --model-provider <id>  chat: provider paired with --model-once
   --exec <cmd>           shell: command to exec inside tmux (default: hermes)
   --raw                  shell: skip auto-exec; drop into bare tmux/bash
   --watch-editor         shell/chat: poll tmux/$VSCODE and send active_editor hints every 5s

@@ -551,8 +551,6 @@ fun ChatScreen(
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
-    val pendingOneTurnModelOverride by chatViewModel.pendingOneTurnModelOverride.collectAsState()
-    val activeOneTurnModelOverride by chatViewModel.activeOneTurnModelOverride.collectAsState()
     val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
     val gatewayProjectName by chatViewModel.gatewayProjectName.collectAsState()
     val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
@@ -2712,10 +2710,7 @@ fun ChatScreen(
                     listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
                     .distinct()
             }
-            val oneTurnModelForInput = pendingOneTurnModelOverride ?: activeOneTurnModelOverride
-            val currentModelForInput = AgentDisplay.displayModelName(oneTurnModelForInput?.model)
-                ?.let { "$it · once" }
-                ?: AgentDisplay.displayModelName(selectedModelOverride)
+            val currentModelForInput = AgentDisplay.displayModelName(selectedModelOverride)
                 ?: AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                 ?: AgentDisplay.displayModelName(serverModelName)
@@ -2952,10 +2947,6 @@ fun ChatScreen(
                     onSelect = { option ->
                         showModelSheet = false
                         chatViewModel.selectModel(option.value, option.provider)
-                    },
-                    onSelectOnce = { option ->
-                        showModelSheet = false
-                        option.value?.let { chatViewModel.selectModelOnce(it, option.provider) }
                     },
                     onDismiss = { showModelSheet = false },
                 )
