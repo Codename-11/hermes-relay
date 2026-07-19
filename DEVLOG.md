@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-07-18 — Non-signalling Windows gateway PID probes
+
+Relay profile discovery now prefers Hermes' supported psutil liveness check and
+falls back to native Windows process handles when psutil is unavailable. The
+POSIX signal-zero probe is restricted to POSIX hosts, preventing relay startup
+and periodic profile rescans from signalling or terminating the gateway named
+by `gateway.pid`. Regression coverage uses disposable child processes instead
+of pointing PID fixtures at the test runner.
+
 ## 2026-07-18 — Android privacy-policy URL hotfix
 
 The canonical Android privacy policy moved to a stable public page on

@@ -9,13 +9,72 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from plugin.relay.config import _load_profiles, _read_proc_start_time
+from plugin.relay.config import _load_profiles, _pid_is_alive, _read_proc_start_time
+
+
+class PidLivenessProbeTests(unittest.TestCase):
+    def _start_live_process(self) -> subprocess.Popen[bytes]:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", "hermes-gateway"]
+        )
+
+        def stop_process() -> None:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+
+        self.addCleanup(stop_process)
+        return process
+
+    def test_windows_fallback_never_calls_os_kill(self) -> None:
+        with (
+            patch("plugin.relay.config._psutil", None),
+            patch("plugin.relay.config.os.name", "nt"),
+            patch(
+                "plugin.relay.config._windows_pid_is_alive", return_value=True
+            ) as windows_probe,
+            patch("plugin.relay.config.os.kill") as kill,
+        ):
+            self.assertTrue(_pid_is_alive(1234))
+
+        windows_probe.assert_called_once_with(1234)
+        kill.assert_not_called()
+
+    def test_psutil_probe_is_preferred_without_signalling(self) -> None:
+        psutil = MagicMock()
+        psutil.pid_exists.return_value = True
+        with (
+            patch("plugin.relay.config._psutil", psutil),
+            patch("plugin.relay.config.os.kill") as kill,
+        ):
+            self.assertTrue(_pid_is_alive(4321))
+
+        psutil.pid_exists.assert_called_once_with(4321)
+        kill.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "native Windows fallback test")
+    def test_windows_native_fallback_preserves_live_process(self) -> None:
+        process = self._start_live_process()
+        with (
+            patch("plugin.relay.config._psutil", None),
+            patch("plugin.relay.config.os.kill") as kill,
+        ):
+            self.assertTrue(_pid_is_alive(process.pid))
+
+        kill.assert_not_called()
+        self.assertIsNone(process.poll(), "native PID probe terminated the child")
 
 
 class ProfileDiscoveryTests(unittest.TestCase):
@@ -27,23 +86,27 @@ class ProfileDiscoveryTests(unittest.TestCase):
         self.profiles_dir = self.hermes_dir / "profiles"
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
 
-        # `_probe_gateway_running` cross-checks /proc/<pid>/comm + /proc/<pid>/cmdline
-        # for "hermes" or "gateway" to defend against PID reuse. The test process
-        # is `python3` and won't match — patch the comm/cmdline check to True so
-        # the gateway-running probe degrades to "PID exists + start_time matches"
-        # for these tests. Both predicates remain enforced in production code.
-        self._comm_patcher = patch(
-            "plugin.relay.config._pid_matches_hermes",
-            return_value=True,
+    def _start_live_process(self) -> subprocess.Popen[bytes]:
+        """Start a disposable process for PID liveness tests."""
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", "hermes-gateway"]
         )
-        self._comm_patcher.start()
-        self.addCleanup(self._comm_patcher.stop)
 
-    def _real_start_time(self) -> int | None:
-        """Return the live test process's /proc start_time (clock ticks since
-        boot). On non-Linux hosts this is None and the probe degrades to
-        os.kill-alone — which still passes for os.getpid()."""
-        return _read_proc_start_time(os.getpid())
+        def stop_process() -> None:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+
+        self.addCleanup(stop_process)
+        return process
+
+    def _real_start_time(self, pid: int) -> int | None:
+        """Return a live child process's Linux ``/proc`` start time."""
+        return _read_proc_start_time(pid)
 
     # ── helpers ─────────────────────────────────────────────────────────
 
@@ -305,20 +368,21 @@ class ProfileDiscoveryTests(unittest.TestCase):
     def test_gateway_running_true_when_pid_file_points_at_live_process(
         self,
     ) -> None:
-        """A profile whose ``gateway.pid`` points at this test process
-        reports ``gateway_running=True``. We use the test runner's own
-        PID — guaranteed to be alive while the assertion runs."""
+        """Profile discovery probes a child PID without terminating it."""
         self._write_root_config()
         pdir = self._write_profile(
             "live",
             config_body="model:\n  default: x\n",
             soul=None,
         )
-        (pdir / "gateway.pid").write_text(str(os.getpid()), encoding="utf-8")
+        process = self._start_live_process()
+        (pdir / "gateway.pid").write_text(str(process.pid), encoding="utf-8")
 
+        self.assertTrue(_pid_is_alive(process.pid))
         out = self._load()
         entry = next(p for p in out if p["name"] == "live")
         self.assertTrue(entry["gateway_running"])
+        self.assertIsNone(process.poll(), "liveness probe terminated the child")
 
     def test_gateway_running_false_when_pid_file_absent(self) -> None:
         self._write_root_config()
@@ -361,14 +425,15 @@ class ProfileDiscoveryTests(unittest.TestCase):
             config_body="model:\n  default: x\n",
             soul=None,
         )
+        process = self._start_live_process()
         # Probe compares pid-file's start_time against /proc/<pid>/stat field 22
         # to defend against PID reuse. Use the live test pid's actual start_time
         # so the probe ratifies the file as fresh. On non-Linux hosts
         # _real_start_time() is None and the probe skips this check entirely.
-        st_value = self._real_start_time()
+        st_value = self._real_start_time(process.pid)
         st_field = (', "start_time": ' + str(st_value)) if st_value is not None else ""
         payload = (
-            '{"pid": ' + str(os.getpid()) +
+            '{"pid": ' + str(process.pid) +
             ', "kind": "hermes-gateway", "argv": ["main.py"]'
             + st_field + '}'
         )
@@ -377,6 +442,7 @@ class ProfileDiscoveryTests(unittest.TestCase):
         out = self._load()
         entry = next(p for p in out if p["name"] == "json-pid")
         self.assertTrue(entry["gateway_running"])
+        self.assertIsNone(process.poll(), "JSON PID probe terminated the child")
 
     def test_gateway_running_false_for_stale_pid(self) -> None:
         """A ``gateway.pid`` file containing a PID that doesn't exist

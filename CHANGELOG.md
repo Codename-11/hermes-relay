@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Relay trust boundaries are enforced across privileged interfaces.** Pairing policy is host-authorized, Android bridge and terminal dispatch require active grants, ordinary sessions can only reduce their own policy, remote profile config is restricted to a public schema, and voice callers cannot redirect host provider credentials.
+- **Starting Relay no longer terminates a running Hermes gateway on Windows.** Profile discovery now checks gateway PIDs through non-signalling process APIs, including during periodic rescans.
 
 ## [1.4.8] - 2026-07-18
 
