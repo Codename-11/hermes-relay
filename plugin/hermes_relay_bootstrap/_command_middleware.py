@@ -42,6 +42,18 @@ logger = logging.getLogger(__name__)
 _INTERCEPTED_PATHS = frozenset({"/v1/chat/completions", "/v1/runs"})
 
 
+def _command_route_path(path: str) -> str:
+    """Strip one upstream multiplex profile prefix for route matching only.
+
+    Authorization and profile runtime scoping remain owned by upstream's
+    middleware because the original request path is never mutated.
+    """
+    parts = path.split("/")
+    if len(parts) >= 5 and parts[1] == "p" and parts[2]:
+        return "/" + "/".join(parts[3:])
+    return path
+
+
 # ---------------------------------------------------------------------------
 # SlashCommandResult (mirrors upstream api_server_slash.SlashCommandResult)
 # ---------------------------------------------------------------------------
@@ -530,7 +542,8 @@ def make_command_middleware(adapter: Any) -> Any:
         handler: Callable,
     ) -> web.StreamResponse:
         # Fast path: skip non-chat endpoints entirely.
-        if request.path not in _INTERCEPTED_PATHS:
+        command_path = _command_route_path(request.path)
+        if command_path not in _INTERCEPTED_PATHS:
             return await handler(request)
 
         # Only intercept POST.
@@ -552,7 +565,7 @@ def make_command_middleware(adapter: Any) -> Any:
                 return await handler(request)
 
             # Extract user message based on endpoint.
-            if request.path == "/v1/chat/completions":
+            if command_path == "/v1/chat/completions":
                 user_message = _extract_user_message_completions(body)
             else:
                 user_message = _extract_user_message_runs(body)
@@ -567,7 +580,7 @@ def make_command_middleware(adapter: Any) -> Any:
 
             # --- Command matched: build synthetic response ---
 
-            if request.path == "/v1/chat/completions":
+            if command_path == "/v1/chat/completions":
                 model_name = body.get("model") or "hermes-agent"
                 completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
                 created = int(time.time())

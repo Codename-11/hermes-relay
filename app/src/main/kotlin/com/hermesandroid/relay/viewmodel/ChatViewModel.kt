@@ -1669,6 +1669,9 @@ class ChatViewModel : ViewModel() {
     }
 
     private var selectedProfileProvider: () -> Profile? = { null }
+    private var isolatedProfileApiProvider: () -> Boolean = {
+        selectedProfileProvider()?.hasIsolatedApi == true
+    }
     private var sessionProfileNameProvider: () -> String? = {
         AgentDisplay.profileRequestName(selectedProfileProvider()?.name)
     }
@@ -1698,6 +1701,10 @@ class ChatViewModel : ViewModel() {
     fun setSelectedProfileProvider(provider: () -> Profile?) {
         selectedProfileProvider = provider
         refreshActiveAgentName()
+    }
+
+    fun setIsolatedProfileApiProvider(provider: () -> Boolean) {
+        isolatedProfileApiProvider = provider
     }
 
     /**
@@ -2642,7 +2649,7 @@ class ChatViewModel : ViewModel() {
 
         viewModelScope.launch {
             val selectedProfile = selectedProfileProvider()
-            val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+            val useIsolatedProfileApi = isolatedProfileApiProvider()
             client.createSessionResult(
                 profileName = if (useIsolatedProfileApi) null else selectedProfile?.name,
                 model = if (useIsolatedProfileApi) {
@@ -4529,7 +4536,7 @@ class ChatViewModel : ViewModel() {
         } else {
             viewModelScope.launch {
                 val selectedProfile = selectedProfileProvider()
-                val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+                val useIsolatedProfileApi = isolatedProfileApiProvider()
                 client.createSessionResult(
                     profileName = if (useIsolatedProfileApi) null else selectedProfile?.name,
                     model = if (useIsolatedProfileApi) {
@@ -5385,7 +5392,7 @@ class ChatViewModel : ViewModel() {
         return composeInjectedContext(
             interfaceContextPrompt = null,
             selectedProfile = profile,
-            useIsolatedProfileApi = profile?.hasIsolatedApi == true,
+            useIsolatedProfileApi = isolatedProfileApiProvider(),
             relayServerBlocks = relayBlocks,
         )
     }
@@ -5403,7 +5410,7 @@ class ChatViewModel : ViewModel() {
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
         val selectedProfile = selectedProfileProvider()
-        val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+        val useIsolatedProfileApi = isolatedProfileApiProvider()
 
         // The injected system_message (persona + phone-status + per-turn
         // context) is built by composeInjectedContext so the chat-screen audit

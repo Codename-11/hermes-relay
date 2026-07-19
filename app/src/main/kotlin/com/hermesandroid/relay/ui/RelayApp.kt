@@ -665,6 +665,9 @@ fun RelayApp() {
         chatViewModel.setSelectedProfileProvider {
             connectionViewModel.selectedProfile.value
         }
+        chatViewModel.setIsolatedProfileApiProvider {
+            connectionViewModel.selectedProfileUsesIsolatedApiRoute()
+        }
         chatViewModel.setSessionProfileNameProvider {
             connectionViewModel.effectiveSessionProfileName.value
         }

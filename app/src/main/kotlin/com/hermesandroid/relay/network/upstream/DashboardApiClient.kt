@@ -51,6 +51,8 @@ data class DashboardStatus(
     val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
     val version: String? = null,
     val message: String? = null,
+    val gatewayMode: String? = null,
+    val profiles: List<String> = emptyList(),
 )
 
 @Serializable
@@ -955,6 +957,10 @@ class DashboardApiClient(
                 authProviderDetails = providers,
                 version = root.stringField("version"),
                 message = root.stringField("message") ?: root.stringField("detail"),
+                gatewayMode = root.stringField("gateway_mode"),
+                profiles = (root["profiles"] as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank) }
+                    .orEmpty(),
             )
         }
 
