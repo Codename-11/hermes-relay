@@ -16,6 +16,7 @@ import com.hermesandroid.relay.auth.buildRawTokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -51,6 +52,17 @@ data class DashboardStatus(
     val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
     val version: String? = null,
     val message: String? = null,
+    @SerialName("nous_session_valid") val nousSessionValid: String? = null,
+    val profiles: List<String> = emptyList(),
+    @SerialName("gateway_mode") val gatewayMode: String? = null,
+    val gateways: List<DashboardGatewayTopology> = emptyList(),
+)
+
+@Serializable
+data class DashboardGatewayTopology(
+    val profile: String,
+    val ports: Map<String, Int> = emptyMap(),
+    @SerialName("served_profiles") val servedProfiles: List<String> = emptyList(),
 )
 
 @Serializable
@@ -947,6 +959,20 @@ class DashboardApiClient(
                 ?: root["providers"]
                 ?: authObject?.get("providers")
             val providers = parseProviders(providersElement)
+            val profiles = (root["profiles"] as? JsonArray).orEmpty().mapNotNull {
+                (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+            }
+            val gateways = (root["gateways"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val profile = obj.stringField("profile") ?: return@mapNotNull null
+                val ports = (obj["ports"] as? JsonObject).orEmpty().mapNotNull { (name, value) ->
+                    (value as? JsonPrimitive)?.contentOrNull?.toIntOrNull()?.let { name to it }
+                }.toMap()
+                val served = (obj["served_profiles"] as? JsonArray).orEmpty().mapNotNull {
+                    (it as? JsonPrimitive)?.contentOrNull
+                }
+                DashboardGatewayTopology(profile = profile, ports = ports, servedProfiles = served)
+            }
             return DashboardStatus(
                 authRequired = root.booleanField("auth_required")
                     ?: authObject.booleanField("required")
@@ -955,6 +981,10 @@ class DashboardApiClient(
                 authProviderDetails = providers,
                 version = root.stringField("version"),
                 message = root.stringField("message") ?: root.stringField("detail"),
+                nousSessionValid = root.stringField("nous_session_valid"),
+                profiles = profiles,
+                gatewayMode = root.stringField("gateway_mode"),
+                gateways = gateways,
             )
         }
 

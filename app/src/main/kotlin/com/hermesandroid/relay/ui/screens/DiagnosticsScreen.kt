@@ -72,6 +72,7 @@ fun DiagnosticsScreen(
     val relayReady by connectionViewModel.relayReady.collectAsState()
     val relayUpdateInfo by connectionViewModel.relayUpdateInfo.collectAsState()
     val relayInfo by connectionViewModel.relayInfo.collectAsState()
+    val toolsets by connectionViewModel.toolsetInventory.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val checkedAt by connectionViewModel.diagnosticsCheckedAt.collectAsState()
     val refreshing by connectionViewModel.diagnosticsRefreshing.collectAsState()
@@ -171,11 +172,39 @@ fun DiagnosticsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                info.gatewayHeartbeat?.let { heartbeat ->
+                    val detail = heartbeat.ageSeconds?.let { " · ${it}s" }.orEmpty()
+                    Text(
+                        text = stringResource(R.string.diag_gateway_heartbeat, heartbeat.status, detail),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (heartbeat.status in setOf("stale", "malformed", "pid_mismatch", "start_mismatch")) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
                 val profileKey = selectedProfile?.name ?: "(default)"
                 val profileState = info.profiles.firstOrNull { it.name == profileKey }?.relayState
                     ?: stringResource(R.string.diag_check_not_checked)
                 Text(
                     text = stringResource(R.string.diag_plugin_profile, profileKey, profileState),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            toolsets?.let { inventory ->
+                val enabled = inventory.count { it.enabled }
+                val relayVisible = inventory.any { item ->
+                    item.tools.any { it.startsWith("relay_") || it.startsWith("android_") }
+                }
+                Text(
+                    text = stringResource(
+                        R.string.diag_toolsets_inventory,
+                        enabled,
+                        inventory.size,
+                        if (relayVisible) stringResource(R.string.diag_yes) else stringResource(R.string.diag_no),
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
