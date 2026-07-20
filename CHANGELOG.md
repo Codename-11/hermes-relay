@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android shows a diffusion animation while Hermes generates an image.** Active `image_generate` tool calls render a theme-aware placeholder in chat until the result arrives; no special server protocol is required.
+
 ### Fixed
 
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
