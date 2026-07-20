@@ -14,6 +14,8 @@ Verified upstream source snapshot:
   `hermes_cli/web_server.py`, `hermes_cli/dashboard_auth/routes.py`,
   `tui_gateway/server.py`, `hermes_cli/plugins.py`,
   `hermes_cli/plugins_cmd.py`
+- Additive Manage contracts were rechecked at upstream MCP hosted-OAuth commits
+  through `4dc2b7be0` and custom-endpoint commit `3d9789357`.
 
 ## Ownership
 
@@ -27,7 +29,7 @@ Verified upstream source snapshot:
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. Optional status diagnostics include Nous bootstrap validity and profile/gateway topology; these do not gate transport selection. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. |
 | Dashboard `/api/audio/transcribe`, `/api/audio/speak` | Upstream dashboard | No | Vanilla Hermes voice | Manage sign-in unlocks Vanilla Hermes voice. API server has no `/v1/audio/*` route today. |
-| Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` | Upstream dashboard | No | Manage | Do not proxy through Relay. |
+| Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*`, `/api/providers/custom-endpoints*` | Upstream dashboard | No | Manage | Do not proxy through Relay. MCP list/actions/OAuth carry Android's effective profile explicitly; Android detects hosted-OAuth support with a read-only missing-flow status GET and caches that capability per dashboard/profile. Hosted OAuth itself stays server-owned, opens only the returned HTTPS URL, and persists only the opaque flow id/server/profile plus a normalized non-secret dashboard/connection identity; polling is held whenever the active connection does not own that flow. Custom-endpoint routes are process-scoped in the current public contract, so Android does not claim or append profile scoping; credentials are write-only and blank edits preserve an existing key. |
 | `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab | FastAPI plugin backend proxies loopback requests to the Relay server. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability (including `/v1/toolsets`), dashboard Nous/topology state, sanitized gateway event-loop heartbeat state, plugin layout, Relay loopback state, and legacy bootstrap presence. |
@@ -176,3 +178,25 @@ Setup payloads should carry an explicit Dashboard/Gateway URL for new
 connections. Legacy API-first QRs remain importable; when their optional
 `dashboard_url` is absent Android may derive the conventional same-host `:9119`
 URL for compatibility.
+
+## API Fallback Compatibility Details
+
+- Android accepts the API server's final-response image data URLs for PNG,
+  JPEG, GIF, WebP, and BMP. Decoding is strict: MIME and file signatures must
+  agree, encoded and decoded bytes are capped at the upstream 5 MiB limit, and
+  oversized pixel dimensions are rejected before bitmap allocation. SVG and
+  unknown image types remain unsupported. Spoiler/alt sensitivity flags use the
+  same reveal gate as remote and Relay-fetched images.
+- `/v1/models` rows retain `id`, `root`, and `parent`. The picker sends the
+  alias `id` unchanged on sessions, completions, and runs requests, while a
+  differing `root` is shown as secondary route information.
+- A `503` OpenAI error with code `gateway_draining` retains its structured code
+  and bounded `Retry-After` hint through every SSE listener. Android identifies
+  this as an intentional Hermes restart/drain rather than a provider outage.
+  Before any event arrives, it retries once through a composite EventSource
+  owner; Stop/session-switch cancels the initial request, pending delay, and
+  replacement together. A second drain or any post-event failure remains an
+  explicit retry so the client cannot duplicate an admitted turn.
+- Gateway `session.create` and `session.resume` declare `source: webui`, the
+  existing upstream rich-chat platform hint. Hermes currently has no stable
+  `android` or `relay_desktop` platform hint; Relay clients must not invent one.

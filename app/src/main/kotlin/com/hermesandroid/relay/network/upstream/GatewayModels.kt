@@ -314,7 +314,9 @@ data class GatewayModelOptions(
  *
  * [model] is the model id (e.g. `grok-4.3`); [provider] is the authenticated
  * provider slug (e.g. `xai`). [reasoningEffort] is the upstream effort string
- * (`low`/`medium`/`high`/…). [fast] pins the priority service tier when true.
+ * (`low`/`medium`/`high`/…). [fast] follows the contract-v4 tri-state: `true`
+ * pins priority, `false` explicitly pins normal, and `null` omits the field so
+ * the profile's service tier is inherited.
  * Note `yolo` is intentionally absent — upstream `session.create` does NOT
  * accept it as a per-session override, so it is applied post-create instead.
  */

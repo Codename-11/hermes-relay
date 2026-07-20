@@ -179,6 +179,127 @@ internal fun parseToolsetListBody(json: Json, body: String): List<ToolsetInfo>? 
     null
 }
 
+/** One OpenAI-compatible `/v1/models` row. [id] is always the request value. */
+data class ApiModelOption(
+    val id: String,
+    val root: String? = null,
+    val parent: String? = null,
+) {
+    /** Secondary picker copy for a configured route alias. */
+    val routeDetail: String?
+        get() = root?.takeIf { it.isNotBlank() && it != id }?.let { "Routes to $it" }
+}
+
+internal fun parseModelOptionsBody(json: Json, body: String): List<ApiModelOption>? {
+    val data = try {
+        (json.parseToJsonElement(body) as? JsonObject)?.get("data") as? JsonArray
+    } catch (_: Exception) {
+        null
+    } ?: return null
+    return data.mapNotNull { row ->
+        val obj = row as? JsonObject ?: return@mapNotNull null
+        val id = (obj["id"] as? JsonPrimitive)?.contentOrNull
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        ApiModelOption(
+            id = id,
+            root = (obj["root"] as? JsonPrimitive)?.contentOrNull,
+            parent = (obj["parent"] as? JsonPrimitive)?.contentOrNull,
+        )
+    }
+}
+
+private const val STREAM_ERROR_BODY_LIMIT = 16L * 1024L
+
+/** Preserve the upstream drain code and bounded retry hint without leaking large bodies. */
+internal fun streamHttpFailureMessage(
+    code: Int,
+    reason: String,
+    retryAfter: String?,
+    body: String?,
+    json: Json,
+): String {
+    val error = body?.takeIf { it.length <= STREAM_ERROR_BODY_LIMIT }?.let { raw ->
+        runCatching { json.parseToJsonElement(raw) as? JsonObject }.getOrNull()?.get("error")
+    }
+    val errorObj = error as? JsonObject
+    val errorCode = (errorObj?.get("code") as? JsonPrimitive)?.contentOrNull
+    val detail = (errorObj?.get("message") as? JsonPrimitive)?.contentOrNull
+        ?: (error as? JsonPrimitive)?.contentOrNull
+    return buildString {
+        append("API error ").append(code).append(": ")
+        if (!errorCode.isNullOrBlank()) append(errorCode).append(": ")
+        append(detail?.takeIf { it.isNotBlank() } ?: reason)
+        retryAfter?.trim()?.toIntOrNull()?.takeIf { it in 0..60 }?.let {
+            append(" (Retry-After: ").append(it).append("s)")
+        }
+    }
+}
+
+internal fun gatewayDrainRetryDelayMillis(
+    httpCode: Int?,
+    retryAfter: String?,
+    errorMessage: String,
+    receivedEvent: Boolean,
+    retryAlreadyScheduled: Boolean,
+): Long? {
+    if (httpCode != 503 || receivedEvent || retryAlreadyScheduled ||
+        !errorMessage.startsWith("API error 503: gateway_draining:")
+    ) return null
+    val seconds = retryAfter?.trim()?.toIntOrNull()?.coerceIn(0, 5) ?: 1
+    return seconds * 1_000L
+}
+
+/** Owns the initial SSE, its one delayed drain retry, and the replacement SSE. */
+private class RetryingEventSource(
+    private val originalRequest: Request,
+    private val handler: Handler,
+) : EventSource {
+    private val lock = Any()
+    private var active: EventSource? = null
+    private var retryRunnable: Runnable? = null
+    private var cancelled = false
+
+    override fun request(): Request = originalRequest
+
+    fun attach(source: EventSource) {
+        synchronized(lock) {
+            if (cancelled) source.cancel() else active = source
+        }
+    }
+
+    fun retryAfter(delayMillis: Long, create: () -> EventSource) {
+        val task = Runnable {
+            synchronized(lock) {
+                retryRunnable = null
+                if (cancelled) return@Runnable
+                // Keep creation under the same lock as cancel(): once Stop or
+                // a session switch wins, no delayed POST can start afterward.
+                active = create()
+            }
+        }
+        synchronized(lock) {
+            if (cancelled) return
+            retryRunnable = task
+            handler.postDelayed(task, delayMillis)
+        }
+    }
+
+    override fun cancel() {
+        val source: EventSource?
+        val task: Runnable?
+        synchronized(lock) {
+            if (cancelled) return
+            cancelled = true
+            source = active
+            active = null
+            task = retryRunnable
+            retryRunnable = null
+        }
+        task?.let(handler::removeCallbacks)
+        source?.cancel()
+    }
+}
+
 /**
  * Direct HTTP/SSE client for the Hermes API Server.
  *
@@ -219,8 +340,13 @@ class HermesApiClient(
 
         /** Shared human-readable message for an SSE [EventSourceListener.onFailure]. */
         private fun streamFailureMessage(t: Throwable?, response: Response?): String = when {
-            response != null && !response.isSuccessful ->
-                "API error ${response.code}: ${response.message}"
+            response != null && !response.isSuccessful -> streamHttpFailureMessage(
+                code = response.code,
+                reason = response.message,
+                retryAfter = response.header("Retry-After"),
+                body = runCatching { response.peekBody(STREAM_ERROR_BODY_LIMIT).string() }.getOrNull(),
+                json = Json { ignoreUnknownKeys = true },
+            )
             t is IOException -> "$TRANSPORT_ERROR_PREFIX: ${t.message}"
             t != null -> "Stream error: ${t.message}"
             else -> "Unknown stream error"
@@ -491,23 +617,22 @@ class HermesApiClient(
      * picker. Returns ids in server order; empty on any failure (the picker
      * then offers only "Server default").
      */
-    suspend fun getModels(): List<String> = withContext(Dispatchers.IO) {
+    suspend fun getModelOptions(): List<ApiModelOption> = withContext(Dispatchers.IO) {
         try {
             val request = authRequest("$baseUrl/v1/models").get().build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext emptyList()
                 val body = response.body?.string() ?: return@withContext emptyList()
-                val data = (json.parseToJsonElement(body) as? JsonObject)
-                    ?.get("data") as? JsonArray ?: return@withContext emptyList()
-                data.mapNotNull {
-                    ((it as? JsonObject)?.get("id") as? JsonPrimitive)?.contentOrNull
-                }
+                parseModelOptionsBody(json, body).orEmpty()
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to fetch models: ${e.message}")
             emptyList()
         }
     }
+
+    /** Compatibility view for callers that only need request ids. */
+    suspend fun getModels(): List<String> = getModelOptions().map { it.id }
 
     // --- Server personalities ---
 
@@ -661,6 +786,9 @@ class HermesApiClient(
             }
 
         val completeCalled = AtomicBoolean(false)
+        val receivedEvent = AtomicBoolean(false)
+        val drainRetryScheduled = AtomicBoolean(false)
+        val turnSource = RetryingEventSource(request, mainHandler)
         // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
         val tracer = TurnLatencyTracer("sessions")
 
@@ -674,6 +802,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                receivedEvent.set(true)
                 tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
@@ -837,9 +966,20 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                val msg = streamFailureMessage(t, response)
+                val retryDelay = gatewayDrainRetryDelayMillis(
+                    response?.code,
+                    response?.header("Retry-After"),
+                    msg,
+                    receivedEvent.get(),
+                    drainRetryScheduled.get(),
+                )
+                if (retryDelay != null && drainRetryScheduled.compareAndSet(false, true)) {
+                    turnSource.retryAfter(retryDelay) { sseFactory.newEventSource(request, this) }
+                    return
+                }
                 tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
-                    val msg = streamFailureMessage(t, response)
                     mainHandler.post { onError(msg) }
                 }
             }
@@ -852,7 +992,8 @@ class HermesApiClient(
             }
         }
 
-        return sseFactory.newEventSource(request, listener)
+        turnSource.attach(sseFactory.newEventSource(request, listener))
+        return turnSource
     }
 
     // --- OpenAI-compatible chat streaming via /v1/chat/completions ---
@@ -914,6 +1055,9 @@ class HermesApiClient(
 
         val completeCalled = AtomicBoolean(false)
         val messageStarted = AtomicBoolean(false)
+        val receivedEvent = AtomicBoolean(false)
+        val drainRetryScheduled = AtomicBoolean(false)
+        val turnSource = RetryingEventSource(request, mainHandler)
         // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
         val tracer = TurnLatencyTracer("completions")
 
@@ -924,6 +1068,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                receivedEvent.set(true)
                 tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
@@ -979,9 +1124,20 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                val msg = streamFailureMessage(t, response)
+                val retryDelay = gatewayDrainRetryDelayMillis(
+                    response?.code,
+                    response?.header("Retry-After"),
+                    msg,
+                    receivedEvent.get(),
+                    drainRetryScheduled.get(),
+                )
+                if (retryDelay != null && drainRetryScheduled.compareAndSet(false, true)) {
+                    turnSource.retryAfter(retryDelay) { sseFactory.newEventSource(request, this) }
+                    return
+                }
                 tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
-                    val msg = streamFailureMessage(t, response)
                     mainHandler.post { onError(msg) }
                 }
             }
@@ -994,7 +1150,8 @@ class HermesApiClient(
             }
         }
 
-        return sseFactory.newEventSource(request, listener)
+        turnSource.attach(sseFactory.newEventSource(request, listener))
+        return turnSource
     }
 
     private fun openAiChoice(event: JsonObject): JsonObject? =
@@ -1108,6 +1265,9 @@ class HermesApiClient(
             }
 
         val completeCalled = AtomicBoolean(false)
+        val receivedEvent = AtomicBoolean(false)
+        val drainRetryScheduled = AtomicBoolean(false)
+        val turnSource = RetryingEventSource(request, mainHandler)
         // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
         val tracer = TurnLatencyTracer("runs")
 
@@ -1118,6 +1278,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                receivedEvent.set(true)
                 tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
@@ -1284,9 +1445,20 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                val msg = streamFailureMessage(t, response)
+                val retryDelay = gatewayDrainRetryDelayMillis(
+                    response?.code,
+                    response?.header("Retry-After"),
+                    msg,
+                    receivedEvent.get(),
+                    drainRetryScheduled.get(),
+                )
+                if (retryDelay != null && drainRetryScheduled.compareAndSet(false, true)) {
+                    turnSource.retryAfter(retryDelay) { sseFactory.newEventSource(request, this) }
+                    return
+                }
                 tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
-                    val msg = streamFailureMessage(t, response)
                     mainHandler.post { onError(msg) }
                 }
             }
@@ -1299,7 +1471,8 @@ class HermesApiClient(
             }
         }
 
-        return sseFactory.newEventSource(request, listener)
+        turnSource.attach(sseFactory.newEventSource(request, listener))
+        return turnSource
     }
 
     // --- Capability detection ---

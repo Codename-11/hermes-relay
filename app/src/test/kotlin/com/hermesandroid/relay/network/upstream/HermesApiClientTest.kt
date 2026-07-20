@@ -310,6 +310,73 @@ class HermesApiClientTest {
         assertEquals("http://localhost:8642/v1/models", url)
     }
 
+    @Test
+    fun modelOptionsPreserveAliasRequestIdAndRootMetadata() {
+        val parsed = parseModelOptionsBody(
+            Json { ignoreUnknownKeys = true },
+            """{"object":"list","data":[{"id":"fast","root":"gpt-5-mini","parent":"hermes-agent"}]}""",
+        )
+        assertEquals("fast", parsed?.single()?.id)
+        assertEquals("gpt-5-mini", parsed?.single()?.root)
+        assertEquals("hermes-agent", parsed?.single()?.parent)
+        assertEquals("Routes to gpt-5-mini", parsed?.single()?.routeDetail)
+    }
+
+    @Test
+    fun modelOptionsIgnoreMalformedRowsButKeepCompatibilityShape() {
+        val parsed = parseModelOptionsBody(
+            Json { ignoreUnknownKeys = true },
+            """{"data":[null,{"root":"missing-id"},{"id":"hermes-agent","extra":true}]}""",
+        )
+        assertEquals(listOf("hermes-agent"), parsed?.map { it.id })
+        assertNull(parseModelOptionsBody(Json, "not-json"))
+    }
+
+    @Test
+    fun drainFailurePreservesCodeMessageAndBoundedRetryHint() {
+        val message = streamHttpFailureMessage(
+            code = 503,
+            reason = "Service Unavailable",
+            retryAfter = "1",
+            body = """{"error":{"message":"Gateway is shutting down","code":"gateway_draining"}}""",
+            json = Json,
+        )
+        assertEquals(
+            "API error 503: gateway_draining: Gateway is shutting down (Retry-After: 1s)",
+            message,
+        )
+    }
+
+    @Test
+    fun ordinaryProvider503KeepsGenericClassificationAndUnsafeRetryHintIsIgnored() {
+        val message = streamHttpFailureMessage(
+            code = 503,
+            reason = "Service Unavailable",
+            retryAfter = "999999999",
+            body = """{"error":{"message":"provider offline","code":"provider_unavailable"}}""",
+            json = Json,
+        )
+        assertEquals("API error 503: provider_unavailable: provider offline", message)
+    }
+
+    @Test
+    fun drainRetryIsSinglePreEventAndBounded() {
+        val drain = "API error 503: gateway_draining: Gateway is shutting down"
+        assertEquals(1_000L, gatewayDrainRetryDelayMillis(503, "1", drain, false, false))
+        assertEquals(5_000L, gatewayDrainRetryDelayMillis(503, "999", drain, false, false))
+        assertNull(gatewayDrainRetryDelayMillis(503, "1", drain, true, false))
+        assertNull(gatewayDrainRetryDelayMillis(503, "1", drain, false, true))
+        assertNull(gatewayDrainRetryDelayMillis(503, "1", "provider unavailable", false, false))
+        assertNull(gatewayDrainRetryDelayMillis(
+            503,
+            "1",
+            "API error 503: provider_unavailable: message mentions gateway_draining",
+            false,
+            false,
+        ))
+        assertNull(gatewayDrainRetryDelayMillis(500, "1", drain, false, false))
+    }
+
     // --- Skills endpoint compatibility ---
 
     @Test

@@ -84,6 +84,7 @@ import com.hermesandroid.relay.data.ProfilePresence
 import com.hermesandroid.relay.data.ProfilePresenceResolver
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.ConnectionState
@@ -671,7 +672,7 @@ fun AgentInfoSheet(
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
-    val availableModels by chatViewModel.availableModels.collectAsState()
+    val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
@@ -1289,11 +1290,13 @@ fun AgentInfoSheet(
             // SSE fallback model list — /v1/models plus the configured profiles'
             // models (used only when the gateway model.options groups aren't
             // available, e.g. on an SSE transport).
-            val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
-                (availableModels.mapNotNull(AgentDisplay::displayModelName) +
-                    agentProfiles.mapNotNull { AgentDisplay.displayModelName(it.model) } +
-                    listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
-                    .distinct()
+            val sseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
+                (apiModelOptions +
+                    agentProfiles.mapNotNull { profile ->
+                        AgentDisplay.requestModelName(profile.model)?.let { ApiModelOption(it) }
+                    } +
+                    listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
+                    .distinctBy { it.id }
             }
             // Always show the Model picker — choosing a model is always possible
             // (Server default at minimum). While the provider/model list is still
@@ -1362,14 +1365,14 @@ fun AgentInfoSheet(
                     } else {
                         sseModelOptions.forEach { model ->
                             ProfileRadioRow(
-                                primary = model,
-                                secondary = null,
-                                selected = selectedModelOverride == model,
+                                primary = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                secondary = model.routeDetail,
+                                selected = selectedModelOverride == model.id,
                                 enabled = !isStreaming,
                                 onSelect = {
-                                    if (selectedModelOverride != model) {
-                                        chatViewModel.selectModel(model)
-                                        toast(modelToast.format(model))
+                                    if (selectedModelOverride != model.id) {
+                                        chatViewModel.selectApiModel(model.id)
+                                        toast(modelToast.format(model.id))
                                     }
                                 },
                             )

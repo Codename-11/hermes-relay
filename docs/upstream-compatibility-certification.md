@@ -18,12 +18,34 @@ model/image-routing and turn-isolation changes:
 git merge-base --is-ancestor 73057ed16 HEAD
 git merge-base --is-ancestor ef9e0c98f HEAD
 git merge-base --is-ancestor 7d27a31ce HEAD
+git merge-base --is-ancestor 54d0948d3 HEAD
 ```
 
 An older baseline is not a Relay failure. Advance the test gateway first rather
 than introducing client branching for behavior upstream has already corrected.
 
 ## Static upstream gate
+
+The repository includes a non-mutating preflight runner. It requires a clean
+upstream checkout, proves the required commits are ancestors of the exact
+checkout, checks that every fixture still exists, and optionally executes the
+fixture groups with that checkout's virtual environment:
+
+```bash
+python scripts/check-upstream-compatibility.py \
+  --upstream /path/to/hermes-agent \
+  --run-tests \
+  --evidence-json /tmp/upstream-compatibility.json
+```
+
+The JSON is sanitized: it contains the upstream SHA, baseline/test outcomes,
+and explicit `not_run` live gates, but no hostname, checkout path, profile,
+token, or session content. A preflight-only invocation omits `--run-tests`.
+Pass `--python` when the upstream environment is not at `.venv/bin/python` (or
+`.venv/Scripts/python.exe` on Windows).
+
+The equivalent manual commands are retained below for upstream maintainers who
+do not have a Hermes-Relay checkout.
 
 From the upstream `hermes-agent` checkout:
 
@@ -37,8 +59,25 @@ uv run pytest -q \
 
 uv run pytest -q \
   tests/test_tui_gateway_server.py \
-  -k "turn_isolation or compression_lineage or queued_prompt" \
-  tests/cli/test_cli_async_delegation_delivery.py
+  -k "turn_isolation or queued_prompt"
+
+uv run pytest -q \
+  tests/cli/test_cli_async_delegation_delivery.py \
+  tests/test_tui_gateway_server.py::test_notification_poller_drops_orphaned_events \
+  tests/test_tui_gateway_server.py::test_notification_poller_delivers_owned_events \
+  tests/test_tui_gateway_server.py::test_run_prompt_submit_requeues_foreign_completion \
+  tests/test_tui_gateway_server.py::test_run_prompt_submit_delivers_completion_observed_by_poll \
+  tests/test_tui_gateway_server.py::test_run_prompt_submit_requeues_all_unstarted_notifications_with_real_threading \
+  tests/test_tui_gateway_server.py::test_run_prompt_submit_delivers_completion_owned_through_compression_lineage \
+  tests/test_tui_gateway_server.py::test_run_prompt_submit_prefers_origin_ui_session_id \
+  tests/tools/test_process_registry.py::test_drain_notifications_can_deliver_poll_observed_for_gateway \
+  tests/tools/test_process_registry.py::test_drain_notifications_routes_foreign_before_local_skip \
+  tests/tools/test_process_registry.py::test_drain_notifications_filters_addressed_completion_by_owns_event \
+  tests/tools/test_process_registry.py::test_drain_notifications_filters_addressed_completion_by_session_key \
+  tests/tools/test_process_registry.py::test_drain_notifications_session_key_filter_requeues_origin_only_event \
+  tests/tools/test_process_registry.py::test_drain_notifications_ownerless_completion_preserves_legacy_delivery \
+  tests/tools/test_process_registry.py::test_drain_notifications_ownerless_async_delegation_still_requires_proof \
+  tests/tools/test_process_registry.py::test_drain_notifications_completion_callback_exception_fails_closed
 ```
 
 Do not start the live matrix if these tests fail. First determine whether the
@@ -114,3 +153,16 @@ For each row, retain:
 
 Never attach tokens, session contents, private hostnames, or raw environment
 configuration to the public evidence.
+
+### Claim boundaries
+
+| Evidence | Proves | Does not prove |
+|---|---|---|
+| Baseline ancestry | Required fixes are in the tested source tree | Deployed processes run that tree |
+| Static fixture groups | Deterministic routing, isolation, queue, compression, and delegation contracts | Provider behavior, restart recovery, or event delivery over a real socket |
+| Live gateway matrix | Session/provider behavior for the recorded runtime and profile | Android lifecycle/reconnect behavior |
+| Android reconnect smoke | Client mapping and recovery on the exercised device | Other providers, profiles, gateway modes, or OS versions |
+
+Do not close HRUI-032, HRUI-039, or HRUI-043 from the static JSON alone. Each
+item remains gated on the corresponding live row above, with the restart and
+provider-cost steps requiring explicit operator authorization.

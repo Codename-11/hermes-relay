@@ -115,6 +115,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
+import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
@@ -553,7 +554,7 @@ fun ChatScreen(
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
-    val availableModels by chatViewModel.availableModels.collectAsState()
+    val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
     val modelProviders by chatViewModel.modelProviders.collectAsState()
     val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
@@ -2715,13 +2716,16 @@ fun ChatScreen(
             val editBusyMessage = stringResource(R.string.chat_edit_busy_snackbar)
             val stoppedMessage = stringResource(R.string.chat_stopped_snackbar)
             val attachmentPlaceholder = stringResource(R.string.chat_attachment_placeholder)
-            val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
-                (availableModels.mapNotNull(AgentDisplay::displayModelName) +
-                    agentProfiles.mapNotNull { AgentDisplay.displayModelName(it.model) } +
-                    listOfNotNull(AgentDisplay.displayModelName(selectedModelOverride)))
-                    .distinct()
+            val sseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
+                (apiModelOptions +
+                    agentProfiles.mapNotNull { profile ->
+                        AgentDisplay.requestModelName(profile.model)?.let { ApiModelOption(it) }
+                    } +
+                    listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
+                    .distinctBy { it.id }
             }
-            val currentModelForInput = AgentDisplay.displayModelName(selectedModelOverride)
+            val currentModelForInput = apiModelOptions.firstOrNull { it.id == selectedModelOverride }?.id
+                ?: AgentDisplay.displayModelName(selectedModelOverride)
                 ?: AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
                 ?: AgentDisplay.displayModelName(serverModelName)
@@ -2793,9 +2797,10 @@ fun ChatScreen(
                             sseModelOptions.forEach { model ->
                                 add(
                                     ChatInputPickerOption(
-                                        label = model,
-                                        value = model,
-                                        selected = selectedModelOverride == model,
+                                        label = AgentDisplay.displayModelName(model.id) ?: model.id,
+                                        value = model.id,
+                                        secondary = model.routeDetail,
+                                        selected = selectedModelOverride == model.id,
                                     ),
                                 )
                             }
@@ -2940,7 +2945,11 @@ fun ChatScreen(
                 isDarkTheme = isDarkTheme,
                 modelControl = modelControl,
                 onModelOptionSelected = { option ->
-                    chatViewModel.selectModel(option.value, option.provider)
+                    if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
+                        option.value?.let(chatViewModel::selectApiModel)
+                    } else {
+                        chatViewModel.selectModel(option.value, option.provider)
+                    }
                 },
                 effortControl = effortControl,
                 onEffortOptionSelected = { option ->
@@ -2957,7 +2966,11 @@ fun ChatScreen(
                     onRefresh = { chatViewModel.refreshModelOptions(refresh = true) },
                     onSelect = { option ->
                         showModelSheet = false
-                        chatViewModel.selectModel(option.value, option.provider)
+                        if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
+                            option.value?.let(chatViewModel::selectApiModel)
+                        } else {
+                            chatViewModel.selectModel(option.value, option.provider)
+                        }
                     },
                     onDismiss = { showModelSheet = false },
                 )

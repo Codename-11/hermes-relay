@@ -57,6 +57,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
 import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
@@ -472,6 +473,8 @@ class ChatViewModel : ViewModel() {
     /** Flat model ids from `GET /v1/models` (SSE fallback source; gateway uses [modelProviders]). */
     private val _availableModels = MutableStateFlow<List<String>>(emptyList())
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
+    private val _apiModelOptions = MutableStateFlow<List<ApiModelOption>>(emptyList())
+    val apiModelOptions: StateFlow<List<ApiModelOption>> = _apiModelOptions.asStateFlow()
 
     /**
      * Curated provider→model groups from the gateway `model.options` RPC — the
@@ -607,7 +610,11 @@ class ChatViewModel : ViewModel() {
 
     fun fetchModels() {
         val client = apiClient ?: return
-        viewModelScope.launch { _availableModels.value = client.getModels() }
+        viewModelScope.launch {
+            val options = client.getModelOptions()
+            _apiModelOptions.value = options
+            _availableModels.value = options.map { it.id }
+        }
     }
 
     /**
@@ -724,6 +731,13 @@ class ChatViewModel : ViewModel() {
                 )
             }
         }
+        refreshActiveAgentName()
+    }
+
+    /** Select a `/v1/models` request id verbatim, including route aliases. */
+    fun selectApiModel(modelId: String) {
+        _selectedModelOverride.value = modelId.trim().takeIf { it.isNotEmpty() }
+        _selectedProviderOverride.value = null
         refreshActiveAgentName()
     }
 
@@ -1092,10 +1106,11 @@ class ChatViewModel : ViewModel() {
             val model = _selectedModelOverride.value?.takeIf { it.isNotBlank() }
             val provider = _selectedProviderOverride.value?.takeIf { it.isNotBlank() }
             val effort = _selectedReasoningEffort.value?.takeIf { it.isNotBlank() }
-            // Only pin fast when explicitly ON (upstream treats fast=false the
-            // same as omitting → profile default tier), so a null/false leaves
-            // the profile's own service tier intact.
-            val fast = _fastEnabled.value?.takeIf { it }
+            // Contract v4 distinguishes all three states: null omits the field
+            // and inherits the profile tier, true pins priority, and false pins
+            // normal. Do not filter false here or a user's explicit Fast-off
+            // pick would silently inherit a priority-by-default profile.
+            val fast = _fastEnabled.value
             if (model != null || effort != null || fast != null) {
                 GatewaySessionModel(
                     model = model,
@@ -2628,6 +2643,7 @@ class ChatViewModel : ViewModel() {
         _defaultPersonality.value = ""
         personalityPrompts = emptyMap()
         _availableModels.value = emptyList()
+        _apiModelOptions.value = emptyList()
         _serverCommands.value = emptyList()
         _modelProviders.value = emptyList()
         _gatewayCurrentModel.value = ""

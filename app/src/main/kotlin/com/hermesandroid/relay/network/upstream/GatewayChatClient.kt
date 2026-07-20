@@ -82,6 +82,8 @@ class GatewayChatClient(
     /** Test seam — idle-progress watchdog base. Production keeps [TURN_TIMEOUT_MS]. */
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
 ) {
+    /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source. */
+    private val sessionSource = "webui"
     companion object {
         private const val TAG = "GatewayChatClient"
 
@@ -793,6 +795,7 @@ class GatewayChatClient(
                     buildJsonObject {
                         put("session_id", storedId)
                         put("cols", DEFAULT_COLS)
+                        put("source", sessionSource)
                         requestedProfile?.let { put("profile", it) }
                     },
                 ).getOrElse { error ->
@@ -1401,6 +1404,7 @@ class GatewayChatClient(
             buildJsonObject {
                 put("session_id", storedId)
                 put("cols", DEFAULT_COLS)
+                put("source", sessionSource)
                 requestedProfile?.let { put("profile", it) }
             },
         )
@@ -1565,6 +1569,7 @@ class GatewayChatClient(
                 buildJsonObject {
                     put("session_id", requestedStoredId)
                     put("cols", DEFAULT_COLS)
+                    put("source", sessionSource)
                     requestedProfile?.let { put("profile", it) }
                 },
             )
@@ -1589,6 +1594,7 @@ class GatewayChatClient(
             "session.create",
             buildJsonObject {
                 put("cols", DEFAULT_COLS)
+                put("source", sessionSource)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
                 requestedProfile?.let { put("profile", it) }
                 // Bind the in-chat overrides to the new session as its
