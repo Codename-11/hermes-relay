@@ -13,6 +13,8 @@ data class PendingMcpOAuth(
     val flowId: String,
     val serverName: String,
     val profile: String?,
+    /** Non-secret connection + normalized dashboard identity that owns this flow. */
+    val routeIdentity: String,
 )
 
 /**
@@ -25,10 +27,16 @@ class DashboardManageOAuthViewModel(
     private val flowId = savedStateHandle.getStateFlow<String?>(KEY_FLOW_ID, null)
     private val serverName = savedStateHandle.getStateFlow<String?>(KEY_SERVER_NAME, null)
     private val profile = savedStateHandle.getStateFlow<String?>(KEY_PROFILE, null)
+    private val routeIdentity = savedStateHandle.getStateFlow<String?>(KEY_ROUTE_IDENTITY, null)
 
-    val pending: StateFlow<PendingMcpOAuth?> = combine(flowId, serverName, profile) { id, server, scope ->
-        if (id.isNullOrBlank() || server.isNullOrBlank()) null
-        else PendingMcpOAuth(id, server, scope)
+    val pending: StateFlow<PendingMcpOAuth?> = combine(
+        flowId,
+        serverName,
+        profile,
+        routeIdentity,
+    ) { id, server, scope, route ->
+        if (id.isNullOrBlank() || server.isNullOrBlank() || route.isNullOrBlank()) null
+        else PendingMcpOAuth(id, server, scope, route)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, currentPending())
 
     val unsupportedRoutes: StateFlow<ArrayList<String>> =
@@ -36,16 +44,19 @@ class DashboardManageOAuthViewModel(
     val supportedRoutes: StateFlow<ArrayList<String>> =
         savedStateHandle.getStateFlow(KEY_SUPPORTED_ROUTES, arrayListOf())
 
-    fun remember(flowId: String, serverName: String, profile: String?) {
+    fun remember(flowId: String, serverName: String, profile: String?, routeIdentity: String) {
+        if (routeIdentity.isBlank()) return
         savedStateHandle[KEY_FLOW_ID] = flowId
         savedStateHandle[KEY_SERVER_NAME] = serverName
         savedStateHandle[KEY_PROFILE] = profile
+        savedStateHandle[KEY_ROUTE_IDENTITY] = routeIdentity
     }
 
     fun clear() {
         savedStateHandle[KEY_FLOW_ID] = null
         savedStateHandle[KEY_SERVER_NAME] = null
         savedStateHandle[KEY_PROFILE] = null
+        savedStateHandle[KEY_ROUTE_IDENTITY] = null
     }
 
     fun markUnsupported(routeKey: String) {
@@ -78,14 +89,16 @@ class DashboardManageOAuthViewModel(
     private fun currentPending(): PendingMcpOAuth? {
         val id = savedStateHandle.get<String>(KEY_FLOW_ID)
         val server = savedStateHandle.get<String>(KEY_SERVER_NAME)
-        if (id.isNullOrBlank() || server.isNullOrBlank()) return null
-        return PendingMcpOAuth(id, server, savedStateHandle.get(KEY_PROFILE))
+        val route = savedStateHandle.get<String>(KEY_ROUTE_IDENTITY)
+        if (id.isNullOrBlank() || server.isNullOrBlank() || route.isNullOrBlank()) return null
+        return PendingMcpOAuth(id, server, savedStateHandle.get(KEY_PROFILE), route)
     }
 
     private companion object {
         const val KEY_FLOW_ID = "manage_mcp_oauth_flow_id"
         const val KEY_SERVER_NAME = "manage_mcp_oauth_server"
         const val KEY_PROFILE = "manage_mcp_oauth_profile"
+        const val KEY_ROUTE_IDENTITY = "manage_mcp_oauth_route_identity"
         const val KEY_UNSUPPORTED_ROUTES = "manage_mcp_oauth_unsupported_routes"
         const val KEY_SUPPORTED_ROUTES = "manage_mcp_oauth_supported_routes"
     }
